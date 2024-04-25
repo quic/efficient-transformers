@@ -1,0 +1,4 @@
+[tool.ruff]
+line-length = 120
+# Enable the isort rules.
+lint.extend-select = ["I"]

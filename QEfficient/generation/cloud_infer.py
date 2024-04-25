@@ -1,0 +1,161 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+from typing import Dict, List
+from warnings import warn
+
+import numpy as np
+
+try:
+    import qaicrt
+except ImportError:
+    import platform
+    import sys
+
+    sys.path.append(f"/opt/qti-aic/dev/lib/{platform.machine()}")
+    import qaicrt
+
+try:
+    import QAicApi_pb2 as aicapi
+except ImportError:
+    import sys
+
+    sys.path.append("/opt/qti-aic/dev/python")
+    import QAicApi_pb2 as aicapi
+
+aic_to_np_dtype_mapping = {
+    aicapi.FLOAT_TYPE: np.dtype(np.float32),
+    aicapi.FLOAT_16_TYPE: np.dtype(np.float16),
+    aicapi.INT8_Q_TYPE: np.dtype(np.int8),
+    aicapi.UINT8_Q_TYPE: np.dtype(np.uint8),
+    aicapi.INT16_Q_TYPE: np.dtype(np.int16),
+    aicapi.INT32_Q_TYPE: np.dtype(np.int32),
+    aicapi.INT32_I_TYPE: np.dtype(np.int32),
+    aicapi.INT64_I_TYPE: np.dtype(np.int64),
+    aicapi.INT8_TYPE: np.dtype(np.int8),
+}
+
+
+class QAICInferenceSession:
+    def __init__(
+        self,
+        qpc_path: str,
+        device_ids: List[int] = [0],
+        activate: bool = True,
+        enable_debug_logs: bool = False,
+    ):
+        # Load QPC
+        devices = qaicrt.QIDList(device_ids)
+        self.context = qaicrt.Context(devices)
+        self.queue = qaicrt.Queue(self.context, device_ids[0])  # Async API
+        if enable_debug_logs:
+            assert (
+                self.context.setLogLevel(qaicrt.QLogLevel.QL_DEBUG) == qaicrt.QStatus.QS_SUCCESS
+            ), "Failed to setLogLevel"
+        qpc = qaicrt.Qpc(qpc_path)
+        # Load IO Descriptor
+        iodesc = aicapi.IoDesc()
+        status, iodesc_data = qpc.getIoDescriptor()
+        assert status == qaicrt.QStatus.QS_SUCCESS, "Failed to getIoDescriptor"
+        iodesc.ParseFromString(bytes(iodesc_data))
+        self.allowed_shapes = [
+            [(aic_to_np_dtype_mapping[x.type].itemsize, list(x.dims)) for x in allowed_shape.shapes]
+            for allowed_shape in iodesc.allowed_shapes
+        ]
+        self.bindings = iodesc.selected_set.bindings
+        self.binding_index_map = {binding.name: binding.index for binding in self.bindings}
+        # Create and load Program
+        prog_properties = qaicrt.QAicProgramProperties()
+        prog_properties.SubmitRetryTimeoutMs = 60_000
+        if len(device_ids) > 1:
+            prog_properties.devMapping = ":".join(map(str, device_ids))
+        self.program = qaicrt.Program(self.context, None, qpc, prog_properties)
+        assert self.program.load() == qaicrt.QStatus.QS_SUCCESS, "Failed to load program"
+        if activate:
+            self.activate()
+        # Create input qbuffers and buf_dims
+        self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
+        self.buf_dims = qaicrt.BufferDimensionsVecRef(
+            [(aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
+        )
+
+    @property
+    def input_names(self) -> List[str]:
+        return [binding.name for binding in self.bindings if binding.dir == aicapi.BUFFER_IO_TYPE_INPUT]
+
+    @property
+    def output_names(self) -> List[str]:
+        return [binding.name for binding in self.bindings if binding.dir == aicapi.BUFFER_IO_TYPE_OUTPUT]
+
+    def activate(self):
+        self.program.activate()
+        self.execObj = qaicrt.ExecObj(self.context, self.program)
+
+    def deactivate(self):
+        del self.execObj
+        self.program.deactivate()
+
+    def set_buffers(self, buffers: Dict[str, np.ndarray]):
+        for buffer_name, buffer in buffers.items():
+            if buffer_name not in self.binding_index_map:
+                warn(f'Buffer: "{buffer_name}" not found')
+                continue
+            buffer_index = self.binding_index_map[buffer_name]
+            self.qbuffers[buffer_index] = qaicrt.QBuffer(buffer.tobytes())
+            self.buf_dims[buffer_index] = (
+                buffer.itemsize,
+                buffer.shape if len(buffer.shape) > 0 else (1,),
+            )
+
+    def skip_buffers(self, skipped_buffer_names: List[str]):
+        self.set_buffers({k: np.array([]) for k in skipped_buffer_names})
+
+    def run(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        # Set inputs
+        self.set_buffers(inputs)
+        assert self.execObj.setData(self.qbuffers, self.buf_dims) == qaicrt.QStatus.QS_SUCCESS, "Failed to setData"
+        # # Run with sync API
+        # if self.execObj.run(self.qbuffers) != qaicrt.QStatus.QS_SUCCESS:
+        # Run with async API
+        assert self.queue.enqueue(self.execObj) == qaicrt.QStatus.QS_SUCCESS, "Failed to enqueue"
+        if self.execObj.waitForCompletion() != qaicrt.QStatus.QS_SUCCESS:
+            error_message = "Failed to run"
+            # Print additional error messages for unmatched dimension error
+            if self.allowed_shapes:
+                error_message += "\n\n"
+                error_message += '(Only if "No matching dimension found" error is present above)'
+                error_message += "\nAllowed shapes:"
+                for i, allowed_shape in enumerate(self.allowed_shapes):
+                    error_message += f"\n{i}\n"
+                    for binding, (elemsize, shape), (_, passed_shape) in zip(
+                        self.bindings, allowed_shape, self.buf_dims
+                    ):
+                        if passed_shape[0] == 0:
+                            if not binding.is_partial_buf_allowed:
+                                warn(f"Partial buffer not allowed for: {binding.name}")
+                            continue
+                        error_message += f"{binding.name}:\t{elemsize}\t{shape}\n"
+                error_message += "\n\nPassed shapes:\n"
+                for binding, (elemsize, shape) in zip(self.bindings, self.buf_dims):
+                    if shape[0] == 0:
+                        continue
+                    error_message += f"{binding.name}:\t{elemsize}\t{shape}\n"
+            raise ValueError(error_message)
+        # Get output buffers
+        status, output_qbuffers = self.execObj.getData()
+        assert status == qaicrt.QStatus.QS_SUCCESS, "Failed to getData"
+        # Build output
+        outputs = {}
+        for output_name in self.output_names:
+            buffer_index = self.binding_index_map[output_name]
+            if self.buf_dims[buffer_index][1][0] == 0:
+                continue
+            outputs[output_name] = np.frombuffer(
+                bytes(output_qbuffers[buffer_index]),
+                aic_to_np_dtype_mapping[self.bindings[buffer_index].type],
+            ).reshape(self.buf_dims[buffer_index][1])
+        return outputs
