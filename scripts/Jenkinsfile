@@ -1,0 +1,76 @@
+pipeline 
+{
+
+    agent 
+    {
+        node 
+        {
+            label 'qeff_node'
+        }
+    }
+
+    stages 
+    {
+        stage('Code Checkout') 
+        {
+            steps 
+            {
+                checkout scm
+            }
+        }
+        stage('Env Activation')
+        {
+            steps
+            {
+            sh '''
+                    mkdir -p preflight_qeff
+                    python3.8 -m venv preflight_qeff
+                    . preflight_qeff/bin/activate
+                '''
+            } 
+        }
+        stage('Install requirments')
+        {
+            steps
+            {
+                sh '''
+                    . preflight_qeff/bin/activate
+                    python3 -m pip install multidict
+                    pip install --upgrade pip setuptools
+                    pip install torch==2.0.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu --no-deps
+                    pip install /opt/qti-aic/dev/lib/x86_64/qaic-0.0.1-py3-none-any.whl
+                    pip install -e .
+                '''
+            }
+        }
+
+
+        stage('Test')
+            {
+                steps
+                {
+                    //todo(ochougul): Increase when MQ tests are enabled 
+		    timeout(time: 60, unit: 'MINUTES') {
+                    sh '''
+                    . preflight_qeff/bin/activate
+                    export TOKENIZERS_PARALLELISM=false
+                    find . | grep -E "(/__pycache__$)" | xargs rm -rf
+                    export PYTHONPATH="."
+                    pytest -W ignore -s -v tests
+                    deactivate
+                    exit
+                    '''     
+                }
+            }
+        }
+    }
+    post 
+    {
+         always 
+         {
+             echo 'Cleaning Workspace'
+             deleteDir() 
+         }
+    }
+       
+}
