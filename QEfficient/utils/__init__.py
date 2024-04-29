@@ -6,17 +6,19 @@
 # -----------------------------------------------------------------------------
 
 import os
-import requests
-from typing import Optional
+from typing import List, Optional
 
-from requests.exceptions import HTTPError
+import requests
 from huggingface_hub import snapshot_download
+from requests.exceptions import HTTPError
 
 
 def hf_download(
     repo_id: Optional[str] = None,
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
+    allow_patterns: Optional[List[str]] = None,
+    ignore_patterns: Optional[List[str]] = None,
 ):
     # Setup cache and local dir
     local_dir = None
@@ -37,7 +39,8 @@ def hf_download(
                 revision="main",
                 resume_download=True,
                 token=hf_token,
-                ignore_patterns=["*.txt", "*.msgpack", "*.h5", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
+                allow_patterns=allow_patterns,
+                ignore_patterns=ignore_patterns,
             )
             break
         except requests.ReadTimeout as e:

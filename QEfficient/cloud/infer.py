@@ -5,20 +5,20 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
-import shutil
 import argparse
+import os
 from typing import List
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from huggingface_hub import login
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
 import QEfficient
-from QEfficient.utils import hf_download
 from QEfficient.cloud.compile import main as compile
-from QEfficient.utils.constants import Constants, QEFF_MODELS_DIR
-from QEfficient.utils.logging_utils import logger
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import latency_stats_kv
+from QEfficient.utils import hf_download
+from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils.logging_utils import logger
 
 """
 1. Check if compiled qpc for given config already exists, if it does jump to execute, else
@@ -35,9 +35,7 @@ def qpc_exists(qpc_dir_path: str) -> bool:
     :param dir_path: str. Path of qpc directory.
     :return: bool.
     """
-    return (os.path.isdir(qpc_dir_path) and
-            os.path.isfile(os.path.join(qpc_dir_path, "programqpc.bin")))
-
+    return os.path.isdir(qpc_dir_path) and os.path.isfile(os.path.join(qpc_dir_path, "programqpc.bin"))
 
 
 def onnx_exists(onnx_file_path: str) -> bool:
@@ -81,7 +79,11 @@ def main(
     # Get tokenizer
     if hf_token is not None:
         login(hf_token)
-    model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir)
+    model_hf_path = hf_download(
+        repo_id=model_name,
+        cache_dir=cache_dir,
+        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
+    )
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True)
 
     if qpc_exists(qpc_dir_path):
@@ -128,7 +130,7 @@ def main(
         kv=True,
         form_factor="cloud",
         return_path=True,
-        tokenizer=tokenizer
+        tokenizer=tokenizer,
     )
     assert (
         generated_onnx_path == onnx_model_path
@@ -194,7 +196,8 @@ if __name__ == "__main__":
         help="Input prompt, if executing for batch size>1, pass input promprs in single string but seperate with pipe (|) symbol",
     )
     parser.add_argument(
-        "--aic_enable_depth_first", "--aic-enable-depth-first",
+        "--aic_enable_depth_first",
+        "--aic-enable-depth-first",
         action="store_true",
         help="If passed, this option will be enabled during compilation, disabled by default",
     )

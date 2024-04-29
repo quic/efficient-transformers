@@ -6,18 +6,17 @@
 # -----------------------------------------------------------------------------
 
 import os
-from typing import Tuple, Optional
 import shutil
+from typing import Optional, Tuple
 
 import torch
-from transformers import AutoTokenizer
 from huggingface_hub import login
+from transformers import AutoTokenizer
 
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
-from QEfficient.utils.constants import Constants
-from QEfficient.utils import hf_download
 from QEfficient.transformers.modeling_utils import transform
-from QEfficient.utils.constants import QEFF_MODELS_DIR
+from QEfficient.utils import hf_download
+from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -80,7 +79,11 @@ def convert_to_cloud_bertstyle(
     try:
         if hf_token:
             login(hf_token)
-        model_hf_path = hf_download(repo_id=model_name, cache_dir=Constants.CACHE_DIR)
+        model_hf_path = hf_download(
+            repo_id=model_name,
+            cache_dir=Constants.CACHE_DIR,
+            ignore_pattrens=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
+        )
         model = model_class.from_pretrained(model_hf_path, cache_dir=Constants.CACHE_DIR, use_cache=True)
     except Exception as e:
         print(f"Failed to download the {model_name} model from Huggingface:%s", e)
@@ -238,7 +241,11 @@ def convert_to_cloud_kvstyle(
         try:
             if hf_token:
                 login(hf_token)
-            model_hf_path = hf_download(repo_id=model_name, cache_dir=Constants.CACHE_DIR)
+            model_hf_path = hf_download(
+                repo_id=model_name,
+                cache_dir=Constants.CACHE_DIR,
+                ignore_pattrens=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
+            )
             model = model_class.from_pretrained(model_hf_path, cache_dir=Constants.CACHE_DIR, use_cache=True)
         except Exception as e:
             print(f"Failed to download the {model_name} model from Huggingface:%s", e)
