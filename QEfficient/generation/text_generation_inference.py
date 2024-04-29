@@ -204,7 +204,7 @@ def latency_stats_kv(
         print("Total (E2E) inference time is=", round(total_time, 2))
         return
     print()
-    print("*****************Performance Stats**********************")
+    print("===================== Performance Stats =====================")
     if batch_size > 1:
         print("Prefill time a.k.a TTFT (batch) is :", round(prefill_time, 2), "s")
         print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s")
@@ -215,4 +215,4 @@ def latency_stats_kv(
         print("Decode:", round(decode_perf, 2), "tok/s")
         print("E2E:", round(total_perf, 2), "tok/s")
         print("Total (E2E) inference time is=", round(total_time, 2), "s")
-    print("********************************************************")
+    print("=============================================================")

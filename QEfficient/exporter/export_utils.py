@@ -329,12 +329,14 @@ def run_model_on_ort(
         past_value_mean = past_key_sum / num
         print(f"past_keys (mean) \t\t {past_key_mean}")
         print(f"past_value (mean) \t\t {past_value_mean}")
+        print("\n=============================================================\n")
 
         return input_names, ort_outputs
     except Exception as e:
         model = onnx.load(onnx_path, load_external_data=False)
         input_names = [x.name for x in model.graph.input]
         print(f"Failed to run the onnx {onnx_path} model in onnx runtime:%s", e)
+        print("\n=============================================================\n")
         return input_names, None
 
 
@@ -373,17 +375,19 @@ def compile_kv_model_on_cloud_ai_100(
     custom_io_path: str,
     aic_enable_depth_first: bool,
     mos: int = -1,
-    device_group: List[int]=[0],
+    device_group: List[int] = [0],
     **kwargs,
 ) -> bool:
     import shutil
 
-    aic_binary_dir =  os.path.join(base_path, "qpcs")
+    aic_binary_dir = os.path.join(base_path, "qpcs")
 
     if os.path.isdir(aic_binary_dir):
         shutil.rmtree(aic_binary_dir)
 
-    assert os.path.isfile(specializations_json), f"Please use 'from QEfficient.cloud.compile import main as compile', as {specializations_json} file was not found"
+    assert os.path.isfile(
+        specializations_json
+    ), f"Please use 'from QEfficient.cloud.compile import main as compile', as {specializations_json} file was not found"
     assert os.path.isfile(custom_io_path), f"{custom_io_path} file was not found!"
     command = [
         "/opt/qti-aic/exec/qaic-exec",
@@ -400,7 +404,7 @@ def compile_kv_model_on_cloud_ai_100(
     ]
     if mxfp6:
         command.append("-mxfp6-matmul")
-    if (mos>0):
+    if mos > 0:
         command.append(f"-mos={mos}")
     if aic_enable_depth_first:
         command.append("-aic-enable-depth-first")
@@ -414,14 +418,14 @@ def compile_kv_model_on_cloud_ai_100(
                 }
             ],
         }
-        mdp_ts_config_path = os.path.join(base_path, f"mdp_ts_config.json")
+        mdp_ts_config_path = os.path.join(base_path, "mdp_ts_config.json")
         with open(mdp_ts_config_path, "w") as file:
             json.dump(mdp_ts_config, file, indent=4)
         command.append(f"-mdp-load-partition-config={mdp_ts_config_path}")
     print("Running AI 100 compiler:", " ".join(command))
     result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-    if result.returncode !=0:
+    if result.returncode != 0:
         raise RuntimeError("Compilation Failed!!, please check compilation arguments.")
 
-    print(f"\n=============== Compilation Done! ===============\n")
+    print("\n===================== Compilation Done! =====================\n")
     return result.returncode == 0, aic_binary_dir
