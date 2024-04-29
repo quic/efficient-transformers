@@ -14,7 +14,7 @@ import QEfficient
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.exporter.export_utils import compile_kv_model_on_cloud_ai_100
 from QEfficient.utils import hf_download
-from QEfficient.utils.constants import Constants, QEFF_MODELS_DIR, ROOT_DIR
+from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
 from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
 
@@ -32,6 +32,7 @@ def prepare_work_dir(work_dir):
     # create empty temp dir
     os.makedirs(temp_dir)
 
+
 def remove_temp_dir(work_dir):
     """
     Function to remove the temp work directory location
@@ -42,17 +43,19 @@ def remove_temp_dir(work_dir):
     if os.path.exists(temp_dir):
         shutil.rmtree(temp_dir)
 
+
 def get_tokenizer(model_name):
     """
     Function to get tokenizer info from transformers.AutoTokenizer
     :param model_name: str
     :return tokenizer
     """
-    model_hf_path = hf_download(repo_id=model_name)
+    model_hf_path = hf_download(repo_id=model_name, allow_patterns=["*.json"])
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_hf_path, padding_side="left")
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
     return tokenizer
+
 
 def load_pytorch_model(model_name, model_class):
     """
@@ -61,10 +64,13 @@ def load_pytorch_model(model_name, model_class):
     :param model_class: type
     :return model_hf
     """
-    model_path = hf_download(repo_id=model_name)
+    model_path = hf_download(
+        repo_id=model_name, ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"]
+    )
     model_hf = model_class.from_pretrained(model_path, use_cache=True)
     model_hf.eval()
     return model_hf
+
 
 def transform_pt_model_with_qeff(model_hf):
     """
@@ -75,6 +81,7 @@ def transform_pt_model_with_qeff(model_hf):
     model_kv = QEfficient.transform(model_hf, type="Transformers", form_factor="cloud")
     model_kv.eval()
     return model_kv
+
 
 def export_onnx(model_kv, tokenizer, model_name, model_class):
     """
@@ -91,8 +98,10 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
         tokenizer=tokenizer,
         onnx_dir_path=onnx_dir_path,
         kv=True,
-        return_path=True)
+        return_path=True,
+    )
     return base_path, onnx_model_path
+
 
 def set_up(model_config):
     """
@@ -148,6 +157,7 @@ def set_up(model_config):
     setup_info["ort_tokens"] = ort_tokens
     return setup_info
 
+
 def get_cloud_ai_100_tokens(setup_info):
     """
     Test function to validate the llama model before and after KV changes on Cloud AI 100
@@ -168,6 +178,7 @@ def get_cloud_ai_100_tokens(setup_info):
             device_group=[0],
         )
         from QEfficient.generation.cloud_infer import QAICInferenceSession
+
         session = QAICInferenceSession(test_qpcs_path, device_id, enable_debug_logs=False)
         try:
             cloud_ai_100_tokens = setup_info["api_runner"].run_kv_model_on_cloud_ai_100(
