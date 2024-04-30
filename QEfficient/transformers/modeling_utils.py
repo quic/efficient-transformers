@@ -17,6 +17,7 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenModel,
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
+from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
@@ -55,6 +56,7 @@ from .models.codegen.modeling_codegen import (
     QEffCodeGenModel,
 )
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
+from .models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJBlock, QEffGPTJForCausalLM, QEffGPTJModel
 from .models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
@@ -77,6 +79,7 @@ ModelArchitectures = namedtuple("ModelArchitectures", ["architectures"])
 my_architectures = ModelArchitectures(
     [
         GPT2LMHeadModel.__name__,
+        GPTJForCausalLM.__name__,
         MptForCausalLM.__name__,
         CodeGenForCausalLM.__name__,
         LlamaForCausalLM.__name__,
@@ -87,11 +90,16 @@ my_architectures = ModelArchitectures(
 # Define a transformers layers to QEff layers dictionary
 # While onboarding new models make sure to add the new layer maps to this dictionary.
 TransformersToQEffModulesDict = {
-    # GPT model layers
+    # GPT2 model layers
     GPT2Model: QEffGPT2Model,
     GPT2Block: QEffGPT2Block,
     GPT2Attention: QEffGPT2Attention,
     GPT2LMHeadModel: QEffGPT2LMHeadModel,
+    # GPTJ model layers
+    GPTJModel: QEffGPTJModel,
+    GPTJBlock: QEffGPTJBlock,
+    GPTJAttention: QEffGPTJAttention,
+    GPTJForCausalLM: QEffGPTJForCausalLM,
     # Llama model layers
     LlamaModel: QEffLlamaModel,
     LlamaAttention: QEffLlamaAttention,
@@ -159,13 +167,12 @@ def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
     Returns:
     torch.nn.Module: PyTorch Module with replaced QEff layers.
     """
-    
+
     # Introducnig qeff_transformed attribue in model to check status of transform
     if getattr(model, "qeff_transformed", False):
         print("Model is already transformed")
         return model
 
-    
     if form_factor == "cloud":
         # Get Hash of all params for checking later
         prior_params_hash = get_params_hash(model)
@@ -192,7 +199,7 @@ def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
         transformers.modeling_attn_mask_utils._prepare_4d_attention_mask = _qeff_prepare_4d_attention_mask
         transformers.modeling_attn_mask_utils._prepare_4d_causal_attention_mask = _qeff_prepare_4d_causal_attention_mask
 
-        setattr(model,'qeff_transformed',True)
+        setattr(model, "qeff_transformed", True)
         return model.eval()
 
     elif form_factor == "edge":
