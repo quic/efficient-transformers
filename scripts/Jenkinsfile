@@ -35,7 +35,7 @@ pipeline
             {
                 sh '''
                     . preflight_qeff/bin/activate
-                    python3 -m pip install multidict
+                    python3 -m pip install multidict==6.0.4
                     pip install --upgrade pip setuptools
                     pip install torch==2.0.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu --no-deps
                     pip install /opt/qti-aic/dev/lib/x86_64/qaic-0.0.1-py3-none-any.whl
