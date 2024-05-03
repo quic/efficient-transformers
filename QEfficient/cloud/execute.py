@@ -36,7 +36,7 @@ def main(
         login(hf_token)
     # Download tokenizer along with model if it doesn't exist
     model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json"])
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
 
     latency_stats_kv(tokenizer=tokenizer, qpc=qpc_path, device_id=devices, prompt=prompt)
 

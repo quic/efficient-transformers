@@ -69,9 +69,11 @@ def convert_to_cloud_bertstyle(
 
     # Load tokenizer
     if tokenizer is None:
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
     else:
-        tokenizer = tokenizer
+        if tokenizer.padding_side != "left":
+            logger.warning(f"Please use padding_side='left' while initializing the tokenizer")
+            tokenizer.padding_side = "left"
 
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -260,7 +262,9 @@ def convert_to_cloud_kvstyle(
         # todo(ochougul): use cache dir from snapshot download
         tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
     else:
-        tokenizer = tokenizer
+        if tokenizer.padding_side != "left":
+            logger.warning(f"Please use padding_side='left' while initializing the tokenizer")
+            tokenizer.padding_side = "left"
 
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id

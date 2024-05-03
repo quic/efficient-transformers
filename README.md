@@ -220,7 +220,7 @@ from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_con
 # Bertstyle models do not have any optimization w.r.t KV cache changes and are unoptimized version.
 # It is recommended to use kv=True for better performance.
 
-tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True)
+tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
 base_path, onnx_path = qualcomm_efficient_converter(
     model_kv=model_transformed,
     model_name=model_name,

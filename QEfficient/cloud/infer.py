@@ -84,7 +84,7 @@ def main(
         cache_dir=cache_dir,
         ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
     )
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
 
     if qpc_exists(qpc_dir_path):
         # execute
