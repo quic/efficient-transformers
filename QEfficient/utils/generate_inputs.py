@@ -8,6 +8,8 @@
 import numpy as np
 import torch
 
+from QEfficient.utils.logging_utils import logger
+
 
 class InputHandler:
     def __init__(self, tokenizer, input_str, prompt_len, ctx_len):
@@ -18,6 +20,11 @@ class InputHandler:
         :param prompt_len: int
         :param ctx_len: int
         """
+        if tokenizer.padding_side != "left":
+            logger.warning(f"Please use padding_side='left' while initializing the tokenizer")
+            tokenizer.padding_side = "left"
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
         self.tokenizer = tokenizer
         self.input_str = input_str
         self.prompt_len = prompt_len
