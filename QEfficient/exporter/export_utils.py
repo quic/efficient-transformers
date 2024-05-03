@@ -16,7 +16,6 @@ from typing import Dict, List, Tuple, Union
 import numpy as np
 import onnx
 import onnxruntime
-import onnxsim
 import torch
 from onnx import external_data_helper, numpy_helper
 
@@ -149,12 +148,6 @@ def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_ba
         onnx.save(model, f=f"{gen_models_path}/{model_base_name}.onnx")
 
     return model_base_name
-
-
-def simplify_onnx(gen_models_path: str, model_base_name: str, **kwargs) -> str:
-    simple_model, check = onnxsim.simplify(f"{gen_models_path}/{model_base_name}.onnx", **kwargs)
-    assert check, "Failed verification of simplified model"
-    return save_onnx(simple_model, gen_models_path, model_base_name + "_simplified")
 
 
 def remove_temp_file(file_path_model, file_path_weights):
