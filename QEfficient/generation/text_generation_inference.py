@@ -15,6 +15,7 @@ import transformers
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils.logging_utils import logger
 
 io_files = []
 
@@ -108,6 +109,11 @@ def latency_stats_kv(
     write_io_dir: Optional[str] = None,
     automation: bool = False,
 ):
+    if tokenizer.padding_side != "left":
+        logger.warning(f"Please use padding_side='left' while initializing the tokenizer")
+        tokenizer.padding_side = "left"
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
     # Load QPC
     session = QAICInferenceSession(qpc, device_id, enable_debug_logs=enable_debug_logs)
     # Read prompt and ctx len from session

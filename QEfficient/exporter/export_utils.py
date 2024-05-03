@@ -423,9 +423,9 @@ def compile_kv_model_on_cloud_ai_100(
             json.dump(mdp_ts_config, file, indent=4)
         command.append(f"-mdp-load-partition-config={mdp_ts_config_path}")
     print("Running AI 100 compiler:", " ".join(command))
-    result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError("Compilation Failed!!, please check compilation arguments.")
+        raise RuntimeError(f"Compilation Failed!!\n\nSTDOUT\n{result.stdout}\n\nSTDERR\n{result.stderr}")
 
     print("\n===================== Compilation Done! =====================\n")
     return result.returncode == 0, aic_binary_dir

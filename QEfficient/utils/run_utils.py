@@ -31,11 +31,12 @@ class ApiRunner:
         :param prompt_len: int
         :param ctx_len: int
         """
+        if tokenizer.padding_side != "left":
+            logger.warning(f"Please use padding_side='left' while initializing the tokenizer")
+            tokenizer.padding_side = "left"
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
         self.tokenizer = tokenizer
-        self.tokenizer.padding_side = "left"
-        logger.info("Changing padding side to 'left'")
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id 
         self.prompt = prompt
         self.prompt_len = prompt_len
         self.ctx_len = ctx_len

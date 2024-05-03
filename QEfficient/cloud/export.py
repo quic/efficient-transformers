@@ -28,7 +28,7 @@ def main(model_name: str, cache_dir: str) -> None:
     :cache_dir: str. Cache dir to store the downloaded huggingface files.
     """
     model_hf_path = hf_download(repo_id=model_name, hf_token=None, cache_dir=cache_dir)
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
     model = AutoModelForCausalLM.from_pretrained(model_hf_path, use_cache=True)
 
     # Easy and minimal api to update the model to QEff.
