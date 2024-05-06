@@ -15,7 +15,7 @@ from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_con
 from QEfficient.exporter.export_utils import compile_kv_model_on_cloud_ai_100
 from QEfficient.utils import hf_download
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
-from QEfficient.utils.device_utils import get_available_device_id
+from QEfficient.utils.device_utils import get_available_device_id, is_qpc_size_gt_32gb
 from QEfficient.utils.run_utils import ApiRunner
 
 
@@ -68,8 +68,9 @@ def load_pytorch_model(model_name, model_class):
         repo_id=model_name, ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"]
     )
     model_hf = model_class.from_pretrained(model_path, use_cache=True)
+    params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
-    return model_hf
+    return model_hf,params
 
 
 def transform_pt_model_with_qeff(model_hf):
@@ -103,7 +104,7 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
     return base_path, onnx_model_path
 
 
-def set_up(model_config):
+def set_up(model_config, device_group=[0]):
     """
     Set up function to set up the test environment for TestQEfficientModel class
     :param None
@@ -115,8 +116,9 @@ def set_up(model_config):
         Constants.PROMPT_LEN,
         Constants.CTX_LEN,
     )
-
-    model_hf = load_pytorch_model(model_config["model_name"], model_config["model_class"])
+    mxfp6 = False
+    model_hf, params = load_pytorch_model(model_config["model_name"], model_config["model_class"])
+    qpc_gt_32gb = is_qpc_size_gt_32gb(params, mxfp6)
     try:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
     except Exception as e:
@@ -149,7 +151,9 @@ def set_up(model_config):
 
     setup_info = {}
     setup_info["model_config"] = model_config
+    setup_info["device_group"] = device_group
     setup_info["api_runner"] = api_runner
+    setup_info["qpc_gt_32gb"] = qpc_gt_32gb
     setup_info["pytorch_hf_tokens"] = pytorch_hf_tokens
     setup_info["pytorch_kv_tokens"] = pytorch_kv_tokens
     setup_info["base_path"] = base_path
@@ -175,7 +179,7 @@ def get_cloud_ai_100_tokens(setup_info):
             mxfp6=False,
             custom_io_path=os.path.join(setup_info["base_path"], "custom_io_fp16.yaml"),
             aic_enable_depth_first=False,
-            device_group=[0],
+            device_group=setup_info["device_group"],
         )
         from QEfficient.generation.cloud_infer import QAICInferenceSession
 
