@@ -8,18 +8,22 @@
 
 
 ### Instructions to launch the app 
-1. Clone the repo `git clone https://github.com/hupreti/efficient-transformers.git`
-2. Create `app_config.json` and update the information like given below
-3. Create a python3.8 environment `python3.8 -m venv env`
-4. Activate the environment `source env/bin/activate`
+1. System Dependencies 
+    - `sudo apt-get install ffmpeg openssl`
+    - same as the `efficient-transformers`
+2. Clone the repo `git clone https://github.com/hupreti/efficient-transformers.git`
+3. Change directory `cd app`
+  - create `app_config.json` inside directory
+  - update the information in app_config.json like given below section
+4. Create a python3.8 environment `python3.8 -m venv env` and activate the environment using `source env/bin/activate`
 5. Update pip, `pip install -U pip`
-6. Install dependencies from requirements.txt, `pip install -r requirements`
+6. Install dependencies 
+  - Install python requirements : `pip install -r requirements`
+  - Install Efficient Transformers Library : `pip install -e ..`
+  - Generate key and cert files : `openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 365`
 7. Run `python app.py`
 8. Open browser https://server_name_or_ip:7881
 9. Accept the certificate
-10. System Dependencies 
-    - `sudo apt-get install ffmpeg`
-    - same as the `efficient-transformers`
 
 
 ### Interaction of Developer Application and QEfficient Transformers Library
