@@ -1,9 +1,20 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+import os
+import time
+import json
 import gradio as gr
 
-from typing import *
-import os
+from pathlib import Path
+from threading import Thread
+from typing import List, Tuple
 
-from LLMGenerator import LLMGenerator
+
+from QEfficient.generation import LLMGenerator
 
 from transformers import (
     AutoConfig,
@@ -13,12 +24,19 @@ from transformers import (
     TextStreamer,
 )
 
-from threading import Thread
-import time
+from utils import ( 
+                get_list_of_model_task, 
+                get_list_of_tasks, 
+                get_list_of_models
+                )
 
-import json
+app_config = open("app_config.json")
+app_config = json.load(app_config)
 
-from pathlib import Path
+list_of_tasks = list(app_config.keys())
+list_of_models = []
+
+list_of_models = [x for x in app_config[each].keys() for each in app_config]
 
 f = open("qpc.json")
 codellama_data = json.load(f)["codellama"]
@@ -45,34 +63,12 @@ subtitle_right = """
 
 """
 
-
-LICENSE = """
-<p/>
-Qualcomm Technologies, Inc. Proprietary
-(c) 2023 Qualcomm Technologies, Inc. All rights reserved.
-All data and information contained in or disclosed by this document are
-confidential and proprietary information of Qualcomm Technologies, Inc., and
-all rights therein are expressly reserved. By accepting this material, the
-recipient agrees that this material and the information contained therein
-are held in confidence and in trust and will not be used, copied, reproduced
-in whole or in part, nor its contents revealed in any manner to others
-without the express written permission of Qualcomm Technologies, Inc.
-"""
-
 # whisper = GreedyDecoder()
 list_of_models = ["mpt", "llama", "mistral", "codellama"]
 qeff_flags = set()
 
 max_length = codellama_data["ctx_len"]
 text = ""
-
-
-def run_whisper(audio):
-    if audio:
-        return whisper.stream("english", audio, None)
-
-    gr.Info("Record/Upload the audio now")
-    return ""
 
 
 ctx_len = codellama_data["ctx_len"]
