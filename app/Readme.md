@@ -30,26 +30,49 @@
 ### Format of "app_config.json"
 
 Please modify the `app_config.json` like below,
-- You can add n number of entry
-- Each entry will appear as list in dropdown
+- You can add N number of entry
+- Each entry in app_config will appear as list in dropdown of tasks
+- Each entry inside the `task` will appear as list in dropdown of models
 
 ```json
 {
-  "codellama" : {
-    "binary_path" : "<path_to_binary_file_from_qeff_library>",
-    "model_name" : "codellama/CodeLlama-34b-Instruct-hf",
-    "prompt_len" : 128,
-    "ctx_len" : 1024,
-    "device_id" : [0],
+  "text-generation" : {  
+    "codellama" : {
+      "qpc_path" : "<path_to_compiled_container_from_library>",
+      "model_name" : "<hf_model_card_name>",
+      "prompt_len" : 128,
+      "ctx_len" : 1024,
+      "device_id" : [0]
+    },
+    "mpt" : {
+      "qpc_path" : "<path_to_compiled_container_from_library>",
+      "model_name" : "<hf_model_card_name>",
+      "prompt_len" : 128,
+      "ctx_len" : 1024,
+      "device_id" : [1]
+    },
+    "llama" : {
+      "qpc_path" : "<path_to_compiled_container_from_library>",
+      "model_name" : "<hf_model_card_name>",
+      "prompt_len" : 128,
+      "ctx_len" : 1024,
+      "device_id" : [2]
+    },
+    "mistral" : {
+      "qpc_path" : "<path_to_compiled_container_from_library>",
+      "model_name" : "<hf_model_card_name>",
+      "prompt_len" : 128,
+      "ctx_len" : 1024,
+      "device_id" : [3]
+    }
   },
-  "mistral" : {
-    "binary_path" : "<path_to_binary_file_from_qeff_library>",
-    "model_name" : "mistralai/Mistral-7B-v0.1",
-    "prompt_len" : 128,
-    "ctx_len" : 1024,
-    "device_id" : [1],
+  "question-answering" : {
   },
-  "mpt"
+  "image-generation" : {
+  },
+  "multi-modalities" : {
+  }
+
 }
 
 ```

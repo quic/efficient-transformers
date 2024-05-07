@@ -14,7 +14,7 @@ from threading import Thread
 from typing import List, Tuple
 
 
-from QEfficient.generation import LLMGenerator
+from QEfficient.generation.LLMGenerator import LLMGenerator
 
 from transformers import (
     AutoConfig,
@@ -24,36 +24,30 @@ from transformers import (
     TextStreamer,
 )
 
-from utils import ( 
-                get_list_of_model_task, 
-                get_list_of_tasks, 
-                get_list_of_models
-                )
+from utils import (
+    get_list_of_models_task,
+    get_list_of_tasks,
+    get_list_of_models_all,
+    get_data,
+    get_generator,
+    load_models_artifacts,
+)
 
-app_config = open("app_config.json")
-app_config = json.load(app_config)
+list_of_tasks = get_list_of_tasks()
+list_of_models = get_list_of_models_all()
 
-list_of_tasks = list(app_config.keys())
-list_of_models = []
+load_models_artifacts()
 
-list_of_models = [x for x in app_config[each].keys() for each in app_config]
+codellama = get_generator(list_of_tasks[0], "codellama")
 
-f = open("qpc.json")
-codellama_data = json.load(f)["codellama"]
-f.close()
-
-
-# title = """
-# # <span style="color:#3253DC;"> Qbuzz 2023 : GenerativeAI on Cloud AI100 </span> 
-
-# """
+assert codellama is not None
 
 title = """
 # <span style="color:#3253DC;">  Developer Applications on Cloud AI 100 using Transformers Library </span> 
 
 """
 
-subtitle_left= """
+subtitle_left = """
 ##  Developer Application </span> 
 
 """
@@ -63,30 +57,19 @@ subtitle_right = """
 
 """
 
-# whisper = GreedyDecoder()
-list_of_models = ["mpt", "llama", "mistral", "codellama"]
 qeff_flags = set()
-
-max_length = codellama_data["ctx_len"]
-text = ""
+summary_text = ""
 
 
-ctx_len = codellama_data["ctx_len"]
-prompt_len = codellama_data["prompt_len"]
 previous_current_ctx_len = 0
 last_prompt = ""
 last_state_generation_ids = []
 
-# codellama = ()
 
-codellama = LLMGenerator(
-    qpc_path=codellama_data["qpc_path"],
-    model_name=codellama_data["model_name"],
-    device_id=codellama_data["device_id"],
-    prompt_len=prompt_len,
-    ctx_len=ctx_len,
-    streamer=TextIteratorStreamer,
-)
+def update_model(task, model):
+    new_obj = get_generator(task, model)
+    if new_obj is not None:
+        codellama = new_obj
 
 
 def get_prompt(
@@ -106,37 +89,38 @@ def get_prompt(
 
 
 def run_qeff_check(model_name, progress=gr.Progress()):
-    global text, qeff_flags
-    text = ""
-    
+    global summary_text, qeff_flags
+    summary_text = ""
+
     if model_name not in qeff_flags:
         qeff_flags.add(model_name)
         progress(0, desc="Downloading...")
         # time.sleep(1)
         for i in progress.tqdm(range(100), desc="Downloading..."):
             time.sleep(0.0005)
-        text += f"$ Downloaded {model_name} from cache directory\n"
+        summary_text += f"$ Downloaded {model_name} from cache directory\n"
         progress(0, desc="Optimizing and Compiling...")
         time.sleep(0.5)
         for i in progress.tqdm(range(100), desc="Optimizing and Compiling..."):
             time.sleep(0.07)
-        
-        text += f"$ Optimized {model_name}\n"
+
+        summary_text += f"$ Optimized {model_name}\n"
         # progress(0, desc="Compiling...")
         # for i in progress.tqdm(range(100), desc="Compiling..."):
         #     time.sleep(0.2)
-        # text += f"Optimized {model_name}\n"
+        # summary_text += f"Optimized {model_name}\n"
 
     progress(0, desc="Generating Inference Container...")
     for i in progress.tqdm(range(100), desc="Generating Inference Container..."):
-            pass
-    
-    text += f"$ Compiled {model_name} and generated inference container\n"
-    
-    return Path('./img/box.png')
+        pass
+
+    summary_text += f"$ Compiled {model_name} and generated inference container\n"
+
+    return Path("./img/box.png")
+
 
 def summary():
-    return text
+    return summary_text
 
 
 def run_codellama(msg, chat_history, task, model):
@@ -145,7 +129,7 @@ def run_codellama(msg, chat_history, task, model):
     # print(task, model)
     # output = "Hi there!"
     # return "", chat_history + [(msg, output)]
-
+    # print(codellama)
     codellama.curr_cache_index = 0
     codellama.generated_ids = []
 
@@ -158,8 +142,6 @@ def run_codellama(msg, chat_history, task, model):
     last_prompt = msg
     previous_current_ctx_len = codellama.curr_cache_index
     last_state_generation_ids = codellama.generated_ids
-
-
 
     if not check():
         return msg, chat_history
@@ -182,9 +164,10 @@ def run_codellama(msg, chat_history, task, model):
 
     t.join()
 
+
 def stop():
     codellama.stop_indicator = False
-    return 
+    return
 
 
 def check():
@@ -203,30 +186,34 @@ def reset_cache_index():
     gr.Warning(f"Regenerating output for last prompt")
     return
 
+
 def run_clear():
     global qeff_flags
     codellama.curr_cache_index = 0
     codellama.generated_ids = []
-    # gr.Warning(f"Cleared the Output")
     qeff_flags = set()
-    # print("codellama current cache", codellama.curr_cache_index)
     return
+
 
 def clear_img(img):
     img.clear()
 
 
 # Combined Interface
-# with gr.Blocks(css="demo.css") as demo:
 with gr.Blocks(theme=gr.themes.Soft(), css="demo.css") as demo:
     gr.Markdown(title)
 
     with gr.Row():
 
-        with gr.Column(scale=7, variant='compact'):
+        with gr.Column(scale=7, variant="compact"):
             gr.Markdown(subtitle_left)
 
-            dropdown1 = gr.Dropdown(["QA", "Text-Generation", "Image Generation", "MultiModal"], value="Text-Generation", label="Developer Use Case", elem_id="task_id")
+            dropdown1 = gr.Dropdown(
+                list_of_tasks,
+                value=list_of_tasks[0],
+                label="Developer Use Case",
+                elem_id="task_id",
+            )
 
             with gr.Row():
                 textbox = gr.Textbox(
@@ -238,28 +225,40 @@ with gr.Blocks(theme=gr.themes.Soft(), css="demo.css") as demo:
                 )
 
             with gr.Row():
-                chat = gr.Button("Launch on AI 100", variant="primary", size='sm')
+                chat = gr.Button("Launch on AI 100", variant="primary", size="sm")
 
-                clear = gr.Button("Reset", size='sm')
+                clear = gr.Button("Reset", size="sm")
 
-                stop_btn = gr.Button("Stop", size='sm')
+                stop_btn = gr.Button("Stop", size="sm")
             with gr.Column():
                 # with gr.Group():
                 chatbot = gr.Chatbot(
-                label="Response",
-                elem_id="chuanhu_chatbot",
-            )
-        with gr.Column(variant='compact', scale=3, elem_id="qeff_id"):
+                    label="Response",
+                    elem_id="chuanhu_chatbot",
+                )
+        with gr.Column(variant="compact", scale=3, elem_id="qeff_id"):
             gr.Markdown(subtitle_right)
 
-            dropdown2 = gr.Dropdown(list_of_models, value=list_of_models[-1], label="Pretrained model catalogue from Qualcomm Transformers Library", elem_id="model_id")
-            img = gr.Image(show_label = False, show_download_button = False, container = True, height=260, width=480, elem_id="qpc_id")
+            dropdown2 = gr.Dropdown(
+                list_of_models,
+                value=list_of_models[-1],
+                label="Pretrained model catalogue from Qualcomm Transformers Library",
+                elem_id="model_id",
+            )
+            img = gr.Image(
+                show_label=False,
+                show_download_button=False,
+                container=True,
+                height=260,
+                width=480,
+                elem_id="qpc_id",
+            )
             # "block-size: inherit;"
             qeff_output = gr.Textbox(
-                    container = True,
-                    show_label = False,
-                    lines = 4,
-                )
+                container=True,
+                show_label=False,
+                lines=4,
+            )
     with gr.Row():
         gr.Image(
             "./img/full.png",
@@ -268,17 +267,32 @@ with gr.Blocks(theme=gr.themes.Soft(), css="demo.css") as demo:
             container=False,
         )
 
+    chat.click(update_model, inputs=[dropdown1, dropdown2], outputs=[]).then(
+        run_qeff_check, inputs=[dropdown2], outputs=[img]
+    ).then(summary, inputs=[], outputs=[qeff_output]).then(
+        run_codellama,
+        inputs=[textbox, chatbot, dropdown1, dropdown2],
+        outputs=[textbox, chatbot],
+    )
 
-    chat.click(run_qeff_check, inputs=[dropdown2], outputs=[img]).then(summary, inputs=[], outputs=[qeff_output]).then(run_codellama, inputs=[textbox, chatbot, dropdown1, dropdown2], outputs=[textbox, chatbot])
-
-    textbox.submit(run_qeff_check, inputs=[dropdown2], outputs=[img]).then(summary, inputs=[], outputs=[qeff_output]).then(run_codellama, inputs=[textbox, chatbot, dropdown1, dropdown2], outputs=[textbox, chatbot])
+    textbox.submit(update_model, inputs=[dropdown1, dropdown2], outputs=[]).then(
+        run_qeff_check, inputs=[dropdown2], outputs=[img]
+    ).then(summary, inputs=[], outputs=[qeff_output]).then(
+        run_codellama,
+        inputs=[textbox, chatbot, dropdown1, dropdown2],
+        outputs=[textbox, chatbot],
+    )
 
     stop_btn.click(fn=stop)
 
     clear.click(lambda: None, None, chatbot, queue=False).then(
         lambda x: gr.update(value=""), [], [textbox]
-    ).then(lambda x: gr.update(value=""), [], [qeff_output]).then(fn=run_clear).then(lambda:None, None, img, queue=False)
-    dropdown2.change(lambda x: gr.update(value=""), [], [qeff_output]).then(lambda:None, None, img, queue=False)
+    ).then(lambda x: gr.update(value=""), [], [qeff_output]).then(fn=run_clear).then(
+        lambda: None, None, img, queue=False
+    )
+    dropdown2.change(lambda x: gr.update(value=""), [], [qeff_output]).then(
+        lambda: None, None, img, queue=False
+    )
 
 
 demo.queue()

@@ -13,7 +13,7 @@
       "model_name" : "codellama/CodeLlama-34b-Instruct-hf",
       "prompt_len" : 128,
       "ctx_len" : 1024,
-      "device_id" : [0],
+      "device_id" : [1],
       "link" : "https://huggingface.co/codellama/CodeLlama-34b-Instruct-hf"
     },
     "llama" : {
@@ -21,7 +21,7 @@
       "model_name" : "codellama/CodeLlama-34b-Instruct-hf",
       "prompt_len" : 128,
       "ctx_len" : 1024,
-      "device_id" : [0],
+      "device_id" : [2],
       "link" : "https://huggingface.co/codellama/CodeLlama-34b-Instruct-hf"
     },
     "mistral" : {
@@ -29,15 +29,15 @@
       "model_name" : "codellama/CodeLlama-34b-Instruct-hf",
       "prompt_len" : 128,
       "ctx_len" : 1024,
-      "device_id" : [0],
+      "device_id" : [3],
       "link" : "https://huggingface.co/codellama/CodeLlama-34b-Instruct-hf"
     }
   },
-  "Question Answering" : {
+  "question-answering" : {
   },
-  "Image Generation" : {
+  "image-generation" : {
   },
-  "Multi-Modalities" : {
+  "multi-modalities" : {
   }
 
 }

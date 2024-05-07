@@ -21,7 +21,6 @@ import torch.nn as nn
 
 import transformers
 
-# from aic_infer import QAICInferenceSession
 
 from QEfficient.generation.aic_infer import QAICInferenceSession
 
@@ -413,11 +412,10 @@ def test_llm(
 
     outputs = []
     for text in model_aic.streamer:
-        # print(text, end=" ")
+        print(text, end=" ")
         outputs.append(text)
 
         # yield "".join(outputs)
-    print("".join(outputs))
 
     t.join()
 
