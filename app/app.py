@@ -13,9 +13,6 @@ from pathlib import Path
 from threading import Thread
 from typing import List, Tuple
 
-
-from QEfficient.generation.LLMGenerator import LLMGenerator
-
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -125,11 +122,6 @@ def summary():
 
 def run_codellama(msg, chat_history, task, model):
 
-    # DEBUG
-    # print(task, model)
-    # output = "Hi there!"
-    # return "", chat_history + [(msg, output)]
-    # print(codellama)
     codellama.curr_cache_index = 0
     codellama.generated_ids = []
 
