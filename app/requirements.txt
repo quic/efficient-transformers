@@ -1,9 +1,2 @@
-gradio==4.10.0
-huggingface_hub==0.19.4
-librosa==0.10.1
-noisereduce==3.0.0
-numpy==1.24.4
-Requests==2.31.0
-torch==2.1.1
-transformers==4.36
-protobuf==3.20
+gradio==4.29
+
