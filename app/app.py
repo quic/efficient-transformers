@@ -13,6 +13,7 @@ from pathlib import Path
 from threading import Thread
 from typing import List, Tuple
 from dotenv import load_dotenv
+from jinja2.exceptions import TemplateError
 
 from transformers import (
     AutoConfig,
@@ -66,8 +67,6 @@ subtitle_right = """
 """
 
 
-
-
 def update_model(task, model):
     global qeff_generator_model
     new_obj = get_generator(task, model)
@@ -76,22 +75,22 @@ def update_model(task, model):
         print("Updating qeff generator, ", qeff_generator_model.model_name)
 
 
-def get_prompt(
-    message: str, chat_history: List[Tuple[str, str]], system_prompt: str
-) -> str:
-    texts = [f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n"]
-    # The first user input is _not_ stripped
-    do_strip = False
-    if chat_history:
-        for user_input, response in chat_history:
-            user_input = user_input.strip() if do_strip else user_input
-            do_strip = True
-            texts.append(f"{user_input} [/INST] {response.strip()} </s><s>[INST] ")
-    message = message.strip() if do_strip else message
-    texts.append(f"{message} [/INST]")
-    return "".join(texts)
+def get_prompt(message : str, system_prompt:str):
+    prompt = message
+    chat = []
+    if system_prompt:
+        chat.append({"role":"system", "content":f"{system_prompt}"})
+    chat.append({"role":"user", "content":f"{message}"})
 
-    
+    try :
+        prompt = qeff_generator_model.tokenizer.apply_chat_template(chat, tokenize=False)
+    except TemplateError:
+        prompt = qeff_generator_model.tokenizer.apply_chat_template(chat[1:], tokenize=False)
+    except Exception as err:
+        print(err)
+        
+    return prompt
+        
 
 
 def run_qeff_check(task, model_name, progress=gr.Progress()):
@@ -159,7 +158,7 @@ def infer_prompt(msg, chat_history, task, model):
     yield "", chat_history + [(msg, output)]
 
     generate_args = {
-        "prompt": get_prompt(msg, None, "Give an brief answer."),
+        "prompt": get_prompt(msg, "Give an brief answer."),
         "sample": True,
         "max_new_tokens": None,
     }
