@@ -5,12 +5,14 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
-from QEfficient.generation.aic_infer import QAICInferenceSession
-from QEfficient.generation.LLMGenerator import LLMGenerator
+import json5 as json
+from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.generation.llm_generator import LLMGenerator
+
 from transformers import TextIteratorStreamer
 
 generator_hub = {}
+
 
 
 def get_app_config():
@@ -51,18 +53,34 @@ def load_models_artifacts():
         generator_hub[task] = {}
         for model in app_config[task].keys():
             data = app_config[task][model]
-            generator_hub[task][model] = LLMGenerator(
-                qpc_path=data["qpc_path"],
-                model_name=data["model_name"],
-                device_id=data["device_id"],
-                prompt_len=data["prompt_len"],
-                ctx_len=data["ctx_len"],
-                streamer=TextIteratorStreamer,
-            )
+            try :
+                generator_hub[task][model] = LLMGenerator(
+                    qpc_path=data["qpc_path"],
+                    model_name=data["model_name"],
+                    device_id=data["device_id"],
+                    prompt_len=data["prompt_len"],
+                    ctx_len=data["ctx_len"],
+                    streamer=TextIteratorStreamer,
+                )
+            except Exception as err:
+                print(err)
+                generator_hub[task][model] = None
+                
+    print(generator_hub)
 
 
 def get_generator(task, model):
     if task in generator_hub.keys():
         if model in generator_hub[task].keys():
+            if generator_hub[task][model] is None:
+                #todo 
+                generator_hub[task][model] = LLMGenerator(
+                    qpc_path=data["qpc_path"],
+                    model_name=data["model_name"],
+                    device_id=data["device_id"],
+                    prompt_len=data["prompt_len"],
+                    ctx_len=data["ctx_len"],
+                    streamer=TextIteratorStreamer,
+                )
             return generator_hub[task][model]
     return None

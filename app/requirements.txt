@@ -1,2 +1,3 @@
 gradio==4.29
-
+json5
+python-dotenv
