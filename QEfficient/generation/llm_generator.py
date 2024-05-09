@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -102,17 +102,14 @@ class LLMGenerator:
                 self.tokenizer, skip_prompt=True, skip_special_tokens=True, timeout=None
             )
 
-        # instantiate deault logit processor and wrapper here
+        # instantiate default logit processor and wrapper here
         # TODO : change default values with temperature and top_p
-        # self.logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
-        # self.logits_warper = logits_warper if logits_warper is not None else LogitsProcessorList()
-
         # instantiate logits processors
         self.logits_processor = LogitsProcessorList(
             [
                 MinLengthLogitsProcessor(
                     15, eos_token_id=self.tokenizer.eos_token_id
-                ),  # model.generation_config.eos_token_id
+                ),
             ]
         )
 
@@ -136,10 +133,9 @@ class LLMGenerator:
             input_ids = torch.Tensor(self.inputs["input_ids"])
             next_token_logits = torch.from_numpy(logits)
 
-            # Qeff is maintaining 1,1,VOCAB_SIZE
+            # Qeff is maintaining [1,1,VOCAB_SIZE]
             if len(next_token_logits.shape) == 3:
                 next_token_logits = next_token_logits.squeeze(0)
-            # next_token_scores = self.logits_processor(input_ids, next_token_logits)
             next_token_scores = self.logits_warper(input_ids, next_token_logits)
 
             probs = nn.functional.softmax(next_token_scores, dim=-1)
@@ -154,7 +150,6 @@ class LLMGenerator:
         return next_token_id
 
     def _stopping_criteria(self, next_token_id, max_new_tokens=None):
-        # if self.curr_cache_index > self.ctx_len:
         if self.curr_cache_index >= self.ctx_len - 1:
             print("self.curr_cache_index reach limit")
             return True
@@ -194,8 +189,6 @@ class LLMGenerator:
         batch_size, prompt_len = inputs["input_ids"].shape
 
         ctx_len = self.ctx_len
-
-        # assert ctx_len > prompt_len, "Model cannot support prompt_len > ctx_len"
 
         inputs["position_ids"] = (np.cumsum(inputs["attention_mask"], 1) - 1) * inputs[
             "attention_mask"

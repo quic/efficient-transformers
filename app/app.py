@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -30,7 +30,7 @@ from utils import (
     get_data,
     get_generator,
     load_models_artifacts,
-    get_app_config
+    get_app_config,
 )
 
 
@@ -75,33 +75,36 @@ def update_model(task, model):
         print("Updating qeff generator, ", qeff_generator_model.model_name)
 
 
-def get_prompt(message : str, system_prompt:str):
+def get_prompt(message: str, system_prompt: str):
     prompt = message
     chat = []
     if system_prompt:
-        chat.append({"role":"system", "content":f"{system_prompt}"})
-    chat.append({"role":"user", "content":f"{message}"})
+        chat.append({"role": "system", "content": f"{system_prompt}"})
+    chat.append({"role": "user", "content": f"{message}"})
 
-    try :
-        prompt = qeff_generator_model.tokenizer.apply_chat_template(chat, tokenize=False)
+    try:
+        prompt = qeff_generator_model.tokenizer.apply_chat_template(
+            chat, tokenize=False
+        )
     except TemplateError:
-        prompt = qeff_generator_model.tokenizer.apply_chat_template(chat[1:], tokenize=False)
+        prompt = qeff_generator_model.tokenizer.apply_chat_template(
+            chat[1:], tokenize=False
+        )
     except Exception as err:
         print(err)
-    
+
     return prompt
-        
 
 
 def run_qeff_check(task, model_name, progress=gr.Progress()):
     global summary_text, qeff_flags
     summary_text = ""
-    
+
     model_info = get_data(task, model_name)
 
     if model_name not in qeff_flags:
         qeff_flags.add(model_name)
-        
+
         # TODO : call QEfficient transform api
         # TODO : take model_info as args
         progress(0, desc="Downloading...")
@@ -119,16 +122,15 @@ def run_qeff_check(task, model_name, progress=gr.Progress()):
 
         summary_text += f"$ Optimized {model_name}\n"
 
-
     progress(0, desc="Generating Inference Container...")
     for i in progress.tqdm(range(100), desc="Generating Inference Container..."):
         pass
 
     summary_text += f"$ Compiled {model_name} and generated inference container\n"
-    
+
     update_model(task, model_name)
     print(qeff_generator_model.model_name)
-    
+
     return Path("./img/box.png")
 
 
@@ -138,7 +140,7 @@ def summary():
 
 def infer_prompt(msg, chat_history, task, model):
     global last_prompt, previous_current_ctx_len, last_state_generation_ids
-    
+
     qeff_generator_model.curr_cache_index = 0
     qeff_generator_model.generated_ids = []
 
@@ -268,17 +270,17 @@ with gr.Blocks(theme=gr.themes.Soft(), css="demo.css") as demo:
             container=False,
         )
 
-    chat.click(
-        run_qeff_check, inputs=[dropdown1, dropdown2], outputs=[img]
-    ).then(summary, inputs=[], outputs=[qeff_output]).then(
+    chat.click(run_qeff_check, inputs=[dropdown1, dropdown2], outputs=[img]).then(
+        summary, inputs=[], outputs=[qeff_output]
+    ).then(
         infer_prompt,
         inputs=[textbox, chatbot, dropdown1, dropdown2],
         outputs=[textbox, chatbot],
     )
 
-    textbox.submit(
-        run_qeff_check, inputs=[dropdown1, dropdown2], outputs=[img]
-    ).then(summary, inputs=[], outputs=[qeff_output]).then(
+    textbox.submit(run_qeff_check, inputs=[dropdown1, dropdown2], outputs=[img]).then(
+        summary, inputs=[], outputs=[qeff_output]
+    ).then(
         infer_prompt,
         inputs=[textbox, chatbot, dropdown1, dropdown2],
         outputs=[textbox, chatbot],
@@ -305,4 +307,3 @@ demo.launch(
     ssl_verify=False,
     allowed_paths=[f"{os.getcwd()}"],
 )
-# launch()
