@@ -88,7 +88,7 @@ def get_prompt(message : str, system_prompt:str):
         prompt = qeff_generator_model.tokenizer.apply_chat_template(chat[1:], tokenize=False)
     except Exception as err:
         print(err)
-        
+    
     return prompt
         
 

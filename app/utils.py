@@ -13,8 +13,6 @@ from transformers import TextIteratorStreamer
 
 generator_hub = {}
 
-
-
 def get_app_config():
     f = open("app_config.json")
     app_config = json.load(f)
@@ -70,10 +68,11 @@ def load_models_artifacts():
 
 
 def get_generator(task, model):
+    app_config = get_app_config()
     if task in generator_hub.keys():
         if model in generator_hub[task].keys():
             if generator_hub[task][model] is None:
-                #todo 
+                data = app_config[task][model]
                 generator_hub[task][model] = LLMGenerator(
                     qpc_path=data["qpc_path"],
                     model_name=data["model_name"],
