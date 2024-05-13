@@ -45,10 +45,10 @@ def onnx_exists(onnx_file_path: str) -> bool:
     )
 
 
-def main(
+def infer_api(
     model_name: str,
     num_cores: int,
-    prompt: str,
+    prompt: str = Constants.input_str,
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     cache_dir: str = Constants.CACHE_DIR,
@@ -60,7 +60,8 @@ def main(
     device_group: List[int] = [
         0,
     ],
-) -> None:
+    skip_stats : bool = False,
+) -> str:
     # Make
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
     os.makedirs(model_card_dir, exist_ok=True)
@@ -76,21 +77,24 @@ def main(
     onnx_dir_path = os.path.join(model_card_dir, "onnx")
     onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
 
+    # skip model download if qpc exits and we do not need stats
+    if not qpc_exists(qpc_dir_path) or not skip_stats:
     # Get tokenizer
-    if hf_token is not None:
-        login(hf_token)
-    model_hf_path = hf_download(
-        repo_id=model_name,
-        cache_dir=cache_dir,
-        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
-    )
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
+        if hf_token is not None:
+            login(hf_token)
+        model_hf_path = hf_download(
+            repo_id=model_name,
+            cache_dir=cache_dir,
+            ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
+        )
+        tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
 
     if qpc_exists(qpc_dir_path):
         # execute
         logger.info("Pre-compiled qpc found! Trying to execute with given prompt")
-        latency_stats_kv(tokenizer=tokenizer, qpc=qpc_dir_path, device_id=device_group, prompt=prompt)
-        return
+        if not skip_stats:
+            latency_stats_kv(tokenizer=tokenizer, qpc=qpc_dir_path, device_id=device_group, prompt=prompt)
+        return qpc_dir_path
 
     if onnx_exists(onnx_model_path):
         # Compile -> execute
@@ -110,8 +114,9 @@ def main(
         assert (
             generated_qpc_path == qpc_dir_path
         ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
-        latency_stats_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
-        return
+        if not skip_stats:
+            latency_stats_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
+        return generated_qpc_path
 
     #############################################
     # hf model -> export -> compile -> execute
@@ -156,9 +161,43 @@ def main(
     ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
     logger.info(f"Compiled qpc files can be found at : {generated_qpc_path}")
 
-    # Execute
-    latency_stats_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
+    if not skip_stats:
+        latency_stats_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
 
+    return generated_qpc_path
+
+def main(
+    model_name: str,
+    num_cores: int,
+    prompt: str,
+    aic_enable_depth_first: bool = False,
+    mos: int = -1,
+    cache_dir: str = Constants.CACHE_DIR,
+    hf_token: str = None,
+    batch_size: int = 1,
+    prompt_len: int = 32,
+    ctx_len: int = 128,
+    mxfp6: bool = False,
+    device_group: List[int] = [
+        0,
+    ],
+) -> None:
+    _ = infer_api(
+        model_name=model_name,
+        num_cores=num_cores,
+        prompt=prompt,
+        aic_enable_depth_first=aic_enable_depth_first,
+        mos=mos,
+        cache_dir=cache_dir,
+        hf_token=hf_token,
+        batch_size=batch_size,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        mxfp6=mxfp6,
+        device_group=device_group
+        )
+    
+    return
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
