@@ -97,7 +97,7 @@ def latency_stats_bertstyle(
     print(round((cur_len - init_len) / (end - start), 2), "tok/s")
 
 
-def latency_stats_kv(
+def cloud_ai_100_exec_kv(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc: str,
     prompt: str,
