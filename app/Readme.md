@@ -52,28 +52,32 @@ Please modify the `app_config.json` like below,
       "model_name" : "<hf_model_card_name>",
       "prompt_len" : 128,
       "ctx_len" : 1024,
-      "device_id" : [0]
+      "device_id" : [0],
+      "num_cores" : 16
     },
     "mpt" : {
       "qpc_path" : "<path_to_keep_compiled_container_from_library>",
       "model_name" : "<hf_model_card_name>",
       "prompt_len" : 128,
       "ctx_len" : 1024,
-      "device_id" : [1]
+      "device_id" : [1],
+      "num_cores" : 16
     },
     "llama" : {
       "qpc_path" : "<path_to_keep_compiled_container_from_library>",
       "model_name" : "<hf_model_card_name>",
       "prompt_len" : 128,
       "ctx_len" : 1024,
-      "device_id" : [2]
+      "device_id" : [2],
+      "num_cores" : 16
     },
     "mistral" : {
       "qpc_path" : "<path_to_keep_compiled_container_from_library>",
       "model_name" : "<hf_model_card_name>",
       "prompt_len" : 128,
       "ctx_len" : 1024,
-      "device_id" : [3]
+      "device_id" : [3],
+      "num_cores" : 16
     }
   },
   "question-answering" : {

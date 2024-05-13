@@ -41,7 +41,10 @@ def get_list_of_models_task(app_config, task):
     return list(app_config[task].keys())
 
 
-def get_data(task, model):
+def get_data(task, model, app_config = None):
+    if app_config:
+        return app_config[task][model]
+
     app_config = get_app_config()
     return app_config[task][model]
 
@@ -68,8 +71,10 @@ def load_models_artifacts():
     print(generator_hub)
 
 
-def get_generator(task, model):
-    app_config = get_app_config()
+def get_generator(task, model, app_config = None):
+    if app_config is None:
+        app_config = get_app_config()
+    
     if task in generator_hub.keys():
         if model in generator_hub[task].keys():
             if generator_hub[task][model] is None:

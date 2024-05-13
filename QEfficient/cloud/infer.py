@@ -45,7 +45,7 @@ def onnx_exists(onnx_file_path: str) -> bool:
     )
 
 
-def main(
+def infer_api(
     model_name: str,
     num_cores: int,
     prompt: str,
@@ -60,6 +60,7 @@ def main(
     device_group: List[int] = [
         0,
     ],
+    execute : bool = True
 ) -> None:
     # Make
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
@@ -110,8 +111,9 @@ def main(
         assert (
             generated_qpc_path == qpc_dir_path
         ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
-        latency_stats_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
-        return
+        if execute:
+            latency_stats_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
+        return generated_qpc_path
 
     #############################################
     # hf model -> export -> compile -> execute
@@ -157,8 +159,10 @@ def main(
     logger.info(f"Compiled qpc files can be found at : {generated_qpc_path}")
 
     # Execute
-    latency_stats_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
+    if execute:
+        latency_stats_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
 
+    return generated_qpc_path
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -209,4 +213,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    main(**args.__dict__)
+    infer_api(**args.__dict__)

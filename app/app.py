@@ -24,7 +24,6 @@ from transformers import (
 )
 
 from utils import (
-    get_list_of_models_task,
     get_list_of_tasks,
     get_list_of_models_all,
     get_data,
@@ -33,6 +32,7 @@ from utils import (
     get_app_config,
 )
 
+from QEfficient.cloud.infer import infer_api
 
 # Load .env file
 load_dotenv()
@@ -51,6 +51,7 @@ summary_text = ""
 previous_current_ctx_len = 0
 last_prompt = ""
 last_state_generation_ids = []
+disable_multiturn = True
 
 # main title of app
 title = """
@@ -68,8 +69,8 @@ subtitle_right = """
 
 
 def update_model(task, model):
-    global qeff_generator_model
-    new_obj = get_generator(task, model)
+    global qeff_generator_model, app_config
+    new_obj = get_generator(task, model, app_config)
     if new_obj is not None:
         qeff_generator_model = new_obj
         print("Updating qeff generator, ", qeff_generator_model.model_name)
@@ -97,7 +98,7 @@ def get_prompt(message: str, system_prompt: str):
 
 
 def run_qeff_check(task, model_name, progress=gr.Progress()):
-    global summary_text, qeff_flags
+    global summary_text, qeff_flags, app_config
     summary_text = ""
 
     model_info = get_data(task, model_name)
@@ -106,19 +107,24 @@ def run_qeff_check(task, model_name, progress=gr.Progress()):
         qeff_flags.add(model_name)
 
         # TODO : call QEfficient transform api
-        # TODO : take model_info as args
         progress(0, desc="Downloading...")
         for i in progress.tqdm(range(100), desc="Downloading..."):
             time.sleep(0.0005)
         summary_text += f"$ Downloaded {model_name} from cache directory\n"
         # TODO : call QEfficient compile api
-        # TODO : take model info as arguments
-        # TODO : we can update the outputs from execute api in summary text
-        # TODO : app_config[task][model_name]['qpc_path'] = <update qpc from qeff api>
         progress(0, desc="Optimizing and Compiling...")
         time.sleep(0.5)
         for i in progress.tqdm(range(100), desc="Optimizing and Compiling..."):
             time.sleep(0.07)
+
+        # calling infer api directly to get qpc_path
+        app_config[task][model_name]['qpc_path'] = infer_api(
+            model_name=model_info['model_name'],
+            num_cores=model_info['num_cores'],
+            prompt_len= model_info['prompt_len'],
+            ctx_len = model_info['ctx_len'],
+            execute = False
+        )
 
         summary_text += f"$ Optimized {model_name}\n"
 
@@ -141,20 +147,15 @@ def summary():
 def infer_prompt(msg, chat_history, task, model):
     global last_prompt, previous_current_ctx_len, last_state_generation_ids
 
-    qeff_generator_model.curr_cache_index = 0
-    qeff_generator_model.generated_ids = []
-
+    qeff_generator_model.stop_indicator = True
+    
+    if disable_multiturn:
+        qeff_generator_model.curr_cache_index = 0
+        qeff_generator_model.generated_ids = []
+    
+    # in case of muli-turn, reset in case of ctx length is exhausted
     if qeff_generator_model.curr_cache_index >= qeff_generator_model.ctx_len - 1:
         qeff_generator_model.curr_cache_index = 0
-
-    qeff_generator_model.curr_cache_index = 0
-    qeff_generator_model.stop_indicator = True
-    last_prompt = msg
-    previous_current_ctx_len = qeff_generator_model.curr_cache_index
-    last_state_generation_ids = qeff_generator_model.generated_ids
-
-    if not check():
-        return msg, chat_history
 
     output = ""
     yield "", chat_history + [(msg, output)]
@@ -178,16 +179,6 @@ def infer_prompt(msg, chat_history, task, model):
 def stop():
     qeff_generator_model.stop_indicator = False
     return
-
-
-def check():
-    if qeff_generator_model.curr_cache_index >= qeff_generator_model.ctx_len - 1:
-        gr.Warning(
-            f"Reached max token generation limit of {qeff_generator_model.ctx_len}, Kindly press clear!"
-        )
-        qeff_generator_model.curr_cache_index = 0
-        return False
-    return True
 
 
 def run_clear():

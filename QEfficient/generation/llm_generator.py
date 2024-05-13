@@ -5,16 +5,13 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 import torch
 import numpy as np
 import torch.nn as nn
 
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 from threading import Thread
-
-from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 from transformers import (
     AutoTokenizer,
@@ -29,6 +26,7 @@ from transformers import (
     MaxLengthCriteria,
 )
 
+from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 
 class LLMGenerator:
@@ -40,15 +38,13 @@ class LLMGenerator:
         prompt_len: Optional[int] = 32,
         ctx_len: Optional[int] = 128,
         streamer: Optional[Union[TextStreamer, TextIteratorStreamer]] = None,
-        logits_processor: Optional = None,
-        logits_warper: Optional = None,
     ):
         self.session = None
         self.tokenizer = None
         self.is_first_prompt = False
-        self.model_name = ""
+        self.model_name = model_name
         self.qpc_path = ""
-        self.device_id = [0]
+        self.device_id = device_id
         self.curr_cache_index = 0
         self.ctx_len = ctx_len
         self.retained_state = True
@@ -61,9 +57,6 @@ class LLMGenerator:
         self.qpc_path = (
             qpc_path if os.path.exists(qpc_path) else OSError(f"{qpc_path} not found !")
         )
-        self.device_id = device_id
-
-        self.model_name = model_name
 
         try:
             self.session = QAICInferenceSession(
@@ -101,6 +94,8 @@ class LLMGenerator:
             self.streamer = streamer(
                 self.tokenizer, skip_prompt=True, skip_special_tokens=True, timeout=None
             )
+        else:
+            self.streamer = TextStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True, timeout=None)
 
         # instantiate default logit processor and wrapper here
         # TODO : change default values with temperature and top_p
@@ -169,10 +164,11 @@ class LLMGenerator:
             )
             return True
         
+        # llama3
         if next_token_id == self.tokenizer.convert_tokens_to_ids("<|eot_id|>"):
             print(
                 next_token_id == self.tokenizer.eos_token_id,
-                "next_token_id == self.tokenizer.eos_token_id",
+                "next_token_id == <|eot_id|>",
             )
             return True
 
