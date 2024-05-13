@@ -48,7 +48,7 @@ def onnx_exists(onnx_file_path: str) -> bool:
 def infer_api(
     model_name: str,
     num_cores: int,
-    prompt: str,
+    prompt: str = Constants.input_str,
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     cache_dir: str = Constants.CACHE_DIR,
@@ -61,9 +61,8 @@ def infer_api(
         0,
     ],
     skip_stats : bool = False,
-) -> None:
+) -> str:
     # Make
-    breakpoint()
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
     os.makedirs(model_card_dir, exist_ok=True)
 
@@ -162,12 +161,43 @@ def infer_api(
     ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
     logger.info(f"Compiled qpc files can be found at : {generated_qpc_path}")
 
-    # Execute
-    # TODO : once the api calls for generic app are there remove this
     if not skip_stats:
         latency_stats_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
 
     return generated_qpc_path
+
+def main(
+    model_name: str,
+    num_cores: int,
+    prompt: str,
+    aic_enable_depth_first: bool = False,
+    mos: int = -1,
+    cache_dir: str = Constants.CACHE_DIR,
+    hf_token: str = None,
+    batch_size: int = 1,
+    prompt_len: int = 32,
+    ctx_len: int = 128,
+    mxfp6: bool = False,
+    device_group: List[int] = [
+        0,
+    ],
+) -> None:
+    _ = infer_api(
+        model_name=model_name,
+        num_cores=num_cores,
+        prompt=prompt,
+        aic_enable_depth_first=aic_enable_depth_first,
+        mos=mos,
+        cache_dir=cache_dir,
+        hf_token=hf_token,
+        batch_size=batch_size,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        mxfp6=mxfp6,
+        device_group=device_group
+        )
+    
+    return
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -218,4 +248,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    infer_api(**args.__dict__)
+    main(**args.__dict__)

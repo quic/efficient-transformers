@@ -106,16 +106,12 @@ def run_qeff_check(task, model_name, progress=gr.Progress()):
     if model_name not in qeff_flags:
         qeff_flags.add(model_name)
 
-        # TODO : call QEfficient transform api
-        progress(0, desc="Downloading...")
-        for i in progress.tqdm(range(100), desc="Downloading..."):
-            time.sleep(0.0005)
         summary_text += f"$ Downloaded {model_name} from cache directory\n"
-        # TODO : call QEfficient compile api
+        
         progress(0, desc="Optimizing and Compiling...")
         time.sleep(0.5)
         for i in progress.tqdm(range(100), desc="Optimizing and Compiling..."):
-            time.sleep(0.07)
+            time.sleep(0.04)
         
         # calling infer api directly to get qpc_path
         app_config[task][model_name]['qpc_path'] = infer_api(
@@ -125,7 +121,7 @@ def run_qeff_check(task, model_name, progress=gr.Progress()):
             ctx_len = model_info['ctx_len'],
             skip_stats = True,
             prompt = "",
-            mxfp6 = True
+            mxfp6 = model_info['mxfp6']
         )
         
         if not os.path.exists(app_config[task][model_name]['qpc_path']):
