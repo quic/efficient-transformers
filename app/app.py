@@ -116,15 +116,20 @@ def run_qeff_check(task, model_name, progress=gr.Progress()):
         time.sleep(0.5)
         for i in progress.tqdm(range(100), desc="Optimizing and Compiling..."):
             time.sleep(0.07)
-
+        
         # calling infer api directly to get qpc_path
         app_config[task][model_name]['qpc_path'] = infer_api(
-            model_name=model_info['model_name'],
-            num_cores=model_info['num_cores'],
-            prompt_len= model_info['prompt_len'],
+            model_name = model_info['model_name'],
+            num_cores = model_info['num_cores'],
+            prompt_len = model_info['prompt_len'],
             ctx_len = model_info['ctx_len'],
-            execute = False
+            skip_stats = True,
+            prompt = "",
+            mxfp6 = True
         )
+        
+        if not os.path.exists(app_config[task][model_name]['qpc_path']):
+            raise RuntimeError(f"qpc path not found for {task} {model_name}")
 
         summary_text += f"$ Optimized {model_name}\n"
 

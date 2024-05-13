@@ -60,9 +60,10 @@ def infer_api(
     device_group: List[int] = [
         0,
     ],
-    execute : bool = True
+    skip_stats : bool = False,
 ) -> None:
     # Make
+    breakpoint()
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
     os.makedirs(model_card_dir, exist_ok=True)
 
@@ -77,21 +78,24 @@ def infer_api(
     onnx_dir_path = os.path.join(model_card_dir, "onnx")
     onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
 
+    # skip model download if qpc exits and we do not need stats
+    if not qpc_exists(qpc_dir_path) or not skip_stats:
     # Get tokenizer
-    if hf_token is not None:
-        login(hf_token)
-    model_hf_path = hf_download(
-        repo_id=model_name,
-        cache_dir=cache_dir,
-        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
-    )
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
+        if hf_token is not None:
+            login(hf_token)
+        model_hf_path = hf_download(
+            repo_id=model_name,
+            cache_dir=cache_dir,
+            ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
+        )
+        tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
 
     if qpc_exists(qpc_dir_path):
         # execute
         logger.info("Pre-compiled qpc found! Trying to execute with given prompt")
-        latency_stats_kv(tokenizer=tokenizer, qpc=qpc_dir_path, device_id=device_group, prompt=prompt)
-        return
+        if not skip_stats:
+            latency_stats_kv(tokenizer=tokenizer, qpc=qpc_dir_path, device_id=device_group, prompt=prompt)
+        return qpc_dir_path
 
     if onnx_exists(onnx_model_path):
         # Compile -> execute
@@ -111,7 +115,7 @@ def infer_api(
         assert (
             generated_qpc_path == qpc_dir_path
         ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
-        if execute:
+        if not skip_stats:
             latency_stats_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
         return generated_qpc_path
 
@@ -159,7 +163,8 @@ def infer_api(
     logger.info(f"Compiled qpc files can be found at : {generated_qpc_path}")
 
     # Execute
-    if execute:
+    # TODO : once the api calls for generic app are there remove this
+    if not skip_stats:
         latency_stats_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
 
     return generated_qpc_path

@@ -32,28 +32,27 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 class LLMGenerator:
     def __init__(
         self,
-        qpc_path,
-        model_name,
+        qpc_path :str,
+        model_name : str,
         device_id: Optional[List[int]] = [0],
         prompt_len: Optional[int] = 32,
         ctx_len: Optional[int] = 128,
         streamer: Optional[Union[TextStreamer, TextIteratorStreamer]] = None,
+        retained_state :bool = True
     ):
         self.session = None
         self.tokenizer = None
         self.is_first_prompt = False
         self.model_name = model_name
-        self.qpc_path = ""
         self.device_id = device_id
         self.curr_cache_index = 0
         self.ctx_len = ctx_len
-        self.retained_state = True
-        self.write_io_dir = False
         self.prompt_len = prompt_len
         self.generated_ids = []
         self.inputs = None
         self.stop_indicator = True
-
+        self.retained_state = retained_state
+        
         self.qpc_path = (
             qpc_path if os.path.exists(qpc_path) else OSError(f"{qpc_path} not found !")
         )
@@ -202,19 +201,14 @@ class LLMGenerator:
         return inputs, prompt_len
 
     def update_inputs_for_inference(self, inputs, next_token_id):
-        batch_size, prompt_len = inputs["input_ids"].shape
+        _, prompt_len = inputs["input_ids"].shape
         inputs["cache_index"] += prompt_len
-
         inputs["input_ids"] = next_token_id
-
-        batch_size, prompt_len = inputs["input_ids"].shape
-
         if "attention_mask" in inputs.keys():
             inputs["position_ids"] = inputs.pop("attention_mask").sum(1, keepdims=True)
         else:
             inputs["position_ids"] += 1
-
-        batch_size, prompt_len = inputs["input_ids"].shape
+        _, prompt_len = inputs["input_ids"].shape
         return inputs, prompt_len
 
     def generate(self, prompt: str, sample: bool = False, max_new_tokens: int = None):
