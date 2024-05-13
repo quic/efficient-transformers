@@ -219,7 +219,7 @@ def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
         transformers.modeling_outputs.BaseModelOutputWithPast = QEffBaseModelOutputWithPast
         transformers.modeling_outputs.CausalLMOutputWithPast = QEffCausalLMOutputWithPast
         transformers.modeling_outputs.MoeCausalLMOutputWithPast = QEffMoeCausalLMOutputWithPast
-        transformers.modeling_outputs.QEffMoeModelOutputWithPast = QEffMoeModelOutputWithPast
+        transformers.modeling_outputs.MoeModelOutputWithPast = QEffMoeModelOutputWithPast
 
         # Replace the modeling attn util classes and functions
         transformers.modeling_attn_mask_utils.AttentionMaskConverter = QEffAttentionMaskConverter

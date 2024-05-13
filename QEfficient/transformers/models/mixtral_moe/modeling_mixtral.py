@@ -30,71 +30,14 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralBLockSparseTop2MLP,
     MixtralRotaryEmbedding,
     MixtralRMSNorm,
+    load_balancing_loss_func,
+    _get_unpad_data,
 )
 from transformers.cache_utils import Cache
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_outputs import QEffMoeModelOutputWithPast, QEffMoeCausalLMOutputWithPast
 from QEfficient.transformers.modeling_attn_mask_utils import _qeff_prepare_4d_causal_attention_mask
 
-
-def load_balancing_loss_func(gate_logits: torch.Tensor, num_experts: torch.Tensor = None, top_k=2) -> float:
-    r"""
-    Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
-
-    See Switch Transformer (https://arxiv.org/abs/2101.03961) for more details. This function implements the loss
-    function presented in equations (4) - (6) of the paper. It aims at penalizing cases where the routing between
-    experts is too unbalanced.
-
-    Args:
-        gate_logits (Union[`torch.Tensor`, Tuple[torch.Tensor]):
-            Logits from the `gate`, should be a tuple of tensors. Shape: [batch_size, seqeunce_length, num_experts].
-        num_experts (`int`, *optional*):
-            Number of experts
-
-    Returns:
-        The auxiliary loss.
-    """
-    if gate_logits is None:
-        return 0
-
-    if isinstance(gate_logits, tuple):
-        compute_device = gate_logits[0].device
-        gate_logits = torch.cat([gate.to(compute_device) for gate in gate_logits], dim=0)
-
-    routing_weights, selected_experts = torch.topk(gate_logits, top_k, dim=-1)
-    routing_weights = routing_weights.softmax(dim=-1)
-
-    # cast the expert indices to int64, otherwise one-hot encoding will fail
-    if selected_experts.dtype != torch.int64:
-        selected_experts = selected_experts.to(torch.int64)
-
-    if len(selected_experts.shape) == 2:
-        selected_experts = selected_experts.unsqueeze(2)
-
-    expert_mask = torch.nn.functional.one_hot(selected_experts, num_experts)
-
-    # For a given token, determine if it was routed to a given expert.
-    expert_mask = torch.max(expert_mask, axis=-2).values
-
-    # cast to float32 otherwise mean will fail
-    expert_mask = expert_mask.to(torch.float32)
-    tokens_per_group_and_expert = torch.mean(expert_mask, axis=-2)
-
-    router_prob_per_group_and_expert = torch.mean(routing_weights, axis=-1)
-    return torch.mean(tokens_per_group_and_expert * router_prob_per_group_and_expert.unsqueeze(-1)) * (num_experts**2)
-
-
-# Copied from transformers.models.llama.modeling_llama._get_unpad_data
-def _get_unpad_data(attention_mask):
-    seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
-    indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
-    max_seqlen_in_batch = seqlens_in_batch.max().item()
-    cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.torch.int32), (1, 0))
-    return (
-        indices,
-        cu_seqlens,
-        max_seqlen_in_batch,
-    )
 
 custom_opset = onnxscript.values.Opset("com.qti.aisw.onnx", 1)
 ops = onnxscript.opset13
