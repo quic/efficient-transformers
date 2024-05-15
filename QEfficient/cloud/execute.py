@@ -11,7 +11,7 @@ from typing import List
 from huggingface_hub import login
 from transformers import AutoTokenizer
 
-from QEfficient.generation.text_generation_inference import latency_stats_kv
+from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.utils import hf_download
 from QEfficient.utils.constants import Constants
 
@@ -38,7 +38,7 @@ def main(
     model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json"])
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
 
-    latency_stats_kv(tokenizer=tokenizer, qpc=qpc_path, device_id=devices, prompt=prompt)
+    cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc=qpc_path, device_id=devices, prompt=prompt)
 
 
 if __name__ == "__main__":
