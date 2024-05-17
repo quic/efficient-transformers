@@ -403,11 +403,11 @@ def compile_kv_model_on_cloud_ai_100(
         command.append("-aic-enable-depth-first")
     if len(device_group) > 1:
         mdp_ts_config = {
-            "connections": [{"devices": device_group, "type": "p2p"}],
+            "connections": [{"devices": list(range(len(device_group))), "type": "p2p"}],
             "partitions": [
                 {
                     "name": "Partition0",
-                    "devices": [{"deviceId": device, "numCores": num_cores} for device in device_group],
+                    "devices": [{"deviceId": device, "numCores": num_cores} for device in range(len(device_group))],
                 }
             ],
         }
