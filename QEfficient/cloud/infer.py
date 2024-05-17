@@ -189,7 +189,7 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Inference command, the model will be downloaded from HF, optmized, compiled, executed on AIC"
+        description="Inference command, the model will be downloaded from HF, optmized, compiled, executed on Cloud AI 100"
     )
     parser.add_argument("--model-name", "--model_name", required=True, help="HF Model card name/id")
     parser.add_argument(

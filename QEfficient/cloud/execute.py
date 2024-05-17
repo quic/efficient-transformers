@@ -78,6 +78,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--inputs_file_path",
+        "--inputs-file-path",
         type=str,
         help="for batch size>1, pass input prompts in txt file, sample prompts.txt file present in examples folder",
     )
