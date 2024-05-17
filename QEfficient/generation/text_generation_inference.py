@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Union
 
 import numpy as np
 import transformers
-from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast,TextStreamer
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast, TextStreamer
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.logging_utils import logger
@@ -110,12 +110,13 @@ def cloud_ai_100_exec_kv(
     automation: bool = False,
 ):
     if tokenizer.padding_side != "left":
-        logger.warning(f"Please use padding_side='left' while initializing the tokenizer")
+        logger.warning("Please use padding_side='left' while initializing the tokenizer")
         tokenizer.padding_side = "left"
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    text_streamer = TextStreamer(tokenizer)
     # Load QPC
-    text_stream=TextStreamer(tokenizer)
     session = QAICInferenceSession(qpc, device_id, enable_debug_logs=enable_debug_logs)
     # Read prompt and ctx len from session
     prompt_len = max([x[session.binding_index_map["input_ids"]][1][1] for x in session.allowed_shapes])
@@ -169,7 +170,7 @@ def cloud_ai_100_exec_kv(
     inputs["position_ids"] = inputs.pop("attention_mask").sum(1, keepdims=True)
     generated_ids[:, cache_index[0] - input_len] = next_token_id.squeeze(1)
     if stream:
-        text_stream.put(next_token_id[0])
+        text_streamer.put(next_token_id[0])
     # Skip attention_mask from next iteration to use retained attention_mask
     session.skip_buffers(["attention_mask"])
     loop_start = perf_counter()
@@ -190,7 +191,7 @@ def cloud_ai_100_exec_kv(
         cache_index += 1
         generated_ids[:, cache_index[0] - input_len] = next_token_id.squeeze(1)
         if stream:
-            text_stream.put(next_token_id[0])
+            text_streamer.put(next_token_id[0])
     end = perf_counter()
     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
     for i in range(1 if stream else 0, batch_size):
