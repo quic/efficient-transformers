@@ -15,7 +15,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import QEfficient
 from QEfficient.cloud.compile import main as compile
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
+from QEfficient.generation.text_generation_inference import (
+    check_batch_size_and_num_prompts,
+    cloud_ai_100_exec_kv,
+    get_compilation_batch_size,
+    read_prompts_txt_file,
+)
 from QEfficient.utils import hf_download
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
@@ -48,8 +53,8 @@ def onnx_exists(onnx_file_path: str) -> bool:
 def main(
     model_name: str,
     num_cores: int,
-    prompt: str,
-    inputs_file_path: str,
+    prompt: str = None,
+    prompts_txt_file_path: str = None,
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     cache_dir: str = Constants.CACHE_DIR,
@@ -77,19 +82,12 @@ def main(
     onnx_dir_path = os.path.join(model_card_dir, "onnx")
     onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
 
-    if inputs_file_path is not None:
-        try:
-            prompt = []
-            with open(inputs_file_path, "r") as file:
-                for line in file:
-                    prompt.append(line.strip())
-        except FileNotFoundError:
-            print("Inputs file not found.")
+    assert (prompt is None and prompts_txt_file_path is not None) or (
+        prompt is not None and prompts_txt_file_path is None
+    ), "Please pass either single input string using --prompt or multiple inputs using --prompts_txt_file_path"
 
-    if batch_size > 1:
-        assert (
-            batch_size == len(prompt)
-        ), "Mismatch between number of prompts {len(prompt)} and batch size {batch_size}; please pass correct input argument"
+    if prompts_txt_file_path is not None:
+        prompt = read_prompts_txt_file(prompts_txt_file_path)
 
     # Get tokenizer
     if hf_token is not None:
@@ -104,12 +102,18 @@ def main(
     if qpc_exists(qpc_dir_path):
         # execute
         logger.info("Pre-compiled qpc found! Trying to execute with given prompt")
-        if batch_size == 1 and isinstance(prompt, list):
-            for i in range(len(prompt)):
-                cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc=qpc_dir_path, device_id=device_group, prompt=prompt[i])
-        else:
-            cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc=qpc_dir_path, device_id=device_group, prompt=prompt)
+        compilation_batch_size = get_compilation_batch_size(qpc_dir_path)
+        check_batch_size_and_num_prompts(prompt, compilation_batch_size)
+        cloud_ai_100_exec_kv(
+            compilation_batch_size=compilation_batch_size,
+            tokenizer=tokenizer,
+            qpc_path=qpc_dir_path,
+            device_id=device_group,
+            prompt=prompt,
+        )
         return
+
+    check_batch_size_and_num_prompts(prompt, batch_size)
 
     if onnx_exists(onnx_model_path):
         # Compile -> execute
@@ -129,11 +133,13 @@ def main(
         assert (
             generated_qpc_path == qpc_dir_path
         ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
-        if batch_size == 1 and isinstance(prompt, list):
-            for i in range(len(prompt)):
-                cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc=qpc_dir_path, device_id=device_group, prompt=prompt[i])
-        else:
-            cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc=qpc_dir_path, device_id=device_group, prompt=prompt)
+        cloud_ai_100_exec_kv(
+            compilation_batch_size=compilation_batch_size,
+            tokenizer=tokenizer,
+            qpc_path=qpc_dir_path,
+            device_id=device_group,
+            prompt=prompt,
+        )
         return
 
     #############################################
@@ -180,11 +186,13 @@ def main(
     logger.info(f"Compiled qpc files can be found at : {generated_qpc_path}")
 
     # Execute
-    if batch_size == 1 and isinstance(prompt, list):
-        for i in range(len(prompt)):
-            cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt[i])
-    else:
-        cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
+    cloud_ai_100_exec_kv(
+        compilation_batch_size=compilation_batch_size,
+        tokenizer=tokenizer,
+        qpc_path=qpc_dir_path,
+        device_id=device_group,
+        prompt=prompt,
+    )
 
 
 if __name__ == "__main__":
@@ -219,12 +227,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--prompt",
         type=str,
-        default="My name is",
-        help="Input prompt, if executing for batch size>1, use inputs_file_path flag",
+        help="Input prompt, if executing for batch size>1, use prompts_txt_file_path flag",
     )
     parser.add_argument(
-        "--inputs_file_path",
-        "--inputs-file-path",
+        "--prompts_txt_file_path",
+        "--prompts-txt-file-path",
         type=str,
         help="for batch size>1, pass input prompts in txt file, sample prompts.txt file present in examples folder",
     )
