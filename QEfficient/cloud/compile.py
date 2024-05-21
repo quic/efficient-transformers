@@ -65,9 +65,9 @@ def main(
 
     # Select the customIO config based on the mx flag.
     if mxint8:
-        custom_io_file_name = "custom_io_fp16.yaml"
-    else:
         custom_io_file_name = "custom_io_int8.yaml"
+    else:
+        custom_io_file_name = "custom_io_fp16.yaml"
 
     custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)
 
