@@ -89,8 +89,8 @@ def read_prompts_txt_file(prompts_txt_file_path: str):
 def cloud_ai_100_exec_kv(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc_path: str,
-    prompt: str,
-    prompts_txt_file_path: str,
+    prompt: Optional[str] = None,
+    prompts_txt_file_path: Optional[str] = None,
     device_id: List[int] = [0],
     input_len: Optional[int] = None,
     generation_len: Optional[int] = None,
