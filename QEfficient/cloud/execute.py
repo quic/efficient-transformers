@@ -39,7 +39,7 @@ def main(
         login(hf_token)
 
     # Download tokenizer along with model if it doesn't exist
-    model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py"])
+    model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
 
     # Execute
