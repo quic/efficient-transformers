@@ -11,9 +11,11 @@ import os
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import QEfficient
+from QEfficient.cloud.infer import onnx_exists
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.utils import hf_download
-from QEfficient.utils.constants import Constants
+from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils.logging_utils import logger
 
 # Specifically for Docker images.
 ROOT_DIR = os.path.dirname(os.path.abspath(""))
@@ -26,6 +28,16 @@ def main(model_name: str, cache_dir: str) -> None:
     :param model_name: str. Hugging Face Model Card name, Example: gpt2
     :cache_dir: str. Cache dir to store the downloaded huggingface files.
     """
+    model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
+    os.makedirs(model_card_dir, exist_ok=True)
+
+    onnx_dir_path = os.path.join(model_card_dir, "onnx")
+    onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
+
+    if onnx_exists(onnx_model_path):
+        logger.warning(f"Generated Onnx files found {onnx_model_path}! Please use Infer/Compile Apis()")
+        return
+
     model_hf_path = hf_download(repo_id=model_name, hf_token=None, cache_dir=cache_dir)
     tokenizer = AutoTokenizer.from_pretrained(
         model_hf_path, use_cache=True, padding_side="left", trust_remote_code=True

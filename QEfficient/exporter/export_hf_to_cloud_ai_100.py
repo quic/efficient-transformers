@@ -372,8 +372,8 @@ def convert_to_cloud_kvstyle(
             save_fp32_onnx=save_fp32_onnx,
         )
 
-    # Generate custom-IO files
-    with open(os.path.join(onnx_dir_path, "custom_io.yaml"), "w") as fp:
+    # Generate custom-IO files for fp16 and int8 kv
+    with open(os.path.join(onnx_dir_path, "custom_io_fp16.yaml"), "w") as fp:
         fp.write("# Model Inputs\n\n")
         for input_name in key_value_names:
             fp.write(f" - IOName: {input_name}\n   Precision: float16\n\n")
@@ -381,6 +381,14 @@ def convert_to_cloud_kvstyle(
         fp.write("# Model Outputs\n\n")
         for output_name in key_value_names:
             fp.write(f" - IOName: {output_name}_RetainedState\n   Precision: float16\n\n")
+
+    with open(os.path.join(onnx_dir_path, "custom_io_int8.yaml"), "w") as fp:
+        fp.write("# Model Inputs\n\n")
+        for input_name in key_value_names:
+            fp.write(f" - IOName: {input_name}\n   Precision: mxint8\n\n")
+        fp.write("# Model Outputs\n\n")
+        for output_name in key_value_names:
+            fp.write(f" - IOName: {output_name}_RetainedState\n   Precision: mxint8\n\n")
 
     # Generate inputFiles
     input_list_file = os.path.join(onnx_dir_path, "input_list.txt")

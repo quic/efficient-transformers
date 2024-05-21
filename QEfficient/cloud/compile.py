@@ -5,9 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
 import argparse
 import json
+import os
 from typing import List
 
 from QEfficient.exporter.export_utils import compile_kv_model_on_cloud_ai_100
@@ -42,6 +42,7 @@ def main(
     prompt_len: int = 32,
     ctx_len: int = 128,
     mxfp6: bool = True,
+    mxint8: bool = False,
 ) -> str:
     # Dynamically create the specializations JSON
     """
@@ -61,8 +62,15 @@ def main(
     create_and_dump_specializations(
         batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, path=specialization_json_path
     )
-    custom_io_file_path = os.path.join(os.path.dirname(onnx_path), "custom_io.yaml")
-    
+
+    # Select the customIO config based on the mx flag.
+    if mxint8:
+        custom_io_file_name = "custom_io_fp16.yaml"
+    else:
+        custom_io_file_name = "custom_io_int8.yaml"
+
+    custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)
+
     if not os.path.isfile(custom_io_file_path):
         raise FileNotFoundError(f"file {custom_io_file_path} needs to exist in the same directory as onnx model files.")
 
@@ -106,6 +114,11 @@ if __name__ == "__main__":
         help="Compress constant MatMul weights to MXFP6 E2M3, default is no compression",
     )
     parser.add_argument(
+        "--mxint8",
+        action="store_false",
+        help="Compress Present/Past KV to MXINT8 using CustomIO config, default is False",
+    )
+    parser.add_argument(
         "--num_cores",
         "--num-cores",
         required=True,
@@ -120,7 +133,8 @@ if __name__ == "__main__":
         help="Cloud AI 100 device ids (comma-separated) e.g. [0] ",
     )
     parser.add_argument(
-        "--aic_enable_depth_first", "--aic-enable-depth-first",
+        "--aic_enable_depth_first",
+        "--aic-enable-depth-first",
         action="store_true",
         help="If passed, this option will be enabled during compilation, disabled by default",
     )
