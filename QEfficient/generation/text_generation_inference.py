@@ -92,6 +92,12 @@ def cloud_ai_100_exec_kv(
     prompt: str,
     prompts_txt_file_path: str,
     device_id: List[int] = [0],
+    input_len: Optional[int] = None,
+    generation_len: Optional[int] = None,
+    enable_debug_logs: bool = False,
+    stream: bool = True,
+    write_io_dir: Optional[str] = None,
+    automation=False,
 ):
     assert (prompt is None and prompts_txt_file_path is not None) or (
         prompt is not None and prompts_txt_file_path is None
@@ -112,7 +118,17 @@ def cloud_ai_100_exec_kv(
         total_time = []
         generated_texts = []
         for i in range(len(prompt)):
-            latency_stats = exec_kv(tokenizer=tokenizer, qpc=qpc_path, device_id=device_id, prompt=[prompt[i]])
+            latency_stats = cloud_ai_100_exec_kv_helper(
+                tokenizer=tokenizer,
+                prompt=[prompt[i]],
+                qpc=qpc_path,
+                device_id=device_id,
+                input_len=input_len,
+                generation_len=generation_len,
+                enable_debug_logs=enable_debug_logs,
+                stream=stream,
+                write_io_dir=write_io_dir,
+            )
             generated_texts.append(latency_stats[0])
             prefill_time.append(latency_stats[1])
             decode_perf.append(latency_stats[2])
@@ -125,7 +141,17 @@ def cloud_ai_100_exec_kv(
         total_time = np.average(total_time)
 
     else:
-        latency_stats = exec_kv(tokenizer=tokenizer, qpc=qpc_path, device_id=device_id, prompt=prompt)
+        latency_stats = cloud_ai_100_exec_kv_helper(
+                tokenizer=tokenizer,
+                prompt=prompt,
+                qpc=qpc_path,
+                device_id=device_id,
+                input_len=input_len,
+                generation_len=generation_len,
+                enable_debug_logs=enable_debug_logs,
+                stream=stream,
+                write_io_dir=write_io_dir,
+            )
         generated_texts, prefill_time, decode_perf, total_perf, total_time = latency_stats
 
     print_latency_stats_kv(
@@ -136,7 +162,7 @@ def cloud_ai_100_exec_kv(
         decode_perf,
         total_perf,
         total_time,
-        automation=False,
+        automation=automation,
     )
 
 
@@ -176,7 +202,7 @@ def latency_stats_bertstyle(
     print(round((cur_len - init_len) / (end - start), 2), "tok/s")
 
 
-def exec_kv(
+def cloud_ai_100_exec_kv_helper(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc: str,
     prompt: List[str],
