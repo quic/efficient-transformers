@@ -12,12 +12,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import QEfficient
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.utils.constants import Constants, QEFF_MODELS_DIR
 from QEfficient.utils import hf_download
+from QEfficient.utils.constants import Constants
 
 # Specifically for Docker images.
 ROOT_DIR = os.path.dirname(os.path.abspath(""))
-
 
 
 def main(model_name: str, cache_dir: str) -> None:
@@ -28,7 +27,9 @@ def main(model_name: str, cache_dir: str) -> None:
     :cache_dir: str. Cache dir to store the downloaded huggingface files.
     """
     model_hf_path = hf_download(repo_id=model_name, hf_token=None, cache_dir=cache_dir)
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_hf_path, use_cache=True, padding_side="left", trust_remote_code=True
+    )
     model = AutoModelForCausalLM.from_pretrained(model_hf_path, use_cache=True)
 
     # Easy and minimal api to update the model to QEff.
@@ -52,7 +53,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export script.")
     parser.add_argument("--model_name", "--model-name", required=True, help="HF Model card name/id")
     parser.add_argument(
-        "--cache_dir", "--cache-dir",
+        "--cache_dir",
+        "--cache-dir",
         required=False,
         default=Constants.CACHE_DIR,
         help="Cache_dir to store the HF files",
