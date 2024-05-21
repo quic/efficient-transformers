@@ -69,10 +69,10 @@ def convert_to_cloud_bertstyle(
 
     # Load tokenizer
     if tokenizer is None:
-        tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
+        tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left", trust_remote_code=True)
     else:
         if tokenizer.padding_side != "left":
-            logger.warning(f"Please use padding_side='left' while initializing the tokenizer")
+            logger.warning("Please use padding_side='left' while initializing the tokenizer")
             tokenizer.padding_side = "left"
 
     if tokenizer.pad_token_id is None:
@@ -263,7 +263,7 @@ def convert_to_cloud_kvstyle(
         tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
     else:
         if tokenizer.padding_side != "left":
-            logger.warning(f"Please use padding_side='left' while initializing the tokenizer")
+            logger.warning("Please use padding_side='left' while initializing the tokenizer")
             tokenizer.padding_side = "left"
 
     if tokenizer.pad_token_id is None:
