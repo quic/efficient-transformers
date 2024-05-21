@@ -4,7 +4,16 @@
   </picture>
 </p>
 
-# Introduction to Qualcomm Transformers Library!
+---
+# Qualcomm Transformers Library 
+
+---
+
+*Latest news* :fire: <br>
+
+- [coming soon] support for more popular [models](#models-coming-soon) and inference optimization techniques like continuous batching and speculative decoding <br>
+- [04/2024] Initial release of [efficient transformers](https://github.com/quic/efficient-transformers) for seamless inference on pre-trained LLMs.
+
 ## Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain
 
 This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AI 100.
@@ -55,8 +64,10 @@ For other models, there is comprehensive documentation to inspire upon the chang
 
 ## Requirements
 System Requirements:
-1. Linux ubuntu (x86)
-2. Preferred Python (3.8.12)
+1. [Supported Linux OS](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/#operating-systems) - Ubuntu, RHEL and AWS Linux 
+2. [Pre-requisites installed](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Pre-requisites/pre-requisites/)
+3. [Cloud AI 100 Platform and Apps SDK installed](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/)  
+4. [Multi-device support enabled for model sharding](https://github.com/quic/cloud-ai-sdk/tree/1.12/utils/multi-device)
 
 :bulb:  Use bash terminal
 
