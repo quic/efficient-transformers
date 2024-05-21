@@ -116,9 +116,9 @@ This is the single e2e python api in the library, which takes model_card name as
 python -m QEfficient.cloud.infer --help
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first  
  
-# If executing for batch size>1, pass input prompts in single string but seperate with pipe (|) symbol". Example below
+# If executing for batch size>1, pass path of txt file with input prompts, Example below
 
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first  
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompts_txt_file_path examples/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first  
  ```
 ### 2. Use of QEfficient.cloud.excute
 
