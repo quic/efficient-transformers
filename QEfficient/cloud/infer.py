@@ -70,7 +70,7 @@ def main(
         f"qpc_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_"
         + f"{len(device_group)}"
         + "devices"
-        + ("_mxfp6" if mxfp6 else "_fp16")
+        + ("_mxfp6_mxint8" if mxfp6 and mxint8 else "_mxfp6" if mxfp6 else "_fp16")
     )
     qpc_dir_path = os.path.join(model_card_dir, qpc_base_dir_name, "qpcs")
 
@@ -185,7 +185,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--mxint8",
-        action="store_false",
+        action="store_true",
         help="Compress Present/Past KV to MXINT8 using CustomIO config, default is False",
     )
     parser.add_argument(
