@@ -18,7 +18,6 @@ from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_con
 from QEfficient.generation.text_generation_inference import (
     check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
-    get_compilation_batch_size,
     read_prompts_txt_file,
 )
 from QEfficient.utils import hf_download
@@ -87,7 +86,10 @@ def main(
     ), "Please pass either single input string using --prompt or multiple inputs using --prompts_txt_file_path"
 
     if prompts_txt_file_path is not None:
-        prompt = read_prompts_txt_file(prompts_txt_file_path)
+        prompts = read_prompts_txt_file(prompts_txt_file_path)
+        check_batch_size_and_num_prompts(prompts, batch_size)
+    else:
+        check_batch_size_and_num_prompts([prompt], batch_size)
 
     # Get tokenizer
     if hf_token is not None:
@@ -102,18 +104,14 @@ def main(
     if qpc_exists(qpc_dir_path):
         # execute
         logger.info("Pre-compiled qpc found! Trying to execute with given prompt")
-        compilation_batch_size = get_compilation_batch_size(qpc_dir_path)
-        check_batch_size_and_num_prompts(prompt, compilation_batch_size)
         cloud_ai_100_exec_kv(
-            compilation_batch_size=compilation_batch_size,
             tokenizer=tokenizer,
             qpc_path=qpc_dir_path,
             device_id=device_group,
             prompt=prompt,
+            prompts_txt_file_path=prompts_txt_file_path,
         )
         return
-
-    check_batch_size_and_num_prompts(prompt, batch_size)
 
     if onnx_exists(onnx_model_path):
         # Compile -> execute
@@ -134,11 +132,11 @@ def main(
             generated_qpc_path == qpc_dir_path
         ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
         cloud_ai_100_exec_kv(
-            compilation_batch_size=compilation_batch_size,
             tokenizer=tokenizer,
             qpc_path=qpc_dir_path,
             device_id=device_group,
             prompt=prompt,
+            prompts_txt_file_path=prompts_txt_file_path,
         )
         return
 
@@ -187,11 +185,11 @@ def main(
 
     # Execute
     cloud_ai_100_exec_kv(
-        compilation_batch_size=compilation_batch_size,
         tokenizer=tokenizer,
         qpc_path=qpc_dir_path,
         device_id=device_group,
         prompt=prompt,
+        prompts_txt_file_path=prompts_txt_file_path,
     )
 
 

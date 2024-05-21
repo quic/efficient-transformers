@@ -63,26 +63,19 @@ def write_io_files(
 
 def get_compilation_batch_size(qpc_path: str):
     qpc_base_path = os.path.dirname(qpc_path)
-    print(qpc_base_path)
     specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
-    print(specialization_file_path)
     with open(specialization_file_path, "r") as file:
         data = json.load(file)
     compilation_batch_size = int(data["specializations"][0]["batch_size"])
     return compilation_batch_size
 
 
-def check_batch_size_and_num_prompts(prompt: Union[str, List], compilation_batch_size: int):
-    if isinstance(prompt, list):
-        num_prompts = len(prompt)
-    elif isinstance(prompt, str):
-        num_prompts = 1
-    else:
-        print("Input prompt sould be either string for single input or List of string in case of mutliple inputs")
-    if compilation_batch_size > 1:
+def check_batch_size_and_num_prompts(prompt: List[str], batch_size: int):
+    num_prompts = len(prompt)
+    if batch_size > 1:
         assert (
-            compilation_batch_size == num_prompts
-        ), f"Mismatch between number of prompts {num_prompts} and compilation batch size {compilation_batch_size}; please pass correct input argument"
+            batch_size == num_prompts
+        ), f"Mismatch between number of prompts {num_prompts} and batch size {batch_size}; please pass correct input argument"
 
 
 def read_prompts_txt_file(prompts_txt_file_path: str):
@@ -96,38 +89,55 @@ def read_prompts_txt_file(prompts_txt_file_path: str):
 def cloud_ai_100_exec_kv(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc_path: str,
-    prompt: Union[str, List],
-    compilation_batch_size: int,
+    prompt: str,
+    prompts_txt_file_path: str,
     device_id: List[int] = [0],
 ):
-    if compilation_batch_size == 1 and isinstance(prompt, list):
+    assert (prompt is None and prompts_txt_file_path is not None) or (
+        prompt is not None and prompts_txt_file_path is None
+    ), "Please pass either single input string using --prompt or multiple inputs using --prompts_txt_file_path"
+
+    if prompts_txt_file_path is not None:
+        prompt = read_prompts_txt_file(prompts_txt_file_path)
+    if isinstance(prompt, str):
+        prompt = [prompt]
+
+    batch_size = get_compilation_batch_size(qpc_path)
+    check_batch_size_and_num_prompts(prompt, batch_size)
+
+    if batch_size == 1:
+        prefill_time = []
+        decode_perf = []
+        total_perf = []
+        total_time = []
+        generated_texts = []
         for i in range(len(prompt)):
-            latency_stats = exec_kv(tokenizer=tokenizer, qpc=qpc_path, device_id=device_id, prompt=prompt[i])
-            if i == len(prompt) - 1:
-                generated_texts, prefill_time, decode_perf, total_perf, total_time = latency_stats
-                print_latency_stats_kv(
-                    prompt,
-                    generated_texts,
-                    compilation_batch_size,
-                    prefill_time,
-                    decode_perf,
-                    total_perf,
-                    total_time,
-                    automation=False,
-                )
+            latency_stats = exec_kv(tokenizer=tokenizer, qpc=qpc_path, device_id=device_id, prompt=[prompt[i]])
+            generated_texts.append(latency_stats[0])
+            prefill_time.append(latency_stats[1])
+            decode_perf.append(latency_stats[2])
+            total_perf.append(latency_stats[3])
+            total_time.append(latency_stats[4])
+
+        prefill_time = np.average(prefill_time)
+        decode_perf = np.average(decode_perf)
+        total_perf = np.average(total_perf)
+        total_time = np.average(total_time)
+
     else:
         latency_stats = exec_kv(tokenizer=tokenizer, qpc=qpc_path, device_id=device_id, prompt=prompt)
         generated_texts, prefill_time, decode_perf, total_perf, total_time = latency_stats
-        print_latency_stats_kv(
-            prompt,
-            generated_texts,
-            compilation_batch_size,
-            prefill_time,
-            decode_perf,
-            total_perf,
-            total_time,
-            automation=False,
-        )
+
+    print_latency_stats_kv(
+        prompt,
+        generated_texts,
+        batch_size,
+        prefill_time,
+        decode_perf,
+        total_perf,
+        total_time,
+        automation=False,
+    )
 
 
 def latency_stats_bertstyle(
@@ -169,7 +179,7 @@ def latency_stats_bertstyle(
 def exec_kv(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc: str,
-    prompt: Union[str, List],
+    prompt: List[str],
     input_len: Optional[int] = None,
     generation_len: Optional[int] = None,
     device_id: List[int] = [0],
@@ -218,10 +228,7 @@ def exec_kv(
     generated_ids = np.full((batch_size, generation_len - input_len + 1), tokenizer.pad_token_id)
 
     if stream:
-        if isinstance(prompt, list):
-            print(0, prompt[0], end=" ", flush=True)
-        else:
-            print(0, prompt, end=" ", flush=True)
+        print(0, prompt[0], end=" ", flush=True)
 
     # Run prefill
     for i in range(num_chunks):
