@@ -16,7 +16,7 @@ from onnxscript.onnx_opset import opset13 as op
 from torch import nn
 
 opset_version = 13
-custom_opset = onnxscript.values.Opset(domain="com.qti.aisw.onnx", version=1)
+custom_opset = onnxscript.values.Opset(domain="QAic", version=1)
 
 
 # Version 1

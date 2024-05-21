@@ -19,6 +19,8 @@ import onnxruntime
 import torch
 from onnx import external_data_helper, numpy_helper
 
+from QEfficient.utils.logging_utils import logger
+
 
 def export_onnx(
     pt_model: torch.nn.Module,
@@ -80,7 +82,7 @@ def export_onnx(
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             opset_version=13,
-            custom_opsets={"com.qti.aisw.onnx": 1},
+            custom_opsets={"QAic": 1},
         )
     except Exception as e:
         error("Exporting to ONNX failed. {}".format(e))
@@ -236,6 +238,13 @@ def fix_onnx_fp16(
 
         # Check if the FP16-fixed model can be used for FP32
         close_outputs = []
+
+        # Check for the Regular CustomOp and Skip the Onnx-Runtime Execution to avoid failure
+        model = onnx.load(os.path.join(gen_models_path, f"{model_base_name}.onnx"), load_external_data=False)
+        for node in model.graph.node:
+            if node.op_type == "QAic::CustomRMSNorm":
+                logger.warning(f"Onnxruntime execution is skipped due to customop {node.op_type}")
+                return model_base_name
         _, ort_outputs_fixed = run_model_on_ort(
             os.path.join(gen_models_path, f"{model_base_name}.onnx"),
             inputs,
@@ -293,6 +302,12 @@ def run_model_on_ort(
     pt_outputs: Dict[str, torch.Tensor],
     dtype: bool = True,
 ) -> Tuple[List[str], List[np.ndarray]]:
+    model = onnx.load(onnx_path, load_external_data=False)
+    for node in model.graph.node:
+        if node.op_type == "QAic::CustomRMSNorm":
+            input_names = [x.name for x in model.graph.input]
+            logger.warning(f"Onnxruntime execution is skipped due to customop {node.op_type}")
+            return input_names, None
     try:
         if dtype:
             info_string = "fp32"
@@ -397,6 +412,13 @@ def compile_kv_model_on_cloud_ai_100(
     ]
     if mxfp6:
         command.append("-mxfp6-matmul")
+    model = onnx.load(onnx_path, load_external_data=False)
+    for node in model.graph.node:
+        if node.op_type == "QAic::CustomRMSNorm":
+            logger.warning(f"Cloud AI 100 execution is with regular customop setup: {node.op_type}")
+            config = kwargs["config"]
+            command.append(f"-register-custom-op={config}")
+            break
     if mos > 0:
         command.append(f"-mos={mos}")
     if aic_enable_depth_first:

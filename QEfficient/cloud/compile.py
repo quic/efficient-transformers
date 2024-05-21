@@ -5,9 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
 import argparse
 import json
+import os
+import pathlib
 from typing import List
 
 from QEfficient.exporter.export_utils import compile_kv_model_on_cloud_ai_100
@@ -62,9 +63,14 @@ def main(
         batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, path=specialization_json_path
     )
     custom_io_file_path = os.path.join(os.path.dirname(onnx_path), "custom_io.yaml")
-    
+
     if not os.path.isfile(custom_io_file_path):
         raise FileNotFoundError(f"file {custom_io_file_path} needs to exist in the same directory as onnx model files.")
+
+    # todo: vbaddi: Identify better way to get the config path. fix it in tag/1.14 in main repo.
+    custom_rms_op_config_path = os.path.join(
+        pathlib.Path(onnx_path).parents[4], "QEfficient/customop/custom_rms_op_config.yaml"
+    )
 
     _, qpc_path = compile_kv_model_on_cloud_ai_100(
         onnx_path=onnx_path,
@@ -76,6 +82,7 @@ def main(
         aic_enable_depth_first=aic_enable_depth_first,
         mos=mos,
         device_group=device_group,
+        config=custom_rms_op_config_path,
     )
 
     logger.info(f"Compiled QPC files can be found here: {qpc_path}")
@@ -120,7 +127,8 @@ if __name__ == "__main__":
         help="Cloud AI 100 device ids (comma-separated) e.g. [0] ",
     )
     parser.add_argument(
-        "--aic_enable_depth_first", "--aic-enable-depth-first",
+        "--aic_enable_depth_first",
+        "--aic-enable-depth-first",
         action="store_true",
         help="If passed, this option will be enabled during compilation, disabled by default",
     )
