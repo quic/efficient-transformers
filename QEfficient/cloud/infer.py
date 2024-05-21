@@ -41,7 +41,7 @@ def qpc_exists(qpc_dir_path: str) -> bool:
 def onnx_exists(onnx_file_path: str) -> bool:
     # todo(ochougul): add check for other files like raw input files, input_list.txt
     return os.path.isfile(onnx_file_path) and os.path.isfile(
-        os.path.join(os.path.dirname(onnx_file_path), "custom_io.yaml")
+        os.path.join(os.path.dirname(onnx_file_path), "custom_io_fp16.yaml")
     )
 
 
@@ -57,6 +57,7 @@ def main(
     prompt_len: int = 32,
     ctx_len: int = 128,
     mxfp6: bool = False,
+    mxint8: bool = False,
     device_group: List[int] = [
         0,
     ],
@@ -82,7 +83,7 @@ def main(
     model_hf_path = hf_download(
         repo_id=model_name,
         cache_dir=cache_dir,
-        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
+        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5"],
     )
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
 
@@ -147,6 +148,7 @@ def main(
         prompt_len=prompt_len,
         ctx_len=ctx_len,
         mxfp6=mxfp6,
+        mxint8=mxint8,
         aic_enable_depth_first=aic_enable_depth_first,
         mos=mos,
         device_group=device_group,
@@ -178,6 +180,11 @@ if __name__ == "__main__":
     parser.add_argument("--ctx-len", "--ctx_len", default=128, type=int, help="Context length for text generation.")
     parser.add_argument(
         "--mxfp6", action="store_true", help="Compress constant MatMul weights to MXFP6 E2M3, default is no compression"
+    )
+    parser.add_argument(
+        "--mxint8",
+        action="store_false",
+        help="Compress Present/Past KV to MXINT8 using CustomIO config, default is False",
     )
     parser.add_argument(
         "--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100"
