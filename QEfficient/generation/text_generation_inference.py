@@ -61,111 +61,6 @@ def write_io_files(
         json.dump({"IO-files": io_files}, fp, indent=True)
 
 
-def get_compilation_batch_size(qpc_path: str):
-    qpc_base_path = os.path.dirname(qpc_path)
-    specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
-    with open(specialization_file_path, "r") as file:
-        data = json.load(file)
-    compilation_batch_size = int(data["specializations"][0]["batch_size"])
-    return compilation_batch_size
-
-
-def check_batch_size_and_num_prompts(prompt: List[str], batch_size: int):
-    num_prompts = len(prompt)
-    if batch_size > 1:
-        assert (
-            batch_size == num_prompts
-        ), f"Mismatch between number of prompts {num_prompts} and batch size {batch_size}; please pass correct input argument"
-
-
-def read_prompts_txt_file(prompts_txt_file_path: str):
-    prompt = []
-    with open(prompts_txt_file_path, "r") as file:
-        for line in file:
-            prompt.append(line.strip())
-    return prompt
-
-
-def cloud_ai_100_exec_kv(
-    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-    qpc_path: str,
-    prompt: Optional[str] = None,
-    prompts_txt_file_path: Optional[str] = None,
-    device_id: List[int] = [0],
-    input_len: Optional[int] = None,
-    generation_len: Optional[int] = None,
-    enable_debug_logs: bool = False,
-    stream: bool = True,
-    write_io_dir: Optional[str] = None,
-    automation=False,
-):
-    assert (prompt is None and prompts_txt_file_path is not None) or (
-        prompt is not None and prompts_txt_file_path is None
-    ), "Please pass either single input string using --prompt or multiple inputs using --prompts_txt_file_path"
-
-    if prompts_txt_file_path is not None:
-        prompt = read_prompts_txt_file(prompts_txt_file_path)
-    if isinstance(prompt, str):
-        prompt = [prompt]
-
-    batch_size = get_compilation_batch_size(qpc_path)
-    check_batch_size_and_num_prompts(prompt, batch_size)
-
-    if batch_size == 1:
-        prefill_time = []
-        decode_perf = []
-        total_perf = []
-        total_time = []
-        generated_texts = []
-        for i in range(len(prompt)):
-            latency_stats = cloud_ai_100_exec_kv_helper(
-                tokenizer=tokenizer,
-                prompt=[prompt[i]],
-                qpc=qpc_path,
-                device_id=device_id,
-                input_len=input_len,
-                generation_len=generation_len,
-                enable_debug_logs=enable_debug_logs,
-                stream=stream,
-                write_io_dir=write_io_dir,
-            )
-            generated_texts.append(latency_stats[0])
-            prefill_time.append(latency_stats[1])
-            decode_perf.append(latency_stats[2])
-            total_perf.append(latency_stats[3])
-            total_time.append(latency_stats[4])
-
-        prefill_time = np.average(prefill_time)
-        decode_perf = np.average(decode_perf)
-        total_perf = np.average(total_perf)
-        total_time = np.average(total_time)
-
-    else:
-        latency_stats = cloud_ai_100_exec_kv_helper(
-                tokenizer=tokenizer,
-                prompt=prompt,
-                qpc=qpc_path,
-                device_id=device_id,
-                input_len=input_len,
-                generation_len=generation_len,
-                enable_debug_logs=enable_debug_logs,
-                stream=stream,
-                write_io_dir=write_io_dir,
-            )
-        generated_texts, prefill_time, decode_perf, total_perf, total_time = latency_stats
-
-    print_latency_stats_kv(
-        prompt,
-        generated_texts,
-        batch_size,
-        prefill_time,
-        decode_perf,
-        total_perf,
-        total_time,
-        automation=automation,
-    )
-
-
 def latency_stats_bertstyle(
     model_name: str,
     qpc: str,
@@ -200,6 +95,31 @@ def latency_stats_bertstyle(
     end = perf_counter()
     print()
     print(round((cur_len - init_len) / (end - start), 2), "tok/s")
+
+
+def get_compilation_batch_size(qpc_path: str):
+    qpc_base_path = os.path.dirname(qpc_path)
+    specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
+    with open(specialization_file_path, "r") as file:
+        data = json.load(file)
+    compilation_batch_size = int(data["specializations"][0]["batch_size"])
+    return compilation_batch_size
+
+
+def check_batch_size_and_num_prompts(prompt: List[str], batch_size: int):
+    num_prompts = len(prompt)
+    if batch_size > 1:
+        assert (
+            batch_size == num_prompts
+        ), f"Mismatch between number of prompts {num_prompts} and batch size {batch_size}; please pass correct input argument"
+
+
+def read_prompts_txt_file(prompts_txt_file_path: str):
+    prompt = []
+    with open(prompts_txt_file_path, "r") as file:
+        for line in file:
+            prompt.append(line.strip())
+    return prompt
 
 
 def cloud_ai_100_exec_kv_helper(
@@ -344,3 +264,80 @@ def print_latency_stats_kv(
         print("E2E:", round(total_perf, 2), "tok/s")
         print("Total (E2E) inference time is=", round(total_time, 2), "s")
     print("=============================================================")
+
+
+def cloud_ai_100_exec_kv(
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+    qpc_path: str,
+    prompt: Optional[str] = None,
+    prompts_txt_file_path: Optional[str] = None,
+    device_id: List[int] = [0],
+    input_len: Optional[int] = None,
+    generation_len: Optional[int] = None,
+    enable_debug_logs: bool = False,
+    stream: bool = True,
+    write_io_dir: Optional[str] = None,
+    automation=False,
+):
+    if prompts_txt_file_path is not None:
+        logger.info("Found inputs passed using txt file as well as CLI, taking inputs from given txt file")
+        prompt = read_prompts_txt_file(prompts_txt_file_path)
+    if isinstance(prompt, str):
+        prompt = [prompt]
+
+    batch_size = get_compilation_batch_size(qpc_path)
+    check_batch_size_and_num_prompts(prompt, batch_size)
+
+    if batch_size == 1:
+        prefill_time = []
+        decode_perf = []
+        total_perf = []
+        total_time = []
+        generated_texts = []
+        for i in range(len(prompt)):
+            latency_stats = cloud_ai_100_exec_kv_helper(
+                tokenizer=tokenizer,
+                prompt=[prompt[i]],
+                qpc=qpc_path,
+                device_id=device_id,
+                input_len=input_len,
+                generation_len=generation_len,
+                enable_debug_logs=enable_debug_logs,
+                stream=stream,
+                write_io_dir=write_io_dir,
+            )
+            generated_texts.append(latency_stats[0])
+            prefill_time.append(latency_stats[1])
+            decode_perf.append(latency_stats[2])
+            total_perf.append(latency_stats[3])
+            total_time.append(latency_stats[4])
+
+        prefill_time = np.average(prefill_time)
+        decode_perf = np.average(decode_perf)
+        total_perf = np.average(total_perf)
+        total_time = np.average(total_time)
+
+    else:
+        latency_stats = cloud_ai_100_exec_kv_helper(
+            tokenizer=tokenizer,
+            prompt=prompt,
+            qpc=qpc_path,
+            device_id=device_id,
+            input_len=input_len,
+            generation_len=generation_len,
+            enable_debug_logs=enable_debug_logs,
+            stream=stream,
+            write_io_dir=write_io_dir,
+        )
+        generated_texts, prefill_time, decode_perf, total_perf, total_time = latency_stats
+
+    print_latency_stats_kv(
+        prompt,
+        generated_texts,
+        batch_size,
+        prefill_time,
+        decode_perf,
+        total_perf,
+        total_time,
+        automation=automation,
+    )

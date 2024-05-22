@@ -81,15 +81,17 @@ def main(
     onnx_dir_path = os.path.join(model_card_dir, "onnx")
     onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
 
-    assert (prompt is None and prompts_txt_file_path is not None) or (
-        prompt is not None and prompts_txt_file_path is None
-    ), "Please pass either single input string using --prompt or multiple inputs using --prompts_txt_file_path"
+    print("prompt : ", prompt)
+    print("prompts_txt_file_path : ", prompts_txt_file_path)
 
     if prompts_txt_file_path is not None:
+        logger.info("Found inputs passed using txt file as well as CLI, taking inputs from given txt file")
         prompts = read_prompts_txt_file(prompts_txt_file_path)
         check_batch_size_and_num_prompts(prompts, batch_size)
     else:
-        check_batch_size_and_num_prompts([prompt], batch_size)
+        if isinstance(prompt, str):
+            prompt = [prompt]
+        check_batch_size_and_num_prompts(prompt, batch_size)
 
     # Get tokenizer
     if hf_token is not None:
@@ -226,14 +228,15 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--prompt",
-        type=str,
-        help="Input prompt, if executing for batch size>1, use prompts_txt_file_path flag",
+        type=lambda prompt: prompt.split("|"),
+        default="My name is",
+        help="Input prompt, if executing for batch size>1, pass input promprs in single string but seperate with pipe (|) symbol",
     )
     parser.add_argument(
         "--prompts_txt_file_path",
         "--prompts-txt-file-path",
         type=str,
-        help="for batch size>1, pass input prompts in txt file, sample prompts.txt file present in examples folder",
+        help="File path for taking input prompts from txt file, sample prompts.txt file present in examples folder",
     )
     parser.add_argument(
         "--aic_enable_depth_first",

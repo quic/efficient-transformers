@@ -67,14 +67,15 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--prompt",
-        type=str,
-        help="Input prompt, if executing for batch size>1, use prompts_txt_file_path flag",
+        type=lambda prompt: prompt.split("|"),
+        default="My name is",
+        help="Input prompt, if executing for batch size>1, pass input promprs in single string but seperate with pipe (|) symbol",
     )
     parser.add_argument(
         "--prompts_txt_file_path",
         "--prompts-txt-file-path",
         type=str,
-        help="for batch size>1, pass input prompts in txt file, sample prompts.txt file present in examples folder",
+        help="File path for taking input prompts from txt file, sample prompts.txt file present in examples folder",
     )
     parser.add_argument(
         "--cache-dir", "--cache_dir", default=Constants.CACHE_DIR, required=False, help="Cache dir to store HF Downlods"
