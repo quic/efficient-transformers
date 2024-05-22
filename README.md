@@ -110,8 +110,8 @@ In summary:
 
 | High Level APIs | Sample use | Arguments         |
 |-----------------|------------|-------------------|
-| QEfficient.cloud.infer           |   [click here](#1-use-qefficientcloudinfer)         |  <li>model_name : $\color{green} {Mandatory}$</li> <li>num_cores : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>batch_size : Optional [Default-1]</li> <li>prompt_len : Optional [Default-32]</li> <li>ctx_len : Optional [Default-128]</li><li>mxfp6 : Optional </li> <li>hf_token : Optional </li><li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>prompt : Optional</li><li>prompts_txt_file_path : Optional</li><li>*One argument, prompt or prompts_txt_file_path must be passed*</li> |
-| QEfficient.cloud.execute  |     [click here](#2-use-of-qefficientcloudexecute)       |   <li>model_name : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li> <li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>hf_token : Optional </li><li>prompt : Optional</li><li>prompts_txt_file_path : Optional</li> <li>*One argument, prompt or prompts_txt_file_path must be passed*</li>             |
+| QEfficient.cloud.infer           |   [click here](#1-use-qefficientcloudinfer)         |  <li>model_name : $\color{green} {Mandatory}$</li> <li>num_cores : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>batch_size : Optional [Default-1]</li> <li>prompt_len : Optional [Default-32]</li> <li>ctx_len : Optional [Default-128]</li><li>mxfp6 : Optional </li> <li>hf_token : Optional </li><li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>prompt : Optional</li><li>prompts_txt_file_path : Optional</li>|
+| QEfficient.cloud.execute  |     [click here](#2-use-of-qefficientcloudexecute)       |   <li>model_name : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li> <li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>hf_token : Optional </li><li>prompt : Optional</li><li>prompts_txt_file_path : Optional</li> |
 
 
 ### 1. Use QEfficient.cloud.infer 
@@ -126,8 +126,14 @@ This is the single e2e python api in the library, which takes model_card name as
 # Check out the options using the help menu
 python -m QEfficient.cloud.infer --help
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first  
- 
-# If executing for batch size>1, pass path of txt file with input prompts, Example below, sample txt file(prompts.txt) is present in examples folder .
+
+# If executing for batch size>1,
+
+Either pass input prompts in single string but seperate with pipe (|) symbol". Example below
+
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first
+
+Or pass path of txt file with input prompts, Example below, sample txt file(prompts.txt) is present in examples folder .
 
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompts_txt_file_path examples/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first  
  ```
@@ -174,7 +180,7 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 |  QEfficient.transform    |   [click here](#1-model-download-and-transform)         |  <li>model : $\color{green} {Mandatory}$</li><li>Type : Optional [Default- "Transformers"]</li> <li>form_factor : Optional [Default-"cloud"]</li>  | 
 | qualcomm_efficient_converter |     [click here](#2-onnx-export-of-transformed-model)       |   <li>mode_name : $\color{green} {Mandatory}$</li><li>model_kv : $\color{green} {Mandatory}$ [Optional when model_class passed] </li><li>model_class : $\color{green} {Mandatory}$ [Optional when model_kv passed]</li> <li>tokenizer : Optional</li><li>onnx_path : Optional </li><li>hf_token : Optional</li><li>seq_length : Optional [Default-128]</li><li>input_str : Optional [Default-"My name is"]</li><li>kv : Optional [Default-$\color{green} {True}$]</li><li>return_path : Optional [Default-False]</li><li>form_factor : Optional [Default-"cloud"]</li><li>save_fp32_onnx : Optional [Default-False]</li><li>save_fp16_onnx : Optional [Default-True]</li> <li>*Both save_fp32_onnx and save_fp16_onnx can't be false*</li> | 
 |     compile | [click here](#3-compile-on-cloud-ai-100) | <li>onnx_path : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li><li>num_cores : $\color{green} {Mandatory}$</li><li>device_group  : $\color{green} {Mandatory}$</li> <li>batch_size : Optional [Default-1]</li> <li>prompt_len : Optional [Default-32]</li><li>ctx_len : Optional [Default-128]</li><li>mxfp6 : Optional [Default-True]</li>| 
-|cloud_ai_100_exec_kv | [click here](#4-run-benchmark)  | <li>tokenizer : $\color{green} {Mandatory}$</li> <li>qpc_path : $\color{green} {Mandatory}$</li><li>prompt : Optional</li><li>prompts_txt_file_path : Optional</li><li>input_len : Optional [Default-None]</li> <li>generation_len : Optional [Default-None]</li> <li>device_id : Optional [Default-[0]]</li> <li>enable_debug_logs : Optional [Default-False]</li> <li>stream : Optional [Default-True]</li> <li>write_io_dir : Optional</li><li>automation : Optional [Default-False]</li><li>*One argument, prompt or prompts_txt_file_path must be passed*</li> | 
+|cloud_ai_100_exec_kv | [click here](#4-run-benchmark)  | <li>tokenizer : $\color{green} {Mandatory}$</li> <li>qpc_path : $\color{green} {Mandatory}$</li><li>prompt : Optional</li><li>prompts_txt_file_path : Optional</li><li>input_len : Optional [Default-None]</li> <li>generation_len : Optional [Default-None]</li> <li>device_id : Optional [Default-[0]]</li> <li>enable_debug_logs : Optional [Default-False]</li> <li>stream : Optional [Default-True]</li> <li>write_io_dir : Optional</li><li>automation : Optional [Default-False]</li>| 
 
 
 ### 1.  Model download and transform
