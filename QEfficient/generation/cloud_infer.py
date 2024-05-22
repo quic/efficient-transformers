@@ -45,6 +45,10 @@ class QAICInferenceSession:
     
     
     
+    
+    
+    
+    
     def __init__(
         self,
         qpc_path: str,
@@ -52,6 +56,14 @@ class QAICInferenceSession:
         activate: bool = True,
         enable_debug_logs: bool = False,
     ):
+        """
+        Initialise for QAIC inference Session
+        ---------
+        :param qpc_path: str. Path to the save generated binary file after compilation.
+        :device_ids: List[int]. Device Ids to be used for compilation. if devices > 1, it enable multiple card setup.
+        :activate: bool. If false, activation will be disabled. Default=True.
+        :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
+        """
         """
         Initialise for QAIC inference Session
         ---------
@@ -99,6 +111,8 @@ class QAICInferenceSession:
     def input_names(self) -> List[str]:
         
         
+        
+        
         return [binding.name for binding in self.bindings if binding.dir == aicapi.BUFFER_IO_TYPE_INPUT]
 
     @property
@@ -109,17 +123,27 @@ class QAICInferenceSession:
         
         """ Device Activation"""
         
+        
+        """ Device Activation"""
+        
         self.program.activate()
         self.execObj = qaicrt.ExecObj(self.context, self.program)
 
     def deactivate(self):
         
-        """ Device deactivate"""
+         """ Device deactivate"""
          
         del self.execObj
         self.program.deactivate()
 
     def set_buffers(self, buffers: Dict[str, np.ndarray]):
+        
+        """
+        Provide buffer mapping for input and output
+        ---------
+        :param buffer: Dict[str, np.ndarray]. Parameter for buffer mapping.
+        """
+        
         
         """
         Provide buffer mapping for input and output
@@ -147,9 +171,26 @@ class QAICInferenceSession:
         """
         
         
+        
+        """
+        skip buffer mapping for given list of buffer names
+        ---------
+        :param skipped_buffer_name: List[str]. List of buffer name to be skipped.
+        """
+        
+        
         self.set_buffers({k: np.array([]) for k in skipped_buffer_names})
 
     def run(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        
+        """ 
+        Execute on cloud AI 100
+        ---------
+        :param inputs: Dict[str, np.ndarray]). Processed torch input for the model.
+        """
+        
+        
+        
         
         """ 
         Execute on cloud AI 100

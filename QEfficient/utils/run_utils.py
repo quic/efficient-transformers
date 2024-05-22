@@ -27,7 +27,11 @@ class ApiRunner:
         """
         Initialization
         ---------
+        ---------
         :param tokenizer: tokenizer
+        :input_str: List[str]
+        :prompt_len: int
+        :ctx_len: int
         :input_str: List[str]
         :prompt_len: int
         :ctx_len: int
@@ -46,6 +50,10 @@ class ApiRunner:
         """
         Function responsible for running Huggingface PyTorch model and return the output tokens
         :param model_hf: pytorch model
+        ---------
+
+        Return:
+            generated_ids: numpy.ndarray - output tokens
         ---------
 
         Return:
@@ -73,10 +81,11 @@ class ApiRunner:
         """
         Function responsible for running KV PyTorch model and return the output tokens
         ---------
+        ---------
         :param model_hf: pytorch model
         :n_layer : int
         :padding_shape : List[int]
-
+        
         Return:
             generated_ids: numpy.ndarray - output tokens
         """
@@ -102,7 +111,11 @@ class ApiRunner:
         """
         Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
         ---------
+        ---------
         :param inputs: Dict
+        :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
+        :n_layer: int
+        :outputs: Dict
         :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
         :n_layer: int
         :outputs: Dict
@@ -134,10 +147,11 @@ class ApiRunner:
         """
         Function responsible for running ONNX model on onnxruntime and return the output tokens
         ---------
+        ---------
         :param model_path: str
         :n_layer : int
         :padding_shape : List[int]
-
+        
         Return:
             generated_ids: numpy.ndarray - output tokens
         """
@@ -183,11 +197,12 @@ class ApiRunner:
         :return generated_ids: numpy.ndarray - output tokens
 =======
         ---------
+        ---------
         :param qpc_path: str
         :device_id: List[int]
         :n_layer : int
         :padding_shape : List[int]
-
+        
         Return:
             generated_ids: numpy.ndarray - output tokens
 >>>>>>> f765bc1 (Updated documentation)

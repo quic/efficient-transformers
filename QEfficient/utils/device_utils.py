@@ -11,13 +11,14 @@ from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.constants import Constants
 
 def get_available_device_id():
+    
     """
     API to check available device id.
-
+    
     Return:
         Return available device id.
     """
-
+    
     device_id = 0
     result = None
     while 1:

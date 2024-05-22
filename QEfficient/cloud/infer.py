@@ -68,7 +68,7 @@ def main(
     :ctx_len: int. Maximum context length for the model to compile.
     :mxfp6: bool. Enable compilation for MXFP6 precision.
     :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices > 1, it enable multiple card setup.
-
+    
     """
     
     qpc_base_dir_name = get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group)

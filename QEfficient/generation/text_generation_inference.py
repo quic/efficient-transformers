@@ -25,11 +25,20 @@ def write_io_files(
     inputs: Dict[str, np.ndarray],
     outputs: Dict[str, np.ndarray],
     write_io_dir: str, 
+    write_io_dir: str, 
     write_io_subdir: str,
     write_io_name: str,
     include_dims: bool = False,
     reset: bool = False,
-): 
+):
+    
+    """
+
+    
+    """
+    
+    
+    
     global io_files
     if reset:
         io_files = []
@@ -70,7 +79,7 @@ def latency_stats_bertstyle(
     device_id: List[int] = [0],
 ):
     
-    """
+  """
     API to execute ONNX model on CPU. 
     ---------
     :param model_name: str. Hugging Face Model Card name, Example: gpt2.
@@ -78,8 +87,9 @@ def latency_stats_bertstyle(
     :seq_len: int. Sequence length.
     :prompt: str. Sample prompt for the model text generation.
     :device_id: List[int]. Device Ids to be used for compilation. if devices > 1, it enable multiple card setup.
-    
     """
+    
+    
     session = QAICInferenceSession(qpc, device_id)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
@@ -108,31 +118,17 @@ def latency_stats_bertstyle(
     print(round((cur_len - init_len) / (end - start), 2), "tok/s")
 
 
-<<<<<<< HEAD
 def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
-=======
-def get_compilation_batch_size(qpc_path: str):
-<<<<<<< HEAD
->>>>>>> 3a7458a (Update infer and execute API to take prompts from txt file for BS>=1 (#11))
     qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
     specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
     logger.info(f"specialization_file_path : {specialization_file_path}")
-=======
-    qpc_base_path = os.path.dirname(qpc_path)
-    specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
->>>>>>> 22a285a (Update infer and execute API to take prompts from txt file for BS>=1 (#11))
     with open(specialization_file_path, "r") as file:
         data = json.load(file)
     compilation_batch_size = int(data["specializations"][0]["batch_size"])
     compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
     return compilation_batch_size, compilation_ctx_len
 
-
-<<<<<<< HEAD
 def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size) -> List[str]:
-=======
-def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size):
->>>>>>> 22a285a (Update infer and execute API to take prompts from txt file for BS>=1 (#11))
     assert (
         prompt is not None or prompts_txt_file_path is not None
     ), "Please pass atleast one argument either using --prompt or --prompts_txt_file_path"
@@ -186,9 +182,25 @@ def cloud_ai_100_exec_kv_helper(
     :automation: bool. If true, it print input, output and performance stats.
     """
     
-    if tokenizer.padding_side != "right":
-        logger.warning("Please use padding_side='right' while initializing the tokenizer")
-        tokenizer.padding_side = "right"
+    
+    """
+    API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file. 
+    ---------
+    :param tokenizer: 
+    :qpc: str.  Path to the save generated binary file after compilation.
+    :prompt: str. Sample prompt for the model text generation.
+    :input_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.
+    :generation_len: int. Maximum context length for the model to compile.
+    :device_id: List[int]. Device Ids to be used for compilation. if len(device_id) > 1, it enable multiple card setup.
+    :enable_debug_logs: bool. If True, it enables debugging logs.
+    :stream: bool. If True enable streamer, which returns tokens one by one as the model generates them.
+    :Write_io_dir: 
+    :automation: bool. If true, it print input, output and performance stats.
+    """
+    
+    if tokenizer.padding_side != "left":
+        logger.warning("Please use padding_side='left' while initializing the tokenizer")
+        tokenizer.padding_side = "left"
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
@@ -216,16 +228,31 @@ def cloud_ai_100_exec_kv_helper(
     padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
     max_gen_len = ctx_len - position_ids_update.max()
     if generation_len is None:
-        if ctx_len is None:
-            raise ValueError("At least one of ctx_len or generation_len is needed")
-        generation_len = max_gen_len
-    elif generation_len > max_gen_len:
-        logger.warning(
-            "Passed generation_len is greater than allowed length. "
-            "Make sure this model supports sliding window, such as Mistral"
-        )
-    assert generation_len > 0, "generation length should be greater than zero"
-    generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
+        generation_len = ctx_len
+    num_chunks = -(input_len // -prompt_len)  # ceil divide without float
+    input_len = num_chunks * prompt_len  # Convert input_len to a multiple of prompt_len
+    assert input_len <= ctx_len, "input_len should be less than ctx_len"
+
+    # Skip inputs/outputs
+    session.skip_buffers([x for x in session.input_names if x.startswith("past_")])
+    session.skip_buffers([x for x in session.output_names if x.endswith("_RetainedState")])
+
+    # Prepare inputs for first iteration
+    start = perf_counter()
+    inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=input_len)
+    batch_size = inputs["input_ids"].shape[0]
+    inputs["position_ids"] = (np.cumsum(inputs["attention_mask"], 1) - 1) * inputs["attention_mask"]
+    inputs["attention_mask"] = np.concatenate(
+        [
+            inputs["attention_mask"].astype(bool),
+            np.zeros((batch_size, ctx_len - input_len), dtype=bool),
+        ],
+        1,
+    )
+    cache_index = np.array([0])
+    inputs["cache_index"] = cache_inde
+    generated_ids = np.full((batch_size, generation_len - input_len + 1), tokenizer.pad_token_id)
+
     if stream:
         streamer = transformers.TextStreamer(tokenizer)
         streamer.on_finalized_text(prompt[0] + " ")
