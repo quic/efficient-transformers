@@ -81,9 +81,6 @@ def main(
     onnx_dir_path = os.path.join(model_card_dir, "onnx")
     onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
 
-    print("prompt : ", prompt)
-    print("prompts_txt_file_path : ", prompts_txt_file_path)
-
     if prompts_txt_file_path is not None:
         logger.info("Found inputs passed using txt file as well as CLI, taking inputs from given txt file")
         prompts = read_prompts_txt_file(prompts_txt_file_path)
@@ -230,7 +227,7 @@ if __name__ == "__main__":
         "--prompt",
         type=lambda prompt: prompt.split("|"),
         default="My name is",
-        help="Input prompt, if executing for batch size>1, pass input promprs in single string but seperate with pipe (|) symbol",
+        help="Input prompt, if executing for batch size>1, pass input prompts in single string but seperate with pipe (|) symbol",
     )
     parser.add_argument(
         "--prompts_txt_file_path",
