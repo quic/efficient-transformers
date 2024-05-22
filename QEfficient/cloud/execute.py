@@ -36,7 +36,7 @@ def main(
     :devices: List[int]. Device Ids to be used for compilation. if devices > 1, it enable multiple card setup.
     :cache_dir: str. Cache dir to store the downloaded huggingface files.
     :hf_token: Huggingface token to access gated models.
-    
+
     """
 
     tokenizer = load_hf_tokenizer(model_name, cache_dir, hf_token)

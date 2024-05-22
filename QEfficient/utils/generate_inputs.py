@@ -14,8 +14,8 @@ from QEfficient.utils import padding_check_and_fix
 class InputHandler:
     def __init__(self, tokenizer, input_str, prompt_len, ctx_len):
         """
-        Initialization 
-        --------- 
+        Initialization
+        ---------
         :param model_name: str. Hugging Face Model Card name, Example: [gpt2].
         :input_str: List[str]. List of input string.
         :prompt_len: int. prompt len for the model to compile.
@@ -39,7 +39,7 @@ class InputHandler:
         ---------
         :param n_layer : int. Number of layers in the PyTorch model.
         :padding_shape : List[int]. Shape of past key values.
-        
+
         Return:
             inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
 >>>>>>> f765bc1 (Updated documentation)
@@ -90,10 +90,10 @@ class InputHandler:
         :return inputs: Dict - input_ids, position_ids, past_key_values
 =======
         ---------
-        :param iteration: int. Current iteration number. 
+        :param iteration: int. Current iteration number.
         :inputs: Dict. Previous iteration inputs.
         :pt_outputs: Dict. Previous iteration PyTorch outputs.
-        
+
         Return:
             inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
 >>>>>>> f765bc1 (Updated documentation)
@@ -118,7 +118,7 @@ class InputHandler:
         ---------
         :param n_layer : int. Number of layers in the PyTorch model.
         :padding_shape : List[int]. Shape of past key values.
-        
+
         Return:
             inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
 >>>>>>> f765bc1 (Updated documentation)
@@ -169,7 +169,7 @@ class InputHandler:
         :inputs: Dict. Previous iteration ORT inputs.
         :ort_outputs: Dict. Previous iteration ORT outputs.
         :n_layer : int. Number of layers in the ONNX model.
-        
+
         Return:
             inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
 >>>>>>> f765bc1 (Updated documentation)
@@ -195,7 +195,7 @@ class InputHandler:
         ---------
         :param n_layer : int. Number of layers in the PyTorch model.
         :padding_shape : List[int]. Shape of past key values.
-        
+
         Return:
             inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
 >>>>>>> f765bc1 (Updated documentation)

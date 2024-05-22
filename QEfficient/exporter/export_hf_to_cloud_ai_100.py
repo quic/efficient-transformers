@@ -52,7 +52,7 @@ def convert_to_cloud_bertstyle(
     if onnx_dir_path is None:
         model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
         onnx_dir_path = os.path.join(model_card_dir, "onnx_bertstyle")
-    
+
     # Check if ONNX already exist
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
@@ -177,7 +177,7 @@ def convert_to_cloud_kvstyle(
 
     Returns:
         Path of exported ONNX file.
-    
+
     """
     warnings.warn("\033[93mThis function will be deprecated soon, use QEfficient.export instead\033[0m", DeprecationWarning, stacklevel=2)
     if os.path.exists(onnx_dir_path):

@@ -76,7 +76,7 @@ class ApiRunner:
         :param model_hf: pytorch model
         :n_layer : int
         :padding_shape : List[int]
-        
+
         Return:
             generated_ids: numpy.ndarray - output tokens
         """
@@ -137,7 +137,7 @@ class ApiRunner:
         :param model_path: str
         :n_layer : int
         :padding_shape : List[int]
-        
+
         Return:
             generated_ids: numpy.ndarray - output tokens
         """
@@ -187,7 +187,7 @@ class ApiRunner:
         :device_id: List[int]
         :n_layer : int
         :padding_shape : List[int]
-        
+
         Return:
             generated_ids: numpy.ndarray - output tokens
 >>>>>>> f765bc1 (Updated documentation)
