@@ -106,12 +106,23 @@ def get_compilation_batch_size(qpc_path: str):
     return compilation_batch_size
 
 
-def check_batch_size_and_num_prompts(prompt: List[str], batch_size: int):
+def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size):
+    assert (
+        prompt is not None or prompts_txt_file_path is not None
+    ), "Please pass atleast one argument either using --prompt or --prompts_txt_file_path"
+    if prompts_txt_file_path is not None:
+        if prompt is not None:
+            logger.warning("Found inputs passed using txt file as well as CLI, taking inputs from given txt file")
+        prompt = read_prompts_txt_file(prompts_txt_file_path)
+    if isinstance(prompt, str):
+        prompt = [prompt]
+
     num_prompts = len(prompt)
     if batch_size > 1:
         assert (
             batch_size == num_prompts
         ), f"Mismatch between number of prompts {num_prompts} and batch size {batch_size}; please pass correct input argument"
+    return prompt
 
 
 def read_prompts_txt_file(prompts_txt_file_path: str):
@@ -266,7 +277,7 @@ def print_latency_stats_kv(
     print("=============================================================")
 
 
-def cloud_ai_100_exec_kv_helper_loop(
+def cloud_ai_100_exec_kv(
     batch_size,
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc_path: str,
@@ -279,7 +290,6 @@ def cloud_ai_100_exec_kv_helper_loop(
     write_io_dir: Optional[str] = None,
     automation=False,
 ):
-
     if batch_size == 1:
         prefill_time = []
         decode_perf = []
@@ -332,41 +342,4 @@ def cloud_ai_100_exec_kv_helper_loop(
         total_perf,
         total_time,
         automation=automation,
-    )
-
-def cloud_ai_100_exec_kv(
-    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-    qpc_path: str,
-    prompt: Optional[str] = None,
-    prompts_txt_file_path: Optional[str] = None,
-    device_id: List[int] = [0],
-    input_len: Optional[int] = None,
-    generation_len: Optional[int] = None,
-    enable_debug_logs: bool = False,
-    stream: bool = True,
-    write_io_dir: Optional[str] = None,
-    automation=False,
-):
-    if prompts_txt_file_path is not None:
-        if prompt is not None:
-            logger.warning("Found inputs passed using txt file as well as CLI, taking inputs from given txt file")
-        prompt = read_prompts_txt_file(prompts_txt_file_path)
-    if isinstance(prompt, str):
-        prompt = [prompt]
-
-    batch_size = get_compilation_batch_size(qpc_path)
-    check_batch_size_and_num_prompts(prompt, batch_size)
-
-    cloud_ai_100_exec_kv_helper_loop(
-        batch_size,
-        tokenizer=tokenizer,
-        prompt=prompt,
-        qpc_path=qpc_path,
-        device_id=device_id,
-        input_len=input_len,
-        generation_len=generation_len,
-        enable_debug_logs=enable_debug_logs,
-        stream=stream,
-        write_io_dir=write_io_dir,
-        automation=False,
     )

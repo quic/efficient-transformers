@@ -11,7 +11,11 @@ from typing import List
 from huggingface_hub import login
 from transformers import AutoTokenizer
 
-from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
+from QEfficient.generation.text_generation_inference import (
+    check_batch_size_and_num_prompts,
+    cloud_ai_100_exec_kv,
+    get_compilation_batch_size,
+)
 from QEfficient.utils import hf_download
 from QEfficient.utils.constants import Constants
 
@@ -42,13 +46,16 @@ def main(
     model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
 
+    batch_size = get_compilation_batch_size(qpc_path)
+    prompt = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
+
     # Execute
     cloud_ai_100_exec_kv(
+        batch_size=batch_size,
         tokenizer=tokenizer,
         qpc_path=qpc_path,
         device_id=device_group,
         prompt=prompt,
-        prompts_txt_file_path=prompts_txt_file_path,
     )
 
 
@@ -77,7 +84,11 @@ if __name__ == "__main__":
         help="File path for taking input prompts from txt file, sample prompts.txt file present in examples folder",
     )
     parser.add_argument(
-        "--cache-dir", "--cache_dir", default=Constants.CACHE_DIR, required=False, help="Cache dir to store HF Downloads"
+        "--cache-dir",
+        "--cache_dir",
+        default=Constants.CACHE_DIR,
+        required=False,
+        help="Cache dir to store HF Downloads",
     )
     parser.add_argument(
         "--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models"
