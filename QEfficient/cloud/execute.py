@@ -32,7 +32,7 @@ def main(
     :qpc_path: str.  Path to the generated binary after compilation.
     :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
     :prompt: str. Sample prompt for the model text generation
-    :prompts_txt_file_path: str. Path to txt file for multiple input prompts (in case of batch size > 1)
+    :prompts_txt_file_path: str. Path to txt file for multiple input prompts
     """
 
     if hf_token is not None:
@@ -68,7 +68,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--prompt",
         type=lambda prompt: prompt.split("|"),
-        default="My name is",
         help="Input prompt, if executing for batch size>1, pass input promprs in single string but seperate with pipe (|) symbol",
     )
     parser.add_argument(

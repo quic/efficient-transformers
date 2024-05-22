@@ -17,7 +17,7 @@ from QEfficient.cloud.compile import main as compile
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import (
     check_batch_size_and_num_prompts,
-    cloud_ai_100_exec_kv,
+    cloud_ai_100_exec_kv_helper_loop,
     read_prompts_txt_file,
 )
 from QEfficient.utils import hf_download
@@ -80,15 +80,17 @@ def main(
 
     onnx_dir_path = os.path.join(model_card_dir, "onnx")
     onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
-
+    
+    assert prompt is not None or prompts_txt_file_path is not None, "Please pass atleast one argument either using --prompt or --prompts_txt_file_path"
+    
     if prompts_txt_file_path is not None:
-        logger.info("Found inputs passed using txt file as well as CLI, taking inputs from given txt file")
-        prompts = read_prompts_txt_file(prompts_txt_file_path)
-        check_batch_size_and_num_prompts(prompts, batch_size)
+        if prompt is not None:
+            logger.warning("Found inputs passed using txt file as well as CLI, taking inputs from given txt file")
+        prompt = read_prompts_txt_file(prompts_txt_file_path)
     else:
         if isinstance(prompt, str):
             prompt = [prompt]
-        check_batch_size_and_num_prompts(prompt, batch_size)
+    check_batch_size_and_num_prompts(prompt, batch_size)
 
     # Get tokenizer
     if hf_token is not None:
@@ -105,12 +107,12 @@ def main(
     if qpc_exists(qpc_dir_path):
         # execute
         logger.info("Pre-compiled qpc found! Trying to execute with given prompt")
-        cloud_ai_100_exec_kv(
+        cloud_ai_100_exec_kv_helper_loop(
+            batch_size,
             tokenizer=tokenizer,
             qpc_path=qpc_dir_path,
             device_id=device_group,
             prompt=prompt,
-            prompts_txt_file_path=prompts_txt_file_path,
         )
         return
 
@@ -132,12 +134,12 @@ def main(
         assert (
             generated_qpc_path == qpc_dir_path
         ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
-        cloud_ai_100_exec_kv(
+        cloud_ai_100_exec_kv_helper_loop(
+            batch_size,
             tokenizer=tokenizer,
             qpc_path=qpc_dir_path,
             device_id=device_group,
             prompt=prompt,
-            prompts_txt_file_path=prompts_txt_file_path,
         )
         return
 
@@ -185,12 +187,12 @@ def main(
     logger.info(f"Compiled qpc files can be found at : {generated_qpc_path}")
 
     # Execute
-    cloud_ai_100_exec_kv(
+    cloud_ai_100_exec_kv_helper_loop(
+        batch_size,
         tokenizer=tokenizer,
         qpc_path=qpc_dir_path,
         device_id=device_group,
         prompt=prompt,
-        prompts_txt_file_path=prompts_txt_file_path,
     )
 
 
@@ -226,7 +228,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--prompt",
         type=lambda prompt: prompt.split("|"),
-        default="My name is",
         help="Input prompt, if executing for batch size>1, pass input prompts in single string but seperate with pipe (|) symbol",
     )
     parser.add_argument(
