@@ -78,7 +78,7 @@ if __name__ == "__main__":
         help="File path for taking input prompts from txt file, sample prompts.txt file present in examples folder",
     )
     parser.add_argument(
-        "--cache-dir", "--cache_dir", default=Constants.CACHE_DIR, required=False, help="Cache dir to store HF Downlods"
+        "--cache-dir", "--cache_dir", default=Constants.CACHE_DIR, required=False, help="Cache dir to store HF Downloads"
     )
     parser.add_argument(
         "--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models"
