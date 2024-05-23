@@ -242,7 +242,7 @@ def fix_onnx_fp16(
         # Check for the Regular CustomOp and Skip the Onnx-Runtime Execution to avoid failure
         model = onnx.load(os.path.join(gen_models_path, f"{model_base_name}.onnx"), load_external_data=False)
         for node in model.graph.node:
-            if node.op_type == "QAic::CustomRMSNorm":
+            if node.op_type == "CustomRMSNorm":
                 logger.warning(f"Onnxruntime execution is skipped due to customop {node.op_type}")
                 return model_base_name
         _, ort_outputs_fixed = run_model_on_ort(
@@ -304,7 +304,7 @@ def run_model_on_ort(
 ) -> Tuple[List[str], List[np.ndarray]]:
     model = onnx.load(onnx_path, load_external_data=False)
     for node in model.graph.node:
-        if node.op_type == "QAic::CustomRMSNorm":
+        if node.op_type == "CustomRMSNorm":
             input_names = [x.name for x in model.graph.input]
             logger.warning(f"Onnxruntime execution is skipped due to customop {node.op_type}")
             return input_names, None
@@ -414,7 +414,7 @@ def compile_kv_model_on_cloud_ai_100(
         command.append("-mxfp6-matmul")
     model = onnx.load(onnx_path, load_external_data=False)
     for node in model.graph.node:
-        if node.op_type == "QAic::CustomRMSNorm":
+        if node.op_type == "CustomRMSNorm":
             logger.warning(f"Cloud AI 100 execution is with regular customop setup: {node.op_type}")
             config = kwargs["config"]
             command.append(f"-register-custom-op={config}")

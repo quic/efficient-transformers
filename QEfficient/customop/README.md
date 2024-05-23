@@ -16,5 +16,5 @@ cd ..
 ## Move the custom op shared library to the customop src directory
 **Note**: Provide specific build so path accordingly, below example is for custom rms norm
 ```
-mv build/customrmsnorm_lib.so CustomRMSNorm/src/
+mv build/libcustomrmsnorm_lib.so CustomRMSNorm/src/
 ```
