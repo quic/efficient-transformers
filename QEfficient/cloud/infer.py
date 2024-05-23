@@ -15,7 +15,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import QEfficient
 from QEfficient.cloud.compile import main as compile
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
+from QEfficient.generation.text_generation_inference import (
+    check_batch_size_and_num_prompts,
+    cloud_ai_100_exec_kv,
+)
 from QEfficient.utils import hf_download, onnx_exists, qpc_exists
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
@@ -31,7 +34,8 @@ from QEfficient.utils.logging_utils import logger
 def main(
     model_name: str,
     num_cores: int,
-    prompt: str,
+    prompt: str = None,
+    prompts_txt_file_path: str = None,
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     cache_dir: str = Constants.CACHE_DIR,
@@ -52,6 +56,8 @@ def main(
         + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
     )
 
+    prompt = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
+
     # Get tokenizer
     if hf_token is not None:
         login(hf_token)
@@ -68,7 +74,13 @@ def main(
     if qpc_path_exists:
         # execute
         logger.info("Pre-compiled qpc found! Trying to execute with given prompt")
-        cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc=qpc_dir_path, device_id=device_group, prompt=prompt)
+        cloud_ai_100_exec_kv(
+            batch_size,
+            tokenizer=tokenizer,
+            qpc_path=qpc_dir_path,
+            device_id=device_group,
+            prompt=prompt,
+        )
         return
 
     onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(model_name)
@@ -91,7 +103,13 @@ def main(
         assert (
             generated_qpc_path == qpc_dir_path
         ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
-        cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
+        cloud_ai_100_exec_kv(
+            batch_size,
+            tokenizer=tokenizer,
+            qpc_path=qpc_dir_path,
+            device_id=device_group,
+            prompt=prompt,
+        )
         return
 
     #############################################
@@ -142,16 +160,26 @@ def main(
     logger.info(f"Compiled qpc files can be found at : {generated_qpc_path}")
 
     # Execute
-    cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc=generated_qpc_path, device_id=device_group, prompt=prompt)
+    cloud_ai_100_exec_kv(
+        batch_size,
+        tokenizer=tokenizer,
+        qpc_path=qpc_dir_path,
+        device_id=device_group,
+        prompt=prompt,
+    )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Inference command, the model will be downloaded from HF, optmized, compiled, executed on AIC"
+        description="Inference command, the model will be downloaded from HF, optmized, compiled, executed on Cloud AI 100"
     )
     parser.add_argument("--model-name", "--model_name", required=True, help="HF Model card name/id")
     parser.add_argument(
-        "--cache-dir", "--cache_dir", default=Constants.CACHE_DIR, required=False, help="Cache dir to store HF Downlods"
+        "--cache-dir",
+        "--cache_dir",
+        default=Constants.CACHE_DIR,
+        required=False,
+        help="Cache dir to store HF Downloads",
     )
     parser.add_argument(
         "--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models"
@@ -182,8 +210,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--prompt",
         type=lambda prompt: prompt.split("|"),
-        default="My name is",
-        help="Input prompt, if executing for batch size>1, pass input promprs in single string but seperate with pipe (|) symbol",
+        help="Input prompt, if executing for batch size>1, pass input prompts in single string but seperate with pipe (|) symbol",
+    )
+    parser.add_argument(
+        "--prompts_txt_file_path",
+        "--prompts-txt-file-path",
+        type=str,
+        help="File path for taking input prompts from txt file, sample prompts.txt file present in examples folder",
     )
     parser.add_argument(
         "--aic_enable_depth_first",
