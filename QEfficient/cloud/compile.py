@@ -8,10 +8,10 @@
 import argparse
 import json
 import os
-import pathlib
 from typing import List
 
 from QEfficient.exporter.export_utils import compile_kv_model_on_cloud_ai_100
+from QEfficient.utils.constants import QEFF_DIR
 from QEfficient.utils.logging_utils import logger
 
 
@@ -67,10 +67,7 @@ def main(
     if not os.path.isfile(custom_io_file_path):
         raise FileNotFoundError(f"file {custom_io_file_path} needs to exist in the same directory as onnx model files.")
 
-    # todo: vbaddi: Identify better way to get the config path. fix it in tag/1.14 in main repo.
-    custom_rms_op_config_path = os.path.join(
-        pathlib.Path(onnx_path).parents[4], "QEfficient/customop/custom_rms_op_config.yaml"
-    )
+    custom_rms_op_config_path = os.path.join(QEFF_DIR, "customop", "custom_rms_op_config.yaml")
 
     _, qpc_path = compile_kv_model_on_cloud_ai_100(
         onnx_path=onnx_path,
