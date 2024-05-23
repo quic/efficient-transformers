@@ -96,7 +96,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--qpc-path",
         "--qpc_path",
-        required=True,
+        required=False,
         help="Compiled qpc binaries will be stored under this folder",
     )
     parser.add_argument("--batch_size", "--batch-size", type=int, default=1, help="Batch size for text generation")
