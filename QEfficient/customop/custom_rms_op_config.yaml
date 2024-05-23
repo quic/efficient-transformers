@@ -16,13 +16,13 @@ CustomOps:
     - name: weight
       maxDims: 1
     parameters:
-    - name: eps
+    - name: epsilon
       dataType: float
       scalar: true
     outputs:
     - name: output
       maxDims: 3
-    functionsLibrary: CustomRMSNorm/src/customrmsnorm_lib.so
+    functionsLibrary: CustomRMSNorm/src/libcustomrmsnorm_lib.so
     implementations:
     - backend: AIC
       type: CustomRMSNormAIC

@@ -19,7 +19,7 @@ bool customOpVerify(const CustomOpProperties *const opProp) {
     return false;
   auto &param0 = opProp->params[0];
   // Check params names are valid.
-  if (strcmp(param0.name, "eps"))
+  if (strcmp(param0.name, "epsilon"))
     return false;
   // Op must have only 2 input and 1 output.
   if (opProp->inputs.size() != 2 || opProp->outputs.size() != 1)

@@ -8,13 +8,14 @@
 import os
 import shutil
 
+import onnx
 import transformers
 
 import QEfficient
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.exporter.export_utils import compile_kv_model_on_cloud_ai_100
 from QEfficient.utils import hf_download
-from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
+from QEfficient.utils.constants import QEFF_DIR, QEFF_MODELS_DIR, ROOT_DIR, Constants
 from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
 
@@ -166,6 +167,14 @@ def get_cloud_ai_100_tokens(setup_info):
     device_id = get_available_device_id()
     tests_qpc_dir = os.path.join(setup_info["base_path"], "tests_qpc")
     os.makedirs(tests_qpc_dir, exist_ok=True)
+
+    # Check for Regular CustomOp and Add config argument
+    model = onnx.load(setup_info["onnx_model_path"], load_external_data=False)
+    for node in model.graph.node:
+        if node.op_type == "CustomRMSNorm":
+            custom_rms_op_config_path = os.path.join(QEFF_DIR, "customop", "custom_rms_op_config.yaml")
+            break
+
     if device_id:
         _, test_qpcs_path = compile_kv_model_on_cloud_ai_100(
             onnx_path=setup_info["onnx_model_path"],
@@ -176,6 +185,7 @@ def get_cloud_ai_100_tokens(setup_info):
             custom_io_path=os.path.join(setup_info["base_path"], "custom_io.yaml"),
             aic_enable_depth_first=False,
             device_group=[0],
+            config=custom_rms_op_config_path,
         )
         from QEfficient.generation.cloud_infer import QAICInferenceSession
 
