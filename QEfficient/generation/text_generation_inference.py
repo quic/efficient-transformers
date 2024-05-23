@@ -117,10 +117,19 @@ def latency_stats_bertstyle(
     print(round((cur_len - init_len) / (end - start), 2), "tok/s")
 
 
+<<<<<<< HEAD
 def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
+=======
+def get_compilation_batch_size(qpc_path: str):
+<<<<<<< HEAD
+>>>>>>> 3a7458a (Update infer and execute API to take prompts from txt file for BS>=1 (#11))
     qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
     specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
     logger.info(f"specialization_file_path : {specialization_file_path}")
+=======
+    qpc_base_path = os.path.dirname(qpc_path)
+    specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
+>>>>>>> 22a285a (Update infer and execute API to take prompts from txt file for BS>=1 (#11))
     with open(specialization_file_path, "r") as file:
         data = json.load(file)
     compilation_batch_size = int(data["specializations"][0]["batch_size"])
@@ -128,7 +137,11 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
     return compilation_batch_size, compilation_ctx_len
 
 
+<<<<<<< HEAD
 def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size) -> List[str]:
+=======
+def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size):
+>>>>>>> 22a285a (Update infer and execute API to take prompts from txt file for BS>=1 (#11))
     assert (
         prompt is not None or prompts_txt_file_path is not None
     ), "Please pass atleast one argument either using --prompt or --prompts_txt_file_path"
