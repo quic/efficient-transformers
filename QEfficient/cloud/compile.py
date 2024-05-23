@@ -72,7 +72,9 @@ def main(
     custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)
 
     if not os.path.isfile(custom_io_file_path):
-        raise FileNotFoundError(f"file {custom_io_file_path} needs to exist in the same directory as onnx model files.")
+        raise FileNotFoundError(
+            f"file {custom_io_file_path} needs to exist in the same directory as onnx model files. Please rerun infer/export Api"
+        )
 
     _, qpc_path = compile_kv_model_on_cloud_ai_100(
         onnx_path=onnx_path,
