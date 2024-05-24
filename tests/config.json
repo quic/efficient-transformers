@@ -1,0 +1,19 @@
+{
+    "models": [
+      {
+        "model_name": "gpt2",
+        "model_class": "GPT2LMHeadModel",
+        "n_head": 12,
+        "n_embd": 768,
+        "n_layer": 12
+      },
+      {
+        "model_name": "Salesforce/codegen-350M-mono",
+        "model_class": "CodeGenForCausalLM",
+        "n_head": 16,
+        "n_embd": 1024,
+        "n_layer": 20
+      }
+    ]
+  }
+  
