@@ -8,12 +8,12 @@
 
 import unittest
 import pytest
-import functools
+
 import transformers
 from transformers.models.mixtral.modeling_mixtral import MixtralForCausalLM
 
 from QEfficient.utils.constants import Constants
-from QEfficient.utils.device_utils import get_available_device_id, is_multi_qranium_setup_available
+from QEfficient.utils.device_utils import get_available_device_id
 from tests.utils import get_cloud_ai_100_tokens, set_up, skip_if_mq_not_enabled
 
 

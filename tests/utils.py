@@ -7,7 +7,8 @@
 
 import os
 import shutil
-
+import unittest
+import functools
 import transformers
 
 import QEfficient
@@ -15,7 +16,7 @@ from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_con
 from QEfficient.exporter.export_utils import compile_kv_model_on_cloud_ai_100
 from QEfficient.utils import hf_download
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
-from QEfficient.utils.device_utils import get_available_device_id, is_qpc_size_gt_32gb
+from QEfficient.utils.device_utils import get_available_device_id, is_qpc_size_gt_32gb, is_multi_qranium_setup_available
 from QEfficient.utils.run_utils import ApiRunner
 
 
