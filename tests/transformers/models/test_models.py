@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -23,10 +23,19 @@ def get_config(model_config):
     :param model_config: Dict containing model configuration
     :return model_config - Dict
     """
-    n_heads = model_config["n_head"]
-    d_head = model_config["n_embd"] // n_heads
-    model_config["model_class"] = AutoModelForCausalLM  # eval(model_config["model_class"])
-    model_config["padding_shape"] = [1, n_heads, Constants.CTX_LEN, d_head]
+    n_heads = model_config.get("n_head")
+    if n_heads is not None:  # Assuming n_head is a key in the config
+        d_head = model_config["n_embd"] // n_heads
+        model_config["model_class"] = AutoModelForCausalLM
+        model_config["padding_shape"] = [1, n_heads, Constants.CTX_LEN, d_head]
+    elif model_config.get("num_key_value_heads") is not None:  # Check for num_key_value_heads
+        n_heads = model_config["num_key_value_heads"]
+        d_head = model_config["hidden_size"] // model_config["num_attention_heads"]
+        model_config["model_class"] = AutoModelForCausalLM
+        model_config["padding_shape"] = [1, n_heads, Constants.CTX_LEN, d_head]
+    else:
+        raise ValueError("Invalid model configuration: n_head or num_key_value_heads not found.")
+
     return model_config
 
 

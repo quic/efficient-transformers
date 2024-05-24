@@ -13,6 +13,20 @@
         "n_head": 16,
         "n_embd": 1024,
         "n_layer": 20
+      },
+      {
+        "model_name": "lu-vae/llama-68m-fft",
+        "model_class": "LlamaForCausalLM",
+        "num_key_value_heads": 12,
+        "hidden_size": 768,
+        "num_attention_heads": 12
+      },
+      {
+        "model_name": "Felladrin/Minueza-32M-Base",
+        "model_class": "MistralForCausalLM",
+        "num_key_value_heads": 16,
+        "hidden_size": 1024,
+        "num_attention_heads": 12
       }
     ]
   }
