@@ -19,8 +19,8 @@ from QEfficient.generation.text_generation_inference import (
     check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
 )
-from QEfficient.utils import hf_download
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils import hf_download, onnx_exists, qpc_exists
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
 """
@@ -29,23 +29,6 @@ from QEfficient.utils.logging_utils import logger
 3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
 4. Download HF model -> transform -> export -> compile -> execute
 """
-
-
-def qpc_exists(qpc_dir_path: str) -> bool:
-    """
-    Checks if qpc files already exists, removes the directory if files have been manipulated.
-    ---------
-    :param dir_path: str. Path of qpc directory.
-    :return: bool.
-    """
-    return os.path.isdir(qpc_dir_path) and os.path.isfile(os.path.join(qpc_dir_path, "programqpc.bin"))
-
-
-def onnx_exists(onnx_file_path: str) -> bool:
-    # todo(ochougul): add check for other files like raw input files, input_list.txt
-    return os.path.isfile(onnx_file_path) and os.path.isfile(
-        os.path.join(os.path.dirname(onnx_file_path), "custom_io.yaml")
-    )
 
 
 def main(
@@ -61,24 +44,17 @@ def main(
     prompt_len: int = 32,
     ctx_len: int = 128,
     mxfp6: bool = False,
+    mxint8: bool = False,
     device_group: List[int] = [
         0,
     ],
 ) -> None:
-    # Make
-    model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
-    os.makedirs(model_card_dir, exist_ok=True)
-
     qpc_base_dir_name = (
-        f"qpc_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_"
+        f"qpc_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
         + f"{len(device_group)}"
         + "devices"
-        + ("_mxfp6" if mxfp6 else "_fp16")
+        + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
     )
-    qpc_dir_path = os.path.join(model_card_dir, qpc_base_dir_name, "qpcs")
-
-    onnx_dir_path = os.path.join(model_card_dir, "onnx")
-    onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
 
     prompt = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
 
@@ -88,13 +64,14 @@ def main(
     model_hf_path = hf_download(
         repo_id=model_name,
         cache_dir=cache_dir,
-        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
+        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5"],
     )
     tokenizer = AutoTokenizer.from_pretrained(
         model_hf_path, use_cache=True, padding_side="left", trust_remote_code=True
     )
 
-    if qpc_exists(qpc_dir_path):
+    qpc_path_exists, qpc_dir_path = qpc_exists(model_name, qpc_base_dir_name)
+    if qpc_path_exists:
         # execute
         logger.info("Pre-compiled qpc found! Trying to execute with given prompt")
         cloud_ai_100_exec_kv(
@@ -106,7 +83,8 @@ def main(
         )
         return
 
-    if onnx_exists(onnx_model_path):
+    onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(model_name)
+    if onnx_path_exists:
         # Compile -> execute
         # We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation
         generated_qpc_path = compile(
@@ -117,6 +95,7 @@ def main(
             prompt_len=prompt_len,
             ctx_len=ctx_len,
             mxfp6=mxfp6,
+            mxint8=mxint8,
             aic_enable_depth_first=aic_enable_depth_first,
             mos=mos,
             device_group=device_group,
@@ -152,6 +131,9 @@ def main(
         return_path=True,
         tokenizer=tokenizer,
     )
+    print(
+        f"Generated Onnx_path {generated_onnx_path} and Onnx_model_path {onnx_model_path} and Onnx_dir_path is {onnx_dir_path}"
+    )
     assert (
         generated_onnx_path == onnx_model_path
     ), f"ONNX files were generated at an unusual location, expected {onnx_model_path}, got {generated_onnx_path}"
@@ -167,6 +149,7 @@ def main(
         prompt_len=prompt_len,
         ctx_len=ctx_len,
         mxfp6=mxfp6,
+        mxint8=mxint8,
         aic_enable_depth_first=aic_enable_depth_first,
         mos=mos,
         device_group=device_group,
@@ -208,6 +191,11 @@ if __name__ == "__main__":
     parser.add_argument("--ctx-len", "--ctx_len", default=128, type=int, help="Context length for text generation.")
     parser.add_argument(
         "--mxfp6", action="store_true", help="Compress constant MatMul weights to MXFP6 E2M3, default is no compression"
+    )
+    parser.add_argument(
+        "--mxint8",
+        action="store_true",
+        help="Compress Present/Past KV to MXINT8 using CustomIO config, default is False",
     )
     parser.add_argument(
         "--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100"

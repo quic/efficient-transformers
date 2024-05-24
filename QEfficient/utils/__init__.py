@@ -6,11 +6,13 @@
 # -----------------------------------------------------------------------------
 
 import os
-from typing import List, Optional
+from typing import List, Optional, Tuple, Union
 
 import requests
 from huggingface_hub import snapshot_download
 from requests.exceptions import HTTPError
+
+from QEfficient.utils.constants import QEFF_MODELS_DIR
 
 
 def hf_download(
@@ -55,3 +57,44 @@ def hf_download(
                 raise e
 
     return model_path
+
+
+def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Union[Tuple[bool, str], None]:
+    """
+    Checks if qpc files already exists, removes the directory if files have been manipulated.
+    ---------
+    :param model_name: str. HF Model card name.
+    :param dir_path: str. Path of qpc directory.
+    :return: Union[Tuple[bool, str]]: qpc_exists and path to qpc directory
+    """
+    model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
+    os.makedirs(model_card_dir, exist_ok=True)
+
+    qpc_dir_path = os.path.join(model_card_dir, qpc_base_dir_name, "qpcs")
+
+    # Compute the boolean indicating if the QPC exists
+    qpc_exists_bool = os.path.isdir(qpc_dir_path) and os.path.isfile(os.path.join(qpc_dir_path, "programqpc.bin"))
+
+    return qpc_exists_bool, qpc_dir_path
+
+
+def onnx_exists(model_name: str) -> Union[Tuple[bool, str, str], None]:
+    """
+    Checks if qpc files already exists, removes the directory if files have been manipulated.
+    ---------
+    :param model_name: str. HF Model card name.
+    :return: Union[Tuple[bool, str, str]]: onnx_exists and path to onnx file and directory
+    """
+    model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
+    os.makedirs(model_card_dir, exist_ok=True)
+
+    onnx_dir_path = os.path.join(model_card_dir, "onnx")
+    onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
+
+    # Compute the boolean indicating if the ONNX model exists
+    onnx_exists_bool = os.path.isfile(onnx_model_path) and os.path.isfile(
+        os.path.join(os.path.dirname(onnx_model_path), "custom_io_fp16.yaml")
+    )
+
+    # Return the boolean, onnx_dir_path, and onnx_model_path
+    return onnx_exists_bool, onnx_dir_path, onnx_model_path
