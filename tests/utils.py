@@ -19,6 +19,20 @@ from QEfficient.utils.device_utils import get_available_device_id, is_qpc_size_g
 from QEfficient.utils.run_utils import ApiRunner
 
 
+def skip_if_mq_not_enabled(test_method):
+    """
+    Wrapper function to skip test if MQ setup not enabled
+    """
+
+    @functools.wraps(test_method)
+    def wrapper(self):
+        if self.setup_info["qpc_gt_32gb"] and (not is_multi_qranium_setup_available()):
+            raise unittest.SkipTest("Skip because MQ set up not available")
+
+        return test_method(self)
+
+    return wrapper
+
 def prepare_work_dir(work_dir):
     """
     Function to create the work directory location

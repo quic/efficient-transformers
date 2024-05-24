@@ -14,7 +14,7 @@ from transformers.models.mixtral.modeling_mixtral import MixtralForCausalLM
 
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id, is_multi_qranium_setup_available
-from tests.utils import get_cloud_ai_100_tokens, set_up
+from tests.utils import get_cloud_ai_100_tokens, set_up, skip_if_mq_not_enabled
 
 
 def get_config():
@@ -36,20 +36,6 @@ def get_config():
 
     return model_config
 
-
-def skip_if_mq_not_enabled(test_method):
-    """
-    Wrapper function to skip test if MQ setup not enabled
-    """
-
-    @functools.wraps(test_method)
-    def wrapper(self):
-        if self.setup_info["qpc_gt_32gb"] and (not is_multi_qranium_setup_available()):
-            raise unittest.SkipTest("Skip because MQ set up not available")
-
-        return test_method(self)
-
-    return wrapper
 
 
 class TestQEfficientMixtral(unittest.TestCase):

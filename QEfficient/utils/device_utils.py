@@ -35,8 +35,8 @@ def is_qpc_size_gt_32gb(params: int, mxfp6: bool) -> bool:
     else:
         qpc_size = math.ceil((params * 2) / Constants.GB)
 
-    print(f"Approximate QPC size is: {qpc_size} GB")
-    print("Number of Devices required: ", math.ceil(qpc_size / Constants.MAX_QPC_LIMIT))
+    logger.warning(f"Approximate QPC size is: {qpc_size} GB")
+    logger.warning("Number of Devices required: ", math.ceil(qpc_size / Constants.MAX_QPC_LIMIT))
     return qpc_size > Constants.MAX_QPC_LIMIT
 
 

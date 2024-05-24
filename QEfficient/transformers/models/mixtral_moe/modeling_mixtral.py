@@ -35,25 +35,11 @@ from transformers.models.mixtral.modeling_mixtral import (
     _get_unpad_data,
 )
 from transformers.cache_utils import Cache
-from QEfficient.transformers.customop_utils import RMSNorm
+from QEfficient.customop import CustomRMSNormAIC
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_outputs import QEffMoeModelOutputWithPast, QEffMoeCausalLMOutputWithPast
 from QEfficient.transformers.modeling_attn_mask_utils import _qeff_prepare_4d_causal_attention_mask
 
-
-
-# Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Mixtral
-class QEffRMSNorm(MixtralRMSNorm):
-    def __init__(self, hidden_size, eps=1e-6):
-        """
-        MixtralRMSNorm is equivalent to T5LayerNorm
-        """
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
-
-    def forward(self, hidden_states):
-        return RMSNorm.apply(hidden_states, self.weight, self.variance_epsilon)
 
 
 # Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding with Llama->Mixtral
@@ -268,8 +254,8 @@ class QEffMixtralDecoderLayer(MixtralDecoderLayer):
         self.self_attn = MIXTRAL_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx)
 
         self.block_sparse_moe = QEffMixtralSparseMoeBlock(config)
-        self.input_layernorm = QEffRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = QEffRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = CustomRMSNormAIC(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = CustomRMSNormAIC(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
         self,
@@ -359,7 +345,7 @@ class QEffMixtralModel(MixtralModel):
             [QEffMixtralDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
-        self.norm = QEffRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = CustomRMSNormAIC(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing

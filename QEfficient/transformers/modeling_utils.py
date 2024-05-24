@@ -144,7 +144,7 @@ TransformersToQEffModulesDict = {
     MixtralDecoderLayer: QEffMixtralDecoderLayer,
     MixtralForCausalLM: QEffMixtralForCausalLM,
     MixtralRotaryEmbedding: QEffMixtralRotaryEmbedding,
-    MixtralRMSNorm: QEffRMSNorm,
+    MixtralRMSNorm: CustomRMSNormAIC,
     MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
     MixtralBLockSparseTop2MLP: QEffMixtralBLockSparseTop2MLP
 }
