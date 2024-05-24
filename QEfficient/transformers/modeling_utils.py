@@ -33,6 +33,7 @@ from transformers.models.mistral.modeling_mistral import (
     MistralRotaryEmbedding,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
+from transformers.models.qwen2.modeling_qwen2 import Qwen2Attention, Qwen2DecoderLayer, Qwen2ForCausalLM, Qwen2Model
 
 from QEfficient.customop import CustomRMSNormAIC
 from QEfficient.utils.logging_utils import logger
@@ -69,6 +70,7 @@ from .models.mistral.modeling_mistral import (
     QEffMistralRotaryEmbedding,
 )
 from .models.mpt.modeling_mpt import QEffMptAttention, QEffMptBlock, QEffMptForCausalLM, QEFfMptModel
+from .models.qwen2.modeling_qwen2 import QEffQwen2Attention, QEffQwen2DecoderLayer, QEffQwen2ForCausalLM, QEffQwen2Model
 
 # Define a named tuple for ModelArchitectures
 # Required for the Automation tool
@@ -81,6 +83,7 @@ my_architectures = ModelArchitectures(
         CodeGenForCausalLM.__name__,
         LlamaForCausalLM.__name__,
         MistralForCausalLM.__name__,
+        Qwen2ForCausalLM.__name__,
     ]
 )
 
@@ -115,6 +118,11 @@ TransformersToQEffModulesDict = {
     MistralForCausalLM: QEffMistralForCausalLM,
     MistralRotaryEmbedding: QEffMistralRotaryEmbedding,
     MistralRMSNorm: CustomRMSNormAIC,
+    # Qwen2 model layers
+    Qwen2Attention: QEffQwen2Attention,
+    Qwen2DecoderLayer: QEffQwen2DecoderLayer,
+    Qwen2ForCausalLM: QEffQwen2ForCausalLM,
+    Qwen2Model: QEffQwen2Model,
 }
 
 
@@ -159,13 +167,12 @@ def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
     Returns:
     torch.nn.Module: PyTorch Module with replaced QEff layers.
     """
-    
+
     # Introducnig qeff_transformed attribue in model to check status of transform
     if getattr(model, "qeff_transformed", False):
         print("Model is already transformed")
         return model
 
-    
     if form_factor == "cloud":
         # Get Hash of all params for checking later
         prior_params_hash = get_params_hash(model)
@@ -192,7 +199,7 @@ def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
         transformers.modeling_attn_mask_utils._prepare_4d_attention_mask = _qeff_prepare_4d_attention_mask
         transformers.modeling_attn_mask_utils._prepare_4d_causal_attention_mask = _qeff_prepare_4d_causal_attention_mask
 
-        setattr(model,'qeff_transformed',True)
+        setattr(model, "qeff_transformed", True)
         return model.eval()
 
     elif form_factor == "edge":
