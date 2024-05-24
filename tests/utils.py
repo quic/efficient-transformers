@@ -173,7 +173,7 @@ def get_cloud_ai_100_tokens(setup_info):
             num_cores=14,
             base_path=tests_qpc_dir,
             mxfp6=False,
-            custom_io_path=os.path.join(setup_info["base_path"], "custom_io.yaml"),
+            custom_io_path=os.path.join(setup_info["base_path"], "custom_io_fp16.yaml"),
             aic_enable_depth_first=False,
             device_group=[0],
         )
