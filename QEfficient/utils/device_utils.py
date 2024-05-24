@@ -7,6 +7,7 @@
 
 import subprocess
 import math
+from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.constants import Constants
 
 def get_available_device_id():
