@@ -35,45 +35,15 @@ from transformers.models.mixtral.modeling_mixtral import (
     _get_unpad_data,
 )
 from transformers.cache_utils import Cache
+from QEfficient.transformers.customop_utils import RMSNorm
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_outputs import QEffMoeModelOutputWithPast, QEffMoeCausalLMOutputWithPast
 from QEfficient.transformers.modeling_attn_mask_utils import _qeff_prepare_4d_causal_attention_mask
 
 
-custom_opset = onnxscript.values.Opset("com.qti.aisw.onnx", 1)
-ops = onnxscript.opset13
-
-@onnxscript.script(custom_opset)
-def CustomRMSNorm(hidden_states: onnxscript.FLOAT, weight: onnxscript.FLOAT, epsilon: float):
-    variance = ops.ReduceMean(ops.Pow(hidden_states, 2), axes=[-1], keepdims=1)
-    epsilon = ops.Expand(epsilon, ops.Shape(variance))
-    hidden_states = hidden_states * ops.Reciprocal(ops.Sqrt(variance + epsilon))
-    return weight * hidden_states
-
-
-class RMSNorm(torch.autograd.Function):
-    @staticmethod
-    def forward(hidden_states: torch.Tensor, weight: torch.Tensor, epsilon: float):
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + epsilon)
-        return weight * hidden_states
-
-    @staticmethod
-    def setup_context(ctx, inputs, outputs):
-        pass
-
-    @staticmethod
-    def symbolic(
-        g: torch.onnx._internal.jit_utils.GraphContext,
-        hidden_states: torch.Value,
-        weight: torch.Value,
-        epsilon: torch.Value,
-    ) -> torch.Value:
-        return g.onnxscript_op(CustomRMSNorm, hidden_states, weight, epsilon_f=epsilon).setTypeAs(hidden_states)
-
 
 # Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Mixtral
-class QEffMixtralRMSNorm(MixtralRMSNorm):
+class QEffRMSNorm(MixtralRMSNorm):
     def __init__(self, hidden_size, eps=1e-6):
         """
         MixtralRMSNorm is equivalent to T5LayerNorm
@@ -298,8 +268,8 @@ class QEffMixtralDecoderLayer(MixtralDecoderLayer):
         self.self_attn = MIXTRAL_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx)
 
         self.block_sparse_moe = QEffMixtralSparseMoeBlock(config)
-        self.input_layernorm = QEffMixtralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = QEffMixtralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = QEffRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = QEffRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
         self,
@@ -389,7 +359,7 @@ class QEffMixtralModel(MixtralModel):
             [QEffMixtralDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
-        self.norm = QEffMixtralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = QEffRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing

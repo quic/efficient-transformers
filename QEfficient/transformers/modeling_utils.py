@@ -86,7 +86,7 @@ from .models.mixtral_moe.modeling_mixtral import (
     QEffMixtralAttention,
     QEffMixtralForCausalLM,
     QEffMixtralDecoderLayer,
-    QEffMixtralRMSNorm,
+    QEffRMSNorm,
     QEffMixtralSparseMoeBlock,
     QEffMixtralBLockSparseTop2MLP,
 )
@@ -144,7 +144,7 @@ TransformersToQEffModulesDict = {
     MixtralDecoderLayer: QEffMixtralDecoderLayer,
     MixtralForCausalLM: QEffMixtralForCausalLM,
     MixtralRotaryEmbedding: QEffMixtralRotaryEmbedding,
-    MixtralRMSNorm: QEffMixtralRMSNorm,
+    MixtralRMSNorm: QEffRMSNorm,
     MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
     MixtralBLockSparseTop2MLP: QEffMixtralBLockSparseTop2MLP
 }
