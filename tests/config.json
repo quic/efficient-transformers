@@ -15,7 +15,7 @@
         "n_layer": 20
       },
       {
-        "model_name": "lu-vae/llama-68m-fft",
+        "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
         "model_class": "LlamaForCausalLM",
         "num_key_value_heads": 12,
         "num_attention_heads": 12,
