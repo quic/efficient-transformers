@@ -23,14 +23,6 @@
       "n_layer": 20
     },
     {
-      "model_name": "Felladrin/Minueza-32M-Base",
-      "model_class": "MistralForCausalLM",
-      "num_key_value_heads": 4,
-      "num_attention_heads": 12,
-      "hidden_size": 312,
-      "n_layer": 10
-    },
-    {
       "model_name": "wtang06/mpt-125m-c4",
       "model_class": "MPTForCausalLM",
       "n_heads": 8,
