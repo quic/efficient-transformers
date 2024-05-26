@@ -18,15 +18,24 @@
         "model_name": "lu-vae/llama-68m-fft",
         "model_class": "LlamaForCausalLM",
         "num_key_value_heads": 12,
+        "num_attention_heads": 12,
         "hidden_size": 768,
-        "num_attention_heads": 12
+        "n_layer": 2
       },
       {
         "model_name": "Felladrin/Minueza-32M-Base",
         "model_class": "MistralForCausalLM",
-        "num_key_value_heads": 16,
-        "hidden_size": 1024,
-        "num_attention_heads": 12
+        "num_key_value_heads": 4,
+        "num_attention_heads": 12,
+        "hidden_size": 312,
+        "n_layer": 10
+      },
+      {
+        "model_name": "wtang06/mpt-125m-c4",
+        "model_class": "MPTForCausalLM",
+        "n_heads": 8,
+        "d_model": 768,
+        "n_layer": 12
       }
     ]
   }

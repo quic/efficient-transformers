@@ -24,17 +24,22 @@ def get_config(model_config):
     :return model_config - Dict
     """
     n_heads = model_config.get("n_head")
-    if n_heads is not None:  # Assuming n_head is a key in the config
+    if n_heads is not None:  # Assuming n_head is a key in the config (GPTs/CodeGen)
         d_head = model_config["n_embd"] // n_heads
         model_config["model_class"] = AutoModelForCausalLM
         model_config["padding_shape"] = [1, n_heads, Constants.CTX_LEN, d_head]
-    elif model_config.get("num_key_value_heads") is not None:  # Check for num_key_value_heads
+    elif model_config.get("num_key_value_heads") is not None:  # Check for num_key_value_heads (Llama/Mistral)
         n_heads = model_config["num_key_value_heads"]
         d_head = model_config["hidden_size"] // model_config["num_attention_heads"]
         model_config["model_class"] = AutoModelForCausalLM
         model_config["padding_shape"] = [1, n_heads, Constants.CTX_LEN, d_head]
+    elif model_config.get("n_heads") is not None:  # Check for n_heads and d_model in the config (MPT Model)
+        n_heads = model_config["n_heads"]
+        d_head = model_config["d_model"] // n_heads
+        model_config["model_class"] = AutoModelForCausalLM
+        model_config["padding_shape"] = [1, n_heads, Constants.CTX_LEN, d_head]
     else:
-        raise ValueError("Invalid model configuration: n_head or num_key_value_heads not found.")
+        raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
 
     return model_config
 
@@ -61,7 +66,7 @@ class TestQEfficientModels(unittest.TestCase):
         for setup_info in self.setup_infos:
             assert (
                 setup_info["pytorch_hf_tokens"] == setup_info["pytorch_kv_tokens"]
-            ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output."
+            ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
     def test_qefficient_model_onnx(self):
         """
