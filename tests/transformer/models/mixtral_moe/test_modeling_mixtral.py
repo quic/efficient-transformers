@@ -25,7 +25,7 @@ def get_config():
     """
 
     model_config = {}
-    model_config["model_name"] = "Open-Orca/Mixtral-SlimOrca-8x7B"
+    model_config["model_name"] = "mistralai/Mixtral-8x7B-Instruct-v0.1"
     config = transformers.AutoConfig.from_pretrained(model_config["model_name"])
     config._attn_implementation = "eager"
     n_heads = config.num_attention_heads
