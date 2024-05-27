@@ -6,6 +6,8 @@
 # -----------------------------------------------------------------------------
 
 import torch.nn as nn
+
+from QEfficient.loader import QEFFAutoModel  # noqa: F401
 from QEfficient.transformers.modeling_utils import transform as transform_hf
 
 

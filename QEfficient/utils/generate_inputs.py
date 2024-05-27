@@ -5,10 +5,42 @@
 #
 # -----------------------------------------------------------------------------
 
+from abc import ABC, abstractmethod
 import numpy as np
 import torch
 
 from QEfficient.utils.logging_utils import logger
+
+
+class AwesomeInputHandler(ABC):
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.counter = 0
+
+    def reset(self):
+        self.counter = 0
+
+    def prepare_inputs(self, prompt, n_layer, padding_shape):
+        if self.counter!=0:
+            logger.warning("Resetting Input Handler as prepare_inputs is called even though it's in the middle of generating outputs")
+            self.reset()
+    
+        self._prepare_inputs(prompt, n_layer, padding_shape)
+        self.counter+=1
+
+    def update_inputs(self, outputs):
+        self._update_inputs(outputs)
+        self.counter+=1
+
+    @abstractmethod
+    def _prepare_inputs(self, prompt, n_layer, padding_shape):
+        pass
+
+    @abstractmethod
+    def _update_inputs(self, outputs):
+        pass
+
 
 
 class InputHandler:

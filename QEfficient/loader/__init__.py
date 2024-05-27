@@ -5,9 +5,4 @@
 #
 # -----------------------------------------------------------------------------
 
-from QEfficient.utils.utils import (  # noqa: F401
-    hf_download,
-    login_and_download_hf_lm,
-    onnx_exists,
-    qpc_exists,
-)
+from QEfficient.loader.loader import QEFFAutoModel  # noqa: F401
