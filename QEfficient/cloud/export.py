@@ -7,13 +7,12 @@
 
 import argparse
 import os
-
-from huggingface_hub import login
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from typing import Optional
 
 import QEfficient
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.utils import hf_download, onnx_exists
+from QEfficient.loader import QEFFAutoModel
+from QEfficient.utils import load_hf_tokenizer, onnx_exists
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
@@ -24,7 +23,7 @@ ROOT_DIR = os.path.dirname(os.path.abspath(""))
 def main(
     model_name: str,
     cache_dir: str,
-    hf_token: str = None,
+    hf_token: Optional[str] = None,
 ) -> None:
     """
     Api() for exporting to Onnx Model.
@@ -38,32 +37,23 @@ def main(
         logger.warning(f"Generated Onnx files found {onnx_model_path}! Please use Infer/Compile Apis()")
         return
 
-    if hf_token is not None:
-        login(hf_token)
-    model_hf_path = hf_download(
-        repo_id=model_name,
-        cache_dir=cache_dir,
-        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5"],
-    )
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_hf_path, use_cache=True, padding_side="left", trust_remote_code=True
-    )
-    model = AutoModelForCausalLM.from_pretrained(model_hf_path, use_cache=True)
+    tokenizer = load_hf_tokenizer(model_name=model_name, cache_dir=cache_dir, hf_token=hf_token)
+    qeff_model = QEFFAutoModel.from_pretrained(pretrained_model_name_or_path=model_name, cache_dir=cache_dir, hf_token=hf_token)
 
     # Easy and minimal api to update the model to QEff.
-    QEfficient.transform(model, type="Transformers", form_factor="cloud")
-    print(f"Model after Optimized transformations {model}")
+    QEfficient.transform(qeff_model, form_factor="cloud")
+    print(f"Model after Optimized transformations {qeff_model}")
 
     # Export to the Onnx
     print(f"Exporting to Pytorch {model_name} to Onnx")
     base_path, onnx_path = qualcomm_efficient_converter(
-        model_kv=model,
+        model_kv=qeff_model,
         model_name=model_name,
         tokenizer=tokenizer,
         kv=True,
         form_factor="cloud",
         return_path=True,
-    )
+    ) # type: ignore
     print(f"Base Path is {base_path} and Onnx Model Path is : {onnx_path}")
 
 

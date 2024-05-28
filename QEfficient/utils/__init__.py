@@ -7,6 +7,7 @@
 
 from QEfficient.utils.utils import (  # noqa: F401
     hf_download,
+    load_hf_tokenizer,
     login_and_download_hf_lm,
     onnx_exists,
     qpc_exists,

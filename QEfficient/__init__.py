@@ -5,18 +5,21 @@
 #
 # -----------------------------------------------------------------------------
 
-import torch.nn as nn
+from typing import Any, Union
 
 from QEfficient.loader import QEFFAutoModel  # noqa: F401
+from QEfficient.loader.loader_factory import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFAutoModelForCausalLM
 from QEfficient.transformers.modeling_utils import transform as transform_hf
 
 
-def transform(model: nn.Module, type="Transformers", form_factor="cloud"):
+def transform(model: Union[QEFFAutoModelForCausalLM, Any], form_factor="cloud"):
     """Low level apis in library
     model : instance of nn.Module
     type : Transformers | Diffusers, default : Transformers
     """
-    if type == "Transformers":
-        return transform_hf(model, form_factor)
+    assert form_factor == "cloud", "Only form_factor='cloud' is supported as of now!"
+    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(model.__class__, None) == QEFF_MODEL_TYPE.LLM:
+        transform_hf(model.model, form_factor)
+        return model
     else:
-        raise NotImplementedError
+        raise NotImplementedError(f"Recieved unsupported class of type {type(model)}")

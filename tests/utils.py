@@ -15,6 +15,9 @@ import transformers
 import QEfficient
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.exporter.export_utils import compile_kv_model_on_cloud_ai_100
+from QEfficient.loader.loader_factory import QEFFAutoModelForCausalLM
+import QEfficient.transformers
+import QEfficient.transformers.modeling_utils
 from QEfficient.utils import hf_download
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
 from QEfficient.utils.device_utils import get_available_device_id, is_multi_qranium_setup_available, is_qpc_size_gt_32gb
@@ -98,7 +101,7 @@ def transform_pt_model_with_qeff(model_hf):
     :param model_hf: pytorch model
     :return model_kv
     """
-    model_kv = QEfficient.transform(model_hf, type="Transformers", form_factor="cloud")
+    model_kv = QEfficient.transformers.modeling_utils.transform(model_hf, form_factor="cloud")
     model_kv.eval()
     return model_kv
 
@@ -113,8 +116,7 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
     onnx_dir_path = os.path.join(QEFF_MODELS_DIR, model_name)
     base_path, onnx_model_path = qualcomm_efficient_converter(
         model_name=model_name,
-        model_class=model_class,
-        model_kv=model_kv,
+        model_kv=QEFFAutoModelForCausalLM(model=model_kv, pretrained_model_name_or_path=None), # type: ignore
         tokenizer=tokenizer,
         onnx_dir_path=onnx_dir_path,
         kv=True,
