@@ -24,3 +24,6 @@ class Constants:
     INPUT_STRING = ["My name is"]
 
     CACHE_DIR = os.path.join(ROOT_DIR, "cache_dir")
+    
+    GB = 2**30
+    MAX_QPC_LIMIT = 30
