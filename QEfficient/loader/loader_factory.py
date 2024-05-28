@@ -8,7 +8,7 @@
 import os
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Dict, Union
+from typing import Any
 
 import torch.nn as nn
 from transformers import AutoConfig, AutoModelForCausalLM
