@@ -51,7 +51,7 @@ For other models, there is comprehensive documentation to inspire upon the chang
 * [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1)
 
 ## Models Coming Soon
-* 
+ 
 * [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) 
 * [Starcoder2-15b](https://huggingface.co/bigcode/starcoder2-15b) 
 * [Phi-3](https://huggingface.co/microsoft/Phi-3-mini-128k-instruct)
