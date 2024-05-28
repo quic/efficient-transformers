@@ -113,14 +113,14 @@ In summary:
 | QEfficient.cloud.infer           |   [click here](#1-use-qefficientcloudinfer)         |  <li>model_name : $\color{green} {Mandatory}$</li> <li>num_cores : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>batch_size : Optional [Default-1]</li> <li>prompt_len : Optional [Default-32]</li> <li>ctx_len : Optional [Default-128]</li><li>mxfp6 : Optional </li> <li>mxint8 : Optional </li><li>hf_token : Optional </li><li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li>|
 | QEfficient.cloud.execute  |     [click here](#2-use-of-qefficientcloudexcute)       |   <li>model_name : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li><li>prompt : Optional [Default-"My name is"]</li> <li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>hf_token : Optional </li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li> |
 
-**One argument, prompt or prompts_txt_file_path must be passed.
+**One argument, prompt or prompts_txt_file_path must be passed.**
 
 ### 1. Use QEfficient.cloud.infer 
 
 This is the single e2e python api in the library, which takes model_card name as input along with other compile args if necessary and does everything in one go. 
 
 * Torch Download → Optimize for Cloud AI 100 → Export to ONNX → Verify (CPU) → Compile on Cloud AI 100 → [Execute](#2-use-of-qefficientcloudexecute)
-* Its skips the ONNX export/compile stage if ONNX file or qpc found on path
+* It skips the ONNX export/compile stage if ONNX file or qpc found on path
 
 
 ```bash
