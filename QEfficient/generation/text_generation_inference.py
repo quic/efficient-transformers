@@ -98,11 +98,9 @@ def latency_stats_bertstyle(
 
 
 def get_compilation_batch_size(qpc_path: str):
-    if qpc_path.endswith("/"):
-        logger.warning("Removing the slash('/')from given qpc path and looking for specializations.json in parent folder")
-        qpc_path = qpc_path.rstrip("/")
-    qpc_base_path = os.path.dirname(qpc_path)
+    qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
     specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
+    logger.info(f"specialization_file_path : {specialization_file_path}")
     with open(specialization_file_path, "r") as file:
         data = json.load(file)
     compilation_batch_size = int(data["specializations"][0]["batch_size"])
