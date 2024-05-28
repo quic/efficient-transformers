@@ -34,7 +34,6 @@ def skip_if_mq_not_enabled(test_method):
 
     return wrapper
 
-
 def prepare_work_dir(work_dir):
     """
     Function to create the work directory location
