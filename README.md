@@ -11,7 +11,8 @@
 
 *Latest news* :fire: <br>
 
-- [coming soon] support for more popular [models](#models-coming-soon) and inference optimization techniques like continuous batching and speculative decoding <br>
+- [coming soon] Support for more popular [models](#models-coming-soon) and inference optimization techniques like continuous batching and speculative decoding <br>
+- [05/2024] Added support for model [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1).
 - [04/2024] Initial release of [efficient transformers](https://github.com/quic/efficient-transformers) for seamless inference on pre-trained LLMs.
 
 ## Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain
@@ -37,7 +38,6 @@ For other models, there is comprehensive documentation to inspire upon the chang
 
 ## Validated Models
 
-
 * [GPT2](https://huggingface.co/openai-community/gpt2)
 * [Llama-2-7b-chat-hf](https://huggingface.co/meta-llama/Llama-2-7b-chat-hf)
 * [Llama-2-13b-chat-hf](https://huggingface.co/meta-llama/Llama-2-13b-chat-hf)
@@ -48,10 +48,10 @@ For other models, there is comprehensive documentation to inspire upon the chang
 * [Salesforce/xgen-7b-8k-base](https://huggingface.co/Salesforce/xgen-7b-8k-base)
 * [MPT-7b](https://huggingface.co/mosaicml/mpt-7b)
 * [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1)
+* [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1)
 
-
-**Models Coming Soon..**
-* [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-Instruct-v0.1)
+## Models Coming Soon
+* 
 * [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) 
 * [Starcoder2-15b](https://huggingface.co/bigcode/starcoder2-15b) 
 * [Phi-3](https://huggingface.co/microsoft/Phi-3-mini-128k-instruct)
