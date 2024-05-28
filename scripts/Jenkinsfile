@@ -50,7 +50,7 @@ pipeline
                 steps
                 {
                     //todo(ochougul): Increase when MQ tests are enabled 
-		    timeout(time: 60, unit: 'MINUTES') {
+		    timeout(time: 420, unit: 'MINUTES') {
                     sh '''
                     . preflight_qeff/bin/activate
                     export TOKENIZERS_PARALLELISM=false

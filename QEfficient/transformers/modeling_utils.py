@@ -32,6 +32,16 @@ from transformers.models.mistral.modeling_mistral import (
     MistralRMSNorm,
     MistralRotaryEmbedding,
 )
+from transformers.models.mixtral.modeling_mixtral import (
+    MixtralAttention,
+    MixtralForCausalLM,
+    MixtralModel,
+    MixtralDecoderLayer,
+    MixtralSparseMoeBlock,
+    MixtralBLockSparseTop2MLP,
+    MixtralRotaryEmbedding,
+    MixtralRMSNorm,
+)
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 
 from QEfficient.customop import CustomRMSNormAIC
@@ -47,6 +57,8 @@ from .modeling_outputs import (
     QEffBaseModelOutputWithPastAndCrossAttentions,
     QEffCausalLMOutputWithCrossAttentions,
     QEffCausalLMOutputWithPast,
+    QEffMoeCausalLMOutputWithPast,
+    QEffMoeModelOutputWithPast,
 )
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
@@ -68,6 +80,15 @@ from .models.mistral.modeling_mistral import (
     QEffMistralModel,
     QEffMistralRotaryEmbedding,
 )
+from .models.mixtral_moe.modeling_mixtral import (
+    QEffMixtralModel,
+    QEffMixtralRotaryEmbedding,
+    QEffMixtralAttention,
+    QEffMixtralForCausalLM,
+    QEffMixtralDecoderLayer,
+    QEffMixtralSparseMoeBlock,
+    QEffMixtralBLockSparseTop2MLP,
+)
 from .models.mpt.modeling_mpt import QEffMptAttention, QEffMptBlock, QEffMptForCausalLM, QEFfMptModel
 
 # Define a named tuple for ModelArchitectures
@@ -81,6 +102,7 @@ my_architectures = ModelArchitectures(
         CodeGenForCausalLM.__name__,
         LlamaForCausalLM.__name__,
         MistralForCausalLM.__name__,
+        MixtralForCausalLM.__name__,
     ]
 )
 
@@ -115,6 +137,15 @@ TransformersToQEffModulesDict = {
     MistralForCausalLM: QEffMistralForCausalLM,
     MistralRotaryEmbedding: QEffMistralRotaryEmbedding,
     MistralRMSNorm: CustomRMSNormAIC,
+    # Mixtral model layers
+    MixtralAttention: QEffMixtralAttention,
+    MixtralModel: QEffMixtralModel,
+    MixtralDecoderLayer: QEffMixtralDecoderLayer,
+    MixtralForCausalLM: QEffMixtralForCausalLM,
+    MixtralRotaryEmbedding: QEffMixtralRotaryEmbedding,
+    MixtralRMSNorm: CustomRMSNormAIC,
+    MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
+    MixtralBLockSparseTop2MLP:QEffMixtralBLockSparseTop2MLP,
 }
 
 
@@ -186,6 +217,8 @@ def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
         transformers.modeling_outputs.CausalLMOutputWithCrossAttentions = QEffCausalLMOutputWithCrossAttentions
         transformers.modeling_outputs.BaseModelOutputWithPast = QEffBaseModelOutputWithPast
         transformers.modeling_outputs.CausalLMOutputWithPast = QEffCausalLMOutputWithPast
+        transformers.modeling_outputs.MoeCausalLMOutputWithPast = QEffMoeCausalLMOutputWithPast
+        transformers.modeling_outputs.MoeModelOutputWithPast = QEffMoeModelOutputWithPast
 
         # Replace the modeling attn util classes and functions
         transformers.modeling_attn_mask_utils.AttentionMaskConverter = QEffAttentionMaskConverter
