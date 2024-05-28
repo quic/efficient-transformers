@@ -15,6 +15,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 
 import QEfficient
+from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
 
 
 class QEFFBaseAutoModelFactory(ABC):
@@ -47,7 +48,8 @@ class QEFFBaseAutoModelFactory(ABC):
 
 class QEFFAutoModelForCausalLM(QEFFBaseAutoModelFactory):
     def __init__(self, model: nn.Module, pretrained_model_name_or_path: str) -> None:
-        assert model.__class__ in MODEL_FOR_CAUSAL_LM_MAPPING.values(), f"Given model{model.__class__.__name__} could not be found in transformers library i.e. {MODEL_FOR_CAUSAL_LM_MAPPING.values()}" # type: ignore
+        assert (model.__class__ in MODEL_FOR_CAUSAL_LM_MAPPING.values() or
+                model.__class__ in TransformersToQEffModulesDict.values()), f"Given model{model.__class__.__name__} could not be found in transformers library i.e. {MODEL_FOR_CAUSAL_LM_MAPPING.values()}" # type: ignore
         self.model: nn.Module = model
         self.model_files_path = pretrained_model_name_or_path
 
