@@ -16,6 +16,13 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
+from transformers.models.falcon.modeling_falcon import (
+    FalconAttention,
+    FalconDecoderLayer,
+    FalconForCausalLM,
+    FalconModel,
+    FalconRotaryEmbedding,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
@@ -34,13 +41,13 @@ from transformers.models.mistral.modeling_mistral import (
 )
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
+    MixtralBLockSparseTop2MLP,
+    MixtralDecoderLayer,
     MixtralForCausalLM,
     MixtralModel,
-    MixtralDecoderLayer,
-    MixtralSparseMoeBlock,
-    MixtralBLockSparseTop2MLP,
-    MixtralRotaryEmbedding,
     MixtralRMSNorm,
+    MixtralRotaryEmbedding,
+    MixtralSparseMoeBlock,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 
@@ -66,6 +73,13 @@ from .models.codegen.modeling_codegen import (
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
+from .models.falcon.modeling_falcon import (
+    QEffFalconAttention,
+    QEffFalconDecoderLayer,
+    QEffFalconForCausalLM,
+    QEffFalconModel,
+    QEffFalconRotaryEmbedding,
+)
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
 from .models.llama.modeling_llama import (
     QEffLlamaAttention,
@@ -81,13 +95,13 @@ from .models.mistral.modeling_mistral import (
     QEffMistralRotaryEmbedding,
 )
 from .models.mixtral_moe.modeling_mixtral import (
+    QEffMixtralAttention,
+    QEffMixtralBLockSparseTop2MLP,
+    QEffMixtralDecoderLayer,
+    QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralRotaryEmbedding,
-    QEffMixtralAttention,
-    QEffMixtralForCausalLM,
-    QEffMixtralDecoderLayer,
     QEffMixtralSparseMoeBlock,
-    QEffMixtralBLockSparseTop2MLP,
 )
 from .models.mpt.modeling_mpt import QEffMptAttention, QEffMptBlock, QEffMptForCausalLM, QEFfMptModel
 
@@ -103,6 +117,7 @@ my_architectures = ModelArchitectures(
         LlamaForCausalLM.__name__,
         MistralForCausalLM.__name__,
         MixtralForCausalLM.__name__,
+        FalconForCausalLM.__name__,
     ]
 )
 
@@ -145,7 +160,13 @@ TransformersToQEffModulesDict = {
     MixtralRotaryEmbedding: QEffMixtralRotaryEmbedding,
     MixtralRMSNorm: CustomRMSNormAIC,
     MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
-    MixtralBLockSparseTop2MLP:QEffMixtralBLockSparseTop2MLP,
+    MixtralBLockSparseTop2MLP: QEffMixtralBLockSparseTop2MLP,
+    # Falcon model layers
+    FalconAttention: QEffFalconAttention,
+    FalconDecoderLayer: QEffFalconDecoderLayer,
+    FalconForCausalLM: QEffFalconForCausalLM,
+    FalconModel: QEffFalconModel,
+    FalconRotaryEmbedding: QEffFalconRotaryEmbedding,
 }
 
 
@@ -190,13 +211,12 @@ def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
     Returns:
     torch.nn.Module: PyTorch Module with replaced QEff layers.
     """
-    
+
     # Introducnig qeff_transformed attribue in model to check status of transform
     if getattr(model, "qeff_transformed", False):
         print("Model is already transformed")
         return model
 
-    
     if form_factor == "cloud":
         # Get Hash of all params for checking later
         prior_params_hash = get_params_hash(model)
@@ -225,7 +245,7 @@ def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
         transformers.modeling_attn_mask_utils._prepare_4d_attention_mask = _qeff_prepare_4d_attention_mask
         transformers.modeling_attn_mask_utils._prepare_4d_causal_attention_mask = _qeff_prepare_4d_causal_attention_mask
 
-        setattr(model,'qeff_transformed',True)
+        setattr(model, "qeff_transformed", True)
         return model.eval()
 
     elif form_factor == "edge":
