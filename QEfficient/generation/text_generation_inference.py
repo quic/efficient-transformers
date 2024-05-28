@@ -98,7 +98,7 @@ def latency_stats_bertstyle(
 
 
 def get_compilation_batch_size(qpc_path: str):
-    qpc_base_path = os.path.dirname(qpc_path)
+    qpc_base_path = os.path.dirname(qpc_path.rstrip("/"))
     specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
     with open(specialization_file_path, "r") as file:
         data = json.load(file)
