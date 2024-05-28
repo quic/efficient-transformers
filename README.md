@@ -12,7 +12,7 @@
 *Latest news* :fire: <br>
 
 - [coming soon] Support for more popular [models](#models-coming-soon) and inference optimization techniques like continuous batching and speculative decoding <br>
-- [05/2024] Added support for model [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1).
+- [05/2024] Added support for [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1).
 - [04/2024] Initial release of [efficient transformers](https://github.com/quic/efficient-transformers) for seamless inference on pre-trained LLMs.
 
 ## Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain
