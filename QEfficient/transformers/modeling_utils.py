@@ -41,13 +41,13 @@ from transformers.models.mistral.modeling_mistral import (
 )
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
+    MixtralBLockSparseTop2MLP,
+    MixtralDecoderLayer,
     MixtralForCausalLM,
     MixtralModel,
-    MixtralDecoderLayer,
-    MixtralSparseMoeBlock,
-    MixtralBLockSparseTop2MLP,
-    MixtralRotaryEmbedding,
     MixtralRMSNorm,
+    MixtralRotaryEmbedding,
+    MixtralSparseMoeBlock,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 
@@ -95,13 +95,13 @@ from .models.mistral.modeling_mistral import (
     QEffMistralRotaryEmbedding,
 )
 from .models.mixtral_moe.modeling_mixtral import (
+    QEffMixtralAttention,
+    QEffMixtralBLockSparseTop2MLP,
+    QEffMixtralDecoderLayer,
+    QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralRotaryEmbedding,
-    QEffMixtralAttention,
-    QEffMixtralForCausalLM,
-    QEffMixtralDecoderLayer,
     QEffMixtralSparseMoeBlock,
-    QEffMixtralBLockSparseTop2MLP,
 )
 from .models.mpt.modeling_mpt import QEffMptAttention, QEffMptBlock, QEffMptForCausalLM, QEFfMptModel
 
@@ -159,7 +159,7 @@ TransformersToQEffModulesDict = {
     MixtralRotaryEmbedding: QEffMixtralRotaryEmbedding,
     MixtralRMSNorm: CustomRMSNormAIC,
     MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
-    MixtralBLockSparseTop2MLP:QEffMixtralBLockSparseTop2MLP,
+    MixtralBLockSparseTop2MLP: QEffMixtralBLockSparseTop2MLP,
     # Falcon model layers
     FalconAttention: QEffFalconAttention,
     FalconDecoderLayer: QEffFalconDecoderLayer,

@@ -41,7 +41,7 @@ def get_config(model_config):
     elif hasattr(config, "multi_query"):  # Check for Falcon
         multi_query_value = getattr(config, "multi_query")
         if multi_query_value:
-            n_heads = 1  # MQA
+            n_heads = 1  # MQA # Falcon only
             d_head = config.hidden_size // config.num_attention_heads
             n_layer = 1  # Due to multi query
     else:
