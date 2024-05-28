@@ -13,11 +13,11 @@ import unittest
 import transformers
 
 import QEfficient
+import QEfficient.transformers
+import QEfficient.transformers.modeling_utils
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.exporter.export_utils import compile_kv_model_on_cloud_ai_100
 from QEfficient.loader.loader_factory import QEFFAutoModelForCausalLM
-import QEfficient.transformers
-import QEfficient.transformers.modeling_utils
 from QEfficient.utils import hf_download
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
 from QEfficient.utils.device_utils import get_available_device_id, is_multi_qranium_setup_available, is_qpc_size_gt_32gb
@@ -161,14 +161,13 @@ def set_up(model_config, device_group=[0]):
         model_config["model_name"],
         model_config["model_class"],
     )
-    try:
-        ort_tokens = api_runner.run_kv_model_on_ort(
-            onnx_model_path,
-            model_config["n_layer"],
-            model_config["padding_shape"],
-        )
-    except Exception as e:
-        print(f"ONNX Model run on onnxrt failed due to : {e}")
+
+    ort_tokens = api_runner.run_kv_model_on_ort(
+        onnx_model_path,
+        model_config["n_layer"],
+        model_config["padding_shape"],
+    )
+
 
     setup_info = {}
     setup_info["model_config"] = model_config

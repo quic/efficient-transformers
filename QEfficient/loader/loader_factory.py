@@ -72,8 +72,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseAutoModelFactory):
     def export(self):
         raise NotImplementedError("Reached too far!!")
     
-    def __repr__(self) -> None:
-        print(self.model)
+    def __repr__(self) -> str:
+        return self.model.__repr__()
 
 
 class QEFF_MODEL_TYPE(Enum):

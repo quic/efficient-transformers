@@ -227,7 +227,6 @@ def convert_to_cloud_kvstyle(
 def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model: torch.nn.Module, tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
                                           onnx_dir_path: str, seq_len: int, save_fp32_onnx: Optional[bool] = False, save_fp16_onnx: Optional[bool] = True):
     
-    assert isinstance(transformed_model, QEFFBaseAutoModelFactory), f"Expected model_kv to be of type {QEFFBaseAutoModelFactory} but got {transformed_model.__class__.__name__}"
     if tokenizer.padding_side != "left":
         logger.warning("Please use padding_side='left' while initializing the tokenizer")
         tokenizer.padding_side = "left"
@@ -416,15 +415,6 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
 
 
     if qeff_model.is_transformed:
-        fp32_model_name, fp16_model_name = export_bertstyle_model_to_onnx(
-            model_name=model_name,
-            model=qeff_model.model,
-            tokenizer=tokenizer, 
-            onnx_dir_path=onnx_dir_path,
-            seq_len=seq_length,
-            save_fp32_onnx=save_fp32_onnx,
-            save_fp16_onnx=save_fp16_onnx) # type: ignore
-    else:
         fp32_model_name, fp16_model_name = export_kvstyle_transformed_model_to_onnx(
             model_name=model_name,
             transformed_model=qeff_model.model,
@@ -433,6 +423,17 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
             seq_len=seq_length,
             save_fp32_onnx=save_fp32_onnx,
             save_fp16_onnx=save_fp16_onnx) # type: ignore
+
+    else:
+        fp32_model_name, fp16_model_name = export_bertstyle_model_to_onnx(
+            model_name=model_name,
+            model=qeff_model.model,
+            tokenizer=tokenizer, 
+            onnx_dir_path=onnx_dir_path,
+            seq_len=seq_length,
+            save_fp32_onnx=save_fp32_onnx,
+            save_fp16_onnx=save_fp16_onnx) # type: ignore
+
     
     # return the model path for automation.
     if return_path:
