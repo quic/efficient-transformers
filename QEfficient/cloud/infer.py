@@ -9,7 +9,7 @@ import argparse
 import os
 from typing import List
 
-import QEfficient
+import QEfficient.transformers.modeling_utils
 from QEfficient.cloud.compile import main as compile
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import (

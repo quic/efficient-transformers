@@ -8,26 +8,31 @@
 import os
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any
+from typing import Any, Dict, Type
 
 import torch.nn as nn
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 
-import QEfficient
+import QEfficient.transformers.modeling_utils
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
 
 
-class QEFFBaseAutoModelFactory(ABC):
-    
+class QEFFBaseModel(ABC):
+    """
+    This class acts as parent class for all the varieties of model class (i.e. LLMs, SD, quantized etc.).
+    Enforces certain methods to be implemented by child classes.
+
+    All the child classes must provide way to load, transform(optimize), exoprt to ONNX etc. capabilities.
+    """
     def __init__(self) -> None:
         super().__init__()
         # Users can call generate or execute
         self.generate = self.execute
     
-    @abstractmethod
-    def from_pretrained(self, pretrained_model_name_or_path: str, *args, **kwargs):
-        pass
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
+        raise NotImplementedError("Must implement for child classes")
     
     @property
     def is_transformed(self) -> bool:
@@ -46,7 +51,10 @@ class QEFFBaseAutoModelFactory(ABC):
         pass
     
 
-class QEFFAutoModelForCausalLM(QEFFBaseAutoModelFactory):
+class QEFFAutoModelForCausalLM(QEFFBaseModel):
+    """
+    QEFF class for manipulating any causal language model from HuggingFace hub.
+    """
     def __init__(self, model: nn.Module, pretrained_model_name_or_path: str) -> None:
         assert (model.__class__ in MODEL_FOR_CAUSAL_LM_MAPPING.values() or
                 model.__class__ in TransformersToQEffModulesDict.values()), f"Given model{model.__class__.__name__} could not be found in transformers library i.e. {MODEL_FOR_CAUSAL_LM_MAPPING.values()}" # type: ignore
@@ -66,7 +74,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseAutoModelFactory):
         raise NotImplementedError("Reached too far!!")
     
     def transform(self):
-        QEfficient.transform(self.model)
+        QEfficient.transformers.modeling_utils.transform_lm(self.model)
         return self
 
     def export(self):
@@ -82,19 +90,23 @@ class QEFF_MODEL_TYPE(Enum):
     AWQ = "AWQ"
 
 
-MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP = {
+MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP: Dict[QEFF_MODEL_TYPE, Type[QEFFBaseModel]] = {
     QEFF_MODEL_TYPE.LLM: QEFFAutoModelForCausalLM
 }
 
-AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP = {v:k for k,v in MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP.items()}
+AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP: Dict[Type[QEFFBaseModel], QEFF_MODEL_TYPE] = {v:k for k,v in MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP.items()}
 
 
-def get_hf_model_type(hf_model_path: str):
-    assert os.path.isdir(hf_model_path), "Pleae pass local dir path where the model is downloaded use `QEfficient.utils.login_and_download_hf_lm` for downloading hf model"
+def get_hf_model_type(hf_model_path: str) -> QEFF_MODEL_TYPE:
+    """
+    Loads model config file and returns the type of the model (i.e. LLMs, SD, quantized etc.) as supported by the library.
+    """
+    assert os.path.isdir(hf_model_path), "Pleae pass local dir path where the model is downloaded; use `QEfficient.utils.login_and_download_hf_lm` for downloading hf model"
     config, kwargs = AutoConfig.from_pretrained(
                 hf_model_path,
                 return_unused_kwargs=True,
             )
+    
     if config.__class__ in MODEL_FOR_CAUSAL_LM_MAPPING:
         # FIXME: Add logic to handle if quantization config is stored in separate quant_config.json outside of config, also create a separate function for this and below lines
         quant_config = getattr(config, "quantization_config", getattr(config, "quant_config", None))

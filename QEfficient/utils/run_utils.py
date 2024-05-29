@@ -14,26 +14,6 @@ from QEfficient.utils.logging_utils import logger
 from .generate_inputs import InputHandler
 
 
-def run_hf_lm_model_with_pt(model_hf, tokenizer, prompt, gen_len):
-    input_ids = tokenizer.encode(prompt, return_tensors="pt")
-
-    input_ids_len = len(input_ids[0])
-
-    with torch.no_grad():
-        for _ in range(gen_len):
-            outputs = model_hf(input_ids)
-            logits = outputs.logits[:, -1, :]
-            predicted_token_id = torch.argmax(logits, dim=-1)
-            input_ids = torch.cat([input_ids, predicted_token_id.unsqueeze(1)], dim=-1)
-
-    generated_ids = input_ids[0][input_ids_len:].detach().numpy()
-    generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
-    print("Original HF Model Outputs (Torch CPU): \n")
-    print("Prompt:", repr(prompt))
-    print("Completion:", repr(generated_text))
-    return generated_ids
-
-
 class ApiRunner:
     """
     ApiRunner class is responsible for:
@@ -71,7 +51,23 @@ class ApiRunner:
         :param model_hf: pytorch model
         :return generated_ids: numpy.ndarray - output tokens
         """
-        return run_hf_lm_model_with_pt(model_hf, self.tokenizer, self.prompt[0], self.gen_len)
+        input_ids = self.tokenizer.encode(self.prompt[0], return_tensors="pt")
+
+        input_ids_len = len(input_ids[0])
+
+        with torch.no_grad():
+            for _ in range(self.gen_len):
+                outputs = model_hf(input_ids)
+                logits = outputs.logits[:, -1, :]
+                predicted_token_id = torch.argmax(logits, dim=-1)
+                input_ids = torch.cat([input_ids, predicted_token_id.unsqueeze(1)], dim=-1)
+
+        generated_ids = input_ids[0][input_ids_len:].detach().numpy()
+        generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        print("Original HF Model Outputs (Torch CPU): \n")
+        print("Prompt:", repr(self.prompt))
+        print("Completion:", repr(generated_text))
+        return generated_ids
 
 
     def run_kv_model_on_pytorch(self, model, n_layer, padding_shape):

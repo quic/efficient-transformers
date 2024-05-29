@@ -7,6 +7,7 @@
 
 import hashlib
 from collections import namedtuple
+from typing import Dict, Type
 
 import torch.nn as nn
 import transformers
@@ -34,17 +35,22 @@ from transformers.models.mistral.modeling_mistral import (
 )
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
+    MixtralBLockSparseTop2MLP,
+    MixtralDecoderLayer,
     MixtralForCausalLM,
     MixtralModel,
-    MixtralDecoderLayer,
-    MixtralSparseMoeBlock,
-    MixtralBLockSparseTop2MLP,
-    MixtralRotaryEmbedding,
     MixtralRMSNorm,
+    MixtralRotaryEmbedding,
+    MixtralSparseMoeBlock,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 
 from QEfficient.customop import CustomRMSNormAIC
+from QEfficient.loader.loader_factory import (
+    AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP,
+    QEFF_MODEL_TYPE,
+    QEFFBaseModel,
+)
 from QEfficient.utils.logging_utils import logger
 
 from .modeling_attn_mask_utils import (
@@ -81,13 +87,13 @@ from .models.mistral.modeling_mistral import (
     QEffMistralRotaryEmbedding,
 )
 from .models.mixtral_moe.modeling_mixtral import (
+    QEffMixtralAttention,
+    QEffMixtralBLockSparseTop2MLP,
+    QEffMixtralDecoderLayer,
+    QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralRotaryEmbedding,
-    QEffMixtralAttention,
-    QEffMixtralForCausalLM,
-    QEffMixtralDecoderLayer,
     QEffMixtralSparseMoeBlock,
-    QEffMixtralBLockSparseTop2MLP,
 )
 from .models.mpt.modeling_mpt import QEffMptAttention, QEffMptBlock, QEffMptForCausalLM, QEFfMptModel
 
@@ -108,7 +114,7 @@ my_architectures = ModelArchitectures(
 
 # Define a transformers layers to QEff layers dictionary
 # While onboarding new models make sure to add the new layer maps to this dictionary.
-TransformersToQEffModulesDict = {
+TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     # GPT model layers
     GPT2Model: QEffGPT2Model,
     GPT2Block: QEffGPT2Block,
@@ -179,13 +185,12 @@ def replace_module_with_qeff_layers(model: nn.Module) -> None:
         replace_module_with_qeff_layers(module)
 
 
-def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
+def transform_lm(model: nn.Module) -> nn.Module:
     """
-    Replaces some Transformers' methods for equivalent methods optimized for AI 100.
+    Replaces some Transformers torch.nn.Module layers for equivalent optimized modules for cloud AI 100.
     ---------
     Args:
     param model (torch.nn.Module): PyTorch model.
-    form_factor(str): form factor configuration for optmizing the model, available options=["cloud", "edge"].
 
     Returns:
     torch.nn.Module: PyTorch Module with replaced QEff layers.
@@ -196,38 +201,49 @@ def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
         print("Model is already transformed")
         return model
 
-    
-    if form_factor == "cloud":
-        # Get Hash of all params for checking later
-        prior_params_hash = get_params_hash(model)
-        logger.warning(f"The model {model.__class__} layers has been upadted to QEff layers in-place")
-        # Replace with QEff layers
-        replace_module_with_qeff_layers(model)
+    # Get Hash of all params for checking later
+    prior_params_hash = get_params_hash(model)
+    logger.warning(f"The model {model.__class__} layers has been upadted to QEff layers in-place")
+    # Replace with QEff layers
+    replace_module_with_qeff_layers(model)
 
-        # Check with new params hash
-        later_params_hash = get_params_hash(model)
-        assert (
-            prior_params_hash == later_params_hash
-        ), "Weights were changed in the transform process, please report an issue"
+    # Check with new params hash
+    later_params_hash = get_params_hash(model)
+    assert (
+        prior_params_hash == later_params_hash
+    ), "Weights were changed in the transform process, please report an issue"
 
-        # Replace the modeling output classes
-        transformers.modeling_outputs.BaseModelOutputWithPastAndCrossAttentions = (
-            QEffBaseModelOutputWithPastAndCrossAttentions
-        )
-        transformers.modeling_outputs.CausalLMOutputWithCrossAttentions = QEffCausalLMOutputWithCrossAttentions
-        transformers.modeling_outputs.BaseModelOutputWithPast = QEffBaseModelOutputWithPast
-        transformers.modeling_outputs.CausalLMOutputWithPast = QEffCausalLMOutputWithPast
-        transformers.modeling_outputs.MoeCausalLMOutputWithPast = QEffMoeCausalLMOutputWithPast
-        transformers.modeling_outputs.MoeModelOutputWithPast = QEffMoeModelOutputWithPast
+    # Replace the modeling output classes
+    transformers.modeling_outputs.BaseModelOutputWithPastAndCrossAttentions = (
+        QEffBaseModelOutputWithPastAndCrossAttentions
+    )
+    transformers.modeling_outputs.CausalLMOutputWithCrossAttentions = QEffCausalLMOutputWithCrossAttentions
+    transformers.modeling_outputs.BaseModelOutputWithPast = QEffBaseModelOutputWithPast
+    transformers.modeling_outputs.CausalLMOutputWithPast = QEffCausalLMOutputWithPast
+    transformers.modeling_outputs.MoeCausalLMOutputWithPast = QEffMoeCausalLMOutputWithPast
+    transformers.modeling_outputs.MoeModelOutputWithPast = QEffMoeModelOutputWithPast
 
-        # Replace the modeling attn util classes and functions
-        transformers.modeling_attn_mask_utils.AttentionMaskConverter = QEffAttentionMaskConverter
-        transformers.modeling_attn_mask_utils._prepare_4d_attention_mask = _qeff_prepare_4d_attention_mask
-        transformers.modeling_attn_mask_utils._prepare_4d_causal_attention_mask = _qeff_prepare_4d_causal_attention_mask
+    # Replace the modeling attn util classes and functions
+    transformers.modeling_attn_mask_utils.AttentionMaskConverter = QEffAttentionMaskConverter
+    transformers.modeling_attn_mask_utils._prepare_4d_attention_mask = _qeff_prepare_4d_attention_mask
+    transformers.modeling_attn_mask_utils._prepare_4d_causal_attention_mask = _qeff_prepare_4d_causal_attention_mask
 
-        setattr(model,'qeff_transformed',True)
-        return model.eval()
+    setattr(model,'qeff_transformed',True)
+    return model.eval()
 
-    elif form_factor == "edge":
-        # Add changes for the edge usecase
-        raise NotImplementedError("We currently only support cloud form factor!")
+
+
+def transform(model: Type[QEFFBaseModel], form_factor="cloud"):
+    """
+    This function serves for optimizing any kind of model (i.e. LLM, SD, AWQ etc.) for cloud AI 100.
+    Will replace the torch.nn.Module layers of passed QEffModel with optimized implementation of the same.
+
+    model: object of any instance of class that is child of `QEFFBaseAutoModelFactory`
+    form_factor(str): form factor configuration for optmizing the model, available options=["cloud", "edge"].
+    """
+    assert form_factor == "cloud", "Only form_factor='cloud' is supported as of now!"
+    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(model.__class__, None) == QEFF_MODEL_TYPE.LLM:
+        transform_lm(model.model, form_factor) # type: ignore
+        return model
+    else:
+        raise NotImplementedError(f"Recieved unsupported class of type {type(model)}")

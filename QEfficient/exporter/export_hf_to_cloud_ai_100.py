@@ -7,19 +7,19 @@
 
 import os
 import shutil
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Type, Union
 
 import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
-import QEfficient
+import QEfficient.transformers.modeling_utils
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
 from QEfficient.loader.loader import QEFFAutoModel
 from QEfficient.loader.loader_factory import (
     AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP,
     QEFF_MODEL_TYPE,
     QEFFAutoModelForCausalLM,
-    QEFFBaseAutoModelFactory,
+    QEFFBaseModel,
 )
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
@@ -376,7 +376,7 @@ def export_for_edge() -> None:
     raise NotImplementedError("Oops...reached too far!!")
 
 
-def export_for_cloud(model_name: str, qeff_model: QEFFBaseAutoModelFactory,
+def export_for_cloud(model_name: str, qeff_model: QEFFBaseModel,
                      tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
                      onnx_dir_path: str, seq_length: int = Constants.seq_length,
                      return_path: bool = True,
@@ -445,7 +445,7 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
 
 def qualcomm_efficient_converter(
     model_name: str,
-    model_kv: Optional[QEFFBaseAutoModelFactory] = None, # type: ignore
+    model_kv: Optional[Type[QEFFBaseModel]] = None, # type: ignore
     tokenizer: Optional[Union[PreTrainedTokenizer, PreTrainedTokenizerFast]]=None,
     onnx_dir_path: Optional[str]=None,
     hf_token: Optional[str] = None,
@@ -483,7 +483,7 @@ def qualcomm_efficient_converter(
     if model_kv.is_transformed and not kv:
         raise AttributeError("Transformed model is passed while requsting to convert non-transformed model")
     
-    model_kv: QEFFBaseAutoModelFactory = QEfficient.transform(model_kv) if kv else model_kv
+    model_kv: Type[QEFFBaseModel] = QEfficient.transform(model_kv) if kv else model_kv
 
 
     if onnx_dir_path is None:

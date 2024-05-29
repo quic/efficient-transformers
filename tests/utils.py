@@ -101,7 +101,7 @@ def transform_pt_model_with_qeff(model_hf):
     :param model_hf: pytorch model
     :return model_kv
     """
-    model_kv = QEfficient.transformers.modeling_utils.transform(model_hf, form_factor="cloud")
+    model_kv = QEfficient.transformers.modeling_utils.transform_lm(model_hf)
     model_kv.eval()
     return model_kv
 

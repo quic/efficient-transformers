@@ -5,21 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Any, Union
-
+from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.loader import QEFFAutoModel  # noqa: F401
-from QEfficient.loader.loader_factory import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFAutoModelForCausalLM
-from QEfficient.transformers.modeling_utils import transform as transform_hf
+from QEfficient.transformers.modeling_utils import transform  # noqa: F401
 
-
-def transform(model: Union[QEFFAutoModelForCausalLM, Any], form_factor="cloud"):
-    """Low level apis in library
-    model : instance of nn.Module
-    type : Transformers | Diffusers, default : Transformers
-    """
-    assert form_factor == "cloud", "Only form_factor='cloud' is supported as of now!"
-    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(model.__class__, None) == QEFF_MODEL_TYPE.LLM:
-        transform_hf(model.model, form_factor)
-        return model
-    else:
-        raise NotImplementedError(f"Recieved unsupported class of type {type(model)}")
+# Users can use QEfficient.export for exporting models to ONNX
+export = qualcomm_efficient_converter
