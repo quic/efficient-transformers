@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from QEfficient.utils.utils import (  # noqa: F401
+from QEfficient.utils._utils import (  # noqa: F401
     hf_download,
     load_hf_tokenizer,
     login_and_download_hf_lm,

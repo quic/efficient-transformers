@@ -23,7 +23,7 @@ from QEfficient.loader.loader_factory import (
 )
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
-from QEfficient.utils.utils import load_hf_tokenizer
+from QEfficient.utils._utils import load_hf_tokenizer
 
 
 def convert_to_cloud_bertstyle(

@@ -13,7 +13,7 @@ from QEfficient.loader.loader_factory import (
     QEFFBaseAutoModelFactory,
     get_hf_model_type,
 )
-from QEfficient.utils.utils import login_and_download_hf_lm
+from QEfficient.utils._utils import login_and_download_hf_lm
 
 
 class QEFFAutoModel:
