@@ -10,7 +10,7 @@ from typing import Any, Dict
 import pytest
 from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 
-import QEfficient.transformers.modeling_utils
+import QEfficient
 from QEfficient import QEFFAutoModel
 from QEfficient.loader.loader_factory import QEFFAutoModelForCausalLM
 

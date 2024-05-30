@@ -9,7 +9,7 @@ import argparse
 import os
 from typing import Optional
 
-import QEfficient.transformers.modeling_utils
+import QEfficient
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.loader import QEFFAutoModel
 from QEfficient.utils import load_hf_tokenizer, onnx_exists

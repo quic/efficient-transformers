@@ -13,7 +13,7 @@ import unittest
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.exporter.export_utils import compile_kv_model_on_cloud_ai_100
 from QEfficient.loader.loader_factory import QEFFAutoModelForCausalLM
-from QEfficient.transformers.modeling_utils import transform_lm
+from QEfficient.transformers.transform import transform_lm
 from QEfficient.utils import hf_download, load_hf_tokenizer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
 from QEfficient.utils.device_utils import get_available_device_id, is_multi_qranium_setup_available, is_qpc_size_gt_32gb

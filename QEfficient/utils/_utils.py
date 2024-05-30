@@ -14,19 +14,21 @@ from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR
+from QEfficient.utils.logging_utils import logger
 
 
-def login_and_download_hf_lm(pretrained_model_name_or_path, *args, **kwargs):
+def login_and_download_hf_lm(model_name, *args, **kwargs):
+    logger.info(f"loading HuggingFace model for {model_name}")
     hf_token = kwargs.pop("hf_token", None)
     cache_dir = kwargs.pop("cache_dir", None)   
     if hf_token is not None:
         login(hf_token)
-    pretrained_model_name_or_path = hf_download(
-        repo_id=pretrained_model_name_or_path,
+    model_name = hf_download(
+        repo_id=model_name,
         cache_dir=cache_dir,
         ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5"],
     )
-    return pretrained_model_name_or_path
+    return model_name
 
 
 def hf_download(
@@ -118,6 +120,7 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
 
 
 def load_hf_tokenizer(model_name: str, cache_dir: Optional[str] = None, hf_token: Optional[str] = None) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
+    logger.info(f"Loading Tokenizer for {model_name}")
     if hf_token is not None:
         login(hf_token)
 

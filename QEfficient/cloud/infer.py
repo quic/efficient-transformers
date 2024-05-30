@@ -6,10 +6,11 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+import logging
 import os
-from typing import List
+from typing import List, Optional
 
-import QEfficient.transformers.modeling_utils
+import QEfficient
 from QEfficient.cloud.compile import main as compile
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import (
@@ -32,12 +33,12 @@ from QEfficient.utils.logging_utils import logger
 def main(
     model_name: str,
     num_cores: int,
-    prompt: str = None,
-    prompts_txt_file_path: str = None,
+    prompt: Optional[str] = None, # type: ignore
+    prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     cache_dir: str = Constants.CACHE_DIR,
-    hf_token: str = None,
+    hf_token: Optional[str] = None,
     batch_size: int = 1,
     prompt_len: int = 32,
     ctx_len: int = 128,
@@ -64,8 +65,9 @@ def main(
 
     if qpc_path_exists:
         # execute
-        logger.info("Pre-compiled qpc found! Trying to execute with given prompt")
+        logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     elif onnx_path_exists:
+        logger.info(f"Pre-exported ONNX files found at {onnx_dir_path}! Jumping to Compilation")
         # Compile -> execute
         # We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation
         generated_qpc_path = compile(
@@ -96,9 +98,10 @@ def main(
         logger.info(f"Model after Optimized transformations {qeff_opt_model}")
 
         # Export to the Onnx
-        logger.info(f"Exporting to Pytorch {model_name} to ONNX...")
+        logger.info(f"Exporting Pytorch {model_name} model to ONNX...")
         # Need to split below function into two functions one which always takes QEFFAutoModel and other with same interface as below
         base_path, generated_onnx_path = qualcomm_efficient_converter(
+            model_name=model_name,
             model_kv=qeff_opt_model, # type: ignore
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
@@ -204,6 +207,14 @@ if __name__ == "__main__":
         default=-1,
         help="Effort level to reduce the on-chip memory",
     )
+    #FIXME: Add verbose feature
+    parser.add_argument(
+        "--verbose","-v",
+        action="store_true",
+        help="pass to print info logs",
+    )
 
     args = parser.parse_args()
+    if args.verbose:
+        logger.setLevel(logging.INFO)
     main(**args.__dict__)
