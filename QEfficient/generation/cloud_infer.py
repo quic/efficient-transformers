@@ -131,7 +131,7 @@ class QAICInferenceSession:
 
     def deactivate(self):
         
-         """ Device deactivate"""
+        """ Device deactivate"""
          
         del self.execObj
         self.program.deactivate()

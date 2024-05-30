@@ -81,7 +81,7 @@ def main(
 def main(model_name: str, cache_dir: str) -> None:
 >>>>>>> d50cb2d (Updated documentation)
     """
-    ApI() for exporting to ONNX Model.
+    ApI for exporting to ONNX Model.
     ---------
     :param model_name: str. Hugging Face Model Card name, Example: gpt2.
     :param model_name: str. Hugging Face Model Card name, Example: gpt2.

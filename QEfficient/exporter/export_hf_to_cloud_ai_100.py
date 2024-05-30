@@ -410,7 +410,7 @@ def qualcomm_efficient_converter(
     save_fp16_onnx: bool = True,
 ) -> Tuple[str, str]:
     """
-    API to convert torch Bert style and KV style model to ONNX
+    API to convert torch Bert style and KV style model to ONNX.
     ---------
     :param model_name: str. The name of the model to be used.
     :model_class: type:. The class of the model.

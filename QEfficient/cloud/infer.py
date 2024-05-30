@@ -46,6 +46,7 @@ def main(
     device_group: List[int] = [
         0,
     ],
+<<<<<<< HEAD
 ) -> None:
 <<<<<<< HEAD
     qpc_base_dir_name = get_qpc_dir_name_infer(
@@ -53,6 +54,9 @@ def main(
     )
 =======
     
+=======
+):
+>>>>>>> 9063ebd (Added sphinx files in docs)
     """
     Inference command, the model will be downloaded from HF, optimized, compiled, executed on AIC.
     ---------
