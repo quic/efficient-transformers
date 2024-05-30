@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QEfficient.utils package &mdash; QEfficient Documentation 1.16 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="_static/jquery.js?v=5d32c60e"></script>
+        <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=a9e34a36"></script>
+        <script src="_static/doctools.js?v=888ff710"></script>
+        <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            QEfficient Documentation
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Validate.html">Validated Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Installation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html">Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html#installation">Installation</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-high-level-api">Using High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-low-level-api">Using Low Level API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="QEfficient.cloud.html">High level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="low_level_api.html">Low level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="other_api.html">Other API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="performance.html">perfromance details</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="reference.html">Reference 1</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">QEfficient Documentation</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">QEfficient.utils package</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/QEfficient.utils.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="qefficient-utils-package">
+<h1>QEfficient.utils package<a class="headerlink" href="#qefficient-utils-package" title="Permalink to this heading"></a></h1>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Permalink to this heading"></a></h2>
+</section>
+<section id="module-QEfficient.utils.constants">
+<span id="qefficient-utils-constants-module"></span><h2>QEfficient.utils.constants module<a class="headerlink" href="#module-QEfficient.utils.constants" title="Permalink to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.utils.constants.Constants">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.constants.</span></span><span class="sig-name descname"><span class="pre">Constants</span></span><a class="reference internal" href="_modules/QEfficient/utils/constants.html#Constants"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.constants.Constants" title="Permalink to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="QEfficient.utils.constants.Constants.CACHE_DIR">
+<span class="sig-name descname"><span class="pre">CACHE_DIR</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'/home/ubuntu/amitraj/documentation/efficient-transformers/cache_dir'</span></em><a class="headerlink" href="#QEfficient.utils.constants.Constants.CACHE_DIR" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="QEfficient.utils.constants.Constants.CTX_LEN">
+<span class="sig-name descname"><span class="pre">CTX_LEN</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">128</span></em><a class="headerlink" href="#QEfficient.utils.constants.Constants.CTX_LEN" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="QEfficient.utils.constants.Constants.INPUT_STRING">
+<span class="sig-name descname"><span class="pre">INPUT_STRING</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">['My</span> <span class="pre">name</span> <span class="pre">is']</span></em><a class="headerlink" href="#QEfficient.utils.constants.Constants.INPUT_STRING" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="QEfficient.utils.constants.Constants.PROMPT_LEN">
+<span class="sig-name descname"><span class="pre">PROMPT_LEN</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">32</span></em><a class="headerlink" href="#QEfficient.utils.constants.Constants.PROMPT_LEN" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="QEfficient.utils.constants.Constants.input_str">
+<span class="sig-name descname"><span class="pre">input_str</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'My</span> <span class="pre">Name</span> <span class="pre">is'</span></em><a class="headerlink" href="#QEfficient.utils.constants.Constants.input_str" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="QEfficient.utils.constants.Constants.seq_length">
+<span class="sig-name descname"><span class="pre">seq_length</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">128</span></em><a class="headerlink" href="#QEfficient.utils.constants.Constants.seq_length" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-QEfficient.utils.device_utils">
+<span id="qefficient-utils-device-utils-module"></span><h2>QEfficient.utils.device_utils module<a class="headerlink" href="#module-QEfficient.utils.device_utils" title="Permalink to this heading"></a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.utils.device_utils.get_available_device_id">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.utils.device_utils.</span></span><span class="sig-name descname"><span class="pre">get_available_device_id</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/device_utils.html#get_available_device_id"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.device_utils.get_available_device_id" title="Permalink to this definition"></a></dt>
+<dd><p>API to check available device id.</p>
+<dl class="simple">
+<dt>Return:</dt><dd><p>Return available device id.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="module-QEfficient.utils.generate_inputs">
+<span id="qefficient-utils-generate-inputs-module"></span><h2>QEfficient.utils.generate_inputs module<a class="headerlink" href="#module-QEfficient.utils.generate_inputs" title="Permalink to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.generate_inputs.</span></span><span class="sig-name descname"><span class="pre">InputHandler</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/generate_inputs.html#InputHandler"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler" title="Permalink to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.prepare_cloud_ai_100_inputs">
+<span class="sig-name descname"><span class="pre">prepare_cloud_ai_100_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/generate_inputs.html#InputHandler.prepare_cloud_ai_100_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.prepare_cloud_ai_100_inputs" title="Permalink to this definition"></a></dt>
+<dd><section id="function-responsible-for-creating-prefill-stage-numpy-inputs-for-onnx-model-to-be-run-on-cloud-ai-100">
+<h3>Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on Cloud AI 100.<a class="headerlink" href="#function-responsible-for-creating-prefill-stage-numpy-inputs-for-onnx-model-to-be-run-on-cloud-ai-100" title="Permalink to this heading"></a></h3>
+<p>:param n_layer : int. Number of layers in the PyTorch model.
+:padding_shape : List[int]. Shape of past key values.</p>
+<dl class="simple">
+<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs">
+<span class="sig-name descname"><span class="pre">prepare_ort_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/generate_inputs.html#InputHandler.prepare_ort_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs" title="Permalink to this definition"></a></dt>
+<dd><section id="function-responsible-for-creating-prefill-stage-numpy-inputs-for-onnx-model-to-be-run-on-onnxrt">
+<h3>Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.<a class="headerlink" href="#function-responsible-for-creating-prefill-stage-numpy-inputs-for-onnx-model-to-be-run-on-onnxrt" title="Permalink to this heading"></a></h3>
+<p>:param n_layer : int. Number of layers in the PyTorch model.
+:padding_shape : List[int]. Shape of past key values.</p>
+<dl class="simple">
+<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs">
+<span class="sig-name descname"><span class="pre">prepare_pytorch_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/generate_inputs.html#InputHandler.prepare_pytorch_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs" title="Permalink to this definition"></a></dt>
+<dd><section id="function-responsible-for-creating-prefill-stage-tensor-inputs-for-pytorch-model">
+<h3>Function responsible for creating Prefill stage tensor inputs for PyTorch model.<a class="headerlink" href="#function-responsible-for-creating-prefill-stage-tensor-inputs-for-pytorch-model" title="Permalink to this heading"></a></h3>
+<p>:param n_layer : int. Number of layers in the PyTorch model.
+:padding_shape : List[int]. Shape of past key values.</p>
+<dl class="simple">
+<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.update_cloud_ai_100_inputs">
+<span class="sig-name descname"><span class="pre">update_cloud_ai_100_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">iteration</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">outputs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/generate_inputs.html#InputHandler.update_cloud_ai_100_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.update_cloud_ai_100_inputs" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for updating Prefill stage inputs to create inputs for
+decode stage inputs for ONNX model to be run on ONNXRT.
+———
+:param iteration: int. Current iteration number.
+:inputs: Dict. Previous iteration inputs of Cloud AI 100 execution.
+:outputs: Dict. Previous iteration outputs of Cloud AI 100 execution.
+:inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100)</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs">
+<span class="sig-name descname"><span class="pre">update_ort_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">iteration</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ort_outputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/generate_inputs.html#InputHandler.update_ort_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs" title="Permalink to this definition"></a></dt>
+<dd><section id="function-responsible-for-updating-prefill-stage-inputs-to-create-inputs-for-decode-stage-inputs-for-onnx-model-to-be-run-on-onnxrt">
+<h3>Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.<a class="headerlink" href="#function-responsible-for-updating-prefill-stage-inputs-to-create-inputs-for-decode-stage-inputs-for-onnx-model-to-be-run-on-onnxrt" title="Permalink to this heading"></a></h3>
+<p>:param iteration:int Current iteration number.
+:inputs: Dict. Previous iteration ORT inputs.
+:ort_outputs: Dict. Previous iteration ORT outputs.
+:n_layer : int. Number of layers in the ONNX model.</p>
+<dl class="simple">
+<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.update_pytorch_inputs">
+<span class="sig-name descname"><span class="pre">update_pytorch_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">iteration</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pt_outputs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/generate_inputs.html#InputHandler.update_pytorch_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.update_pytorch_inputs" title="Permalink to this definition"></a></dt>
+<dd><section id="function-responsible-for-updating-prefill-stage-inputs-to-create-inputs-for-decode-stage-inputs-for-pytorch-model">
+<h3>Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for PyTorch model.<a class="headerlink" href="#function-responsible-for-updating-prefill-stage-inputs-to-create-inputs-for-decode-stage-inputs-for-pytorch-model" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param iteration<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. Current iteration number.</p>
+</dd>
+<dt class="field-even">inputs<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dict. Previous iteration inputs.</p>
+</dd>
+<dt class="field-odd">pt_outputs<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict. Previous iteration PyTorch outputs.</p>
+</dd>
+</dl>
+<dl class="simple">
+<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-QEfficient.utils.logging_utils">
+<span id="qefficient-utils-logging-utils-module"></span><h2>QEfficient.utils.logging_utils module<a class="headerlink" href="#module-QEfficient.utils.logging_utils" title="Permalink to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.utils.logging_utils.QEffFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.logging_utils.</span></span><span class="sig-name descname"><span class="pre">QEffFormatter</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">fmt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">datefmt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">style</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'%'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">validate</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/logging_utils.html#QEffFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.logging_utils.QEffFormatter" title="Permalink to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">Formatter</span></code></p>
+<p>Formatter class used to set colors for printing different logging levels of messages on console.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="QEfficient.utils.logging_utils.QEffFormatter.FORMATS">
+<span class="sig-name descname"><span class="pre">FORMATS</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">{10:</span> <span class="pre">'\x1b[38;20m%(levelname)s</span> <span class="pre">-</span> <span class="pre">%(name)s</span> <span class="pre">-</span> <span class="pre">%(message)s</span>&#160; <span class="pre">(%(filename)s:%(lineno)d)\x1b[0m',</span> <span class="pre">20:</span> <span class="pre">'\x1b[38;20m%(levelname)s</span> <span class="pre">-</span> <span class="pre">%(name)s</span> <span class="pre">-</span> <span class="pre">%(message)s</span>&#160; <span class="pre">(%(filename)s:%(lineno)d)\x1b[0m',</span> <span class="pre">30:</span> <span class="pre">'\x1b[33;20m%(levelname)s</span> <span class="pre">-</span> <span class="pre">%(name)s</span> <span class="pre">-</span> <span class="pre">%(message)s</span>&#160; <span class="pre">(%(filename)s:%(lineno)d)\x1b[0m',</span> <span class="pre">40:</span> <span class="pre">'\x1b[31;20m%(levelname)s</span> <span class="pre">-</span> <span class="pre">%(name)s</span> <span class="pre">-</span> <span class="pre">%(message)s</span>&#160; <span class="pre">(%(filename)s:%(lineno)d)\x1b[0m',</span> <span class="pre">50:</span> <span class="pre">'\x1b[31;1m%(levelname)s</span> <span class="pre">-</span> <span class="pre">%(name)s</span> <span class="pre">-</span> <span class="pre">%(message)s</span>&#160; <span class="pre">(%(filename)s:%(lineno)d)\x1b[0m'}</span></em><a class="headerlink" href="#QEfficient.utils.logging_utils.QEffFormatter.FORMATS" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="QEfficient.utils.logging_utils.QEffFormatter.bold_red">
+<span class="sig-name descname"><span class="pre">bold_red</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'\x1b[31;1m'</span></em><a class="headerlink" href="#QEfficient.utils.logging_utils.QEffFormatter.bold_red" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.logging_utils.QEffFormatter.format">
+<span class="sig-name descname"><span class="pre">format</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">record</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/logging_utils.html#QEffFormatter.format"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.logging_utils.QEffFormatter.format" title="Permalink to this definition"></a></dt>
+<dd><p>Overriding the base class method to Choose format based on log level.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="QEfficient.utils.logging_utils.QEffFormatter.grey">
+<span class="sig-name descname"><span class="pre">grey</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'\x1b[38;20m'</span></em><a class="headerlink" href="#QEfficient.utils.logging_utils.QEffFormatter.grey" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="QEfficient.utils.logging_utils.QEffFormatter.red">
+<span class="sig-name descname"><span class="pre">red</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'\x1b[31;20m'</span></em><a class="headerlink" href="#QEfficient.utils.logging_utils.QEffFormatter.red" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="QEfficient.utils.logging_utils.QEffFormatter.reset">
+<span class="sig-name descname"><span class="pre">reset</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'\x1b[0m'</span></em><a class="headerlink" href="#QEfficient.utils.logging_utils.QEffFormatter.reset" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="QEfficient.utils.logging_utils.QEffFormatter.yellow">
+<span class="sig-name descname"><span class="pre">yellow</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'\x1b[33;20m'</span></em><a class="headerlink" href="#QEfficient.utils.logging_utils.QEffFormatter.yellow" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.utils.logging_utils.create_logger">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.utils.logging_utils.</span></span><span class="sig-name descname"><span class="pre">create_logger</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Logger</span></span></span><a class="reference internal" href="_modules/QEfficient/utils/logging_utils.html#create_logger"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.logging_utils.create_logger" title="Permalink to this definition"></a></dt>
+<dd><p>Creates a logger object with Colored QEffFormatter.</p>
+</dd></dl>
+
+</section>
+<section id="module-QEfficient.utils.run_utils">
+<span id="qefficient-utils-run-utils-module"></span><h2>QEfficient.utils.run_utils module<a class="headerlink" href="#module-QEfficient.utils.run_utils" title="Permalink to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.run_utils.</span></span><span class="sig-name descname"><span class="pre">ApiRunner</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/run_utils.html#ApiRunner"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner" title="Permalink to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>ApiRunner class is responsible for:</p>
+<ol class="arabic simple">
+<li><p>Running Huggingface PyTorch model</p></li>
+<li><p>Running KV Pytorch Model</p></li>
+<li><p>Running ONNX model on ONNXRT</p></li>
+<li><p>Running ONNX Model on Cloud AI 100</p></li>
+</ol>
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch">
+<span class="sig-name descname"><span class="pre">run_hf_model_on_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_hf</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/run_utils.html#ApiRunner.run_hf_model_on_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for running Huggingface PyTorch model and return the output tokens
+:param model_hf: pytorch model
+———</p>
+<dl class="simple">
+<dt>Return:</dt><dd><p>generated_ids: numpy.ndarray - output tokens</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100">
+<span class="sig-name descname"><span class="pre">run_kv_model_on_cloud_ai_100</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_cloud_ai_100"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100" title="Permalink to this definition"></a></dt>
+<dd><section id="function-responsible-for-running-onnx-model-on-cloud-ai-100-and-return-the-output-tokens">
+<h3>Function responsible for running ONNX model on Cloud AI 100 and return the output tokens<a class="headerlink" href="#function-responsible-for-running-onnx-model-on-cloud-ai-100-and-return-the-output-tokens" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param qpc_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+<dt class="field-even">device_id<span class="colon">:</span></dt>
+<dd class="field-even"><p>List[int]</p>
+</dd>
+</dl>
+<p>:n_layer : int
+:padding_shape : List[int]</p>
+<dl class="simple">
+<dt>Return:</dt><dd><p>generated_ids: numpy.ndarray - output tokens</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort">
+<span class="sig-name descname"><span class="pre">run_kv_model_on_ort</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_ort"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort" title="Permalink to this definition"></a></dt>
+<dd><section id="function-responsible-for-running-onnx-model-on-onnxruntime-and-return-the-output-tokens">
+<h3>Function responsible for running ONNX model on onnxruntime and return the output tokens<a class="headerlink" href="#function-responsible-for-running-onnx-model-on-onnxruntime-and-return-the-output-tokens" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param model_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+<p>:n_layer : int
+:padding_shape : List[int]</p>
+<dl class="simple">
+<dt>Return:</dt><dd><p>generated_ids: numpy.ndarray - output tokens</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch">
+<span class="sig-name descname"><span class="pre">run_kv_model_on_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch" title="Permalink to this definition"></a></dt>
+<dd><section id="function-responsible-for-running-kv-pytorch-model-and-return-the-output-tokens">
+<h3>Function responsible for running KV PyTorch model and return the output tokens<a class="headerlink" href="#function-responsible-for-running-kv-pytorch-model-and-return-the-output-tokens" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param model_hf<span class="colon">:</span></dt>
+<dd class="field-odd"><p>pytorch model</p>
+</dd>
+</dl>
+<p>:n_layer : int
+:padding_shape : List[int]</p>
+<dl class="simple">
+<dt>Return:</dt><dd><p>generated_ids: numpy.ndarray - output tokens</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_ort_session">
+<span class="sig-name descname"><span class="pre">run_ort_session</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">session</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils/run_utils.html#ApiRunner.run_ort_session"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_ort_session" title="Permalink to this definition"></a></dt>
+<dd><section id="function-responsible-for-running-onnxrt-session-with-given-inputs-and-passing-retained-state-outputs-to-be-used-for-next-iteration-inputs">
+<h3>Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs<a class="headerlink" href="#function-responsible-for-running-onnxrt-session-with-given-inputs-and-passing-retained-state-outputs-to-be-used-for-next-iteration-inputs" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param inputs<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict</p>
+</dd>
+<dt class="field-even">session<span class="colon">:</span></dt>
+<dd class="field-even"><p>‘onnxruntime.capi.onnxruntime_inference_collection.InferenceSession’.</p>
+</dd>
+<dt class="field-odd">n_layer<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+<dt class="field-even">outputs<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dict</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-QEfficient.utils">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-QEfficient.utils" title="Permalink to this heading"></a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.utils.hf_download">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.utils.</span></span><span class="sig-name descname"><span class="pre">hf_download</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">repo_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cache_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hf_token</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">allow_patterns</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ignore_patterns</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/utils.html#hf_download"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.hf_download" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, Qualcomm.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

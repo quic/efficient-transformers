@@ -29,15 +29,7 @@ def write_io_files(
     write_io_name: str,
     include_dims: bool = False,
     reset: bool = False,
-):
-    
-    """
-
-    
-    """
-    
-    
-    
+): 
     global io_files
     if reset:
         io_files = []
@@ -78,7 +70,7 @@ def latency_stats_bertstyle(
     device_id: List[int] = [0],
 ):
     
-  """
+    """
     API to execute ONNX model on CPU. 
     ---------
     :param model_name: str. Hugging Face Model Card name, Example: gpt2.
@@ -86,9 +78,8 @@ def latency_stats_bertstyle(
     :seq_len: int. Sequence length.
     :prompt: str. Sample prompt for the model text generation.
     :device_id: List[int]. Device Ids to be used for compilation. if devices > 1, it enable multiple card setup.
+    
     """
-    
-    
     session = QAICInferenceSession(qpc, device_id)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability

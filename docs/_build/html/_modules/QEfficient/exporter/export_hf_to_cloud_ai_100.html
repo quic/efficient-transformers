@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QEfficient.exporter.export_hf_to_cloud_ai_100 &mdash; QEfficient Documentation 1.16 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../../../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js?v=a9e34a36"></script>
+        <script src="../../../_static/doctools.js?v=888ff710"></script>
+        <script src="../../../_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            QEfficient Documentation
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../Validate.html">Validated Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Installation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html">Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html#installation">Installation</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../QEfficient.cloud.html">High level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html">QEfficient.exporter.export_hf_to_cloud_ai_100 module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#module-QEfficient.cloud.compile">QEfficient.cloud.compile</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#module-QEfficient.generation.text_generation_inference">QEfficient.generation.text_generation_inference module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#module-QEfficient.generation.cloud_infer">QEfficient.generation.cloud_infer module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#module-QEfficient.exporter.export_utils">QEfficient.exporter.export_utils module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#id1">QEfficient.generation.cloud_infer module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#id2">QEfficient.generation.text_generation_inference module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#module-QEfficient.generation">Module contents</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../performance.html">perfromance details</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html">Blog 1</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../reference.html">Reference 1</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">QEfficient Documentation</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+          <li class="breadcrumb-item"><a href="../../QEfficient.html">QEfficient</a></li>
+      <li class="breadcrumb-item active">QEfficient.exporter.export_hf_to_cloud_ai_100</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for QEfficient.exporter.export_hf_to_cloud_ai_100</h1><div class="highlight"><pre>
+<span></span><span class="c1"># -----------------------------------------------------------------------------</span>
+<span class="c1">#</span>
+<span class="c1"># Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: BSD-3-Clause</span>
+<span class="c1">#</span>
+<span class="c1"># -----------------------------------------------------------------------------</span>
+
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">shutil</span>
+
+<span class="kn">import</span> <span class="nn">torch</span>
+<span class="kn">from</span> <span class="nn">huggingface_hub</span> <span class="kn">import</span> <span class="n">login</span>
+<span class="kn">from</span> <span class="nn">transformers</span> <span class="kn">import</span> <span class="n">AutoTokenizer</span>
+
+<span class="kn">from</span> <span class="nn">QEfficient.exporter.export_utils</span> <span class="kn">import</span> <span class="n">export_onnx</span><span class="p">,</span> <span class="n">fix_onnx_fp16</span><span class="p">,</span> <span class="n">generate_input_files</span><span class="p">,</span> <span class="n">run_model_on_ort</span>
+<span class="kn">from</span> <span class="nn">QEfficient.transformers.modeling_utils</span> <span class="kn">import</span> <span class="n">transform</span>
+<span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">hf_download</span>
+<span class="kn">from</span> <span class="nn">QEfficient.utils.constants</span> <span class="kn">import</span> <span class="n">QEFF_MODELS_DIR</span><span class="p">,</span> <span class="n">Constants</span>
+<span class="kn">from</span> <span class="nn">QEfficient.utils.logging_utils</span> <span class="kn">import</span> <span class="n">logger</span>
+
+
+<div class="viewcode-block" id="convert_to_cloud_bertstyle"><a class="viewcode-back" href="../../../low_level_api.html#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_bertstyle">[docs]</a><span class="k">def</span> <span class="nf">convert_to_cloud_bertstyle</span><span class="p">(</span>
+    <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">model_class</span><span class="p">:</span> <span class="nb">type</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">tokenizer</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">onnx_dir_path</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">hf_token</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">seq_length</span><span class="p">,</span>
+    <span class="n">input_str</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">input_str</span><span class="p">,</span>
+    <span class="n">return_path</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">save_fp32_onnx</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">save_fp16_onnx</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    API to convert model to Bertstyle approach.</span>
+<span class="sd">    Bertstyle Approach:</span>
+<span class="sd">        1. No Prefill/Decode separably compiled.</span>
+<span class="sd">        2. No KV retention logic.</span>
+<span class="sd">        3. KV is every time computed for all the tokens until EOS/max_length.</span>
+<span class="sd">    ---------</span>
+<span class="sd">    :param model_name: str. The name of the model to be used.</span>
+<span class="sd">    :model_class: type:. The class of the model.</span>
+<span class="sd">    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.</span>
+<span class="sd">    :model_path: str. The path where the model is stored. If None, the model is loaded from the default location.</span>
+<span class="sd">    :hf_token: str. to access gated models.</span>
+<span class="sd">    :seq_len: int. The length of the sequence. Default is 128.</span>
+<span class="sd">    :input_str: str. The input string to be processed.</span>
+<span class="sd">    :return_path: bool. If True, return the base path for models and exported onnx model path</span>
+<span class="sd">    :save_fp32_onnx: bool. If True, fp32 unclipped version of ONNX will be saved. Default is False.</span>
+<span class="sd">    :save_fp16_onnx: bool. If false, fp16 clipped version of ONNX will be deleted. Default is True.</span>
+
+<span class="sd">    Return:</span>
+<span class="sd">        Path of exported ONNX file.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># todo (amitraj) Optimize the onnx export</span>
+    <span class="k">if</span> <span class="n">onnx_dir_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">model_card_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">QEFF_MODELS_DIR</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">model_name</span><span class="p">))</span>
+        <span class="n">onnx_dir_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">model_card_dir</span><span class="p">,</span> <span class="s2">&quot;onnx_bertstyle&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Check if ONNX already exist</span>
+    <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">):</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Overriding </span><span class="si">{</span><span class="n">onnx_dir_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="n">save_fp32_onnx</span> <span class="ow">or</span> <span class="n">save_fp16_onnx</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;save_fp32_onnx and save_fp16_onnx can&#39;t be false&quot;</span><span class="p">)</span>
+
+    <span class="n">seq_len</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">seq_length</span>
+    <span class="n">input_str</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">input_str</span>
+
+    <span class="c1"># Load tokenizer</span>
+    <span class="k">if</span> <span class="n">tokenizer</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">padding_side</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">,</span> <span class="n">trust_remote_code</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">padding_side</span> <span class="o">!=</span> <span class="s2">&quot;left&quot;</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Please use padding_side=&#39;left&#39; while initializing the tokenizer&quot;</span><span class="p">)</span>
+            <span class="n">tokenizer</span><span class="o">.</span><span class="n">padding_side</span> <span class="o">=</span> <span class="s2">&quot;left&quot;</span>
+
+    <span class="k">if</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">eos_token_id</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">hf_token</span><span class="p">:</span>
+            <span class="n">login</span><span class="p">(</span><span class="n">hf_token</span><span class="p">)</span>
+        <span class="n">model_hf_path</span> <span class="o">=</span> <span class="n">hf_download</span><span class="p">(</span>
+            <span class="n">repo_id</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span>
+            <span class="n">cache_dir</span><span class="o">=</span><span class="n">Constants</span><span class="o">.</span><span class="n">CACHE_DIR</span><span class="p">,</span>
+            <span class="n">ignore_pattrens</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;*.txt&quot;</span><span class="p">,</span> <span class="s2">&quot;*.onnx&quot;</span><span class="p">,</span> <span class="s2">&quot;*.ot&quot;</span><span class="p">,</span> <span class="s2">&quot;*.md&quot;</span><span class="p">,</span> <span class="s2">&quot;*.tflite&quot;</span><span class="p">,</span> <span class="s2">&quot;*.pdf&quot;</span><span class="p">],</span>
+        <span class="p">)</span>
+        <span class="n">model</span> <span class="o">=</span> <span class="n">model_class</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_hf_path</span><span class="p">,</span> <span class="n">cache_dir</span><span class="o">=</span><span class="n">Constants</span><span class="o">.</span><span class="n">CACHE_DIR</span><span class="p">,</span> <span class="n">use_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to download the </span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2"> model from Huggingface:%s&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+
+    <span class="c1"># Decide path for saving exported ONNX files.</span>
+    <span class="n">model_base_name</span> <span class="o">=</span> <span class="n">model_name</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">,</span> <span class="s2">&quot;_&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;_bertstyle&quot;</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># Preprocess inputs</span>
+    <span class="k">if</span> <span class="n">seq_len</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">eos_token_id</span>
+        <span class="n">inputs</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span>
+            <span class="n">input_str</span><span class="p">,</span>
+            <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">,</span>
+            <span class="n">padding</span><span class="o">=</span><span class="s2">&quot;max_length&quot;</span><span class="p">,</span>
+            <span class="n">max_length</span><span class="o">=</span><span class="n">seq_len</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">inputs</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">input_str</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">is_encoder_decoder</span><span class="p">:</span>
+        <span class="k">if</span> <span class="s2">&quot;token_type_ids&quot;</span> <span class="ow">in</span> <span class="n">inputs</span><span class="p">:</span>
+            <span class="n">inputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;token_type_ids&quot;</span><span class="p">)</span>
+        <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;decoder_input_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">model</span><span class="o">.</span><span class="n">generation_config</span><span class="o">.</span><span class="n">decoder_start_token_id</span><span class="p">)</span>
+
+    <span class="c1"># Run PyTorch inference</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">pt_outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
+        <span class="n">output_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">pt_outputs</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Model </span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2"> Execution failed in pytorch:%s&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+    <span class="c1"># Add pkv into output_names</span>
+    <span class="n">pkv</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">([(</span><span class="n">key</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">value</span><span class="o">.</span><span class="n">detach</span><span class="p">())</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">pt_outputs</span><span class="o">.</span><span class="n">past_key_values</span><span class="p">])</span>
+    <span class="n">pkv_idx</span> <span class="o">=</span> <span class="n">output_names</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="s2">&quot;past_key_values&quot;</span><span class="p">)</span>
+    <span class="n">key_value_names</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;past_</span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">pkv</span><span class="p">))</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;key&quot;</span><span class="p">,</span> <span class="s2">&quot;value&quot;</span><span class="p">]]</span>
+    <span class="n">output_names</span><span class="p">[</span><span class="n">pkv_idx</span> <span class="p">:</span> <span class="n">pkv_idx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">key_value_names</span><span class="p">]</span>
+
+    <span class="n">pt_outputs</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">pt_outputs</span><span class="p">)</span>
+    <span class="n">pkv_out</span> <span class="o">=</span> <span class="n">pt_outputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;past_key_values&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">pkv_out</span><span class="p">):</span>
+        <span class="n">pt_outputs</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;past_key.</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">key</span>
+        <span class="n">pt_outputs</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;past_value.</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="c1"># Export the model to Onnx.</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">fp32_model_name</span> <span class="o">=</span> <span class="n">export_onnx</span><span class="p">(</span>
+            <span class="n">pt_model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="n">inputs</span><span class="p">,</span>
+            <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+            <span class="n">gen_models_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
+            <span class="n">model_base_name</span><span class="o">=</span><span class="n">model_base_name</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Model </span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2"> failed to export in Onnx:%s&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+    <span class="c1"># Run onnxrt inference</span>
+    <span class="n">input_names</span><span class="p">,</span> <span class="n">ort_outputs</span> <span class="o">=</span> <span class="n">run_model_on_ort</span><span class="p">(</span>
+        <span class="n">onnx_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">fp32_model_name</span><span class="si">}</span><span class="s2">.onnx&quot;</span><span class="p">),</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="n">inputs</span><span class="p">,</span>
+        <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+        <span class="n">pt_outputs</span><span class="o">=</span><span class="n">pt_outputs</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Fix onnx for fp16</span>
+    <span class="c1"># Clip the values to fp16 ranges to avoid over/under flow in AI 100</span>
+    <span class="k">if</span> <span class="n">save_fp16_onnx</span><span class="p">:</span>
+        <span class="n">fp16_model_name</span> <span class="o">=</span> <span class="n">fix_onnx_fp16</span><span class="p">(</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="n">inputs</span><span class="p">,</span>
+            <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+            <span class="n">ort_outputs</span><span class="o">=</span><span class="n">ort_outputs</span><span class="p">,</span>
+            <span class="n">gen_models_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
+            <span class="n">model_base_name</span><span class="o">=</span><span class="n">fp32_model_name</span><span class="p">,</span>
+            <span class="n">pt_outputs</span><span class="o">=</span><span class="n">pt_outputs</span><span class="p">,</span>
+            <span class="n">save_fp32_onnx</span><span class="o">=</span><span class="n">save_fp32_onnx</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Generate inputFiles</span>
+    <span class="c1"># todo(ochougul):rename to bert_style_input_list.txt</span>
+    <span class="n">input_list_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="s2">&quot;input_list.txt&quot;</span><span class="p">)</span>
+    <span class="n">generate_input_files</span><span class="p">(</span>
+        <span class="n">input_files_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="s2">&quot;inputFiles&quot;</span><span class="p">),</span>
+        <span class="n">input_names</span><span class="o">=</span><span class="n">input_names</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="n">inputs</span><span class="p">,</span>
+        <span class="n">input_list_file</span><span class="o">=</span><span class="n">input_list_file</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># return the model path for automation.</span>
+    <span class="k">if</span> <span class="n">return_path</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">save_fp16_onnx</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">onnx_dir_path</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">fp16_model_name</span><span class="si">}</span><span class="s2">.onnx&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">onnx_dir_path</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">fp32_model_name</span><span class="si">}</span><span class="s2">.onnx&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span></div>
+
+
+<div class="viewcode-block" id="convert_to_cloud_kvstyle"><a class="viewcode-back" href="../../../low_level_api.html#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_kvstyle">[docs]</a><span class="k">def</span> <span class="nf">convert_to_cloud_kvstyle</span><span class="p">(</span>
+    <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">model_class</span><span class="p">:</span> <span class="nb">type</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">model_kv</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">tokenizer</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">onnx_dir_path</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">hf_token</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">seq_length</span><span class="p">,</span>
+    <span class="n">input_str</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">input_str</span><span class="p">,</span>
+    <span class="n">return_path</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">save_fp32_onnx</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">save_fp16_onnx</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    API change model for kv retention and export to ONNX.</span>
+<span class="sd">    KV Style Approach:</span>
+<span class="sd">        1. This architecture is particularly suitable for autoregressive tasks</span>
+<span class="sd">        2. where sequence generation involves processing one token at a time</span>
+<span class="sd">        3. And contextual information from earlier tokens is crucial for predicting the next token.</span>
+<span class="sd">        4. The inclusion of a kV cache enhances the efficiency of the decoding process, making it more computationally efficient.</span>
+<span class="sd">    ---------</span>
+<span class="sd">    :param model_name: str. Hugging Face Model Card name, Example: [gpt2].</span>
+<span class="sd">    :model_class: type. The class of the model.</span>
+<span class="sd">    :model_kv: torch.nn.Module. Transformed KV torch model to be used</span>
+<span class="sd">    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.</span>
+<span class="sd">    :onnx_dir_path: str. The path where the model is stored. If None, the model is loaded from the default location.</span>
+<span class="sd">    :hf_token: str. Huggingface token to access gated models. Default=None.</span>
+<span class="sd">    :seq_len: int. The length of the sequence. Default=128.</span>
+<span class="sd">    :input_str: str. The input string to be processed. Default=Constants.input_str.</span>
+<span class="sd">    :return_path: bool. If True, return the base path for models and exported onnx model path. Default=Constants.seq_length.</span>
+<span class="sd">    :save_fp32_onnx: bool. If True, fp32 unclipped version of ONNX will be saved. Default is False.</span>
+<span class="sd">    :save_fp16_onnx: bool. If false, fp16 clipped version of ONNX will be deleted. Default is True.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Path of exported ONNX file.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">onnx_dir_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">model_card_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">QEFF_MODELS_DIR</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">model_name</span><span class="p">))</span>
+        <span class="n">onnx_dir_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">model_card_dir</span><span class="p">,</span> <span class="s2">&quot;onnx&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">):</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Overriding </span><span class="si">{</span><span class="n">onnx_dir_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="n">save_fp32_onnx</span> <span class="ow">or</span> <span class="n">save_fp16_onnx</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;save_fp32_onnx and save_fp16_onnx can&#39;t be false&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">model_class</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">model_kv</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;model_class and model_kv both can&#39;t be None&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">model_kv</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">model_kv</span><span class="p">,</span> <span class="s2">&quot;qeff_transformed&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span>
+                <span class="s2">&quot;Model is not transformed, Please first use QEfficient.transform to transform the model.&quot;</span>
+            <span class="p">)</span>
+        <span class="n">model</span> <span class="o">=</span> <span class="n">model_kv</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">hf_token</span><span class="p">:</span>
+                <span class="n">login</span><span class="p">(</span><span class="n">hf_token</span><span class="p">)</span>
+            <span class="n">model_hf_path</span> <span class="o">=</span> <span class="n">hf_download</span><span class="p">(</span>
+                <span class="n">repo_id</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span>
+                <span class="n">cache_dir</span><span class="o">=</span><span class="n">Constants</span><span class="o">.</span><span class="n">CACHE_DIR</span><span class="p">,</span>
+                <span class="n">ignore_pattrens</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;*.txt&quot;</span><span class="p">,</span> <span class="s2">&quot;*.onnx&quot;</span><span class="p">,</span> <span class="s2">&quot;*.ot&quot;</span><span class="p">,</span> <span class="s2">&quot;*.md&quot;</span><span class="p">,</span> <span class="s2">&quot;*.tflite&quot;</span><span class="p">,</span> <span class="s2">&quot;*.pdf&quot;</span><span class="p">],</span>
+            <span class="p">)</span>
+            <span class="n">model</span> <span class="o">=</span> <span class="n">model_class</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_hf_path</span><span class="p">,</span> <span class="n">cache_dir</span><span class="o">=</span><span class="n">Constants</span><span class="o">.</span><span class="n">CACHE_DIR</span><span class="p">,</span> <span class="n">use_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to download the </span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2"> model from Huggingface:%s&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+        <span class="n">transform</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">form_factor</span><span class="o">=</span><span class="s2">&quot;cloud&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Decide path for saving exported ONNX files.</span>
+    <span class="n">model_base_name</span> <span class="o">=</span> <span class="n">model_name</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">,</span> <span class="s2">&quot;_&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;_kv&quot;</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># Load tokenizer</span>
+    <span class="k">if</span> <span class="n">tokenizer</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># todo(ochougul): use cache dir from snapshot download</span>
+        <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">padding_side</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">padding_side</span> <span class="o">!=</span> <span class="s2">&quot;left&quot;</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Please use padding_side=&#39;left&#39; while initializing the tokenizer&quot;</span><span class="p">)</span>
+            <span class="n">tokenizer</span><span class="o">.</span><span class="n">padding_side</span> <span class="o">=</span> <span class="s2">&quot;left&quot;</span>
+
+    <span class="k">if</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">eos_token_id</span>
+
+    <span class="c1"># Disabling requires_grad on all parameters</span>
+    <span class="k">for</span> <span class="n">j</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()):</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="c1"># Preprocess inputs</span>
+    <span class="n">input_str</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;My name is Sarah.&quot;</span><span class="p">,</span> <span class="s2">&quot;I live in London.&quot;</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">seq_len</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">inputs</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">input_str</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">,</span> <span class="n">padding</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">batch_size</span><span class="p">,</span> <span class="n">prompt_len</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span>
+            <span class="p">[</span>
+                <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">],</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">seq_len</span> <span class="o">-</span> <span class="n">prompt_len</span><span class="p">),</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span><span class="p">),</span>
+            <span class="p">],</span>
+            <span class="mi">1</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span>
+            <span class="p">[</span>
+                <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">],</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">seq_len</span> <span class="o">-</span> <span class="n">prompt_len</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int64</span><span class="p">),</span>
+            <span class="p">],</span>
+            <span class="mi">1</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">inputs</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">input_str</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">pt_outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
+        <span class="n">output_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">pt_outputs</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Model </span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2"> Execution failed in pytorch:%s&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+    <span class="c1"># Raise error if expected outputs are not present</span>
+    <span class="k">assert</span> <span class="s2">&quot;logits&quot;</span> <span class="ow">in</span> <span class="n">output_names</span><span class="p">,</span> <span class="s2">&quot;logits not found in output&quot;</span>
+    <span class="k">assert</span> <span class="s2">&quot;past_key_values&quot;</span> <span class="ow">in</span> <span class="n">output_names</span><span class="p">,</span> <span class="s2">&quot;past_key_values not found in output&quot;</span>
+
+    <span class="c1"># Build inputs for next iteration from outputs</span>
+    <span class="n">cache_index</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">prompt_len</span><span class="p">)</span>
+    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">([</span><span class="s2">&quot;I have&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_ids</span><span class="p">[:,</span> <span class="o">-</span><span class="mi">2</span><span class="p">:]</span>
+    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">bool</span><span class="p">()</span>
+    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;cache_index&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">cache_index</span>
+
+    <span class="c1"># Add past_key_values into inputs</span>
+    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;past_key_values&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">([(</span><span class="n">key</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">value</span><span class="o">.</span><span class="n">detach</span><span class="p">())</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">pt_outputs</span><span class="o">.</span><span class="n">past_key_values</span><span class="p">])</span>
+
+    <span class="c1"># Run PyTorch inference with past</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">pt_outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
+        <span class="n">output_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">pt_outputs</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Model </span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2"> Execution failed in pytorch:%s&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+    <span class="c1"># Add pkv into output_names</span>
+    <span class="n">pkv</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">([(</span><span class="n">key</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">value</span><span class="o">.</span><span class="n">detach</span><span class="p">())</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">pt_outputs</span><span class="o">.</span><span class="n">past_key_values</span><span class="p">])</span>
+    <span class="n">pkv_idx</span> <span class="o">=</span> <span class="n">output_names</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="s2">&quot;past_key_values&quot;</span><span class="p">)</span>
+    <span class="n">key_value_names</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;past_</span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">pkv</span><span class="p">))</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;key&quot;</span><span class="p">,</span> <span class="s2">&quot;value&quot;</span><span class="p">]]</span>
+    <span class="n">output_names</span><span class="p">[</span><span class="n">pkv_idx</span> <span class="p">:</span> <span class="n">pkv_idx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span> <span class="o">+</span> <span class="s2">&quot;_RetainedState&quot;</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">key_value_names</span><span class="p">]</span>
+
+    <span class="c1"># Replace nested past_key_values outputs with separate KV tensors</span>
+    <span class="n">pt_outputs</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">pt_outputs</span><span class="p">)</span>
+    <span class="n">pkv_out</span> <span class="o">=</span> <span class="n">pt_outputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;past_key_values&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">pkv_out</span><span class="p">):</span>
+        <span class="n">pt_outputs</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;past_key.</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">_RetainedState&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">key</span>
+        <span class="n">pt_outputs</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;past_value.</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">_RetainedState&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="c1"># Export and simplify ONNX model</span>
+    <span class="n">fp32_model_name</span> <span class="o">=</span> <span class="n">export_onnx</span><span class="p">(</span>
+        <span class="n">pt_model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="n">inputs</span><span class="p">,</span>
+        <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+        <span class="n">gen_models_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
+        <span class="n">model_base_name</span><span class="o">=</span><span class="n">model_base_name</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Replace nested past_key_values inputs with separate KV tensors</span>
+    <span class="n">inputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;past_key_values&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">pkv</span><span class="p">):</span>
+        <span class="n">inputs</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;past_key.</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">key</span>
+        <span class="n">inputs</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;past_value.</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="c1"># Run onnxrt inference</span>
+    <span class="n">input_names</span><span class="p">,</span> <span class="n">ort_outputs</span> <span class="o">=</span> <span class="n">run_model_on_ort</span><span class="p">(</span>
+        <span class="n">onnx_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">fp32_model_name</span><span class="si">}</span><span class="s2">.onnx&quot;</span><span class="p">),</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="n">inputs</span><span class="p">,</span>
+        <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+        <span class="n">pt_outputs</span><span class="o">=</span><span class="n">pt_outputs</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Fix onnx for FP16</span>
+    <span class="k">if</span> <span class="n">save_fp16_onnx</span><span class="p">:</span>
+        <span class="n">fp16_model_name</span> <span class="o">=</span> <span class="n">fix_onnx_fp16</span><span class="p">(</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="n">inputs</span><span class="p">,</span>
+            <span class="n">output_names</span><span class="o">=</span><span class="n">output_names</span><span class="p">,</span>
+            <span class="n">ort_outputs</span><span class="o">=</span><span class="n">ort_outputs</span><span class="p">,</span>
+            <span class="n">gen_models_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
+            <span class="n">model_base_name</span><span class="o">=</span><span class="n">fp32_model_name</span><span class="p">,</span>
+            <span class="n">pt_outputs</span><span class="o">=</span><span class="n">pt_outputs</span><span class="p">,</span>
+            <span class="n">save_fp32_onnx</span><span class="o">=</span><span class="n">save_fp32_onnx</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Generate custom-IO files</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="s2">&quot;custom_io.yaml&quot;</span><span class="p">),</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">fp</span><span class="p">:</span>
+        <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;# Model Inputs</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">input_name</span> <span class="ow">in</span> <span class="n">key_value_names</span><span class="p">:</span>
+            <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; - IOName: </span><span class="si">{</span><span class="n">input_name</span><span class="si">}</span><span class="se">\n</span><span class="s2">   Precision: float16</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">inputs</span><span class="p">[</span><span class="n">input_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="n">input_name</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span>
+        <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;# Model Outputs</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">output_name</span> <span class="ow">in</span> <span class="n">key_value_names</span><span class="p">:</span>
+            <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; - IOName: </span><span class="si">{</span><span class="n">output_name</span><span class="si">}</span><span class="s2">_RetainedState</span><span class="se">\n</span><span class="s2">   Precision: float16</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Generate inputFiles</span>
+    <span class="n">input_list_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="s2">&quot;input_list.txt&quot;</span><span class="p">)</span>
+    <span class="n">generate_input_files</span><span class="p">(</span>
+        <span class="n">input_files_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="s2">&quot;inputFiles&quot;</span><span class="p">),</span>
+        <span class="n">input_names</span><span class="o">=</span><span class="n">input_names</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="n">inputs</span><span class="p">,</span>
+        <span class="n">input_list_file</span><span class="o">=</span><span class="n">input_list_file</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># return the model path for automation.</span>
+    <span class="k">if</span> <span class="n">return_path</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">save_fp16_onnx</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">onnx_dir_path</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">fp16_model_name</span><span class="si">}</span><span class="s2">.onnx&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">onnx_dir_path</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">fp32_model_name</span><span class="si">}</span><span class="s2">.onnx&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span></div>
+
+
+<div class="viewcode-block" id="convert_to_edge"><a class="viewcode-back" href="../../../QEfficient.exporter.html#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_edge">[docs]</a><span class="k">def</span> <span class="nf">convert_to_edge</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="c1"># [TODO]: Apply the class transformation to make changes for the KV models in edge use cases</span>
+    <span class="c1"># model = QEfficient.transform(model_hf, type=&quot;Transformers&quot;, form_factor=&quot;edge&quot;)</span>
+    <span class="c1"># model.eval()</span>
+    <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Oops...reached too far!!&quot;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="qualcomm_efficient_converter"><a class="viewcode-back" href="../../../low_level_api.html#QEfficient.exporter.export_hf_to_cloud_ai_100.qualcomm_efficient_converter">[docs]</a><span class="k">def</span> <span class="nf">qualcomm_efficient_converter</span><span class="p">(</span>
+    <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">model_class</span><span class="p">:</span> <span class="nb">type</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">model_kv</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">tokenizer</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">onnx_dir_path</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">hf_token</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+    <span class="n">seq_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">seq_length</span><span class="p">,</span>
+    <span class="n">input_str</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">input_str</span><span class="p">,</span>
+    <span class="n">kv</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">return_path</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">form_factor</span><span class="o">=</span><span class="s2">&quot;cloud&quot;</span><span class="p">,</span>
+    <span class="n">save_fp32_onnx</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">save_fp16_onnx</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    API to convert torch Bert style and KV style model to ONNX.</span>
+<span class="sd">    ---------</span>
+<span class="sd">    :param model_name: str. The name of the model to be used.</span>
+<span class="sd">    :model_class: type:. The class of the model.</span>
+<span class="sd">    :model_kv: torch.nn.Module. Transformed KV torch model to be used</span>
+<span class="sd">    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.</span>
+<span class="sd">    :onnx_dir_path: str. The path where the model is stored. If None, the model is loaded from the default location.</span>
+<span class="sd">    :hf_token: str. Huggingface token to access gated models. Default=None.</span>
+<span class="sd">    :seq_len: int. The length of the sequence. Default is 128.</span>
+<span class="sd">    :input_str: str. The input string to be processed.</span>
+<span class="sd">    :kv: bool. If false, It will export to Bert style. Default=true.</span>
+<span class="sd">    :return_path: bool. If True, return the base path for models and exported onnx model path.</span>
+<span class="sd">    :save_fp32_onnx: bool. If True, fp32 unclipped version of ONNX will be saved. Default is False.</span>
+<span class="sd">    :save_fp16_onnx: bool. If false, fp16 clipped version of ONNX will be deleted. Default is True.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">       Path of exported ONNX file.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">model_kv</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">kv</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;For transformed model kv must be True&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">form_factor</span> <span class="o">==</span> <span class="s2">&quot;cloud&quot;</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">kv</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">convert_to_cloud_kvstyle</span><span class="p">(</span>
+                <span class="n">model_name</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span>
+                <span class="n">model_class</span><span class="o">=</span><span class="n">model_class</span><span class="p">,</span>
+                <span class="n">model_kv</span><span class="o">=</span><span class="n">model_kv</span><span class="p">,</span>
+                <span class="n">onnx_dir_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
+                <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+                <span class="n">hf_token</span><span class="o">=</span><span class="n">hf_token</span><span class="p">,</span>
+                <span class="n">seq_len</span><span class="o">=</span><span class="n">seq_length</span><span class="p">,</span>
+                <span class="n">input_str</span><span class="o">=</span><span class="n">input_str</span><span class="p">,</span>
+                <span class="n">return_path</span><span class="o">=</span><span class="n">return_path</span><span class="p">,</span>
+                <span class="n">save_fp32_onnx</span><span class="o">=</span><span class="n">save_fp32_onnx</span><span class="p">,</span>
+                <span class="n">save_fp16_onnx</span><span class="o">=</span><span class="n">save_fp16_onnx</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">convert_to_cloud_bertstyle</span><span class="p">(</span>
+                <span class="n">model_name</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span>
+                <span class="n">model_class</span><span class="o">=</span><span class="n">model_class</span><span class="p">,</span>
+                <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+                <span class="n">onnx_dir_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
+                <span class="n">hf_token</span><span class="o">=</span><span class="n">hf_token</span><span class="p">,</span>
+                <span class="n">seq_len</span><span class="o">=</span><span class="n">seq_length</span><span class="p">,</span>
+                <span class="n">input_str</span><span class="o">=</span><span class="n">input_str</span><span class="p">,</span>
+                <span class="n">return_path</span><span class="o">=</span><span class="n">return_path</span><span class="p">,</span>
+                <span class="n">save_fp32_onnx</span><span class="o">=</span><span class="n">save_fp32_onnx</span><span class="p">,</span>
+                <span class="n">save_fp16_onnx</span><span class="o">=</span><span class="n">save_fp16_onnx</span><span class="p">,</span>
+            <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">convert_to_edge</span><span class="p">()</span></div>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, Qualcomm.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

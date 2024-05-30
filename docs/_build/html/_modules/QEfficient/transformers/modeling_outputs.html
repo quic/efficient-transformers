@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QEfficient.transformers.modeling_outputs &mdash; QEfficient Documentation 1.16 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../../../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js?v=a9e34a36"></script>
+        <script src="../../../_static/doctools.js?v=888ff710"></script>
+        <script src="../../../_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            QEfficient Documentation
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../Validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Amiot</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">efficient-transformers</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Installation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html">Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html#installation">Installation</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../QEfficient.html">QEfficient package</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">QEfficient Documentation</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+          <li class="breadcrumb-item"><a href="../../QEfficient.html">QEfficient</a></li>
+      <li class="breadcrumb-item active">QEfficient.transformers.modeling_outputs</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for QEfficient.transformers.modeling_outputs</h1><div class="highlight"><pre>
+<span></span><span class="c1"># -----------------------------------------------------------------------------</span>
+<span class="c1">#</span>
+<span class="c1"># Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: BSD-3-Clause</span>
+<span class="c1">#</span>
+<span class="c1"># -----------------------------------------------------------------------------</span>
+
+<span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Tuple</span>
+
+<span class="kn">import</span> <span class="nn">torch</span>
+<span class="kn">from</span> <span class="nn">transformers.utils</span> <span class="kn">import</span> <span class="n">ModelOutput</span>
+
+
+<div class="viewcode-block" id="QEffBaseModelOutputWithPastAndCrossAttentions"><a class="viewcode-back" href="../../../QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPastAndCrossAttentions">[docs]</a><span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">QEffBaseModelOutputWithPastAndCrossAttentions</span><span class="p">(</span><span class="n">ModelOutput</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Base class for model&#39;s outputs that may also contain a past key/values (to speed up sequential decoding).</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        last_hidden_state (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):</span>
+<span class="sd">            Sequence of hidden-states at the output of the last layer of the model.</span>
+
+<span class="sd">            If `past_key_values` is used only the last hidden-state of the sequences of shape `(batch_size, 1,</span>
+<span class="sd">            hidden_size)` is output.</span>
+<span class="sd">        past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):</span>
+<span class="sd">            Tuple of `tuple(torch.FloatTensor)` of length `config.n_layers`, with each tuple having 2 tensors of shape</span>
+<span class="sd">            `(batch_size, num_heads, sequence_length, embed_size_per_head)`) and optionally if</span>
+<span class="sd">            `config.is_encoder_decoder=True` 2 additional tensors of shape `(batch_size, num_heads,</span>
+<span class="sd">            encoder_sequence_length, embed_size_per_head)`.</span>
+
+<span class="sd">            Contains pre-computed hidden-states (key and values in the self-attention blocks and optionally if</span>
+<span class="sd">            `config.is_encoder_decoder=True` in the cross-attention blocks) that can be used (see `past_key_values`</span>
+<span class="sd">            input) to speed up sequential decoding.</span>
+<span class="sd">        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +</span>
+<span class="sd">            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.</span>
+
+<span class="sd">            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.</span>
+<span class="sd">        attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,</span>
+<span class="sd">            sequence_length)`.</span>
+
+<span class="sd">            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention</span>
+<span class="sd">            heads.</span>
+<span class="sd">        cross_attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` and `config.add_cross_attention=True` is passed or when `config.output_attentions=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,</span>
+<span class="sd">            sequence_length)`.</span>
+
+<span class="sd">            Attentions weights of the decoder&#39;s cross-attention layer, after the attention softmax, used to compute the</span>
+<span class="sd">            weighted average in the cross-attention heads.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">last_hidden_state</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">past_key_values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">hidden_states</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">attentions</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">attention_mask_RetainedState</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">BoolTensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">cross_attentions</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span></div>
+
+
+<div class="viewcode-block" id="QEffCausalLMOutputWithCrossAttentions"><a class="viewcode-back" href="../../../QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithCrossAttentions">[docs]</a><span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">QEffCausalLMOutputWithCrossAttentions</span><span class="p">(</span><span class="n">ModelOutput</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Base class for causal language model (or autoregressive) outputs.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):</span>
+<span class="sd">            Language modeling loss (for next-token prediction).</span>
+<span class="sd">        logits (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.vocab_size)`):</span>
+<span class="sd">            Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).</span>
+<span class="sd">        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +</span>
+<span class="sd">            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.</span>
+
+<span class="sd">            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.</span>
+<span class="sd">        attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,</span>
+<span class="sd">            sequence_length)`.</span>
+
+<span class="sd">            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention</span>
+<span class="sd">            heads.</span>
+<span class="sd">        cross_attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,</span>
+<span class="sd">            sequence_length)`.</span>
+
+<span class="sd">            Cross attentions weights after the attention softmax, used to compute the weighted average in the</span>
+<span class="sd">            cross-attention heads.</span>
+<span class="sd">        past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` tuples of length `config.n_layers`, with each tuple containing the cached key,</span>
+<span class="sd">            value states of the self-attention and the cross-attention layers if model is used in encoder-decoder</span>
+<span class="sd">            setting. Only relevant if `config.is_decoder = True`.</span>
+
+<span class="sd">            Contains pre-computed hidden-states (key and values in the attention blocks) that can be used (see</span>
+<span class="sd">            `past_key_values` input) to speed up sequential decoding.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">loss</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">past_key_values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">hidden_states</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">attentions</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">attention_mask_RetainedState</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">BoolTensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">cross_attentions</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span></div>
+
+
+<div class="viewcode-block" id="QEffBaseModelOutputWithPast"><a class="viewcode-back" href="../../../QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPast">[docs]</a><span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">QEffBaseModelOutputWithPast</span><span class="p">(</span><span class="n">ModelOutput</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Base class for model&#39;s outputs that may also contain a past key/values (to speed up sequential decoding).</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        last_hidden_state (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):</span>
+<span class="sd">            Sequence of hidden-states at the output of the last layer of the model.</span>
+
+<span class="sd">            If `past_key_values` is used only the last hidden-state of the sequences of shape `(batch_size, 1,</span>
+<span class="sd">            hidden_size)` is output.</span>
+<span class="sd">        past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):</span>
+<span class="sd">            Tuple of `tuple(torch.FloatTensor)` of length `config.n_layers`, with each tuple having 2 tensors of shape</span>
+<span class="sd">            `(batch_size, num_heads, sequence_length, embed_size_per_head)`) and optionally if</span>
+<span class="sd">            `config.is_encoder_decoder=True` 2 additional tensors of shape `(batch_size, num_heads,</span>
+<span class="sd">            encoder_sequence_length, embed_size_per_head)`.</span>
+
+<span class="sd">            Contains pre-computed hidden-states (key and values in the self-attention blocks and optionally if</span>
+<span class="sd">            `config.is_encoder_decoder=True` in the cross-attention blocks) that can be used (see `past_key_values`</span>
+<span class="sd">            input) to speed up sequential decoding.</span>
+<span class="sd">        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +</span>
+<span class="sd">            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.</span>
+
+<span class="sd">            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.</span>
+<span class="sd">        attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,</span>
+<span class="sd">            sequence_length)`.</span>
+
+<span class="sd">            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention</span>
+<span class="sd">            heads.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">last_hidden_state</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">past_key_values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">hidden_states</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">attentions</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">attention_mask_RetainedState</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">BoolTensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></div>
+
+
+<div class="viewcode-block" id="QEffCausalLMOutputWithPast"><a class="viewcode-back" href="../../../QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithPast">[docs]</a><span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">QEffCausalLMOutputWithPast</span><span class="p">(</span><span class="n">ModelOutput</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Base class for causal language model (or autoregressive) outputs.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):</span>
+<span class="sd">            Language modeling loss (for next-token prediction).</span>
+<span class="sd">        logits (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.vocab_size)`):</span>
+<span class="sd">            Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).</span>
+<span class="sd">        past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):</span>
+<span class="sd">            Tuple of `tuple(torch.FloatTensor)` of length `config.n_layers`, with each tuple having 2 tensors of shape</span>
+<span class="sd">            `(batch_size, num_heads, sequence_length, embed_size_per_head)`)</span>
+
+<span class="sd">            Contains pre-computed hidden-states (key and values in the self-attention blocks) that can be used (see</span>
+<span class="sd">            `past_key_values` input) to speed up sequential decoding.</span>
+<span class="sd">        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +</span>
+<span class="sd">            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.</span>
+
+<span class="sd">            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.</span>
+<span class="sd">        attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,</span>
+<span class="sd">            sequence_length)`.</span>
+
+<span class="sd">            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention</span>
+<span class="sd">            heads.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">loss</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">past_key_values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">hidden_states</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">attentions</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">attention_mask_RetainedState</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">BoolTensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></div>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, Qualcomm.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QEfficient package &mdash; QEfficient Documentation 1.16 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="_static/jquery.js?v=5d32c60e"></script>
+        <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=a9e34a36"></script>
+        <script src="_static/doctools.js?v=888ff710"></script>
+        <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            QEfficient Documentation
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Validate.html">Validated Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Installation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html">Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html#installation">Installation</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-high-level-api">Using High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="QEfficient.cloud.html">High level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="low_level_api.html">Low level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="other_api.html">Other API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="performance.html">perfromance details</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="reference.html">Reference 1</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">QEfficient Documentation</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">QEfficient package</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/QEfficient.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="qefficient-package">
+<h1>QEfficient package<a class="headerlink" href="#qefficient-package" title="Permalink to this heading"></a></h1>
+<section id="subpackages">
+<h2>Subpackages<a class="headerlink" href="#subpackages" title="Permalink to this heading"></a></h2>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="QEfficient.cloud.html">High level API</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.cloud.html#module-QEfficient.cloud.infer">QEfficient.cloud.infer</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.cloud.html#QEfficient.cloud.infer.main"><code class="docutils literal notranslate"><span class="pre">main()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.cloud.html#module-QEfficient.cloud.execute">QEfficient.cloud.execute</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.cloud.html#QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">main()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="QEfficient.customop.html">QEfficient.customop package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.customop.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.customop.html#qefficient-customop-rms-norm-module">QEfficient.customop.rms_norm module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.customop.html#module-QEfficient.customop">Module contents</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.customop.html#QEfficient.customop.CustomRMSNormAIC"><code class="docutils literal notranslate"><span class="pre">CustomRMSNormAIC</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.customop.html#QEfficient.customop.CustomRMSNormAIC.forward"><code class="docutils literal notranslate"><span class="pre">CustomRMSNormAIC.forward()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.customop.html#QEfficient.customop.CustomRMSNormAIC.training"><code class="docutils literal notranslate"><span class="pre">CustomRMSNormAIC.training</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.customop.html#QEfficient.customop.CustomRMSNormOp"><code class="docutils literal notranslate"><span class="pre">CustomRMSNormOp</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.customop.html#QEfficient.customop.CustomRMSNormOp.forward"><code class="docutils literal notranslate"><span class="pre">CustomRMSNormOp.forward()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.customop.html#QEfficient.customop.CustomRMSNormOp.setup_context"><code class="docutils literal notranslate"><span class="pre">CustomRMSNormOp.setup_context()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.customop.html#QEfficient.customop.CustomRMSNormOp.symbolic"><code class="docutils literal notranslate"><span class="pre">CustomRMSNormOp.symbolic()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="QEfficient.exporter.html">QEfficient.exporter package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.exporter.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.exporter.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100">QEfficient.exporter.export_hf_to_cloud_ai_100 module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.exporter.html#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_bertstyle"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_bertstyle()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.exporter.html#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_kvstyle"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_kvstyle()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.exporter.html#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_edge"><code class="docutils literal notranslate"><span class="pre">convert_to_edge()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.exporter.html#QEfficient.exporter.export_hf_to_cloud_ai_100.qualcomm_efficient_converter"><code class="docutils literal notranslate"><span class="pre">qualcomm_efficient_converter()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.exporter.html#module-QEfficient.exporter.export_utils">QEfficient.exporter.export_utils module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.exporter.html#QEfficient.exporter.export_utils.compile_kv_model_on_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">compile_kv_model_on_cloud_ai_100()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.exporter.html#QEfficient.exporter.export_utils.export_onnx"><code class="docutils literal notranslate"><span class="pre">export_onnx()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.exporter.html#QEfficient.exporter.export_utils.fix_onnx_fp16"><code class="docutils literal notranslate"><span class="pre">fix_onnx_fp16()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.exporter.html#QEfficient.exporter.export_utils.generate_input_files"><code class="docutils literal notranslate"><span class="pre">generate_input_files()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.exporter.html#QEfficient.exporter.export_utils.remove_temp_file"><code class="docutils literal notranslate"><span class="pre">remove_temp_file()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.exporter.html#QEfficient.exporter.export_utils.run_model_on_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">run_model_on_cloud_ai_100()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.exporter.html#QEfficient.exporter.export_utils.run_model_on_ort"><code class="docutils literal notranslate"><span class="pre">run_model_on_ort()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.exporter.html#QEfficient.exporter.export_utils.save_onnx"><code class="docutils literal notranslate"><span class="pre">save_onnx()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.exporter.html#module-QEfficient.exporter">Module contents</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="QEfficient.generation.html">QEfficient.generation package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.generation.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.generation.html#module-QEfficient.generation.cloud_infer">QEfficient.generation.cloud_infer module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.cloud_infer.QAICInferenceSession"><code class="docutils literal notranslate"><span class="pre">QAICInferenceSession</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.cloud_infer.QAICInferenceSession.activate"><code class="docutils literal notranslate"><span class="pre">QAICInferenceSession.activate()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.cloud_infer.QAICInferenceSession.deactivate"><code class="docutils literal notranslate"><span class="pre">QAICInferenceSession.deactivate()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.cloud_infer.QAICInferenceSession.input_names"><code class="docutils literal notranslate"><span class="pre">QAICInferenceSession.input_names</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.cloud_infer.QAICInferenceSession.output_names"><code class="docutils literal notranslate"><span class="pre">QAICInferenceSession.output_names</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.cloud_infer.QAICInferenceSession.run"><code class="docutils literal notranslate"><span class="pre">QAICInferenceSession.run()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.cloud_infer.QAICInferenceSession.set_buffers"><code class="docutils literal notranslate"><span class="pre">QAICInferenceSession.set_buffers()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.cloud_infer.QAICInferenceSession.skip_buffers"><code class="docutils literal notranslate"><span class="pre">QAICInferenceSession.skip_buffers()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.generation.html#module-QEfficient.generation.text_generation_inference">QEfficient.generation.text_generation_inference module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.text_generation_inference.check_batch_size_and_num_prompts"><code class="docutils literal notranslate"><span class="pre">check_batch_size_and_num_prompts()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv"><code class="docutils literal notranslate"><span class="pre">cloud_ai_100_exec_kv()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv_helper"><code class="docutils literal notranslate"><span class="pre">cloud_ai_100_exec_kv_helper()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.text_generation_inference.get_compilation_batch_size"><code class="docutils literal notranslate"><span class="pre">get_compilation_batch_size()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.text_generation_inference.latency_stats_bertstyle"><code class="docutils literal notranslate"><span class="pre">latency_stats_bertstyle()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.text_generation_inference.print_latency_stats_kv"><code class="docutils literal notranslate"><span class="pre">print_latency_stats_kv()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.text_generation_inference.read_prompts_txt_file"><code class="docutils literal notranslate"><span class="pre">read_prompts_txt_file()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.generation.html#QEfficient.generation.text_generation_inference.write_io_files"><code class="docutils literal notranslate"><span class="pre">write_io_files()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.generation.html#module-QEfficient.generation">Module contents</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="QEfficient.transformers.html">QEfficient.transformers package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.transformers.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.transformers.html#module-QEfficient.transformers.modeling_attn_mask_utils">QEfficient.transformers.modeling_attn_mask_utils module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter"><code class="docutils literal notranslate"><span class="pre">QEffAttentionMaskConverter</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter.cache_index"><code class="docutils literal notranslate"><span class="pre">QEffAttentionMaskConverter.cache_index</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter.is_causal"><code class="docutils literal notranslate"><span class="pre">QEffAttentionMaskConverter.is_causal</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter.sliding_window"><code class="docutils literal notranslate"><span class="pre">QEffAttentionMaskConverter.sliding_window</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter.to_4d"><code class="docutils literal notranslate"><span class="pre">QEffAttentionMaskConverter.to_4d()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.transformers.html#module-QEfficient.transformers.modeling_outputs">QEfficient.transformers.modeling_outputs module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPast"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPast</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPast.attention_mask_RetainedState"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPast.attention_mask_RetainedState</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPast.attentions"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPast.attentions</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPast.hidden_states"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPast.hidden_states</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPast.last_hidden_state"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPast.last_hidden_state</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPast.past_key_values"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPast.past_key_values</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPastAndCrossAttentions"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPastAndCrossAttentions</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPastAndCrossAttentions.attention_mask_RetainedState"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPastAndCrossAttentions.attention_mask_RetainedState</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPastAndCrossAttentions.attentions"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPastAndCrossAttentions.attentions</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPastAndCrossAttentions.cross_attentions"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPastAndCrossAttentions.cross_attentions</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPastAndCrossAttentions.hidden_states"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPastAndCrossAttentions.hidden_states</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPastAndCrossAttentions.last_hidden_state"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPastAndCrossAttentions.last_hidden_state</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPastAndCrossAttentions.past_key_values"><code class="docutils literal notranslate"><span class="pre">QEffBaseModelOutputWithPastAndCrossAttentions.past_key_values</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithCrossAttentions"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithCrossAttentions</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithCrossAttentions.attention_mask_RetainedState"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithCrossAttentions.attention_mask_RetainedState</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithCrossAttentions.attentions"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithCrossAttentions.attentions</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithCrossAttentions.cross_attentions"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithCrossAttentions.cross_attentions</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithCrossAttentions.hidden_states"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithCrossAttentions.hidden_states</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithCrossAttentions.logits"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithCrossAttentions.logits</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithCrossAttentions.loss"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithCrossAttentions.loss</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithCrossAttentions.past_key_values"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithCrossAttentions.past_key_values</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithPast"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithPast</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithPast.attention_mask_RetainedState"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithPast.attention_mask_RetainedState</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithPast.attentions"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithPast.attentions</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithPast.hidden_states"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithPast.hidden_states</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithPast.logits"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithPast.logits</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithPast.loss"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithPast.loss</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithPast.past_key_values"><code class="docutils literal notranslate"><span class="pre">QEffCausalLMOutputWithPast.past_key_values</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.transformers.html#module-QEfficient.transformers.modeling_utils">QEfficient.transformers.modeling_utils module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_utils.ModelArchitectures"><code class="docutils literal notranslate"><span class="pre">ModelArchitectures</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_utils.ModelArchitectures.architectures"><code class="docutils literal notranslate"><span class="pre">ModelArchitectures.architectures</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_utils.get_params_hash"><code class="docutils literal notranslate"><span class="pre">get_params_hash()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_utils.replace_module_with_qeff_layers"><code class="docutils literal notranslate"><span class="pre">replace_module_with_qeff_layers()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.transformers.html#QEfficient.transformers.modeling_utils.transform"><code class="docutils literal notranslate"><span class="pre">transform()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="QEfficient.utils.html">QEfficient.utils package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.utils.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.utils.html#module-QEfficient.utils.constants">QEfficient.utils.constants module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.constants.Constants"><code class="docutils literal notranslate"><span class="pre">Constants</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.constants.Constants.CACHE_DIR"><code class="docutils literal notranslate"><span class="pre">Constants.CACHE_DIR</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.constants.Constants.CTX_LEN"><code class="docutils literal notranslate"><span class="pre">Constants.CTX_LEN</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.constants.Constants.INPUT_STRING"><code class="docutils literal notranslate"><span class="pre">Constants.INPUT_STRING</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.constants.Constants.PROMPT_LEN"><code class="docutils literal notranslate"><span class="pre">Constants.PROMPT_LEN</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.constants.Constants.input_str"><code class="docutils literal notranslate"><span class="pre">Constants.input_str</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.constants.Constants.seq_length"><code class="docutils literal notranslate"><span class="pre">Constants.seq_length</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.utils.html#module-QEfficient.utils.device_utils">QEfficient.utils.device_utils module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.device_utils.get_available_device_id"><code class="docutils literal notranslate"><span class="pre">get_available_device_id()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.utils.html#module-QEfficient.utils.generate_inputs">QEfficient.utils.generate_inputs module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.generate_inputs.InputHandler"><code class="docutils literal notranslate"><span class="pre">InputHandler</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.generate_inputs.InputHandler.prepare_cloud_ai_100_inputs"><code class="docutils literal notranslate"><span class="pre">InputHandler.prepare_cloud_ai_100_inputs()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs"><code class="docutils literal notranslate"><span class="pre">InputHandler.prepare_ort_inputs()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs"><code class="docutils literal notranslate"><span class="pre">InputHandler.prepare_pytorch_inputs()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.generate_inputs.InputHandler.update_cloud_ai_100_inputs"><code class="docutils literal notranslate"><span class="pre">InputHandler.update_cloud_ai_100_inputs()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs"><code class="docutils literal notranslate"><span class="pre">InputHandler.update_ort_inputs()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.generate_inputs.InputHandler.update_pytorch_inputs"><code class="docutils literal notranslate"><span class="pre">InputHandler.update_pytorch_inputs()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.utils.html#module-QEfficient.utils.logging_utils">QEfficient.utils.logging_utils module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.logging_utils.QEffFormatter"><code class="docutils literal notranslate"><span class="pre">QEffFormatter</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.logging_utils.QEffFormatter.FORMATS"><code class="docutils literal notranslate"><span class="pre">QEffFormatter.FORMATS</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.logging_utils.QEffFormatter.bold_red"><code class="docutils literal notranslate"><span class="pre">QEffFormatter.bold_red</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.logging_utils.QEffFormatter.format"><code class="docutils literal notranslate"><span class="pre">QEffFormatter.format()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.logging_utils.QEffFormatter.grey"><code class="docutils literal notranslate"><span class="pre">QEffFormatter.grey</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.logging_utils.QEffFormatter.red"><code class="docutils literal notranslate"><span class="pre">QEffFormatter.red</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.logging_utils.QEffFormatter.reset"><code class="docutils literal notranslate"><span class="pre">QEffFormatter.reset</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.logging_utils.QEffFormatter.yellow"><code class="docutils literal notranslate"><span class="pre">QEffFormatter.yellow</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.logging_utils.create_logger"><code class="docutils literal notranslate"><span class="pre">create_logger()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.utils.html#module-QEfficient.utils.run_utils">QEfficient.utils.run_utils module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.run_utils.ApiRunner"><code class="docutils literal notranslate"><span class="pre">ApiRunner</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_hf_model_on_pytorch()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_kv_model_on_cloud_ai_100()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_kv_model_on_ort()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_kv_model_on_pytorch()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.run_utils.ApiRunner.run_ort_session"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_ort_session()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="QEfficient.utils.html#module-QEfficient.utils">Module contents</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="QEfficient.utils.html#QEfficient.utils.hf_download"><code class="docutils literal notranslate"><span class="pre">hf_download()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Permalink to this heading"></a></h2>
+</section>
+<section id="module-QEfficient.version">
+<span id="qefficient-version-module"></span><h2>QEfficient.version module<a class="headerlink" href="#module-QEfficient.version" title="Permalink to this heading"></a></h2>
+</section>
+<section id="module-QEfficient">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-QEfficient" title="Permalink to this heading"></a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.transform">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.</span></span><span class="sig-name descname"><span class="pre">transform</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Module</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'Transformers'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">form_factor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'cloud'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient.html#transform"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transform" title="Permalink to this definition"></a></dt>
+<dd><section id="low-level-apis-in-library">
+<h3>Low level apis in library<a class="headerlink" href="#low-level-apis-in-library" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param model<span class="colon">:</span></dt>
+<dd class="field-odd"><p>nn.Module. instance of nn.Module.</p>
+</dd>
+<dt class="field-even">type<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Transformers | Diffusers, default : Transformers.</p>
+</dd>
+<dt class="field-odd">form_factor<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str.</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, Qualcomm.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

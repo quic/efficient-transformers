@@ -1,0 +1,25 @@
+# Validated Models
+
+
+* [GPT2](https://huggingface.co/openai-community/gpt2)
+* [Llama-2-7b-chat-hf](https://huggingface.co/meta-llama/Llama-2-7b-chat-hf)
+* [Llama-2-13b-chat-hf](https://huggingface.co/meta-llama/Llama-2-13b-chat-hf)
+* [CodeLlama-7b-hf](https://huggingface.co/codellama/CodeLlama-7b-hf)
+* [CodeLlama-13b-hf](https://huggingface.co/codellama/CodeLlama-13b-hf)
+* [CodeLlama-34b-hf](https://huggingface.co/codellama/CodeLlama-34b-hf)
+* [Salesforce/codegen25-7b-mono_P](https://huggingface.co/Salesforce/codegen25-7b-mono_P)
+* [Salesforce/xgen-7b-8k-base](https://huggingface.co/Salesforce/xgen-7b-8k-base)
+* [MPT-7b](https://huggingface.co/mosaicml/mpt-7b)
+* [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1)
+
+
+**Models Coming Soon..**
+* [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-Instruct-v0.1)
+* [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) 
+* [Starcoder2-15b](https://huggingface.co/bigcode/starcoder2-15b) 
+* [Phi-3](https://huggingface.co/microsoft/Phi-3-mini-128k-instruct)
+* [Jais-13b](https://huggingface.co/core42/jais-13b)
+* [Jais-30b](https://huggingface.co/core42/jais-30b-chat-v1)
+* [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
+* [Chatglm2-6b](https://huggingface.co/THUDM/chatglm2-6b)
+* [Baichuan2-7B-Base](baichuan-inc/Baichuan2-7B-Base)

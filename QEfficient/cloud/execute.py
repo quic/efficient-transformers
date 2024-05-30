@@ -28,7 +28,7 @@ def main(
     hf_token: Optional[str] = None,
 ):
     """
-    API() to run the model on Cloud AI 100 platform.
+    API to run the model on Cloud AI 100 platform.
     ---------
     :param model_name: str. Hugging Face Model Card name, Example: [gpt2].
     :prompt: str. Sample prompt for the model text generation.

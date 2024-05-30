@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Other API &mdash; QEfficient Documentation 1.16 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="_static/jquery.js?v=5d32c60e"></script>
+        <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=a9e34a36"></script>
+        <script src="_static/doctools.js?v=888ff710"></script>
+        <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="perfromance details" href="performance.html" />
+    <link rel="prev" title="Low level API" href="low_level_api.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            QEfficient Documentation
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Validate.html">Validated Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Installation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html">Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html#installation">Installation</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-high-level-api">Using High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-low-level-api">Using Low Level API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="QEfficient.cloud.html">High level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="low_level_api.html">Low level API</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Other API</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.generation.cloud_infer">QEfficient.generation.cloud_infer module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.exporter.export_utils">QEfficient.exporter.export_utils module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_utils.compile_kv_model_on_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">compile_kv_model_on_cloud_ai_100()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_utils.export_onnx"><code class="docutils literal notranslate"><span class="pre">export_onnx()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_utils.fix_onnx_fp16"><code class="docutils literal notranslate"><span class="pre">fix_onnx_fp16()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_utils.generate_input_files"><code class="docutils literal notranslate"><span class="pre">generate_input_files()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_utils.remove_temp_file"><code class="docutils literal notranslate"><span class="pre">remove_temp_file()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_utils.run_model_on_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">run_model_on_cloud_ai_100()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_utils.run_model_on_ort"><code class="docutils literal notranslate"><span class="pre">run_model_on_ort()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_utils.save_onnx"><code class="docutils literal notranslate"><span class="pre">save_onnx()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#id1">QEfficient.generation.cloud_infer module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.generation.text_generation_inference">QEfficient.generation.text_generation_inference module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv_helper"><code class="docutils literal notranslate"><span class="pre">cloud_ai_100_exec_kv_helper()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.latency_stats_bertstyle"><code class="docutils literal notranslate"><span class="pre">latency_stats_bertstyle()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.generation">Module contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.cloud.export">QEfficient.cloud.export</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.cloud.export.main"><code class="docutils literal notranslate"><span class="pre">main()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="performance.html">perfromance details</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="reference.html">Reference 1</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">QEfficient Documentation</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Other API</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/other_api.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="other-api">
+<h1>Other API<a class="headerlink" href="#other-api" title="Permalink to this heading"></a></h1>
+<section id="module-QEfficient.generation.cloud_infer">
+<span id="qefficient-generation-cloud-infer-module"></span><h2>QEfficient.generation.cloud_infer module<a class="headerlink" href="#module-QEfficient.generation.cloud_infer" title="Permalink to this heading"></a></h2>
+<dl class="field-list simple">
+<dt class="field-odd">show-inheritance<span class="colon">:</span></dt>
+<dd class="field-odd"><p></p></dd>
+</dl>
+</section>
+<section id="module-QEfficient.exporter.export_utils">
+<span id="qefficient-exporter-export-utils-module"></span><h2>QEfficient.exporter.export_utils module<a class="headerlink" href="#module-QEfficient.exporter.export_utils" title="Permalink to this heading"></a></h2>
+<dl class="field-list simple">
+<dt class="field-odd">show-inheritance<span class="colon">:</span></dt>
+<dd class="field-odd"><p></p></dd>
+</dl>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.exporter.export_utils.compile_kv_model_on_cloud_ai_100">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.exporter.export_utils.</span></span><span class="sig-name descname"><span class="pre">compile_kv_model_on_cloud_ai_100</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">onnx_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">specializations_json</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_cores</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">base_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxfp6</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">custom_io_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">aic_enable_depth_first</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mos</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">-1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_group</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">[0]</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">bool</span></span></span><a class="reference internal" href="_modules/QEfficient/exporter/export_utils.html#compile_kv_model_on_cloud_ai_100"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.exporter.export_utils.compile_kv_model_on_cloud_ai_100" title="Permalink to this definition"></a></dt>
+<dd><section id="api-to-compile-model-cloud-ai-100">
+<h3>API to compile model Cloud AI 100.<a class="headerlink" href="#api-to-compile-model-cloud-ai-100" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param onnx_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Path of the ONNX file.</p>
+</dd>
+<dt class="field-even">specializations_json<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Path of specializations.json file.</p>
+</dd>
+<dt class="field-odd">num_cores<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. Number of cores to use during compilation.</p>
+</dd>
+<dt class="field-even">base_path<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Path where intermediate files and compiled artifacts will be stored.</p>
+</dd>
+<dt class="field-odd">mxfp6<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool. If true, it enables MXFP6 (Mixed Precision Floating Point 6) mode during compilation.</p>
+</dd>
+<dt class="field-even">custom_io_path<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path to a custom I/O configuration file.</p>
+</dd>
+<dt class="field-odd">aic_enable_depth_first<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool. If true, it enables during compilation.</p>
+</dd>
+<dt class="field-even">mos<span class="colon">:</span></dt>
+<dd class="field-even"><p>int. Effort level to reduce the on-chip memory.</p>
+</dd>
+<dt class="field-odd">device_group<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[int]. List of device group IDs.</p>
+</dd>
+</dl>
+<dl class="simple">
+<dt>Return:</dt><dd><p>True if model compiled successfully.</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.exporter.export_utils.export_onnx">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.exporter.export_utils.</span></span><span class="sig-name descname"><span class="pre">export_onnx</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">pt_model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Module</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Tensor</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_names</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gen_models_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_base_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="_modules/QEfficient/exporter/export_utils.html#export_onnx"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.exporter.export_utils.export_onnx" title="Permalink to this definition"></a></dt>
+<dd><section id="api-for-export-pytorch-model-to-onnx">
+<h3>API for export PyTorch model to ONNX.<a class="headerlink" href="#api-for-export-pytorch-model-to-onnx" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param pt_model<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.nn.Module. PyTorch model that will be exported to ONNX format.</p>
+</dd>
+<dt class="field-even">inputs<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dict[str, torch.Tensor]. Processed torch input for the model.</p>
+</dd>
+<dt class="field-odd">output_names<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[str]. Output of pytorch model inference.</p>
+</dd>
+<dt class="field-even">gen_models_path<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Path of generated ONNX model.</p>
+</dd>
+<dt class="field-odd">model_base_name<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Base name for the exported ONNX file .</p>
+</dd>
+</dl>
+<dl class="simple">
+<dt>Return:</dt><dd><p>Updated base name of exported ONNX model.</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.exporter.export_utils.fix_onnx_fp16">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.exporter.export_utils.</span></span><span class="sig-name descname"><span class="pre">fix_onnx_fp16</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Tensor</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_names</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ort_outputs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">ndarray</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gen_models_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_base_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pt_outputs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Tensor</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">save_fp32_onnx</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="_modules/QEfficient/exporter/export_utils.html#fix_onnx_fp16"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.exporter.export_utils.fix_onnx_fp16" title="Permalink to this definition"></a></dt>
+<dd><section id="api-to-clip-model-weights-in-fp16-range-and-save-updated-clipped-onnx-model">
+<h3>API to clip model weights in fp16 range and save updated clipped ONNX model.<a class="headerlink" href="#api-to-clip-model-weights-in-fp16-range-and-save-updated-clipped-onnx-model" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param inputs<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict[str, torch.Tensor]. Processed torch input for the model.</p>
+</dd>
+<dt class="field-even">output_names<span class="colon">:</span></dt>
+<dd class="field-even"><p>List[str]. Output of pytorch model inference.</p>
+</dd>
+<dt class="field-odd">ort_outputs<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[np.ndarray]. Output of onnxruntime.</p>
+</dd>
+<dt class="field-even">gen_models_path<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Path of generated ONNX model.</p>
+</dd>
+<dt class="field-odd">model_base_name<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Base name for the exported ONNX model.</p>
+</dd>
+<dt class="field-even">pt_outputs<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dict[str, torch.Tensor]. Output of PyTorch model inference.</p>
+</dd>
+<dt class="field-odd">save_fp32_onnx<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool. If True, fp32 unclipped version of ONNX will be saved. Default is False.</p>
+</dd>
+</dl>
+<dl class="simple">
+<dt>Return:</dt><dd><p>Updated base name of exported ONNX model.</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.exporter.export_utils.generate_input_files">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.exporter.export_utils.</span></span><span class="sig-name descname"><span class="pre">generate_input_files</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_files_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_names</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Tensor</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_list_file</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/exporter/export_utils.html#generate_input_files"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.exporter.export_utils.generate_input_files" title="Permalink to this definition"></a></dt>
+<dd><section id="api-to-generate-input-files-required-for-cloud-ai-100-execution">
+<h3>API to generate input files, required for Cloud AI 100 execution.<a class="headerlink" href="#api-to-generate-input-files-required-for-cloud-ai-100-execution" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param input_files_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path of the input file.</p>
+</dd>
+<dt class="field-even">input_names<span class="colon">:</span></dt>
+<dd class="field-even"><p></p></dd>
+<dt class="field-odd">inputs<span class="colon">:</span></dt>
+<dd class="field-odd"><p></p></dd>
+<dt class="field-even">input_list_file<span class="colon">:</span></dt>
+<dd class="field-even"><p></p></dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.exporter.export_utils.remove_temp_file">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.exporter.export_utils.</span></span><span class="sig-name descname"><span class="pre">remove_temp_file</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">file_path_model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">file_path_weights</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/exporter/export_utils.html#remove_temp_file"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.exporter.export_utils.remove_temp_file" title="Permalink to this definition"></a></dt>
+<dd><section id="api-to-remove-a-temporary-file">
+<h3>API to remove a temporary file<a class="headerlink" href="#api-to-remove-a-temporary-file" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param str file_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Path to the file to be deleted</p>
+</dd>
+<dt class="field-even">file_path_weights<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Path to the weights file</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.exporter.export_utils.run_model_on_cloud_ai_100">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.exporter.export_utils.</span></span><span class="sig-name descname"><span class="pre">run_model_on_cloud_ai_100</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">onnx_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">onnx_symbol_defs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">{}</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">bool</span></span></span><a class="reference internal" href="_modules/QEfficient/exporter/export_utils.html#run_model_on_cloud_ai_100"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.exporter.export_utils.run_model_on_cloud_ai_100" title="Permalink to this definition"></a></dt>
+<dd><section id="api-to-run-model-on-cloud-ai-100">
+<h3>API to run model on Cloud AI 100.<a class="headerlink" href="#api-to-run-model-on-cloud-ai-100" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param onnx_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Path of the ONNX file.</p>
+</dd>
+<dt class="field-even">ONNX_symbol_defs<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dict[str, int] = {}.  Custom ONNX symbols definition.</p>
+</dd>
+</dl>
+<dl class="simple">
+<dt>Return:</dt><dd><p>True if model run successfully on Cloud AI 100.</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.exporter.export_utils.run_model_on_ort">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.exporter.export_utils.</span></span><span class="sig-name descname"><span class="pre">run_model_on_ort</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">onnx_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Tensor</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_names</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pt_outputs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Tensor</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">ndarray</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="_modules/QEfficient/exporter/export_utils.html#run_model_on_ort"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.exporter.export_utils.run_model_on_ort" title="Permalink to this definition"></a></dt>
+<dd><section id="api-to-run-onnx-model-on-onnx-runtime">
+<h3>API to run ONNX model on ONNX runtime<a class="headerlink" href="#api-to-run-onnx-model-on-onnx-runtime" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param onnx_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Path of ONNX model.</p>
+</dd>
+<dt class="field-even">inputs<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dict[str, torch.Tensor]. Processed torch input for the model.</p>
+</dd>
+<dt class="field-odd">output_names<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[str]. Output of pytorch model inference.</p>
+</dd>
+<dt class="field-even">pt_outputs<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dict[str, torch.Tensor]. Output of PyTorch model inference.</p>
+</dd>
+<dt class="field-odd">dtype<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool. If False it will consider you are passing clipped version of ONNX model.</p>
+</dd>
+</dl>
+<dl class="simple">
+<dt>Return:</dt><dd><p>input_names</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.exporter.export_utils.save_onnx">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.exporter.export_utils.</span></span><span class="sig-name descname"><span class="pre">save_onnx</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">ModelProto</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gen_models_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_base_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="_modules/QEfficient/exporter/export_utils.html#save_onnx"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.exporter.export_utils.save_onnx" title="Permalink to this definition"></a></dt>
+<dd><section id="api-to-save-onnx-model-and-it-s-data-separately-if-size-of-onnx-model-is-greater-than-2gb">
+<h3>API to save ONNX model and it’s data separately if size of ONNX model is greater than 2GB.<a class="headerlink" href="#api-to-save-onnx-model-and-it-s-data-separately-if-size-of-onnx-model-is-greater-than-2gb" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param model<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Union[onnx.ModelProto, str]. Pass ONNX model or name of the model.</p>
+</dd>
+<dt class="field-even">gen_models_path<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Path of generated ONNX model.</p>
+</dd>
+<dt class="field-odd">model_base_name<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Base name of the HF model.</p>
+</dd>
+</dl>
+<dl class="simple">
+<dt>Return:</dt><dd><p>Base name of ONNX exported model.</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+</section>
+<section id="id1">
+<h2>QEfficient.generation.cloud_infer module<a class="headerlink" href="#id1" title="Permalink to this heading"></a></h2>
+<span class="target" id="module-QEfficient.generation.cloud_infer"></span><dl class="field-list simple">
+<dt class="field-odd">show-inheritance<span class="colon">:</span></dt>
+<dd class="field-odd"><p></p></dd>
+</dl>
+</section>
+<section id="module-QEfficient.generation.text_generation_inference">
+<span id="qefficient-generation-text-generation-inference-module"></span><h2>QEfficient.generation.text_generation_inference module<a class="headerlink" href="#module-QEfficient.generation.text_generation_inference" title="Permalink to this heading"></a></h2>
+<dl class="field-list simple">
+<dt class="field-odd">show-inheritance<span class="colon">:</span></dt>
+<dd class="field-odd"><p></p></dd>
+</dl>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv_helper">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.generation.text_generation_inference.</span></span><span class="sig-name descname"><span class="pre">cloud_ai_100_exec_kv_helper</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PreTrainedTokenizer</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">PreTrainedTokenizerFast</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qpc</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generation_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">[0]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_debug_logs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">write_io_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/generation/text_generation_inference.html#cloud_ai_100_exec_kv_helper"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv_helper" title="Permalink to this definition"></a></dt>
+<dd><section id="api-to-execute-qefficient-transformed-onnx-model-on-cloud-ai-100-using-compiled-qpc-file">
+<h3>API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.<a class="headerlink" href="#api-to-execute-qefficient-transformed-onnx-model-on-cloud-ai-100-using-compiled-qpc-file" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param tokenizer<span class="colon">:</span></dt>
+<dd class="field-odd"><p></p></dd>
+<dt class="field-even">qpc<span class="colon">:</span></dt>
+<dd class="field-even"><p>str.  Path to the save generated binary file after compilation.</p>
+</dd>
+<dt class="field-odd">prompt<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Sample prompt for the model text generation.</p>
+</dd>
+<dt class="field-even">input_len<span class="colon">:</span></dt>
+<dd class="field-even"><p>int. input length of prompt to get number of chunks to execute on Cloud AI 100.</p>
+</dd>
+<dt class="field-odd">generation_len<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. Maximum context length for the model to compile.</p>
+</dd>
+<dt class="field-even">device_id<span class="colon">:</span></dt>
+<dd class="field-even"><p>List[int]. Device Ids to be used for compilation. if len(device_id) &gt; 1, it enable multiple card setup.</p>
+</dd>
+<dt class="field-odd">enable_debug_logs<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool. If True, it enables debugging logs.</p>
+</dd>
+<dt class="field-even">stream<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool. If True enable streamer, which returns tokens one by one as the model generates them.</p>
+</dd>
+<dt class="field-odd">Write_io_dir<span class="colon">:</span></dt>
+<dd class="field-odd"><p></p></dd>
+<dt class="field-even">automation<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool. If true, it print input, output and performance stats.</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.generation.text_generation_inference.latency_stats_bertstyle">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.generation.text_generation_inference.</span></span><span class="sig-name descname"><span class="pre">latency_stats_bertstyle</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qpc</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">seq_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">[0]</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/QEfficient/generation/text_generation_inference.html#latency_stats_bertstyle"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.generation.text_generation_inference.latency_stats_bertstyle" title="Permalink to this definition"></a></dt>
+<dd><section id="api-to-execute-onnx-model-on-cpu">
+<h3>API to execute ONNX model on CPU.<a class="headerlink" href="#api-to-execute-onnx-model-on-cpu" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param model_name<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Hugging Face Model Card name, Example: gpt2.</p>
+</dd>
+<dt class="field-even">qpc<span class="colon">:</span></dt>
+<dd class="field-even"><p>str.  Path to the save generated binary file after compilation.</p>
+</dd>
+<dt class="field-odd">seq_len<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. Sequence length.</p>
+</dd>
+<dt class="field-even">prompt<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Sample prompt for the model text generation.</p>
+</dd>
+<dt class="field-odd">device_id<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[int]. Device Ids to be used for compilation. if devices &gt; 1, it enable multiple card setup.</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+</section>
+<section id="module-QEfficient.generation">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-QEfficient.generation" title="Permalink to this heading"></a></h2>
+<dl class="field-list simple">
+<dt class="field-odd">show-inheritance<span class="colon">:</span></dt>
+<dd class="field-odd"><p></p></dd>
+</dl>
+</section>
+<section id="module-QEfficient.cloud.export">
+<span id="qefficient-cloud-export"></span><h2>QEfficient.cloud.export<a class="headerlink" href="#module-QEfficient.cloud.export" title="Permalink to this heading"></a></h2>
+<dl class="field-list simple">
+<dt class="field-odd">show-inheritance<span class="colon">:</span></dt>
+<dd class="field-odd"><p></p></dd>
+</dl>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.cloud.export.main">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.cloud.export.</span></span><span class="sig-name descname"><span class="pre">main</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cache_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="_modules/QEfficient/cloud/export.html#main"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.cloud.export.main" title="Permalink to this definition"></a></dt>
+<dd><section id="api-for-exporting-to-onnx-model">
+<h3>ApI for exporting to ONNX Model.<a class="headerlink" href="#api-for-exporting-to-onnx-model" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param model_name<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Hugging Face Model Card name, Example: gpt2.</p>
+</dd>
+<dt class="field-even">cache_dir<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Cache dir to store the downloaded huggingface files.</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="low_level_api.html" class="btn btn-neutral float-left" title="Low level API" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="performance.html" class="btn btn-neutral float-right" title="perfromance details" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, Qualcomm.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -1,8 +1,5 @@
-<p align="center">
-  <picture>
-    <img alt="Cloud AI 100" src="docs/Cloud_AI_100.png" width=100%>
-  </picture>
-</p>
+![alt text](docs/Cloud_AI_100.png)
+
 
 ---
 # Qualcomm Transformers Library 
@@ -107,7 +104,7 @@ pip install -e .
 
 QEfficient Library was designed with one goal: **to make onboarding of models inference straightforward for any Transformer architecture, while leveraging the complete power of Cloud AI platform**
 
-To achieve this, we have 2 levels of APIs, with different levels of abstraction.
+To achieve this, we have 2 level`s of APIs, with different levels of abstraction.
 1. High-level APIs abstract away complex details, offering a simpler interface. They're ideal for quick development and prototyping. If you're new to a technology or want to minimize coding effort, high-level APIs are more user-friendly.
 
 2. Low-level APIs offer more granular control, ideal for when customization is necessary. These are particularly useful for users who are trying their own models, not hosted on HF but are implemented based on Transformers.
