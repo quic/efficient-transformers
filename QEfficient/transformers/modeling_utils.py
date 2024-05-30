@@ -242,7 +242,7 @@ def transform(model: Type[QEFFBaseModel], form_factor="cloud"):
     form_factor(str): form factor configuration for optmizing the model, available options=["cloud", "edge"].
     """
     assert form_factor == "cloud", "Only form_factor='cloud' is supported as of now!"
-    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(model.__class__, None) == QEFF_MODEL_TYPE.LLM:
+    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:
         transform_lm(model.model, form_factor) # type: ignore
         return model
     else:

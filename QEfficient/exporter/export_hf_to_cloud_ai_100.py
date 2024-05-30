@@ -260,11 +260,10 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model:
     else:
         inputs = tokenizer(input_str, return_tensors="pt")
 
-    try:
-        pt_outputs = transformed_model(**inputs)
-        output_names = list(pt_outputs.keys())
-    except Exception as e:
-        print(f"Model {transformed_model.__class__,__name__} Execution failed in pytorch:%s", e)
+
+    pt_outputs = transformed_model(**inputs)
+    output_names = list(pt_outputs.keys())
+
 
     # Raise error if expected outputs are not present
     assert "logits" in output_names, "logits not found in output"
@@ -282,11 +281,9 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model:
     inputs["past_key_values"] = tuple([(key.detach(), value.detach()) for key, value in pt_outputs.past_key_values])
 
     # Run PyTorch inference with past
-    try:
-        pt_outputs = transformed_model(**inputs)
-        output_names = list(pt_outputs.keys())
-    except Exception as e:
-        print(f"Model {transformed_model.__class__,__name__} Execution failed in pytorch:%s", e)
+    pt_outputs = transformed_model(**inputs)
+    output_names = list(pt_outputs.keys())
+
 
     # Add pkv into output_names
     pkv = tuple([(key.detach(), value.detach()) for key, value in pt_outputs.past_key_values])
@@ -382,7 +379,7 @@ def export_for_cloud(model_name: str, qeff_model: QEFFBaseModel,
                      return_path: bool = True,
                      save_fp32_onnx: bool = False,
                      save_fp16_onnx: bool = True):
-    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.LLM: # type: ignore
+    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM: # type: ignore
         return export_lm_model_for_cloud(model_name=model_name,
                                          qeff_model=qeff_model, # type: ignore
                                          tokenizer=tokenizer,

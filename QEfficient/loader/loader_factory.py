@@ -39,6 +39,14 @@ class QEFFBaseModel(ABC):
         raise NotImplementedError("Must implement for child classes")
 
     @abstractmethod
+    def transform_export(self, *args, **kwargs) -> Any:
+        pass
+
+    @abstractmethod
+    def transform_export_compile(self, *args, **kwargs) -> Any:
+        pass
+
+    @abstractmethod
     def execute(self, *args, **kwargs) -> Any:
         pass
     
@@ -48,6 +56,10 @@ class QEFFBaseModel(ABC):
     
     @abstractmethod
     def export(self, *args, **kwargs) -> Any:
+        pass
+
+    @abstractmethod
+    def compile(self, *args, **kwargs) -> Any:
         pass
     
 
@@ -61,6 +73,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.model: nn.Module = model
         self.model_files_path = pretrained_model_name_or_path
 
+    def __repr__(self) -> str:
+        return self.model.__repr__()
+    
     @property
     def is_transformed(self) -> bool:
         return getattr(self.model, "qeff_transformed", False)
@@ -69,6 +84,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         return cls(model=model, pretrained_model_name_or_path=pretrained_model_name_or_path)
+    
+    def transform_export(self, *args, **kwargs) -> Any:
+        raise NotImplementedError("Reached too far!!")
+    
+    def transform_export_compile(self, *args, **kwargs) -> Any:
+        raise NotImplementedError("Reached too far!!")
     
     def execute(self, *args, **kwargs): # type: ignore
         raise NotImplementedError("Reached too far!!")
@@ -80,18 +101,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     def export(self):
         raise NotImplementedError("Reached too far!!")
     
-    def __repr__(self) -> str:
-        return self.model.__repr__()
+    def compile(self, *args, **kwargs) -> Any:
+        raise NotImplementedError("Reached too far!!")
 
 
 class QEFF_MODEL_TYPE(Enum):
-    LLM = "LLM"
-    STABLE_DIFFUSION = "STABLE_DIFFUSION"
+    CAUSALLM = "LLM"
+    DIFFUSION = "STABLE_DIFFUSION"
     AWQ = "AWQ"
 
 
 MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP: Dict[QEFF_MODEL_TYPE, Type[QEFFBaseModel]] = {
-    QEFF_MODEL_TYPE.LLM: QEFFAutoModelForCausalLM
+    QEFF_MODEL_TYPE.CAUSALLM: QEFFAutoModelForCausalLM
 }
 
 AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP: Dict[Type[QEFFBaseModel], QEFF_MODEL_TYPE] = {v:k for k,v in MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP.items()}
@@ -116,6 +137,6 @@ def get_hf_model_type(hf_model_path: str) -> QEFF_MODEL_TYPE:
             else:
                 raise NotImplementedError(f"current model type is not yet supported {type(config)}")
         else:
-            return QEFF_MODEL_TYPE.LLM
+            return QEFF_MODEL_TYPE.CAUSALLM
     else:
         raise NotImplementedError(f"model type {type(config)} is not yet supported")

@@ -75,7 +75,10 @@ def hf_download(
 
 def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Tuple[bool, str]:
     """
-    Checks if qpc files already exists, removes the directory if files have been manipulated.
+    Checks if qpc dir exists.
+    Returns
+    1. Boolean variable indicating if qpc files exist
+    2. Path of the qpc dir if found.
     ---------
     :param model_name: str. HF Model card name.
     :param dir_path: str. Path of qpc directory.
@@ -120,5 +123,5 @@ def load_hf_tokenizer(model_name: str, cache_dir: Optional[str] = None, hf_token
 
     # Download tokenizer along with model if it doesn't exist
     model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
+    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left", trust_remote_code=True)
     return tokenizer
