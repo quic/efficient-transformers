@@ -1,0 +1,29 @@
+QEfficient.generation package
+=============================
+
+Submodules
+----------
+
+QEfficient.generation.cloud\_infer module
+-----------------------------------------
+
+.. automodule:: QEfficient.generation.cloud_infer
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+QEfficient.generation.text\_generation\_inference module
+--------------------------------------------------------
+
+.. automodule:: QEfficient.generation.text_generation_inference
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: QEfficient.generation
+   :members:
+   :undoc-members:
+   :show-inheritance:

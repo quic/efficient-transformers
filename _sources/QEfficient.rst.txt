@@ -1,0 +1,34 @@
+QEfficient package
+==================
+
+Subpackages
+-----------
+
+.. toctree::
+   :maxdepth: 4
+
+   QEfficient.cloud
+   QEfficient.customop
+   QEfficient.exporter
+   QEfficient.generation
+   QEfficient.transformers
+   QEfficient.utils
+
+Submodules
+----------
+
+QEfficient.version module
+-------------------------
+
+.. automodule:: QEfficient.version
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: QEfficient
+   :members:
+   :undoc-members:
+   :show-inheritance:

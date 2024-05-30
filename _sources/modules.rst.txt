@@ -1,0 +1,13 @@
+efficient-transformers
+======================
+
+.. toctree::
+   :maxdepth: 4
+
+   QEfficient
+   docs
+   examples
+   notebooks
+   scripts
+   setup
+   tests

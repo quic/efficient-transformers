@@ -1,0 +1,30 @@
+# QEfficient.generation package
+
+## Submodules
+
+## QEfficient.generation.cloud_infer module
+
+```{eval-rst}
+.. automodule:: QEfficient.generation.cloud_infer
+   :members:
+   :undoc-members:
+   :show-inheritance:
+```
+
+## QEfficient.generation.text_generation_inference module
+
+```{eval-rst}
+.. automodule:: QEfficient.generation.text_generation_inference
+   :members:
+   :undoc-members:
+   :show-inheritance:
+```
+
+## Module contents
+
+```{eval-rst}
+.. automodule:: QEfficient.generation
+   :members:
+   :undoc-members:
+   :show-inheritance:
+```

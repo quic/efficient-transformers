@@ -1,0 +1,21 @@
+QEfficient.customop package
+===========================
+
+Submodules
+----------
+
+QEfficient.customop.rms\_norm module
+------------------------------------
+
+.. automodule:: QEfficient.customop.rms_norm
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: QEfficient.customop
+   :members:
+   :undoc-members:
+   :show-inheritance:

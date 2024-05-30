@@ -1,0 +1,37 @@
+QEfficient.transformers package
+===============================
+
+Submodules
+----------
+
+QEfficient.transformers.modeling\_attn\_mask\_utils module
+----------------------------------------------------------
+
+.. automodule:: QEfficient.transformers.modeling_attn_mask_utils
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+QEfficient.transformers.modeling\_outputs module
+------------------------------------------------
+
+.. automodule:: QEfficient.transformers.modeling_outputs
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+QEfficient.transformers.modeling\_utils module
+----------------------------------------------
+
+.. automodule:: QEfficient.transformers.modeling_utils
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: QEfficient.transformers
+   :members:
+   :undoc-members:
+   :show-inheritance:
