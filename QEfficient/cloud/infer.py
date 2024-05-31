@@ -69,7 +69,7 @@ def main(
         logger.info(f"Pre-exported ONNX files found at {onnx_dir_path}! Jumping to Compilation")
         # Compile -> execute
         # We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation
-        generated_qpc_path = compile(
+        generated_qpc_path = QEfficient.compile(
             onnx_path=onnx_model_path,
             qpc_path=os.path.dirname(qpc_dir_path),
             num_cores=num_cores,

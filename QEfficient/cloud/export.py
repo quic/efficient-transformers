@@ -10,7 +10,6 @@ import os
 from typing import Optional
 
 import QEfficient
-from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.loader import QEFFAutoModel
 from QEfficient.utils import load_hf_tokenizer, onnx_exists
 from QEfficient.utils.constants import Constants
@@ -46,7 +45,7 @@ def main(
 
     # Export to the Onnx
     print(f"Exporting to Pytorch {model_name} to Onnx")
-    base_path, onnx_path = qualcomm_efficient_converter(
+    base_path, onnx_path = QEfficient.export(
         model_kv=qeff_model,
         model_name=model_name,
         tokenizer=tokenizer,
