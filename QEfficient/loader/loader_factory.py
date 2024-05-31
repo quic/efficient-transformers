@@ -5,6 +5,23 @@
 #
 # ----------------------------------------------------------------------------
 
+"""
+** This file for holds the classes that handle main functions
+1.load i.e. from_pretrained
+2.execute
+3.transform
+4.export
+5.compile
+For different varities of Transformer Models
+
+** Each variety of the Transformer model that has different way of doing any of the above functions will have it's own class i.e.
+following models type will have their own class which must inherit QEFFBaseModel abstract class.
+1.Causal Language Models
+2.Diffusion
+3.Quantized models 
+
+** QEFFBASEModel is abstract base class that defines the basic structure of these classes.
+"""
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any
@@ -18,6 +35,9 @@ from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
 
 
 class QEFF_MODEL_TYPE(Enum):
+    """
+    Defines Names of the different varities of transformer models.
+    """
     CAUSALLM = "LLM"
     DIFFUSION = "STABLE_DIFFUSION"
     AWQ = "AWQ"

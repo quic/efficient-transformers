@@ -10,9 +10,8 @@ import hashlib
 import torch.nn as nn
 import transformers
 
-from QEfficient.loader.loader_factory import QEFF_MODEL_TYPE
 from QEfficient.loader.loader import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP
-from QEfficient.loader.loader_factory import QEFFBaseModel
+from QEfficient.loader.loader_factory import QEFF_MODEL_TYPE, QEFFBaseModel
 from QEfficient.transformers.modeling_attn_mask_utils import (
     QEffAttentionMaskConverter,
     _qeff_prepare_4d_attention_mask,

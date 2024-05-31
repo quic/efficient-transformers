@@ -11,7 +11,6 @@ import os
 from typing import List, Optional
 
 import QEfficient
-from QEfficient.cloud.compile import main as compile
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import (
     check_batch_size_and_num_prompts,
@@ -117,7 +116,7 @@ def main(
 
         # Compile
         # We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation
-        generated_qpc_path = compile(
+        generated_qpc_path = QEfficient.compile(
             onnx_path=onnx_model_path,
             qpc_path=os.path.dirname(qpc_dir_path),
             num_cores=num_cores,

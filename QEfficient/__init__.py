@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+from QEfficient.cross_compile import compile  # noqa: F401
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.loader import QEFFAutoModel  # noqa: F401
 from QEfficient.transformers.transform import transform  # noqa: F401

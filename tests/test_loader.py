@@ -24,7 +24,7 @@ model_name_to_params_dict : Dict[str, Dict[str, Any]] = {
 }
 model_names = model_name_to_params_dict.keys()
 
-
+#FIXME: Add test cases for passing cache_dir, pretrained_model_path instead of card name, etc., Passing other kwargs
 @pytest.mark.parametrize("model_name", model_names)
 def test_qeff_auto_model_for_causal_lm(model_name: str):
     model = QEFFAutoModel.from_pretrained(model_name)

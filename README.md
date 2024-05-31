@@ -118,8 +118,8 @@ In summary:
 
 | High Level APIs | Sample use | Arguments         |
 |-----------------|------------|-------------------|
-| QEfficient.cloud.infer           |   [click here](#1-use-qefficientcloudinfer)         |  <li>model_name : $\color{green} {Mandatory}$</li> <li>num_cores : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>batch_size : Optional [Default-1]</li> <li>prompt_len : Optional [Default-32]</li> <li>ctx_len : Optional [Default-128]</li><li>mxfp6 : Optional </li> <li>mxint8 : Optional </li><li>hf_token : Optional </li><li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li>|
-| QEfficient.cloud.execute  |     [click here](#2-use-of-qefficientcloudexcute)       |   <li>model_name : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li><li>prompt : Optional [Default-"My name is"]</li> <li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>hf_token : Optional </li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li> |
+| QEfficient.cloud.infer           |   [click here](#1-use-qefficientcloudinfer)         |  <li>model_name : $\color{green} {Mandatory}$</li> <li>num_cores : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>batch_size : Optional [Default-1]</li> <li>prompt_len : Optional [Default-32]</li> <li>ctx_len : Optional [Default-128]</li><li>mxfp6 : Optional </li> <li>mxint8 : Optional </li><li>hf_token : Optional </li><li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li><li>verbose : Optional</li>|
+| QEfficient.cloud.execute  |     [click here](#2-use-of-qefficientcloudexcute)       |   <li>model_name : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li><li>prompt : Optional [Default-"My name is"]</li> <li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>hf_token : Optional </li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li>|
 
 **One argument, prompt or prompts_txt_file_path must be passed.**
 
@@ -187,46 +187,40 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 
 | Low Level APIs | Sample use | Arguments         | 
 |-----------------|------------|-------------------|
-|  QEfficient.transform    |   [click here](#1-model-download-and-transform)         |  <li>model : $\color{green} {Mandatory}$</li><li>Type : Optional [Default- "Transformers"]</li> <li>form_factor : Optional [Default-"cloud"]</li>  | 
-| qualcomm_efficient_converter |     [click here](#2-onnx-export-of-transformed-model)       |   <li>mode_name : $\color{green} {Mandatory}$</li><li>model_kv : $\color{green} {Mandatory}$ [Optional when model_class passed] </li><li>model_class : $\color{green} {Mandatory}$ [Optional when model_kv passed]</li> <li>tokenizer : Optional</li><li>onnx_path : Optional </li><li>hf_token : Optional</li><li>seq_length : Optional [Default-128]</li><li>input_str : Optional [Default-"My name is"]</li><li>kv : Optional [Default-$\color{green} {True}$]</li><li>return_path : Optional [Default-False]</li><li>form_factor : Optional [Default-"cloud"]</li><li>save_fp32_onnx : Optional [Default-False]</li><li>save_fp16_onnx : Optional [Default-True]</li> <li>*Both save_fp32_onnx and save_fp16_onnx can't be false*</li> | 
-|     compile | [click here](#3-compile-on-cloud-ai-100) | <li>onnx_path : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li><li>num_cores : $\color{green} {Mandatory}$</li><li>device_group  : $\color{green} {Mandatory}$</li> <li>batch_size : Optional [Default-1]</li> <li>prompt_len : Optional [Default-32]</li><li>ctx_len : Optional [Default-128]</li><li>mxfp6 : Optional [Default-True]</li>| 
+|  QEfficient.transform    |   [click here](#1-model-download-and-transform)         |  <li>model : $\color{green} {Mandatory}$</li><li>form_factor : Optional [Default-"cloud"]</li>  | 
+| QEfficient.export |     [click here](#2-onnx-export-of-transformed-model)       |   <li>mode_name : $\color{green} {Mandatory}$</li><li>model_kv : Optional </li><li>tokenizer : Optional</li><li>onnx_path : Optional </li><li>hf_token : Optional</li><li>seq_length : Optional [Default-128]</li><li>kv : Optional [Default-$\color{green} {True}$]</li><li>return_path : Optional [Default-False]</li><li>form_factor : Optional [Default-"cloud"]</li><li>***save_fp32_onnx : Optional [Default-False]</li><li>***save_fp16_onnx : Optional [Default-True]</li>| 
+|     QEfficient.compile | [click here](#3-compile-on-cloud-ai-100) | <li>onnx_path : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li><li>num_cores : $\color{green} {Mandatory}$</li><li>device_group  : $\color{green} {Mandatory}$</li>  <li>batch_size : Optional [Default-1]</li> <li>prompt_len : Optional [Default-32]</li><li>ctx_len : Optional [Default-128]</li><li>aic_enable_depth_first : Optional [Default-False]</li> <li>mos : Optional [Defaul= -1]</li> <li>mxint8 : Optional [Defaul-False]</li><li>mxfp6 : Optional [Default-True]</li>| 
 |cloud_ai_100_exec_kv | [click here](#4-run-benchmark)  | <li>batch_size : $\color{green} {Mandatory}$</li> <li>tokenizer : $\color{green} {Mandatory}$</li> <li>qpc_path : $\color{green} {Mandatory}$</li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li><li>input_len : Optional [Default-None]</li> <li>generation_len : Optional [Default-None]</li> <li>device_id : Optional [Default-[0]]</li> <li>enable_debug_logs : Optional [Default-False]</li> <li>stream : Optional [Default-True]</li> <li>write_io_dir : Optional</li><li>automation : Optional [Default-False]</li>| 
 
-**One argument, prompt or prompts_txt_file_path must be passed.
-
+**One argument, prompt or prompts_txt_file_path must be passed.<br>
+***Both save_fp32_onnx and save_fp16_onnx can't be false.
 
 ### 1.  Model download and transform
 
 Initialize QEfficient and transform the models, Check the list of supported architectures in the repo.
 
-```bash
+```Python
 # Initiate the Orignal Transformer model
 import os
-from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
+
+
 import QEfficient
-from transformers import AutoTokenizer
-from QEfficient.utils import hf_download
-from QEfficient.utils.constants import Constants
+from QEfficient import QEFFAutoModel
+
 # Please uncomment and use appropriate Cache Directory for transformers, in case you don't want to use default ~/.cache dir.
 # os.environ["TRANSFORMERS_CACHE"] = "/local/mnt/workspace/hf_cache"
 
-ROOT_DIR = os.path.dirname(os.path.abspath(""))
+#ROOT_DIR = os.path.dirname(os.path.abspath(""))
+#CACHE_DIR = os.path.join(ROOT_DIR, "tmp"), you can use a different location for just one model by passing this param as cache_dir in below API.
 
 # Model-Card name to be onboarded (This is HF Model Card name) : https://huggingface.co/gpt2-xl
+model_name = "gpt2"  # Similar, we can change model name and generate corresponding models, if we have added the support in the lib.
 
-model_name = "gpt2" 
-
-# Similar, we can change model name and generate corresponding models, if we have added the support in the lib.
-
-model_hf_path = hf_download(repo_id=model_name, cache_dir=Constants.CACHE_DIR, ignore_pattrens=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"])
-model_hf = GPT2LMHeadModel.from_pretrained(model_hf_path, use_cache=True)
-model_hf.eval()
-print(f"{model_name} from hugging-face \n", model_hf)
+qeff_model = QEFFAutoModel.from_pretrained(model_name, cache_dir=None)
+print(f"{model_name} from hugging-face \n", qeff_model)
 
 # Easy and minimal api to update the model
-model_transformed = QEfficient.transform(model_hf, type="Transformers", form_factor="cloud")
-
-model_transformed.eval()
+model_transformed = QEfficient.transform(qeff_model, form_factor="cloud")
 print("Model after Optimized transformations \n", model_transformed)
 ```
 
@@ -234,31 +228,27 @@ print("Model after Optimized transformations \n", model_transformed)
 
 use the qualcomm_efficient_converter API to export the KV transformed Model to ONNX and Verify on Torch.
 
-```bash
-from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-
-# We can now export the modified models to  ONNX framework
-# This will generate single ONNX Model for both Prefill and Decode Variations which are optimized for
+```Python
+from QEfficient.utils import load_hf_tokenizer
+# We can now export the modified models to Onnx framework
+# This will generate single Onnx Model for both Prefill and Decode Variations which are optimized for
 # Cloud AI 100 Platform.
 
-# This will generate  ONNX model, clip the overflow constants to fp16
-# Verify the model on  ONNXRuntime vs Pytorch
-# Then generate inputs and custom_io.yaml file required for compilation.
+# This will generate Onnx model, clip the overflow constants to fp16
+# Verify the model on Onnxruntime vs Pytorch
+# Then generate inputs and customio yaml file required for compilation.
 
 # We can generate the KV Style models with the flag "kv"
 # Bertstyle models do not have any optimization w.r.t KV cache changes and are unoptimized version.
 # It is recommended to use kv=True for better performance.
-
-# For custom models defined on the Hub in their own modeling files. We need `trust_remote_code` option
-# Should be set to `True` in `AutoTokenizer` for repositories you trust.
-tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
-base_path, onnx_path = qualcomm_efficient_converter(
-    model_kv=model_transformed,
+tokenizer = load_hf_tokenizer(model_name, use_cache=True)
+base_path, onnx_path = QEfficient.export(
     model_name=model_name,
+    model_kv=model_transformed,
+    tokenizer=tokenizer,
     kv=True,
     form_factor="cloud",
     return_path=True,
-    tokenizer=tokenizer,
 )
 ```
 
@@ -266,29 +256,28 @@ base_path, onnx_path = qualcomm_efficient_converter(
 
 Once, the model is exported, Compile the model on Cloud AI 100 and generate QPC.
 
-```bash
+```Python
 # Please use platform SDk to Check num_cores for your card.
-from QEfficient.cloud.compile import main as compile
 
-generated_qpc_path = compile(
+generated_qpc_path = QEfficient.compile(
     onnx_path=onnx_path,
     num_cores=14,
-    qpc_path=base_path,
+    qpc_path=os.path.dirname(base_path),
+    mxfp6=False,
     device_group=[0],
-    mxfp6=True,
 )
 ```
 ### 4. Run Benchmark 
 
 Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/sec
 
-```bash
+```Python
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv, get_compilation_batch_size
 
 # post compilation, we can print the latency stats for the kv models, We provide API to print token and Latency stats on AI 100
 # We need the compiled prefill and decode qpc to compute the token generated, This is based on Greedy Sampling Approach
 batch_size = get_compilation_batch_size(generated_qpc_path)
-cloud_ai_100_exec_kv(batch_size=batch_size, tokenizer=tokenizer, qpc_path=generated_qpc_path, device_id=[0], prompt="My name is")
+cloud_ai_100_exec_kv(batch_size=batch_size, tokenizer=tokenizer, qpc_path=generated_qpc_path, device_id=[0], prompt=["My name is"])
 ```
 End to End demo examples for various models are available in **notebooks** directory. Please check them out.
 
