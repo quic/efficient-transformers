@@ -216,4 +216,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.verbose:
         logger.setLevel(logging.INFO)
+    del args.verbose # type: ignore
     main(**args.__dict__)
