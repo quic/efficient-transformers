@@ -12,7 +12,7 @@
 *Latest news* :fire: <br>
 
 - [coming soon] Support for more popular [models](#models-coming-soon) and inference optimization techniques like continuous batching and speculative decoding <br>
-- [05/2024] Added support for [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1).
+- [05/2024] Added support for [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) & [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1).
 - [04/2024] Initial release of [efficient transformers](https://github.com/quic/efficient-transformers) for seamless inference on pre-trained LLMs.
 
 ## Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain
@@ -39,6 +39,9 @@ For other models, there is comprehensive documentation to inspire upon the chang
 ## Validated Models
 
 * [GPT2](https://huggingface.co/openai-community/gpt2)
+* [Llama-3-8b](https://huggingface.co/meta-llama/Meta-Llama-3-8B)
+* [Llama-3-70b](https://huggingface.co/meta-llama/Meta-Llama-3-70B)
+* [Llama-2-70b](https://huggingface.co/meta-llama/Llama-2-70b-chat-hf)
 * [Llama-2-7b-chat-hf](https://huggingface.co/meta-llama/Llama-2-7b-chat-hf)
 * [Llama-2-13b-chat-hf](https://huggingface.co/meta-llama/Llama-2-13b-chat-hf)
 * [CodeLlama-7b-hf](https://huggingface.co/codellama/CodeLlama-7b-hf)
