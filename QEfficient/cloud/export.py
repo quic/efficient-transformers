@@ -7,16 +7,47 @@
 
 import argparse
 import os
-from typing import Optional
+from typing import Optional, Union
 
-import QEfficient
-from QEfficient.loader import QEFFAutoModel
-from QEfficient.utils import load_hf_tokenizer, onnx_exists
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
+
+from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
+from QEfficient.utils import onnx_exists
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
 # Specifically for Docker images.
 ROOT_DIR = os.path.dirname(os.path.abspath(""))
+
+
+def get_onnx_model_path(model_name: str, cache_dir: str, tokenizer: Optional[Union[PreTrainedTokenizerFast, PreTrainedTokenizer]]=None, hf_token: Optional[str] = None):
+    """
+    exports the model to onnx if pre-exported file is not found and returns onnx_model_path
+    """
+    onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(model_name)
+    if onnx_path_exists:
+        logger.info(f"Pre-exported ONNX files found at {onnx_dir_path}! Jumping to Compilation")
+    else:
+        ###################
+        # hf model -> export
+        ####################
+        # Export to the Onnx
+        logger.info(f"Exporting Pytorch {model_name} model to ONNX...")
+        _, generated_onnx_model_path = qualcomm_efficient_converter(
+                model_name=model_name,
+                tokenizer=tokenizer,
+                onnx_dir_path=onnx_dir_path,
+                kv=True,
+                form_factor="cloud",
+                return_path=True,
+                hf_token=hf_token,
+                cache_dir=cache_dir
+            ) # type: ignore
+        logger.info(f"Generated Onnx_path {generated_onnx_model_path} \nOnnx_model_path {onnx_model_path} \nand Onnx_dir_path is {onnx_dir_path}")
+        assert (
+                generated_onnx_model_path == onnx_model_path
+            ), f"ONNX files were generated at an unusual location, expected {onnx_model_path}, got {generated_onnx_model_path}"
+    return onnx_model_path
 
 
 def main(
@@ -31,29 +62,7 @@ def main(
     :cache_dir: str. Cache dir to store the downloaded huggingface files.
     :hf_token: str. HuggingFace login token to access private repos.
     """
-    onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(model_name)
-    if onnx_path_exists:
-        logger.warning(f"Generated Onnx files found {onnx_model_path}! Please use Infer/Compile Apis()")
-        return
-
-    tokenizer = load_hf_tokenizer(model_name=model_name, cache_dir=cache_dir, hf_token=hf_token)
-    qeff_model = QEFFAutoModel.from_pretrained(pretrained_model_name_or_path=model_name, cache_dir=cache_dir, hf_token=hf_token)
-
-    # Easy and minimal api to update the model to QEff.
-    QEfficient.transform(qeff_model, form_factor="cloud")
-    print(f"Model after Optimized transformations {qeff_model}")
-
-    # Export to the Onnx
-    print(f"Exporting to Pytorch {model_name} to Onnx")
-    base_path, onnx_path = QEfficient.export(
-        model_kv=qeff_model,
-        model_name=model_name,
-        tokenizer=tokenizer,
-        kv=True,
-        form_factor="cloud",
-        return_path=True,
-    ) # type: ignore
-    print(f"Base Path is {base_path} and Onnx Model Path is : {onnx_path}")
+    get_onnx_model_path(model_name=model_name, cache_dir=cache_dir, hf_token=hf_token)
 
 
 if __name__ == "__main__":

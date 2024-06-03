@@ -129,3 +129,14 @@ def load_hf_tokenizer(model_name: str, cache_dir: Optional[str] = None, hf_token
     #FIXME(ochougul): should this always return left padded tokenizer?
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
     return tokenizer
+
+
+def get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group):
+    qpc_base_dir_name = (
+        f"qpc_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
+        + f"{len(device_group)}"
+        + "devices"
+        + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
+    )
+
+    return qpc_base_dir_name

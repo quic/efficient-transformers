@@ -365,19 +365,12 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model:
     return fp32_model_name, fp16_model_name
 
 
-def export_for_edge() -> None:
-    # [TODO]: Apply the class transformation to make changes for the KV models in edge use cases
-    # model = QEfficient.transform(model_hf, type="Transformers", form_factor="edge")
-    # model.eval()
-    raise NotImplementedError("Oops...reached too far!!")
-
-
 def export_for_cloud(model_name: str, qeff_model: QEFFBaseModel,
                      tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
                      onnx_dir_path: str, seq_length: int = Constants.seq_length,
                      return_path: bool = True,
                      save_fp32_onnx: bool = False,
-                     save_fp16_onnx: bool = True):
+                     save_fp16_onnx: bool = True)-> Tuple[str, str]:
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM: # type: ignore
         return export_lm_model_for_cloud(model_name=model_name,
                                          qeff_model=qeff_model, # type: ignore
@@ -443,6 +436,7 @@ def qualcomm_efficient_converter(
     model_name: str,
     model_kv: QEFFBaseModel = None, # type: ignore
     tokenizer: Optional[Union[PreTrainedTokenizer, PreTrainedTokenizerFast]]=None,
+    cache_dir: Optional[str] = None,
     onnx_dir_path: Optional[str]=None,
     hf_token: Optional[str] = None,
     seq_length: int = Constants.seq_length,
@@ -451,17 +445,17 @@ def qualcomm_efficient_converter(
     form_factor: str="cloud",
     save_fp32_onnx: bool = False,
     save_fp16_onnx: bool = True,
-) -> Union[Tuple[str, str], None]:
+) -> Tuple[str, str]:
     """
     Function to convert the input string using the specified model and returns the result.
 
     Args:
         model_name (str): The name of the model to be used.
-        model_class (type): The class of the model.
         model_kv (torch.nn.Module): Transformed KV torch model to be used
         tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
+        cache_dir (str): Path to cache dir if not specified, default HF cache_dir will be used.
         onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
-        token (bool): If True, an authentication token will be used. Default is False.
+        hf_token (bool): If True, an authentication token will be used. Default is False.
         seq_len (int, optional): The length of the sequence. Default is 128.
         kv (bool): If True, key-value pairs will be used. Default is True.
         return_path (bool): If True, return the base path for models and exported onnx model path
@@ -473,7 +467,7 @@ def qualcomm_efficient_converter(
 
     """
     # Get model_kv first
-    model_kv = model_kv if model_kv else QEFFAutoModel.from_pretrained(pretrained_model_name_or_path=model_name, hf_token=hf_token)
+    model_kv = model_kv if model_kv else QEFFAutoModel.from_pretrained(pretrained_model_name_or_path=model_name, hf_token=hf_token, cache_dir=cache_dir)
 
     # Transform if required
     if model_kv.is_transformed and not kv:
@@ -481,13 +475,12 @@ def qualcomm_efficient_converter(
     
     model_kv = model_kv if model_kv.is_transformed else QEfficient.transform(model_kv) if kv else model_kv
 
-
     if onnx_dir_path is None:
         model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
         onnx_dir_path = os.path.join(model_card_dir, "onnx")
     
     # Load tokenizer if not passed
-    tokenizer = load_hf_tokenizer(model_name=model_name, hf_token=hf_token) if tokenizer is None else tokenizer
+    tokenizer = tokenizer if tokenizer else load_hf_tokenizer(model_name=model_name, hf_token=hf_token, cache_dir=cache_dir)
     
     if form_factor == "cloud":
         return export_for_cloud(
@@ -500,4 +493,7 @@ def qualcomm_efficient_converter(
             save_fp16_onnx=save_fp16_onnx,
             save_fp32_onnx=save_fp32_onnx)
     else:
-        return export_for_edge()
+        # [TODO]: Apply the class transformation to make changes for the KV models in edge use cases
+        # model = QEfficient.transform(model_hf, type="Transformers", form_factor="edge")
+        # model.eval()
+        raise NotImplementedError("Oops! Reached too far!!")
