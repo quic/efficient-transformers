@@ -13,7 +13,12 @@ import torch
 from huggingface_hub import login
 from transformers import AutoTokenizer
 
-from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort #,simplify_onnx
+from QEfficient.exporter.export_utils import (  # ,simplify_onnx
+    export_onnx,
+    fix_onnx_fp16,
+    generate_input_files,
+    run_model_on_ort,
+)
 from QEfficient.transformers.modeling_utils import transform
 from QEfficient.utils import hf_download
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
@@ -248,7 +253,13 @@ def convert_to_cloud_kvstyle(
                 cache_dir=Constants.CACHE_DIR,
                 ignore_pattrens=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
             )
-            model = model_class.from_pretrained(model_hf_path, cache_dir=Constants.CACHE_DIR, use_cache=True, trust_remote_code=True, attn_implementation="eager")
+            model = model_class.from_pretrained(
+                model_hf_path,
+                cache_dir=Constants.CACHE_DIR,
+                use_cache=True,
+                trust_remote_code=True,
+                attn_implementation="eager",
+            )
         except Exception as e:
             print(f"Failed to download the {model_name} model from Huggingface:%s", e)
         transform(model, form_factor="cloud")
@@ -276,19 +287,44 @@ def convert_to_cloud_kvstyle(
     batch_size, prompt_len = inputs["input_ids"].shape
     inputs.pop("attention_mask")
     inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
-    head_dim = model.config.hidden_size // model.config.num_attention_heads
+
+    config = model.config
+    if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
+        n_heads = config.n_head
+        d_head = config.n_embd // config.n_head
+        n_layer = config.n_layer
+    elif hasattr(config, "num_key_value_heads") and hasattr(
+        config, "num_attention_heads"
+    ):  # Check for num_key_value_heads (Llama/Mistral)
+        n_heads = config.num_key_value_heads
+        d_head = config.hidden_size // config.num_attention_heads
+        n_layer = config.num_hidden_layers
+    elif hasattr(config, "n_heads"):  # Check for n_heads and d_model in the config (MPT Model)
+        n_heads = config.n_heads
+        d_head = config.d_model // config.n_heads
+        n_layer = config.n_layers
+    elif hasattr(config, "multi_query"):  # Check for Falcon
+        multi_query_value = getattr(config, "multi_query")
+        if multi_query_value:
+            n_heads = 1  # MQA
+            d_head = config.hidden_size // config.num_attention_heads
+            n_layer = 1  # Due to multi query
+    else:
+        raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
     inputs["past_key_values"] = [
-        tuple([
-            torch.zeros(
-                batch_size,
-                model.config.num_key_value_heads,
-                prompt_len,  # seq_len for running decode loop
-                head_dim,
-                dtype=torch.float32,
-            )
-            for _ in range(2)
-        ])
-        for _ in range(model.config.num_hidden_layers)
+        tuple(
+            [
+                torch.zeros(
+                    batch_size,
+                    n_heads,
+                    prompt_len,  # seq_len for running decode loop
+                    d_head,
+                    dtype=torch.float32,
+                )
+                for _ in range(2)
+            ]
+        )
+        for _ in range(n_layer)
     ]
     # Run PyTorch inference for prefill
     pt_outputs = model(**inputs)
@@ -333,9 +369,8 @@ def convert_to_cloud_kvstyle(
         gen_models_path=onnx_dir_path,
         model_base_name=model_base_name,
     )
-    
-    # fp32_model_name = simplify_onnx(onnx_dir_path, fp32_model_name, mutable_initializer=True)
 
+    # fp32_model_name = simplify_onnx(onnx_dir_path, fp32_model_name, mutable_initializer=True)
     # Replace nested past_key_values inputs with separate KV tensors
     inputs.pop("past_key_values")
     for i, (key, value) in enumerate(pkv):
