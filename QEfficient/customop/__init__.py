@@ -12,7 +12,7 @@ This is to handle the FP16 Overflow seen in RMS Norm for LLMs
 
 import onnxscript
 import torch
-from onnxscript.onnx_opset import opset13 as op
+from onnxscript.onnx_opset import opset13 as ops
 from torch import nn
 
 opset_version = 13
@@ -22,10 +22,10 @@ custom_opset = onnxscript.values.Opset(domain="com.qti.aisw.onnx", version=1)
 # Version 1
 @onnxscript.script(custom_opset)
 def CustomRMSNorm(hidden_states: onnxscript.FLOAT, weight: onnxscript.FLOAT, epsilon: float):
-    weight = op.Cast(weight, to=1)
-    variance = op.ReduceMean(op.Pow(hidden_states, 2), axes=[-1], keepdims=1)
-    epsilon = op.Expand(epsilon, op.Shape(variance))
-    hidden_states = hidden_states * op.Reciprocal(op.Sqrt(variance + epsilon))
+    weight = ops.Cast(weight, to=1)
+    variance = ops.ReduceMean(ops.Pow(hidden_states, 2), axes=[-1], keepdims=1)
+    epsilon = ops.Expand(epsilon, ops.Shape(variance))
+    hidden_states = hidden_states * ops.Reciprocal(ops.Sqrt(variance + epsilon))
     return weight * hidden_states
 
 
@@ -59,3 +59,63 @@ class CustomRMSNormAIC(nn.Module):
     def forward(self, hidden_states):
         output = CustomRMSNormOp.apply(hidden_states, self.weight, self.variance_epsilon)
         return output
+
+@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+def CtxScatter(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT) -> onnxscript.FLOAT:
+    # Find dims
+    batch_size = ops.Gather(ops.Shape(data), [0])
+    num_heads = ops.Gather(ops.Shape(data), [1])
+    seq_len = ops.Gather(ops.Shape(position_ids), [1])
+
+    # Expanded shape to create indices
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
+    exp_shape = ops.Concat(batch_size, num_heads, seq_len, one, axis=0)
+
+    # Create indices
+    batch_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, batch_size, one), [1, 2, 3]), exp_shape)
+    head_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, num_heads, one), [0, 2, 3]), exp_shape)
+    ctx_idx = ops.Expand(ops.Unsqueeze(position_ids, [1, 3]), exp_shape)
+    indices = ops.Concat(batch_idx, head_idx, ctx_idx, axis=3)
+
+    return ops.ScatterND(data, indices, updates)
+
+class CtxScatterFunc(torch.autograd.Function):
+    @staticmethod
+    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
+        head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
+        ctx_idx = position_ids.unsqueeze(1)
+        data[batch_idx, head_idx, ctx_idx] = updates
+        return data
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
+        return g.onnxscript_op(CtxScatter, data, position_ids, updates).setTypeAs(data)
+
+@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+def CtxGather(data: onnxscript.FLOAT, indices: onnxscript.INT32) -> onnxscript.FLOAT:
+    indices = ops.Unsqueeze(indices, [1])
+    indices = ops.Expand(indices, ops.Slice(ops.Shape(data), starts=[0], ends=[3], axes=[0]))
+    indices = ops.Unsqueeze(indices, [-1])
+    return ops.GatherND(data, indices, batch_dims=2)
+
+class CtxGatherFunc(torch.autograd.Function):
+    @staticmethod
+    def forward(data: torch.Tensor, indices: torch.Tensor):
+        batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
+        head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
+        ctx_idx = indices.unsqueeze(1)
+        return data[batch_idx, head_idx, ctx_idx]
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, indices: torch.Value) -> torch.Value:
+        return g.onnxscript_op(CtxGather, data, indices).setTypeAs(data)

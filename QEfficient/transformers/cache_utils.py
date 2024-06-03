@@ -11,6 +11,7 @@ import torch
 from transformers.cache_utils import (
     DynamicCache
 )
+from QEfficient.customop import CtxScatterFunc, CtxGatherFunc
 
 
 class QEffDynamicCache(DynamicCache):
@@ -19,6 +20,11 @@ class QEffDynamicCache(DynamicCache):
 
     It stores the Key and Value states as a list of tensors, one for each layer. The expected shape for each tensor is
     `[batch_size, num_heads, seq_len, head_dim]`.
+
+    - Optimized implementation for the Cloud AI 100 to reuse KV Cache.
+    - get the position_ids input using kwargs.
+    - Use custom Onnxscript ops to write optimized version to generate Onnx model.
+
     """
 
     def update(
@@ -44,19 +50,27 @@ class QEffDynamicCache(DynamicCache):
         Return:
             A tuple containing the updated key and value states.
         """
-        # Update the number of seen tokens
-        if layer_idx == 0:
-            self.seen_tokens += key_states.shape[-2]
-
         # Update the cache
         if len(self.key_cache) <= layer_idx:
             self.key_cache.append(key_states)
             self.value_cache.append(value_states)
+            k_out, v_out = key_states, value_states
         else:
-            kv_indices = torch.arange(key_states.shape[2]) + cache_kwargs['cache_index']
-            self.key_cache[layer_idx][:,:, kv_indices] = key_states
-            self.value_cache[layer_idx][:,:, kv_indices] = value_states
+            position_ids = cache_kwargs.get("position_ids")
 
-        return self.key_cache[layer_idx], self.value_cache[layer_idx]
+            # Scatter
+            self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], position_ids, key_states)
+            self.value_cache[layer_idx] = CtxScatterFunc.apply(self.value_cache[layer_idx], position_ids, value_states)
+            k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+
+            # Gather
+            ctx_len = k_out.shape[2]
+            kv_indices = torch.arange(ctx_len).view(1, -1)
+            gather_limit = position_ids.max(1, keepdim=True).values
+            kv_indices = torch.where(kv_indices > gather_limit, torch.iinfo(torch.int32).max, kv_indices)
+            k_out = CtxGatherFunc.apply(k_out, kv_indices)
+            v_out = CtxGatherFunc.apply(v_out, kv_indices)
+
+        return k_out, v_out
 
     

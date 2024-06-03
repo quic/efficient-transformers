@@ -19,7 +19,6 @@ from transformers.models.codegen.modeling_codegen import (
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
-    LlamaDecoderLayer,
     LlamaForCausalLM,
     LlamaModel,
     LlamaRMSNorm,
@@ -32,16 +31,16 @@ from transformers.models.mistral.modeling_mistral import (
     MistralRMSNorm,
     MistralRotaryEmbedding,
 )
-from transformers.models.mixtral.modeling_mixtral import (
-    MixtralAttention,
-    MixtralForCausalLM,
-    MixtralModel,
-    MixtralDecoderLayer,
-    MixtralSparseMoeBlock,
-    MixtralBLockSparseTop2MLP,
-    MixtralRotaryEmbedding,
-    MixtralRMSNorm,
-)
+# from transformers.models.mixtral.modeling_mixtral import (
+#     MixtralAttention,
+#     MixtralForCausalLM,
+#     MixtralModel,
+#     MixtralDecoderLayer,
+#     MixtralSparseMoeBlock,
+#     MixtralBLockSparseTop2MLP,
+#     MixtralRotaryEmbedding,
+#     MixtralRMSNorm,
+# )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 
 from QEfficient.customop import CustomRMSNormAIC
@@ -52,6 +51,10 @@ from .modeling_attn_mask_utils import (
     _qeff_prepare_4d_attention_mask,
     _qeff_prepare_4d_causal_attention_mask,
 )
+
+from transformers.cache_utils import DynamicCache
+from .cache_utils import QEffDynamicCache
+
 from .modeling_outputs import (
     QEffBaseModelOutputWithPast,
     QEffBaseModelOutputWithPastAndCrossAttentions,
@@ -69,26 +72,23 @@ from .models.codegen.modeling_codegen import (
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
 from .models.llama.modeling_llama import (
     QEffLlamaAttention,
-    QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
 )
 from .models.mistral.modeling_mistral import (
     QEffMistralAttention,
-    QEffMistralDecoderLayer,
     QEffMistralForCausalLM,
     QEffMistralModel,
-    QEffMistralRotaryEmbedding,
 )
-from .models.mixtral_moe.modeling_mixtral import (
-    QEffMixtralModel,
-    QEffMixtralRotaryEmbedding,
-    QEffMixtralAttention,
-    QEffMixtralForCausalLM,
-    QEffMixtralDecoderLayer,
-    QEffMixtralSparseMoeBlock,
-    QEffMixtralBLockSparseTop2MLP,
-)
+# from .models.mixtral_moe.modeling_mixtral import (
+#     QEffMixtralModel,
+#     QEffMixtralRotaryEmbedding,
+#     QEffMixtralAttention,
+#     QEffMixtralForCausalLM,
+#     QEffMixtralDecoderLayer,
+#     QEffMixtralSparseMoeBlock,
+#     QEffMixtralBLockSparseTop2MLP,
+# )
 from .models.mpt.modeling_mpt import QEffMptAttention, QEffMptBlock, QEffMptForCausalLM, QEFfMptModel
 
 # Define a named tuple for ModelArchitectures
@@ -102,7 +102,7 @@ my_architectures = ModelArchitectures(
         CodeGenForCausalLM.__name__,
         LlamaForCausalLM.__name__,
         MistralForCausalLM.__name__,
-        MixtralForCausalLM.__name__,
+        # MixtralForCausalLM.__name__,
     ]
 )
 
@@ -118,7 +118,6 @@ TransformersToQEffModulesDict = {
     LlamaModel: QEffLlamaModel,
     LlamaAttention: QEffLlamaAttention,
     LlamaForCausalLM: QEffLlamaForCausalLM,
-    LlamaDecoderLayer: QEffLlamaDecoderLayer,
     LlamaRMSNorm: CustomRMSNormAIC,
     # MPT model layers
     MptAttention: QEffMptAttention,
@@ -133,19 +132,17 @@ TransformersToQEffModulesDict = {
     # Mistral model layers
     MistralAttention: QEffMistralAttention,
     MistralModel: QEffMistralModel,
-    MistralDecoderLayer: QEffMistralDecoderLayer,
     MistralForCausalLM: QEffMistralForCausalLM,
-    MistralRotaryEmbedding: QEffMistralRotaryEmbedding,
     MistralRMSNorm: CustomRMSNormAIC,
     # Mixtral model layers
-    MixtralAttention: QEffMixtralAttention,
-    MixtralModel: QEffMixtralModel,
-    MixtralDecoderLayer: QEffMixtralDecoderLayer,
-    MixtralForCausalLM: QEffMixtralForCausalLM,
-    MixtralRotaryEmbedding: QEffMixtralRotaryEmbedding,
-    MixtralRMSNorm: CustomRMSNormAIC,
-    MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
-    MixtralBLockSparseTop2MLP:QEffMixtralBLockSparseTop2MLP,
+    # MixtralAttention: QEffMixtralAttention,
+    # MixtralModel: QEffMixtralModel,
+    # MixtralDecoderLayer: QEffMixtralDecoderLayer,
+    # MixtralForCausalLM: QEffMixtralForCausalLM,
+    # MixtralRotaryEmbedding: QEffMixtralRotaryEmbedding,
+    # MixtralRMSNorm: CustomRMSNormAIC,
+    # MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
+    # MixtralBLockSparseTop2MLP:QEffMixtralBLockSparseTop2MLP,
 }
 
 
@@ -220,10 +217,13 @@ def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
         transformers.modeling_outputs.MoeCausalLMOutputWithPast = QEffMoeCausalLMOutputWithPast
         transformers.modeling_outputs.MoeModelOutputWithPast = QEffMoeModelOutputWithPast
 
-        # Replace the modeling attn util classes and functions
-        transformers.modeling_attn_mask_utils.AttentionMaskConverter = QEffAttentionMaskConverter
-        transformers.modeling_attn_mask_utils._prepare_4d_attention_mask = _qeff_prepare_4d_attention_mask
-        transformers.modeling_attn_mask_utils._prepare_4d_causal_attention_mask = _qeff_prepare_4d_causal_attention_mask
+        # # Replace the modeling attn util classes and functions
+        # transformers.modeling_attn_mask_utils.AttentionMaskConverter = QEffAttentionMaskConverter
+        # transformers.modeling_attn_mask_utils._prepare_4d_attention_mask = _qeff_prepare_4d_attention_mask
+        # transformers.modeling_attn_mask_utils._prepare_4d_causal_attention_mask = _qeff_prepare_4d_causal_attention_mask
+
+        # Replace the update of DynamicCache with Cloud AI 100 version
+        DynamicCache.update = QEffDynamicCache.update
 
         setattr(model,'qeff_transformed',True)
         return model.eval()

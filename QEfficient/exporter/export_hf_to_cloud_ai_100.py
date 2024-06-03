@@ -13,7 +13,7 @@ import torch
 from huggingface_hub import login
 from transformers import AutoTokenizer
 
-from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
+from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort #,simplify_onnx
 from QEfficient.transformers.modeling_utils import transform
 from QEfficient.utils import hf_download
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
@@ -248,7 +248,7 @@ def convert_to_cloud_kvstyle(
                 cache_dir=Constants.CACHE_DIR,
                 ignore_pattrens=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"],
             )
-            model = model_class.from_pretrained(model_hf_path, cache_dir=Constants.CACHE_DIR, use_cache=True)
+            model = model_class.from_pretrained(model_hf_path, cache_dir=Constants.CACHE_DIR, use_cache=True, trust_remote_code=True, attn_implementation="eager")
         except Exception as e:
             print(f"Failed to download the {model_name} model from Huggingface:%s", e)
         transform(model, form_factor="cloud")
@@ -260,11 +260,7 @@ def convert_to_cloud_kvstyle(
     # Load tokenizer
     if tokenizer is None:
         # todo(ochougul): use cache dir from snapshot download
-        tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
-    else:
-        if tokenizer.padding_side != "left":
-            logger.warning("Please use padding_side='left' while initializing the tokenizer")
-            tokenizer.padding_side = "left"
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -274,62 +270,54 @@ def convert_to_cloud_kvstyle(
         p.requires_grad_(False)
 
     # Preprocess inputs
-    input_str = ["My name is Sarah.", "I live in London."]
-    if seq_len > 0:
-        inputs = tokenizer(input_str, return_tensors="pt", padding=True)
-        batch_size, prompt_len = inputs["input_ids"].shape
-        inputs["input_ids"] = torch.concat(
-            [
-                inputs["input_ids"],
-                torch.full((batch_size, seq_len - prompt_len), tokenizer.pad_token_id),
-            ],
-            1,
-        )
-        inputs["attention_mask"] = torch.concat(
-            [
-                inputs["attention_mask"],
-                torch.zeros((batch_size, seq_len - prompt_len), dtype=torch.int64),
-            ],
-            1,
-        )
-        inputs["position_ids"] = (inputs["attention_mask"].cumsum(1) - 1) * inputs["attention_mask"]
-    else:
-        inputs = tokenizer(input_str, return_tensors="pt")
-
-    try:
-        pt_outputs = model(**inputs)
-        output_names = list(pt_outputs.keys())
-    except Exception as e:
-        print(f"Model {model_name} Execution failed in pytorch:%s", e)
+    # Build inputs for prefill
+    assert seq_len > 0, "Need seq_len to be greater than zero"
+    inputs = tokenizer(input_str, return_tensors="pt")
+    batch_size, prompt_len = inputs["input_ids"].shape
+    inputs.pop("attention_mask")
+    inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
+    head_dim = model.config.hidden_size // model.config.num_attention_heads
+    inputs["past_key_values"] = [
+        tuple([
+            torch.zeros(
+                batch_size,
+                model.config.num_key_value_heads,
+                prompt_len,  # seq_len for running decode loop
+                head_dim,
+                dtype=torch.float32,
+            )
+            for _ in range(2)
+        ])
+        for _ in range(model.config.num_hidden_layers)
+    ]
+    # Run PyTorch inference for prefill
+    pt_outputs = model(**inputs)
+    output_names = list(pt_outputs.keys())
 
     # Raise error if expected outputs are not present
     assert "logits" in output_names, "logits not found in output"
     assert "past_key_values" in output_names, "past_key_values not found in output"
 
     # Build inputs for next iteration from outputs
-    cache_index = torch.tensor(prompt_len)
-    inputs["input_ids"] = tokenizer(["I have"] * 2, return_tensors="pt").input_ids[:, -2:]
-    inputs["position_ids"] = inputs["attention_mask"].sum(1, keepdim=True)
-    inputs["position_ids"] = inputs["position_ids"].repeat(1, 2) + torch.arange(2).view(1, 2)
-    inputs["attention_mask"] = inputs["attention_mask"].bool()
-    inputs["cache_index"] = cache_index
-
-    # Add past_key_values into inputs
-    inputs["past_key_values"] = tuple([(key.detach(), value.detach()) for key, value in pt_outputs.past_key_values])
-
-    # Run PyTorch inference with past
-    try:
+    # Build inputs for decode
+    inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
+    inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
+    print(tokenizer.batch_decode(inputs["input_ids"]))
+    # Run PyTorch inference for decode in loop
+    for i in range(0):
         pt_outputs = model(**inputs)
-        output_names = list(pt_outputs.keys())
-    except Exception as e:
-        print(f"Model {model_name} Execution failed in pytorch:%s", e)
+        inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
+        inputs["position_ids"] += 1
+        print(tokenizer.batch_decode(inputs["input_ids"]))
+    # To avoid issues in onnx export
+    inputs["position_ids"] = torch.full((batch_size, 1), prompt_len - 1)
+    pt_outputs = model(**inputs)
 
     # Add pkv into output_names
-    pkv = tuple([(key.detach(), value.detach()) for key, value in pt_outputs.past_key_values])
+    pkv = inputs["past_key_values"]
     pkv_idx = output_names.index("past_key_values")
     key_value_names = [f"past_{x}.{i}" for i in range(len(pkv)) for x in ["key", "value"]]
     output_names[pkv_idx : pkv_idx + 1] = [x + "_RetainedState" for x in key_value_names]
-
     # Replace nested past_key_values outputs with separate KV tensors
     pt_outputs = dict(pt_outputs)
     pkv_out = pt_outputs.pop("past_key_values")
@@ -345,6 +333,8 @@ def convert_to_cloud_kvstyle(
         gen_models_path=onnx_dir_path,
         model_base_name=model_base_name,
     )
+    
+    # fp32_model_name = simplify_onnx(onnx_dir_path, fp32_model_name, mutable_initializer=True)
 
     # Replace nested past_key_values inputs with separate KV tensors
     inputs.pop("past_key_values")

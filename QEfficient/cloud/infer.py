@@ -67,7 +67,7 @@ def main(
         ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5"],
     )
     tokenizer = AutoTokenizer.from_pretrained(
-        model_hf_path, use_cache=True, padding_side="left", trust_remote_code=True
+        model_hf_path, use_cache=True, padding_side="right", trust_remote_code=True
     )
 
     qpc_path_exists, qpc_dir_path = qpc_exists(model_name, qpc_base_dir_name)
@@ -115,7 +115,7 @@ def main(
     #############################################
     # hf model -> export -> compile -> execute
     #############################################
-    model_hf = AutoModelForCausalLM.from_pretrained(model_hf_path, use_cache=True)
+    model_hf = AutoModelForCausalLM.from_pretrained(model_hf_path, use_cache=True, trust_remote_code=True, attn_implementation="eager")
     # Easy and minimal api to update the model to QEff.
     model_transformed = QEfficient.transform(model_hf, type="Transformers", form_factor="cloud")
     logger.info(f"Model after Optimized transformations {model_transformed}")
