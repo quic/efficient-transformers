@@ -10,6 +10,7 @@ from collections import namedtuple
 
 import torch.nn as nn
 import transformers
+from transformers.cache_utils import DynamicCache
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,
@@ -25,36 +26,23 @@ from transformers.models.llama.modeling_llama import (
 )
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
-    MistralDecoderLayer,
     MistralForCausalLM,
     MistralModel,
     MistralRMSNorm,
-    MistralRotaryEmbedding,
 )
-# from transformers.models.mixtral.modeling_mixtral import (
-#     MixtralAttention,
-#     MixtralForCausalLM,
-#     MixtralModel,
-#     MixtralDecoderLayer,
-#     MixtralSparseMoeBlock,
-#     MixtralBLockSparseTop2MLP,
-#     MixtralRotaryEmbedding,
-#     MixtralRMSNorm,
-# )
+from transformers.models.mixtral.modeling_mixtral import (
+    MixtralAttention,
+    MixtralForCausalLM,
+    MixtralModel,
+    MixtralRMSNorm,
+    MixtralSparseMoeBlock,
+)
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 
 from QEfficient.customop import CustomRMSNormAIC
 from QEfficient.utils.logging_utils import logger
 
-from .modeling_attn_mask_utils import (
-    QEffAttentionMaskConverter,
-    _qeff_prepare_4d_attention_mask,
-    _qeff_prepare_4d_causal_attention_mask,
-)
-
-from transformers.cache_utils import DynamicCache
 from .cache_utils import QEffDynamicCache
-
 from .modeling_outputs import (
     QEffBaseModelOutputWithPast,
     QEffBaseModelOutputWithPastAndCrossAttentions,
@@ -80,15 +68,12 @@ from .models.mistral.modeling_mistral import (
     QEffMistralForCausalLM,
     QEffMistralModel,
 )
-# from .models.mixtral_moe.modeling_mixtral import (
-#     QEffMixtralModel,
-#     QEffMixtralRotaryEmbedding,
-#     QEffMixtralAttention,
-#     QEffMixtralForCausalLM,
-#     QEffMixtralDecoderLayer,
-#     QEffMixtralSparseMoeBlock,
-#     QEffMixtralBLockSparseTop2MLP,
-# )
+from .models.mixtral_moe.modeling_mixtral import (
+    QEffMixtralAttention,
+    QEffMixtralForCausalLM,
+    QEffMixtralModel,
+    QEffMixtralSparseMoeBlock,
+)
 from .models.mpt.modeling_mpt import QEffMptAttention, QEffMptBlock, QEffMptForCausalLM, QEFfMptModel
 
 # Define a named tuple for ModelArchitectures
@@ -135,14 +120,11 @@ TransformersToQEffModulesDict = {
     MistralForCausalLM: QEffMistralForCausalLM,
     MistralRMSNorm: CustomRMSNormAIC,
     # Mixtral model layers
-    # MixtralAttention: QEffMixtralAttention,
-    # MixtralModel: QEffMixtralModel,
-    # MixtralDecoderLayer: QEffMixtralDecoderLayer,
-    # MixtralForCausalLM: QEffMixtralForCausalLM,
-    # MixtralRotaryEmbedding: QEffMixtralRotaryEmbedding,
-    # MixtralRMSNorm: CustomRMSNormAIC,
-    # MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
-    # MixtralBLockSparseTop2MLP:QEffMixtralBLockSparseTop2MLP,
+    MixtralAttention: QEffMixtralAttention,
+    MixtralModel: QEffMixtralModel,
+    MixtralForCausalLM: QEffMixtralForCausalLM,
+    MixtralRMSNorm: CustomRMSNormAIC,
+    MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
 }
 
 
@@ -187,13 +169,12 @@ def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
     Returns:
     torch.nn.Module: PyTorch Module with replaced QEff layers.
     """
-    
+
     # Introducnig qeff_transformed attribue in model to check status of transform
     if getattr(model, "qeff_transformed", False):
         print("Model is already transformed")
         return model
 
-    
     if form_factor == "cloud":
         # Get Hash of all params for checking later
         prior_params_hash = get_params_hash(model)
@@ -225,7 +206,7 @@ def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
         # Replace the update of DynamicCache with Cloud AI 100 version
         DynamicCache.update = QEffDynamicCache.update
 
-        setattr(model,'qeff_transformed',True)
+        setattr(model, "qeff_transformed", True)
         return model.eval()
 
     elif form_factor == "edge":

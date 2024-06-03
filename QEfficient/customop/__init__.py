@@ -8,6 +8,7 @@
 """
 RMS Norm CustomOp Node in com.qti.aisw.onnx Domain for Cloud AI 100
 This is to handle the FP16 Overflow seen in RMS Norm for LLMs
+
 """
 
 import onnxscript
@@ -60,6 +61,7 @@ class CustomRMSNormAIC(nn.Module):
         output = CustomRMSNormOp.apply(hidden_states, self.weight, self.variance_epsilon)
         return output
 
+
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxScatter(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT) -> onnxscript.FLOAT:
     # Find dims
@@ -80,6 +82,7 @@ def CtxScatter(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: 
 
     return ops.ScatterND(data, indices, updates)
 
+
 class CtxScatterFunc(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
@@ -97,12 +100,14 @@ class CtxScatterFunc(torch.autograd.Function):
     def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxScatter, data, position_ids, updates).setTypeAs(data)
 
+
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxGather(data: onnxscript.FLOAT, indices: onnxscript.INT32) -> onnxscript.FLOAT:
     indices = ops.Unsqueeze(indices, [1])
     indices = ops.Expand(indices, ops.Slice(ops.Shape(data), starts=[0], ends=[3], axes=[0]))
     indices = ops.Unsqueeze(indices, [-1])
     return ops.GatherND(data, indices, batch_dims=2)
+
 
 class CtxGatherFunc(torch.autograd.Function):
     @staticmethod

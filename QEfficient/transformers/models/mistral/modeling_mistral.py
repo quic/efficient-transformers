@@ -8,33 +8,28 @@
 """PyTorch Mistral model."""
 
 import math
-import warnings
 from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
-
-from transformers.models.mistral.modeling_mistral import (
-    logger,
-    MistralAttention,
-    MistralConfig,
-    MistralModel,
-    MistralForCausalLM,
-    apply_rotary_pos_emb,
-    repeat_kv
-)
 from transformers.cache_utils import Cache, DynamicCache
-from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask, _prepare_4d_causal_attention_mask_for_sdpa
-
-from QEfficient.customop import CustomRMSNormAIC
-from QEfficient.transformers.modeling_attn_mask_utils import (
-    _qeff_prepare_4d_causal_attention_mask,
+from transformers.modeling_attn_mask_utils import (
+    _prepare_4d_causal_attention_mask,
+    _prepare_4d_causal_attention_mask_for_sdpa,
 )
-from QEfficient.transformers.modeling_outputs import (
-    QEffBaseModelOutputWithPast,
-    QEffCausalLMOutputWithPast,
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    CausalLMOutputWithPast,
+)
+from transformers.models.mistral.modeling_mistral import (
+    MistralAttention,
+    MistralForCausalLM,
+    MistralModel,
+    apply_rotary_pos_emb,
+    logger,
+    repeat_kv,
 )
 
 
@@ -140,7 +135,7 @@ class QEffMistralModel(MistralModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, QEffBaseModelOutputWithPast]:
+    ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -216,7 +211,9 @@ class QEffMistralModel(MistralModel):
             pos_max = position_ids.max(1, keepdim=True).values
             kv_start = (pos_max // past_key_values_length) * past_key_values_length
             kv_indices_high = kv_indices + kv_start
-            kv_indices_low = torch.where(kv_indices_high < past_key_values_length, kv_indices, kv_indices_high - past_key_values_length)
+            kv_indices_low = torch.where(
+                kv_indices_high < past_key_values_length, kv_indices, kv_indices_high - past_key_values_length
+            )
             kv_indices = torch.where(kv_indices_high > pos_max, kv_indices_low, kv_indices_high)
             kv_indices = kv_indices.unsqueeze(1)
             # ------
@@ -292,7 +289,7 @@ class QEffMistralModel(MistralModel):
 
         if not return_dict:
             return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
-        return QEffBaseModelOutputWithPast(
+        return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=next_cache,
             hidden_states=all_hidden_states,
@@ -319,7 +316,7 @@ class QEffMistralForCausalLM(MistralForCausalLM):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, QEffCausalLMOutputWithPast]:
+    ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
             labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -388,7 +385,7 @@ class QEffMistralForCausalLM(MistralForCausalLM):
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
 
-        return QEffCausalLMOutputWithPast(
+        return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
