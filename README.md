@@ -12,7 +12,7 @@
 *Latest news* :fire: <br>
 
 - [coming soon] Support for more popular [models](#models-coming-soon) and inference optimization techniques like continuous batching and speculative decoding <br>
-- [06/2024] Added support for [Vicuna-v1.3](https://huggingface.co/lmsys/vicuna-13b-v1.3) * [Vicuna-v0](https://huggingface.co/lmsys/vicuna-13b-delta-v0)
+- [06/2024] Added support for [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5)
 - [05/2024] Added support for [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) & [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1).
 - [04/2024] Initial release of [efficient transformers](https://github.com/quic/efficient-transformers) for seamless inference on pre-trained LLMs.
 
@@ -53,8 +53,8 @@ For other models, there is comprehensive documentation to inspire upon the chang
 * [MPT-7b](https://huggingface.co/mosaicml/mpt-7b)
 * [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1)
 * [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1)
-* [Vicuna-v1.3](https://huggingface.co/lmsys/vicuna-13b-v1.3)
 * [Vicuna-v0](https://huggingface.co/lmsys/vicuna-13b-delta-v0)
+* [Vicuna-v1.3](https://huggingface.co/lmsys/vicuna-13b-v1.3)
 * [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5)
 
 
