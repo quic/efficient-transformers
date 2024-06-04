@@ -10,14 +10,14 @@ Welcome to Efficient-Transformers Documentation!
 <!-- ```{include} ../README.md
    :relative-images: 
 ```   -->
-
+ 
 
 ```{toctree}
 :caption: 'Getting Started'
 :maxdepth: 4
-
-Introduction
-Validate
+ 
+source/Introduction
+source/Validate
 ```
 
 
@@ -25,7 +25,7 @@ Validate
 :caption: 'Installation'
 :maxdepth: 2
 
-Linux_installation
+source/Linux_installation
 ```
 
 
@@ -33,8 +33,8 @@ Linux_installation
 :caption: 'Quick start'
 :maxdepth: 4
 
-quick_start
-kv_change
+source/quick_start
+source/kv_change
 
 ```
 
@@ -44,16 +44,16 @@ kv_change
 :caption: 'Python API'
 :maxdepth: 2
 
-QEfficient.cloud
-low_level_api
-other_api
+source/high_level_api
+source/low_level_api
+source/other_api
 
 ```
 ```{toctree}
 :caption: 'Performance'
 :maxdepth: 2
 
-performance
+source/performance
 
 ```
  
@@ -61,7 +61,7 @@ performance
 :caption: 'Blogs'
 :maxdepth: 2
 
-blogs
+source/blogs
 
 ```
 
@@ -69,7 +69,7 @@ blogs
 :caption: 'Reference'
 :maxdepth: 2
 
-reference
+source/reference
 
 ```
 
