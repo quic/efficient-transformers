@@ -109,7 +109,7 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
     onnx_dir_path = os.path.join(QEFF_MODELS_DIR, model_name)
     base_path, onnx_model_path = qualcomm_efficient_converter(
         model_name=model_name,
-        model_kv=QEFFAutoModelForCausalLM(model=model_kv, pretrained_model_name_or_path=None), # type: ignore
+        model_kv=QEFFAutoModelForCausalLM(model=model_kv), # type: ignore
         tokenizer=tokenizer,
         onnx_dir_path=onnx_dir_path,
         kv=True,
