@@ -205,7 +205,7 @@ import os
 
 
 import QEfficient
-from QEfficient import QEFFAutoModel
+from QEfficient import QEFFAutoModelForCausalLM
 
 # Please uncomment and use appropriate Cache Directory for transformers, in case you don't want to use default ~/.cache dir.
 # os.environ["TRANSFORMERS_CACHE"] = "/local/mnt/workspace/hf_cache"
@@ -216,7 +216,7 @@ from QEfficient import QEFFAutoModel
 # Model-Card name to be onboarded (This is HF Model Card name) : https://huggingface.co/gpt2-xl
 model_name = "gpt2"  # Similar, we can change model name and generate corresponding models, if we have added the support in the lib.
 
-qeff_model = QEFFAutoModel.from_pretrained(model_name, cache_dir=None)
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, cache_dir=None)
 print(f"{model_name} from hugging-face \n", qeff_model)
 
 # Easy and minimal api to update the model

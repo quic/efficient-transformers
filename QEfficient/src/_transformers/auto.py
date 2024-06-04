@@ -5,37 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-"""
-** This file for holds the classes that handle main functions
-1.load i.e. from_pretrained
-2.execute
-3.transform
-4.export
-5.compile
-For different varities of Transformer Models
-
-Representation of class inheritence followed keeping in line with transformers/diffusers repos ->
-
-                                                                                            QEFFBaseModel
-                                                 ________________________________________________|________________________________________________________________
-                                                |                                                                                                                 |  
-                                            QEFFTransformersBase                                                                                           QEFFDiffusersBase
-                                                |                                                                                                                 |
-                                    ____________|________________________________________________________ ________________                       _________________|______________
-                   _____           |                              |                                      |                |                     |                                |         
-                  |          QEFFAutoModel             QEFFAutoModelForCausalLM              QEFFAWQModelForCausalLM     ...                   ...                              ...
-QEFFCommonLoader -|       [Provides way to          [Provides way to do 1-5 on                 [Supports 1-5 for 
-[Provides         |        do steps 1-5 on           transformers.AutoModelForCausalLM]         AWQ Models]
-interface to      |_____   transformers.AutoModel]
-Load any of 
-These models       
-by automatically
-detecting the type
-of the model]
-
-** QEFFBASEModel is abstract base class that defines the basic structure of these classes.
-** QEFFPipeline classes will stay at the same level as QEFFAutoModel in this hierarchy in future.
-"""
 from typing import Any
 
 import torch.nn as nn
