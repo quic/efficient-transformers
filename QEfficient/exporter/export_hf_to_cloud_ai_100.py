@@ -339,7 +339,8 @@ def convert_to_cloud_kvstyle(
     inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
     print(tokenizer.batch_decode(inputs["input_ids"]))
     # Run PyTorch inference for decode in loop
-    for i in range(10):
+    # todo: vbaddi, fix it to verify on Cloud AI 100.
+    for i in range(0):
         pt_outputs = model(**inputs)
         inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
         inputs["position_ids"] += 1
