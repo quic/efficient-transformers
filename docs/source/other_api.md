@@ -1,4 +1,4 @@
-# Other API
+# Utilities
 
 
 ## QEfficient.utils.device_utils module

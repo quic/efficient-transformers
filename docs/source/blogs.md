@@ -10,3 +10,6 @@
 # Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats
 [click here](https://www.qualcomm.com/developer/blog/2024/01/qualcomm-cloud-ai-100-accelerates-large-language-model-inference-2x-using-microscaling-mx)
 
+# Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities
+[click here](https://www.qualcomm.com/developer/blog/2024/05/qualcomm-cloud-ai-introduces-efficient-transformers--one-api--in)
+
