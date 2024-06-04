@@ -20,9 +20,9 @@ class InputHandler:
         :param prompt_len: int
         :param ctx_len: int
         """
-        if tokenizer.padding_side != "left":
-            logger.warning(f"Please use padding_side='left' while initializing the tokenizer")
-            tokenizer.padding_side = "left"
+        if tokenizer.padding_side != "right":
+            logger.warning("Please use padding_side='right' while initializing the tokenizer")
+            tokenizer.padding_side = "right"
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token_id = tokenizer.eos_token_id
         self.tokenizer = tokenizer
@@ -45,16 +45,8 @@ class InputHandler:
             max_length=self.prompt_len,
         )
         batch_size, input_len = inputs["input_ids"].shape
-        inputs["attention_mask"] = torch.concat(
-            [
-                inputs["attention_mask"],
-                torch.zeros((batch_size, self.ctx_len - self.prompt_len), dtype=torch.int64),
-            ],
-            1,
-        )
-        inputs["position_ids"] = ((torch.cumsum(inputs["attention_mask"], 1) - 1) * inputs["attention_mask"])[
-            :, : inputs["input_ids"].shape[1]
-        ]
+        inputs.pop("attention_mask")
+        inputs["position_ids"] = torch.arange(self.prompt_len).view(1, -1)
 
         past_key_values = []
         for i in range(n_layer):
@@ -64,7 +56,6 @@ class InputHandler:
             past_key_values.append(pkv)
 
         inputs["past_key_values"] = tuple(past_key_values)
-        inputs["cache_index"] = torch.tensor(0)
 
         return inputs
 
@@ -79,15 +70,10 @@ class InputHandler:
 
         updated_inputs = {}
         updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
-        if iteration == 1:
-            updated_inputs["attention_mask"] = inputs["attention_mask"].bool()
-        else:
-            updated_inputs["attention_mask"] = pt_outputs["attention_mask_RetainedState"].bool()
-        updated_inputs["position_ids"] = updated_inputs["attention_mask"].sum(1, keepdim=True)
+        updated_inputs["position_ids"] = updated_inputs["position_ids"].max(1, keepdim=True).values + 1
         updated_inputs["past_key_values"] = tuple(
             [(key.detach(), value.detach()) for key, value in pt_outputs["past_key_values"]]
         )
-        updated_inputs["cache_index"] = torch.tensor(iteration + self.prompt_len - 1)
 
         return updated_inputs
 

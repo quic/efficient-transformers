@@ -155,9 +155,7 @@ def cloud_ai_100_exec_kv_helper(
     session = QAICInferenceSession(qpc, device_id, enable_debug_logs=enable_debug_logs)
 
     # Skip inputs/outputs
-    session.skip_buffers([
-        x for x in session.input_names + session.output_names if x.startswith("past_")
-    ])
+    session.skip_buffers([x for x in session.input_names + session.output_names if x.startswith("past_")])
 
     # Read prompt and ctx len from session
     batch_size, _, ctx_len, _ = session.bindings[session.binding_index_map["past_key.0"]].dims
@@ -192,12 +190,8 @@ def cloud_ai_100_exec_kv_helper(
     # Run prefill
     for i in range(num_chunks):
         chunk_inputs = inputs.copy()
-        chunk_inputs["input_ids"] = inputs["input_ids"][
-            :, i * prefill_seq_len : (i + 1) * prefill_seq_len
-        ]
-        chunk_inputs["position_ids"] = inputs["position_ids"][
-            :, i * prefill_seq_len : (i + 1) * prefill_seq_len
-        ]
+        chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+        chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
         outputs = session.run(chunk_inputs)
         if write_io_dir:
             write_io_files(inputs, outputs, write_io_dir, "prefill", "aic_batch_io", True, False)
@@ -253,7 +247,7 @@ def print_latency_stats_kv(
         print()
         print("input=", prompt)
         print("output=", generated_texts)
-        print("Prefill time a.k.a TTFT is=", round(prefill_time, 2))
+        print("Prefill time a.k.a TTFT is=", round(prefill_time * batch_size, 2))
         print("Decode token/sec is=", round(decode_perf * batch_size, 2))
         print("Total token/sec is=", round(total_perf * batch_size, 2))
         print("Total (E2E) inference time is=", round(total_time, 2))
@@ -262,7 +256,7 @@ def print_latency_stats_kv(
 
     print("===================== Performance Stats =====================")
     if batch_size > 1:
-        print("Prefill time a.k.a TTFT (batch) is :", round(prefill_time, 2), "s")
+        print("Prefill time a.k.a TTFT (batch) is :", round(prefill_time * batch_size, 2), "s")
         print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s")
         print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s")
         print("Total (E2E) inference time (batch) is=", round(total_time, 2), "s")

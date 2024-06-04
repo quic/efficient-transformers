@@ -102,25 +102,23 @@ class CtxScatterFunc(torch.autograd.Function):
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
-def CtxGather(data: onnxscript.FLOAT, indices: onnxscript.INT32) -> onnxscript.FLOAT:
-    indices = ops.Unsqueeze(indices, [1])
-    indices = ops.Expand(indices, ops.Slice(ops.Shape(data), starts=[0], ends=[3], axes=[0]))
-    indices = ops.Unsqueeze(indices, [-1])
-    return ops.GatherND(data, indices, batch_dims=2)
+def CtxGather(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
+    ctx_indices = ops.Expand(ctx_indices, ops.Slice(ops.Shape(data), starts=[0], ends=[3], axes=[0]))
+    ctx_indices = ops.Unsqueeze(ctx_indices, [-1])
+    return ops.GatherND(data, ctx_indices, batch_dims=2)
 
 
 class CtxGatherFunc(torch.autograd.Function):
     @staticmethod
-    def forward(data: torch.Tensor, indices: torch.Tensor):
-        batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
-        head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
-        ctx_idx = indices.unsqueeze(1)
-        return data[batch_idx, head_idx, ctx_idx]
+    def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
+        batch_indices = torch.arange(data.shape[0]).view(-1, 1, 1)
+        head_indices = torch.arange(data.shape[1]).view(1, -1, 1)
+        return data[batch_indices, head_indices, ctx_indices]
 
     @staticmethod
     def setup_context(ctx, inputs, outputs):
         pass
 
     @staticmethod
-    def symbolic(g: torch.Graph, data: torch.Value, indices: torch.Value) -> torch.Value:
-        return g.onnxscript_op(CtxGather, data, indices).setTypeAs(data)
+    def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
+        return g.onnxscript_op(CtxGather, data, ctx_indices).setTypeAs(data)

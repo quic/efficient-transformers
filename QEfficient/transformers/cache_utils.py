@@ -6,12 +6,12 @@
 # -----------------------------------------------------------------------------
 
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
+
 import torch
-from transformers.cache_utils import (
-    DynamicCache
-)
-from QEfficient.customop import CtxScatterFunc, CtxGatherFunc
+from transformers.cache_utils import DynamicCache
+
+from QEfficient.customop import CtxGatherFunc, CtxScatterFunc
 
 
 class QEffDynamicCache(DynamicCache):
@@ -65,12 +65,16 @@ class QEffDynamicCache(DynamicCache):
 
             # Gather
             ctx_len = k_out.shape[2]
-            kv_indices = torch.arange(ctx_len).view(1, -1)
-            gather_limit = position_ids.max(1, keepdim=True).values
-            kv_indices = torch.where(kv_indices > gather_limit, torch.iinfo(torch.int32).max, kv_indices)
-            k_out = CtxGatherFunc.apply(k_out, kv_indices)
-            v_out = CtxGatherFunc.apply(v_out, kv_indices)
+            ctx_indices = torch.arange(ctx_len)[None, None, ...]
+            gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+            invalid_mask = ctx_indices > gather_limit
+            if torch.onnx.is_in_onnx_export():
+                invalid_idx_value = torch.iinfo(torch.int32).max
+            else:
+                invalid_idx_value = 0
+            ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+            k_out = CtxGatherFunc.apply(k_out, ctx_indices)
+            v_out = CtxGatherFunc.apply(v_out, ctx_indices)
+            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
 
         return k_out, v_out
-
-    
