@@ -45,20 +45,39 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../Validate.html">Validated Models</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Amiot</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">efficient-transformers</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html">Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html#installation">Installation</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API</span></p>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../QEfficient.html">QEfficient package</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html#using-high-level-api">Using High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../QEfficient.cloud.html">High level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html">Low level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../other_api.html">Other API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../performance.html">perfromance details</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../reference.html">Reference 1</a></li>
 </ul>
 
         </div>
@@ -97,7 +116,6 @@
 
 <span class="kn">import</span> <span class="nn">os</span>
 
-
 <span class="n">UTILS_DIR</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">))</span>
 <span class="n">QEFF_DIR</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">UTILS_DIR</span><span class="p">)</span>
 <span class="n">ROOT_DIR</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">QEFF_DIR</span><span class="p">)</span>
@@ -106,14 +124,17 @@
 
 <div class="viewcode-block" id="Constants"><a class="viewcode-back" href="../../../QEfficient.utils.html#QEfficient.utils.constants.Constants">[docs]</a><span class="k">class</span> <span class="nc">Constants</span><span class="p">:</span>
     <span class="c1"># Export Constants.</span>
-    <span class="n">seq_length</span> <span class="o">=</span> <span class="mi">128</span>
+    <span class="n">seq_length</span> <span class="o">=</span> <span class="mi">32</span>
     <span class="n">input_str</span> <span class="o">=</span> <span class="s2">&quot;My Name is&quot;</span>
 
-    <span class="n">CTX_LEN</span> <span class="o">=</span> <span class="mi">128</span>
-    <span class="n">PROMPT_LEN</span> <span class="o">=</span> <span class="mi">32</span>
+    <span class="n">CTX_LEN</span> <span class="o">=</span> <span class="mi">32</span>
+    <span class="n">PROMPT_LEN</span> <span class="o">=</span> <span class="mi">8</span>
     <span class="n">INPUT_STRING</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;My name is&quot;</span><span class="p">]</span>
 
-    <span class="n">CACHE_DIR</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">ROOT_DIR</span><span class="p">,</span> <span class="s2">&quot;cache_dir&quot;</span><span class="p">)</span></div>
+    <span class="n">CACHE_DIR</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">ROOT_DIR</span><span class="p">,</span> <span class="s2">&quot;cache_dir&quot;</span><span class="p">)</span>
+    
+    <span class="n">GB</span> <span class="o">=</span> <span class="mi">2</span><span class="o">**</span><span class="mi">30</span>
+    <span class="n">MAX_QPC_LIMIT</span> <span class="o">=</span> <span class="mi">30</span></div>
 </pre></div>
 
            </div>

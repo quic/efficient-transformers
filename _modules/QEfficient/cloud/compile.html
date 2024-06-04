@@ -46,19 +46,23 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../Validate.html">Validated Models</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html">Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html#installation">Installation</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API</span></p>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html#using-high-level-api">Using High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../QEfficient.cloud.html">High level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html">Low level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../other_api.html">Other API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Performance</span></p>
 <ul>
@@ -66,7 +70,10 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html">Blog 1</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
 <ul>
@@ -132,7 +139,7 @@
         <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">specializations</span><span class="p">,</span> <span class="n">file</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
 
 
-<div class="viewcode-block" id="main"><a class="viewcode-back" href="../../../QEfficient.cloud.html#QEfficient.cloud.compile.main">[docs]</a><span class="k">def</span> <span class="nf">main</span><span class="p">(</span>
+<div class="viewcode-block" id="main"><a class="viewcode-back" href="../../../low_level_api.html#QEfficient.cloud.compile.main">[docs]</a><span class="k">def</span> <span class="nf">main</span><span class="p">(</span>
     <span class="n">onnx_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">num_cores</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
@@ -143,6 +150,7 @@
     <span class="n">prompt_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span>
     <span class="n">ctx_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>
     <span class="n">mxfp6</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">mxint8</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    API to compile the ONNX model on Cloud AI 100 platform with given config.</span>
@@ -170,10 +178,19 @@
     <span class="n">create_and_dump_specializations</span><span class="p">(</span>
         <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt_len</span><span class="p">,</span> <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="n">specialization_json_path</span>
     <span class="p">)</span>
-    <span class="n">custom_io_file_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">),</span> <span class="s2">&quot;custom_io.yaml&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Select the customIO config based on the mx flag.</span>
+    <span class="k">if</span> <span class="n">mxint8</span><span class="p">:</span>
+        <span class="n">custom_io_file_name</span> <span class="o">=</span> <span class="s2">&quot;custom_io_int8.yaml&quot;</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">custom_io_file_name</span> <span class="o">=</span> <span class="s2">&quot;custom_io_fp16.yaml&quot;</span>
+
+    <span class="n">custom_io_file_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">),</span> <span class="n">custom_io_file_name</span><span class="p">)</span>
 
     <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">custom_io_file_path</span><span class="p">):</span>
-        <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;file </span><span class="si">{</span><span class="n">custom_io_file_path</span><span class="si">}</span><span class="s2"> needs to exist in the same directory as onnx model files.&quot;</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;file </span><span class="si">{</span><span class="n">custom_io_file_path</span><span class="si">}</span><span class="s2"> needs to exist in the same directory as onnx model files. Please rerun infer/export Api&quot;</span>
+        <span class="p">)</span>
 
     <span class="n">_</span><span class="p">,</span> <span class="n">qpc_path</span> <span class="o">=</span> <span class="n">compile_kv_model_on_cloud_ai_100</span><span class="p">(</span>
         <span class="n">onnx_path</span><span class="o">=</span><span class="n">onnx_path</span><span class="p">,</span>
@@ -213,6 +230,11 @@
         <span class="s2">&quot;--mxfp6&quot;</span><span class="p">,</span>
         <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">,</span>
         <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Compress constant MatMul weights to MXFP6 E2M3, default is no compression&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--mxint8&quot;</span><span class="p">,</span>
+        <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Compress Present/Past KV to MXINT8 using CustomIO config, default is False&quot;</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
         <span class="s2">&quot;--num_cores&quot;</span><span class="p">,</span>

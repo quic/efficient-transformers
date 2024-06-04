@@ -46,19 +46,23 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../Validate.html">Validated Models</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html">Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html#installation">Installation</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API</span></p>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html#using-high-level-api">Using High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../QEfficient.cloud.html">High level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html">Low level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../other_api.html">Other API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Performance</span></p>
 <ul>
@@ -66,7 +70,10 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html">Blog 1</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
 <ul>
@@ -121,7 +128,7 @@
 <span class="n">io_files</span> <span class="o">=</span> <span class="p">[]</span>
 
 
-<div class="viewcode-block" id="write_io_files"><a class="viewcode-back" href="../../../low_level_api.html#QEfficient.generation.text_generation_inference.write_io_files">[docs]</a><span class="k">def</span> <span class="nf">write_io_files</span><span class="p">(</span>
+<div class="viewcode-block" id="write_io_files"><a class="viewcode-back" href="../../../QEfficient.generation.html#QEfficient.generation.text_generation_inference.write_io_files">[docs]</a><span class="k">def</span> <span class="nf">write_io_files</span><span class="p">(</span>
     <span class="n">inputs</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
     <span class="n">outputs</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
     <span class="n">write_io_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> 
@@ -162,7 +169,7 @@
         <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">({</span><span class="s2">&quot;IO-files&quot;</span><span class="p">:</span> <span class="n">io_files</span><span class="p">},</span> <span class="n">fp</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></div>
 
 
-<div class="viewcode-block" id="latency_stats_bertstyle"><a class="viewcode-back" href="../../../low_level_api.html#QEfficient.generation.text_generation_inference.latency_stats_bertstyle">[docs]</a><span class="k">def</span> <span class="nf">latency_stats_bertstyle</span><span class="p">(</span>
+<div class="viewcode-block" id="latency_stats_bertstyle"><a class="viewcode-back" href="../../../other_api.html#QEfficient.generation.text_generation_inference.latency_stats_bertstyle">[docs]</a><span class="k">def</span> <span class="nf">latency_stats_bertstyle</span><span class="p">(</span>
     <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">qpc</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
@@ -209,16 +216,17 @@
     <span class="nb">print</span><span class="p">(</span><span class="nb">round</span><span class="p">((</span><span class="n">cur_len</span> <span class="o">-</span> <span class="n">init_len</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">end</span> <span class="o">-</span> <span class="n">start</span><span class="p">),</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;tok/s&quot;</span><span class="p">)</span></div>
 
 
-<div class="viewcode-block" id="get_compilation_batch_size"><a class="viewcode-back" href="../../../low_level_api.html#QEfficient.generation.text_generation_inference.get_compilation_batch_size">[docs]</a><span class="k">def</span> <span class="nf">get_compilation_batch_size</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-    <span class="n">qpc_base_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">)</span>
+<div class="viewcode-block" id="get_compilation_batch_size"><a class="viewcode-back" href="../../../QEfficient.generation.html#QEfficient.generation.text_generation_inference.get_compilation_batch_size">[docs]</a><span class="k">def</span> <span class="nf">get_compilation_batch_size</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+    <span class="n">qpc_base_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">normpath</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">))</span>
     <span class="n">specialization_file_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">qpc_base_path</span><span class="p">,</span> <span class="s2">&quot;specializations.json&quot;</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;specialization_file_path : </span><span class="si">{</span><span class="n">specialization_file_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">specialization_file_path</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
         <span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">file</span><span class="p">)</span>
     <span class="n">compilation_batch_size</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;batch_size&quot;</span><span class="p">])</span>
     <span class="k">return</span> <span class="n">compilation_batch_size</span></div>
 
 
-<div class="viewcode-block" id="check_batch_size_and_num_prompts"><a class="viewcode-back" href="../../../low_level_api.html#QEfficient.generation.text_generation_inference.check_batch_size_and_num_prompts">[docs]</a><span class="k">def</span> <span class="nf">check_batch_size_and_num_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">):</span>
+<div class="viewcode-block" id="check_batch_size_and_num_prompts"><a class="viewcode-back" href="../../../QEfficient.generation.html#QEfficient.generation.text_generation_inference.check_batch_size_and_num_prompts">[docs]</a><span class="k">def</span> <span class="nf">check_batch_size_and_num_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">):</span>
     <span class="k">assert</span> <span class="p">(</span>
         <span class="n">prompt</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">prompts_txt_file_path</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
     <span class="p">),</span> <span class="s2">&quot;Please pass atleast one argument either using --prompt or --prompts_txt_file_path&quot;</span>
@@ -237,7 +245,7 @@
     <span class="k">return</span> <span class="n">prompt</span></div>
 
 
-<div class="viewcode-block" id="read_prompts_txt_file"><a class="viewcode-back" href="../../../low_level_api.html#QEfficient.generation.text_generation_inference.read_prompts_txt_file">[docs]</a><span class="k">def</span> <span class="nf">read_prompts_txt_file</span><span class="p">(</span><span class="n">prompts_txt_file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<div class="viewcode-block" id="read_prompts_txt_file"><a class="viewcode-back" href="../../../QEfficient.generation.html#QEfficient.generation.text_generation_inference.read_prompts_txt_file">[docs]</a><span class="k">def</span> <span class="nf">read_prompts_txt_file</span><span class="p">(</span><span class="n">prompts_txt_file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
     <span class="n">prompt</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">prompts_txt_file_path</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
         <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">file</span><span class="p">:</span>
@@ -245,7 +253,7 @@
     <span class="k">return</span> <span class="n">prompt</span></div>
 
 
-<div class="viewcode-block" id="cloud_ai_100_exec_kv_helper"><a class="viewcode-back" href="../../../low_level_api.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv_helper">[docs]</a><span class="k">def</span> <span class="nf">cloud_ai_100_exec_kv_helper</span><span class="p">(</span>
+<div class="viewcode-block" id="cloud_ai_100_exec_kv_helper"><a class="viewcode-back" href="../../../other_api.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv_helper">[docs]</a><span class="k">def</span> <span class="nf">cloud_ai_100_exec_kv_helper</span><span class="p">(</span>
     <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">],</span>
     <span class="n">qpc</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
@@ -377,7 +385,7 @@
     <span class="k">return</span> <span class="n">latency_stats</span></div>
 
 
-<div class="viewcode-block" id="print_latency_stats_kv"><a class="viewcode-back" href="../../../low_level_api.html#QEfficient.generation.text_generation_inference.print_latency_stats_kv">[docs]</a><span class="k">def</span> <span class="nf">print_latency_stats_kv</span><span class="p">(</span>
+<div class="viewcode-block" id="print_latency_stats_kv"><a class="viewcode-back" href="../../../QEfficient.generation.html#QEfficient.generation.text_generation_inference.print_latency_stats_kv">[docs]</a><span class="k">def</span> <span class="nf">print_latency_stats_kv</span><span class="p">(</span>
     <span class="n">prompt</span><span class="p">,</span> <span class="n">generated_texts</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">prefill_time</span><span class="p">,</span> <span class="n">decode_perf</span><span class="p">,</span> <span class="n">total_perf</span><span class="p">,</span> <span class="n">total_time</span><span class="p">,</span> <span class="n">automation</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
 <span class="p">):</span>
     <span class="k">if</span> <span class="n">automation</span><span class="p">:</span>
@@ -405,7 +413,7 @@
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=============================================================&quot;</span><span class="p">)</span></div>
 
 
-<div class="viewcode-block" id="cloud_ai_100_exec_kv"><a class="viewcode-back" href="../../../low_level_api.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv">[docs]</a><span class="k">def</span> <span class="nf">cloud_ai_100_exec_kv</span><span class="p">(</span>
+<div class="viewcode-block" id="cloud_ai_100_exec_kv"><a class="viewcode-back" href="../../../QEfficient.generation.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv">[docs]</a><span class="k">def</span> <span class="nf">cloud_ai_100_exec_kv</span><span class="p">(</span>
     <span class="n">batch_size</span><span class="p">,</span>
     <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">],</span>
     <span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>

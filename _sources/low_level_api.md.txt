@@ -1,11 +1,11 @@
 # Low level API
 
-<!-- ```{eval-rst}
-.. automodule:: QEfficient.
+```{eval-rst}
+.. automodule:: QEfficient
    :members:
    :undoc-members:
    :show-inheritance:
-``` --> 
+``` 
 
 ## QEfficient.exporter.export_hf_to_cloud_ai_100 module
 

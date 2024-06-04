@@ -4,7 +4,7 @@
   <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>tests package &mdash; QEfficient Documentation 1.16 documentation</title>
+  <title>tests package &mdash; Efficient-Transformers 1.16 documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
 
@@ -32,7 +32,7 @@
           
           
           <a href="index.html" class="icon icon-home">
-            QEfficient Documentation
+            Efficient-Transformers
           </a>
 <div role="search">
   <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
@@ -44,7 +44,7 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Introduction.html">Introduciton Qualcomm Efficient-Transformers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="Validate.html">Validated Models</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
@@ -57,6 +57,7 @@
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-high-level-api">Using High Level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
@@ -86,7 +87,7 @@
 
     <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
           <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
-          <a href="index.html">QEfficient Documentation</a>
+          <a href="index.html">Efficient-Transformers</a>
       </nav>
 
       <div class="wy-nav-content">
@@ -171,9 +172,15 @@
 
 <dl class="py function">
 <dt class="sig sig-object py" id="tests.utils.set_up">
-<span class="sig-prename descclassname"><span class="pre">tests.utils.</span></span><span class="sig-name descname"><span class="pre">set_up</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/tests/utils.html#set_up"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#tests.utils.set_up" title="Permalink to this definition"></a></dt>
+<span class="sig-prename descclassname"><span class="pre">tests.utils.</span></span><span class="sig-name descname"><span class="pre">set_up</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_group</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[0]</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/tests/utils.html#set_up"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#tests.utils.set_up" title="Permalink to this definition"></a></dt>
 <dd><p>Set up function to set up the test environment for TestQEfficientModel class
 :param None</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="tests.utils.skip_if_mq_not_enabled">
+<span class="sig-prename descclassname"><span class="pre">tests.utils.</span></span><span class="sig-name descname"><span class="pre">skip_if_mq_not_enabled</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">test_method</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/tests/utils.html#skip_if_mq_not_enabled"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#tests.utils.skip_if_mq_not_enabled" title="Permalink to this definition"></a></dt>
+<dd><p>Wrapper function to skip test if MQ setup not enabled</p>
 </dd></dl>
 
 <dl class="py function">

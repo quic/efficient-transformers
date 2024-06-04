@@ -45,20 +45,39 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../Validate.html">Validated Models</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Amiot</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">efficient-transformers</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html">Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html#installation">Installation</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API</span></p>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../QEfficient.html">QEfficient package</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html#using-high-level-api">Using High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../QEfficient.cloud.html">High level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html">Low level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../other_api.html">Other API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../performance.html">perfromance details</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../reference.html">Reference 1</a></li>
 </ul>
 
         </div>
@@ -267,6 +286,98 @@
     <span class="n">past_key_values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">hidden_states</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">attentions</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">attention_mask_RetainedState</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">BoolTensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></div>
+    
+
+<div class="viewcode-block" id="QEffMoeModelOutputWithPast"><a class="viewcode-back" href="../../../QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffMoeModelOutputWithPast">[docs]</a><span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">QEffMoeModelOutputWithPast</span><span class="p">(</span><span class="n">ModelOutput</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Base class for model&#39;s outputs, with potential hidden states and attentions.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        last_hidden_state (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):</span>
+<span class="sd">            Sequence of hidden-states at the output of the last layer of the model.</span>
+<span class="sd">        past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):</span>
+<span class="sd">            Tuple of `tuple(torch.FloatTensor)` of length `config.n_layers`, with each tuple having 2 tensors of shape</span>
+<span class="sd">            `(batch_size, num_heads, sequence_length, embed_size_per_head)`) and optionally if</span>
+<span class="sd">            `config.is_encoder_decoder=True` 2 additional tensors of shape `(batch_size, num_heads,</span>
+<span class="sd">            encoder_sequence_length, embed_size_per_head)`.</span>
+
+<span class="sd">            Contains pre-computed hidden-states (key and values in the self-attention blocks and optionally if</span>
+<span class="sd">            `config.is_encoder_decoder=True` in the cross-attention blocks) that can be used (see `past_key_values`</span>
+<span class="sd">            input) to speed up sequential decoding.</span>
+<span class="sd">        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +</span>
+<span class="sd">            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.</span>
+
+<span class="sd">            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.</span>
+<span class="sd">        attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,</span>
+<span class="sd">            sequence_length)`.</span>
+
+<span class="sd">            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention</span>
+<span class="sd">            heads.</span>
+<span class="sd">        router_logits (`tuple(torch.FloatTensor)`, *optional*, returned when `output_router_probs=True` and `config.add_router_probs=True` is passed or when `config.output_router_probs=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, sequence_length, num_experts)`.</span>
+
+<span class="sd">            Raw router logtis (post-softmax) that are computed by MoE routers, these terms are used to compute the auxiliary</span>
+<span class="sd">            loss for Mixture of Experts models.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">last_hidden_state</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">past_key_values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">hidden_states</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">attentions</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">router_logits</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">attention_mask_RetainedState</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">BoolTensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></div>
+    
+<div class="viewcode-block" id="QEffMoeCausalLMOutputWithPast"><a class="viewcode-back" href="../../../QEfficient.transformers.html#QEfficient.transformers.modeling_outputs.QEffMoeCausalLMOutputWithPast">[docs]</a><span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">QEffMoeCausalLMOutputWithPast</span><span class="p">(</span><span class="n">ModelOutput</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Base class for causal language model (or autoregressive) with mixture of experts outputs.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):</span>
+<span class="sd">            Language modeling loss (for next-token prediction).</span>
+
+<span class="sd">        logits (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.vocab_size)`):</span>
+<span class="sd">            Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).</span>
+
+<span class="sd">        aux_loss (`torch.FloatTensor`, *optional*, returned when `labels` is provided):</span>
+<span class="sd">            aux_loss for the sparse modules.</span>
+
+<span class="sd">        router_logits (`tuple(torch.FloatTensor)`, *optional*, returned when `output_router_probs=True` and `config.add_router_probs=True` is passed or when `config.output_router_probs=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, sequence_length, num_experts)`.</span>
+
+<span class="sd">            Raw router logtis (post-softmax) that are computed by MoE routers, these terms are used to compute the auxiliary</span>
+<span class="sd">            loss for Mixture of Experts models.</span>
+
+<span class="sd">        past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):</span>
+<span class="sd">            Tuple of `tuple(torch.FloatTensor)` of length `config.n_layers`, with each tuple having 2 tensors of shape</span>
+<span class="sd">            `(batch_size, num_heads, sequence_length, embed_size_per_head)`)</span>
+
+<span class="sd">            Contains pre-computed hidden-states (key and values in the self-attention blocks) that can be used (see</span>
+<span class="sd">            `past_key_values` input) to speed up sequential decoding.</span>
+<span class="sd">        hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +</span>
+<span class="sd">            one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.</span>
+
+<span class="sd">            Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.</span>
+<span class="sd">        attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):</span>
+<span class="sd">            Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,</span>
+<span class="sd">            sequence_length)`.</span>
+
+<span class="sd">            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention</span>
+<span class="sd">            heads.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">loss</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">aux_loss</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">logits</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">past_key_values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">hidden_states</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">attentions</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">router_logits</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">FloatTensor</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">attention_mask_RetainedState</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">BoolTensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span></div>
 </pre></div>
 

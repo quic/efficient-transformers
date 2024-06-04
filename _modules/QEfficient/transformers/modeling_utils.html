@@ -45,20 +45,39 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../Validate.html">Validated Models</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Amiot</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">efficient-transformers</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html">Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html#installation">Installation</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API</span></p>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../QEfficient.html">QEfficient package</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html#using-high-level-api">Using High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../QEfficient.cloud.html">High level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html">Low level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../other_api.html">Other API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../performance.html">perfromance details</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../reference.html">Reference 1</a></li>
 </ul>
 
         </div>
@@ -121,6 +140,16 @@
     <span class="n">MistralRMSNorm</span><span class="p">,</span>
     <span class="n">MistralRotaryEmbedding</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="kn">from</span> <span class="nn">transformers.models.mixtral.modeling_mixtral</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">MixtralAttention</span><span class="p">,</span>
+    <span class="n">MixtralForCausalLM</span><span class="p">,</span>
+    <span class="n">MixtralModel</span><span class="p">,</span>
+    <span class="n">MixtralDecoderLayer</span><span class="p">,</span>
+    <span class="n">MixtralSparseMoeBlock</span><span class="p">,</span>
+    <span class="n">MixtralBLockSparseTop2MLP</span><span class="p">,</span>
+    <span class="n">MixtralRotaryEmbedding</span><span class="p">,</span>
+    <span class="n">MixtralRMSNorm</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span> <span class="nn">transformers.models.mpt.modeling_mpt</span> <span class="kn">import</span> <span class="n">MptAttention</span><span class="p">,</span> <span class="n">MptBlock</span><span class="p">,</span> <span class="n">MptForCausalLM</span><span class="p">,</span> <span class="n">MptModel</span>
 
 <span class="kn">from</span> <span class="nn">QEfficient.customop</span> <span class="kn">import</span> <span class="n">CustomRMSNormAIC</span>
@@ -136,6 +165,8 @@
     <span class="n">QEffBaseModelOutputWithPastAndCrossAttentions</span><span class="p">,</span>
     <span class="n">QEffCausalLMOutputWithCrossAttentions</span><span class="p">,</span>
     <span class="n">QEffCausalLMOutputWithPast</span><span class="p">,</span>
+    <span class="n">QEffMoeCausalLMOutputWithPast</span><span class="p">,</span>
+    <span class="n">QEffMoeModelOutputWithPast</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span> <span class="nn">.models.codegen.modeling_codegen</span> <span class="kn">import</span> <span class="p">(</span>
     <span class="n">QEffCodeGenAttention</span><span class="p">,</span>
@@ -157,6 +188,15 @@
     <span class="n">QEffMistralModel</span><span class="p">,</span>
     <span class="n">QEffMistralRotaryEmbedding</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="kn">from</span> <span class="nn">.models.mixtral_moe.modeling_mixtral</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">QEffMixtralModel</span><span class="p">,</span>
+    <span class="n">QEffMixtralRotaryEmbedding</span><span class="p">,</span>
+    <span class="n">QEffMixtralAttention</span><span class="p">,</span>
+    <span class="n">QEffMixtralForCausalLM</span><span class="p">,</span>
+    <span class="n">QEffMixtralDecoderLayer</span><span class="p">,</span>
+    <span class="n">QEffMixtralSparseMoeBlock</span><span class="p">,</span>
+    <span class="n">QEffMixtralBLockSparseTop2MLP</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span> <span class="nn">.models.mpt.modeling_mpt</span> <span class="kn">import</span> <span class="n">QEffMptAttention</span><span class="p">,</span> <span class="n">QEffMptBlock</span><span class="p">,</span> <span class="n">QEffMptForCausalLM</span><span class="p">,</span> <span class="n">QEFfMptModel</span>
 
 <span class="c1"># Define a named tuple for ModelArchitectures</span>
@@ -170,6 +210,7 @@
         <span class="n">CodeGenForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
         <span class="n">LlamaForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
         <span class="n">MistralForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
+        <span class="n">MixtralForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
     <span class="p">]</span>
 <span class="p">)</span>
 
@@ -204,6 +245,15 @@
     <span class="n">MistralForCausalLM</span><span class="p">:</span> <span class="n">QEffMistralForCausalLM</span><span class="p">,</span>
     <span class="n">MistralRotaryEmbedding</span><span class="p">:</span> <span class="n">QEffMistralRotaryEmbedding</span><span class="p">,</span>
     <span class="n">MistralRMSNorm</span><span class="p">:</span> <span class="n">CustomRMSNormAIC</span><span class="p">,</span>
+    <span class="c1"># Mixtral model layers</span>
+    <span class="n">MixtralAttention</span><span class="p">:</span> <span class="n">QEffMixtralAttention</span><span class="p">,</span>
+    <span class="n">MixtralModel</span><span class="p">:</span> <span class="n">QEffMixtralModel</span><span class="p">,</span>
+    <span class="n">MixtralDecoderLayer</span><span class="p">:</span> <span class="n">QEffMixtralDecoderLayer</span><span class="p">,</span>
+    <span class="n">MixtralForCausalLM</span><span class="p">:</span> <span class="n">QEffMixtralForCausalLM</span><span class="p">,</span>
+    <span class="n">MixtralRotaryEmbedding</span><span class="p">:</span> <span class="n">QEffMixtralRotaryEmbedding</span><span class="p">,</span>
+    <span class="n">MixtralRMSNorm</span><span class="p">:</span> <span class="n">CustomRMSNormAIC</span><span class="p">,</span>
+    <span class="n">MixtralSparseMoeBlock</span><span class="p">:</span> <span class="n">QEffMixtralSparseMoeBlock</span><span class="p">,</span>
+    <span class="n">MixtralBLockSparseTop2MLP</span><span class="p">:</span><span class="n">QEffMixtralBLockSparseTop2MLP</span><span class="p">,</span>
 <span class="p">}</span>
 
 
@@ -275,6 +325,8 @@
         <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_outputs</span><span class="o">.</span><span class="n">CausalLMOutputWithCrossAttentions</span> <span class="o">=</span> <span class="n">QEffCausalLMOutputWithCrossAttentions</span>
         <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_outputs</span><span class="o">.</span><span class="n">BaseModelOutputWithPast</span> <span class="o">=</span> <span class="n">QEffBaseModelOutputWithPast</span>
         <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_outputs</span><span class="o">.</span><span class="n">CausalLMOutputWithPast</span> <span class="o">=</span> <span class="n">QEffCausalLMOutputWithPast</span>
+        <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_outputs</span><span class="o">.</span><span class="n">MoeCausalLMOutputWithPast</span> <span class="o">=</span> <span class="n">QEffMoeCausalLMOutputWithPast</span>
+        <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_outputs</span><span class="o">.</span><span class="n">MoeModelOutputWithPast</span> <span class="o">=</span> <span class="n">QEffMoeModelOutputWithPast</span>
 
         <span class="c1"># Replace the modeling attn util classes and functions</span>
         <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_attn_mask_utils</span><span class="o">.</span><span class="n">AttentionMaskConverter</span> <span class="o">=</span> <span class="n">QEffAttentionMaskConverter</span>

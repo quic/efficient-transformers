@@ -19,7 +19,7 @@
    :undoc-members:
    :show-inheritance:
 ```
-
+<!-- 
 ## Module contents
 
 ```{eval-rst}
@@ -27,4 +27,4 @@
    :members:
    :undoc-members:
    :show-inheritance:
-```
+``` -->

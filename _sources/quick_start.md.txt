@@ -1,6 +1,8 @@
 ## Quick Start Guide
 
-QEfficient Library was designed with one goal: **to make onboarding of models inference straightforward for any Transformer architecture, while leveraging the complete power of Cloud AI platform**
+QEfficient Library was designed with one goal: 
+
+**To make onboarding of models inference straightforward for any Transformer architecture, while leveraging the complete power of Cloud AI platform**
 
 To achieve this, we have 2 levels of APIs, with different levels of abstraction.
 1. High-level APIs abstract away complex details, offering a simpler interface. They're ideal for quick development and prototyping. If you're new to a technology or want to minimize coding effort, high-level APIs are more user-friendly.

@@ -5,8 +5,7 @@
 
 ```{eval-rst}
 .. automodule:: QEfficient.cloud.infer
-   :members:
-   :exclude-members: qpc_exists,onnx_exists
+   :members: 
 
 ```
 ## QEfficient.cloud.execute
@@ -16,7 +15,7 @@
    :members:
    :undoc-members:
    :show-inheritance:
-```
+```   
 
 
 

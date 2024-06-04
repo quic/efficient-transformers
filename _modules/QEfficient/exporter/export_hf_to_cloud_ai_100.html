@@ -46,26 +46,23 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../Validate.html">Validated Models</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
-</ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html">Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../Linux_installation.html#installation">Installation</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API</span></p>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html">Quick Start Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html#using-high-level-api">Using High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../QEfficient.cloud.html">High level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html">QEfficient.exporter.export_hf_to_cloud_ai_100 module</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#module-QEfficient.cloud.compile">QEfficient.cloud.compile</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#module-QEfficient.generation.text_generation_inference">QEfficient.generation.text_generation_inference module</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#module-QEfficient.generation.cloud_infer">QEfficient.generation.cloud_infer module</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#module-QEfficient.exporter.export_utils">QEfficient.exporter.export_utils module</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#id1">QEfficient.generation.cloud_infer module</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#id2">QEfficient.generation.text_generation_inference module</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html#module-QEfficient.generation">Module contents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../low_level_api.html">Low level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../other_api.html">Other API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Performance</span></p>
 <ul>
@@ -73,7 +70,10 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html">Blog 1</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
 <ul>
@@ -484,8 +484,8 @@
             <span class="n">save_fp32_onnx</span><span class="o">=</span><span class="n">save_fp32_onnx</span><span class="p">,</span>
         <span class="p">)</span>
 
-    <span class="c1"># Generate custom-IO files</span>
-    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="s2">&quot;custom_io.yaml&quot;</span><span class="p">),</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">fp</span><span class="p">:</span>
+    <span class="c1"># Generate custom-IO files for fp16 and int8 kv</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="s2">&quot;custom_io_fp16.yaml&quot;</span><span class="p">),</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">fp</span><span class="p">:</span>
         <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;# Model Inputs</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="k">for</span> <span class="n">input_name</span> <span class="ow">in</span> <span class="n">key_value_names</span><span class="p">:</span>
             <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; - IOName: </span><span class="si">{</span><span class="n">input_name</span><span class="si">}</span><span class="se">\n</span><span class="s2">   Precision: float16</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
@@ -493,6 +493,14 @@
         <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;# Model Outputs</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="k">for</span> <span class="n">output_name</span> <span class="ow">in</span> <span class="n">key_value_names</span><span class="p">:</span>
             <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; - IOName: </span><span class="si">{</span><span class="n">output_name</span><span class="si">}</span><span class="s2">_RetainedState</span><span class="se">\n</span><span class="s2">   Precision: float16</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="s2">&quot;custom_io_int8.yaml&quot;</span><span class="p">),</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">fp</span><span class="p">:</span>
+        <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;# Model Inputs</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">input_name</span> <span class="ow">in</span> <span class="n">key_value_names</span><span class="p">:</span>
+            <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; - IOName: </span><span class="si">{</span><span class="n">input_name</span><span class="si">}</span><span class="se">\n</span><span class="s2">   Precision: mxint8</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;# Model Outputs</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">output_name</span> <span class="ow">in</span> <span class="n">key_value_names</span><span class="p">:</span>
+            <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; - IOName: </span><span class="si">{</span><span class="n">output_name</span><span class="si">}</span><span class="s2">_RetainedState</span><span class="se">\n</span><span class="s2">   Precision: mxint8</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
 
     <span class="c1"># Generate inputFiles</span>
     <span class="n">input_list_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="s2">&quot;input_list.txt&quot;</span><span class="p">)</span>

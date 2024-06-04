@@ -45,20 +45,39 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../Introduction.html">Introduciton Qualcomm Transformers Library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../Validate.html">Validated Models</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../quick_start.html">Quick Start Guide</a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Amiot</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../modules.html">efficient-transformers</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../Linux_installation.html">Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../Linux_installation.html#installation">Installation</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API</span></p>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../QEfficient.html">QEfficient package</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../quick_start.html">Quick Start Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../quick_start.html#using-high-level-api">Using High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../QEfficient.cloud.html">High level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../low_level_api.html">Low level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../other_api.html">Other API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../performance.html">perfromance details</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../reference.html">Reference 1</a></li>
 </ul>
 
         </div>
@@ -93,8 +112,10 @@
 <span class="c1">#</span>
 <span class="c1"># -----------------------------------------------------------------------------</span>
 
+<span class="kn">import</span> <span class="nn">functools</span>
 <span class="kn">import</span> <span class="nn">os</span>
 <span class="kn">import</span> <span class="nn">shutil</span>
+<span class="kn">import</span> <span class="nn">unittest</span>
 
 <span class="kn">import</span> <span class="nn">transformers</span>
 
@@ -103,8 +124,23 @@
 <span class="kn">from</span> <span class="nn">QEfficient.exporter.export_utils</span> <span class="kn">import</span> <span class="n">compile_kv_model_on_cloud_ai_100</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">hf_download</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.constants</span> <span class="kn">import</span> <span class="n">QEFF_MODELS_DIR</span><span class="p">,</span> <span class="n">ROOT_DIR</span><span class="p">,</span> <span class="n">Constants</span>
-<span class="kn">from</span> <span class="nn">QEfficient.utils.device_utils</span> <span class="kn">import</span> <span class="n">get_available_device_id</span>
+<span class="kn">from</span> <span class="nn">QEfficient.utils.device_utils</span> <span class="kn">import</span> <span class="n">get_available_device_id</span><span class="p">,</span> <span class="n">is_multi_qranium_setup_available</span><span class="p">,</span> <span class="n">is_qpc_size_gt_32gb</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.run_utils</span> <span class="kn">import</span> <span class="n">ApiRunner</span>
+
+
+<div class="viewcode-block" id="skip_if_mq_not_enabled"><a class="viewcode-back" href="../../tests.html#tests.utils.skip_if_mq_not_enabled">[docs]</a><span class="k">def</span> <span class="nf">skip_if_mq_not_enabled</span><span class="p">(</span><span class="n">test_method</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Wrapper function to skip test if MQ setup not enabled</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="nd">@functools</span><span class="o">.</span><span class="n">wraps</span><span class="p">(</span><span class="n">test_method</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">wrapper</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">setup_info</span><span class="p">[</span><span class="s2">&quot;qpc_gt_32gb&quot;</span><span class="p">]</span> <span class="ow">and</span> <span class="p">(</span><span class="ow">not</span> <span class="n">is_multi_qranium_setup_available</span><span class="p">()):</span>
+            <span class="k">raise</span> <span class="n">unittest</span><span class="o">.</span><span class="n">SkipTest</span><span class="p">(</span><span class="s2">&quot;Skip because MQ set up not available&quot;</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">test_method</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">wrapper</span></div>
 
 
 <div class="viewcode-block" id="prepare_work_dir"><a class="viewcode-back" href="../../tests.html#tests.utils.prepare_work_dir">[docs]</a><span class="k">def</span> <span class="nf">prepare_work_dir</span><span class="p">(</span><span class="n">work_dir</span><span class="p">):</span>
@@ -155,9 +191,12 @@
     <span class="n">model_path</span> <span class="o">=</span> <span class="n">hf_download</span><span class="p">(</span>
         <span class="n">repo_id</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span> <span class="n">ignore_patterns</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;*.txt&quot;</span><span class="p">,</span> <span class="s2">&quot;*.onnx&quot;</span><span class="p">,</span> <span class="s2">&quot;*.ot&quot;</span><span class="p">,</span> <span class="s2">&quot;*.md&quot;</span><span class="p">,</span> <span class="s2">&quot;*.tflite&quot;</span><span class="p">,</span> <span class="s2">&quot;*.pdf&quot;</span><span class="p">]</span>
     <span class="p">)</span>
-    <span class="n">model_hf</span> <span class="o">=</span> <span class="n">model_class</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_path</span><span class="p">,</span> <span class="n">use_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">model_hf</span> <span class="o">=</span> <span class="n">model_class</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+        <span class="n">model_path</span><span class="p">,</span> <span class="n">use_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">num_hidden_layers</span><span class="o">=</span><span class="mi">1</span>
+    <span class="p">)</span>  <span class="c1"># Run models for single layers only</span>
+    <span class="n">params</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">model_hf</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
     <span class="n">model_hf</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
-    <span class="k">return</span> <span class="n">model_hf</span></div>
+    <span class="k">return</span> <span class="n">model_hf</span><span class="p">,</span> <span class="n">params</span></div>
 
 
 <div class="viewcode-block" id="transform_pt_model_with_qeff"><a class="viewcode-back" href="../../tests.html#tests.utils.transform_pt_model_with_qeff">[docs]</a><span class="k">def</span> <span class="nf">transform_pt_model_with_qeff</span><span class="p">(</span><span class="n">model_hf</span><span class="p">):</span>
@@ -191,7 +230,7 @@
     <span class="k">return</span> <span class="n">base_path</span><span class="p">,</span> <span class="n">onnx_model_path</span></div>
 
 
-<div class="viewcode-block" id="set_up"><a class="viewcode-back" href="../../tests.html#tests.utils.set_up">[docs]</a><span class="k">def</span> <span class="nf">set_up</span><span class="p">(</span><span class="n">model_config</span><span class="p">):</span>
+<div class="viewcode-block" id="set_up"><a class="viewcode-back" href="../../tests.html#tests.utils.set_up">[docs]</a><span class="k">def</span> <span class="nf">set_up</span><span class="p">(</span><span class="n">model_config</span><span class="p">,</span> <span class="n">device_group</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">]):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Set up function to set up the test environment for TestQEfficientModel class</span>
 <span class="sd">    :param None</span>
@@ -203,8 +242,9 @@
         <span class="n">Constants</span><span class="o">.</span><span class="n">PROMPT_LEN</span><span class="p">,</span>
         <span class="n">Constants</span><span class="o">.</span><span class="n">CTX_LEN</span><span class="p">,</span>
     <span class="p">)</span>
-
-    <span class="n">model_hf</span> <span class="o">=</span> <span class="n">load_pytorch_model</span><span class="p">(</span><span class="n">model_config</span><span class="p">[</span><span class="s2">&quot;model_name&quot;</span><span class="p">],</span> <span class="n">model_config</span><span class="p">[</span><span class="s2">&quot;model_class&quot;</span><span class="p">])</span>
+    <span class="n">mxfp6</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="n">model_hf</span><span class="p">,</span> <span class="n">params</span> <span class="o">=</span> <span class="n">load_pytorch_model</span><span class="p">(</span><span class="n">model_config</span><span class="p">[</span><span class="s2">&quot;model_name&quot;</span><span class="p">],</span> <span class="n">model_config</span><span class="p">[</span><span class="s2">&quot;model_class&quot;</span><span class="p">])</span>
+    <span class="n">qpc_gt_32gb</span> <span class="o">=</span> <span class="n">is_qpc_size_gt_32gb</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="n">mxfp6</span><span class="p">)</span>
     <span class="k">try</span><span class="p">:</span>
         <span class="n">pytorch_hf_tokens</span> <span class="o">=</span> <span class="n">api_runner</span><span class="o">.</span><span class="n">run_hf_model_on_pytorch</span><span class="p">(</span><span class="n">model_hf</span><span class="p">)</span>
     <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
@@ -237,7 +277,9 @@
 
     <span class="n">setup_info</span> <span class="o">=</span> <span class="p">{}</span>
     <span class="n">setup_info</span><span class="p">[</span><span class="s2">&quot;model_config&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">model_config</span>
+    <span class="n">setup_info</span><span class="p">[</span><span class="s2">&quot;device_group&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">device_group</span>
     <span class="n">setup_info</span><span class="p">[</span><span class="s2">&quot;api_runner&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">api_runner</span>
+    <span class="n">setup_info</span><span class="p">[</span><span class="s2">&quot;qpc_gt_32gb&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">qpc_gt_32gb</span>
     <span class="n">setup_info</span><span class="p">[</span><span class="s2">&quot;pytorch_hf_tokens&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">pytorch_hf_tokens</span>
     <span class="n">setup_info</span><span class="p">[</span><span class="s2">&quot;pytorch_kv_tokens&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">pytorch_kv_tokens</span>
     <span class="n">setup_info</span><span class="p">[</span><span class="s2">&quot;base_path&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">base_path</span>
@@ -261,9 +303,9 @@
             <span class="n">num_cores</span><span class="o">=</span><span class="mi">14</span><span class="p">,</span>
             <span class="n">base_path</span><span class="o">=</span><span class="n">tests_qpc_dir</span><span class="p">,</span>
             <span class="n">mxfp6</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-            <span class="n">custom_io_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">setup_info</span><span class="p">[</span><span class="s2">&quot;base_path&quot;</span><span class="p">],</span> <span class="s2">&quot;custom_io.yaml&quot;</span><span class="p">),</span>
+            <span class="n">custom_io_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">setup_info</span><span class="p">[</span><span class="s2">&quot;base_path&quot;</span><span class="p">],</span> <span class="s2">&quot;custom_io_fp16.yaml&quot;</span><span class="p">),</span>
             <span class="n">aic_enable_depth_first</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-            <span class="n">device_group</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+            <span class="n">device_group</span><span class="o">=</span><span class="n">setup_info</span><span class="p">[</span><span class="s2">&quot;device_group&quot;</span><span class="p">],</span>
         <span class="p">)</span>
         <span class="kn">from</span> <span class="nn">QEfficient.generation.cloud_infer</span> <span class="kn">import</span> <span class="n">QAICInferenceSession</span>
 

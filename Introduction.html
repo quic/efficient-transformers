@@ -4,7 +4,7 @@
   <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Introduciton Qualcomm Transformers Library &mdash; QEfficient Documentation 1.16 documentation</title>
+  <title>Introduciton Qualcomm Efficient-Transformers &mdash; Efficient-Transformers 1.16 documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
 
@@ -22,7 +22,7 @@
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
     <link rel="next" title="Validated Models" href="Validate.html" />
-    <link rel="prev" title="Welcome to Qualcomm QEfficient Documentation!" href="index.html" /> 
+    <link rel="prev" title="Welcome to Efficient-Transformers Documentation!" href="index.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -34,7 +34,7 @@
           
           
           <a href="index.html" class="icon icon-home">
-            QEfficient Documentation
+            Efficient-Transformers
           </a>
 <div role="search">
   <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
@@ -46,7 +46,7 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul class="current">
-<li class="toctree-l1 current"><a class="current reference internal" href="#">Introduciton Qualcomm Transformers Library</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Introduciton Qualcomm Efficient-Transformers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="Validate.html">Validated Models</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
@@ -59,6 +59,7 @@
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-high-level-api">Using High Level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
@@ -88,7 +89,7 @@
 
     <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
           <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
-          <a href="index.html">QEfficient Documentation</a>
+          <a href="index.html">Efficient-Transformers</a>
       </nav>
 
       <div class="wy-nav-content">
@@ -96,7 +97,7 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Introduciton Qualcomm Transformers Library</li>
+      <li class="breadcrumb-item active">Introduciton Qualcomm Efficient-Transformers</li>
       <li class="wy-breadcrumbs-aside">
             <a href="_sources/Introduction.md.txt" rel="nofollow"> View page source</a>
       </li>
@@ -108,19 +109,20 @@
              
   <p><img alt="alt text" src="_images/Cloud_AI_100.png" /></p>
 <hr class="docutils" />
-<section id="introduciton-qualcomm-transformers-library">
-<h1>Introduciton Qualcomm Transformers Library<a class="headerlink" href="#introduciton-qualcomm-transformers-library" title="Permalink to this heading"></a></h1>
+<section id="introduciton-qualcomm-efficient-transformers">
+<h1>Introduciton Qualcomm Efficient-Transformers<a class="headerlink" href="#introduciton-qualcomm-efficient-transformers" title="Permalink to this heading"></a></h1>
 <hr class="docutils" />
-<p><em>Latest news</em> :fire: <br></p>
+<p><em><strong>Latest news</strong></em> : <br></p>
 <ul class="simple">
-<li><p>[coming soon] support for more popular <a class="reference internal" href="#models-coming-soon"><span class="xref myst">models</span></a> and inference optimization techniques like continuous batching and speculative decoding <br></p></li>
+<li><p>[coming soon] Support for more popular <a class="reference internal" href="Validate.html#validated-models"><span class="std std-ref">models</span></a> and inference optimization techniques like continuous batching and speculative decoding <br></p></li>
+<li><p>[05/2024] Added support for <a class="reference external" href="https://huggingface.co/mistralai/Mixtral-8x7B-v0.1">Mixtral-8x7B</a> &amp; <a class="reference external" href="https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1">Mistral-7B-Instruct-v0.1</a>.</p></li>
 <li><p>[04/2024] Initial release of <a class="reference external" href="https://github.com/quic/efficient-transformers">efficient transformers</a> for seamless inference on pre-trained LLMs.</p></li>
 </ul>
-<p><span style="font-size: 20px;"><strong>Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain</strong></span></p>
+<p><strong>Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain</strong></p>
 <p>This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AI 100.
 There are several models which can be directly transformed from a pre-trained original form to a deployment ready optimized form.
 For other models, there is comprehensive documentation to inspire upon the changes needed and How-To(s).</p>
-<p><span style="font-size: 20px;"><strong>Typically for LLMs, the library provides</strong></span></p>
+<p><strong>Typically for LLMs, the library provides:</strong></p>
 <ol class="arabic simple">
 <li><p>Reimplemented blocks from Transformers <link> which enable efficient on-device retention of intermediate states.</p></li>
 <li><p>Graph transformations to enable execution of key operations in lower precision</p></li>
@@ -131,7 +133,7 @@ For other models, there is comprehensive documentation to inspire upon the chang
 <li><p>Sample example applications and demo notebooks</p></li>
 <li><p>Unit test templates.</p></li>
 </ol>
-<p><span style="font-size: 20px;"><strong>It is mandatory for each Pull Request to include tests such as</strong>:</span></p>
+<p><strong>It is mandatory for each Pull Request to include tests such as</strong>:</p>
 <ol class="arabic simple">
 <li><p>If the PR is for adding support for a model, the tests should include successful execution of the model post changes (the changes included as part of PR) on Pytorch and ONNXRT. Successful exit criteria is MSE between output of original model and updated model.</p></li>
 <li><p>If the PR modifies any common utilities, tests need to be included to execute tests of all models included in the library.</p></li>
@@ -142,7 +144,7 @@ For other models, there is comprehensive documentation to inspire upon the chang
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="index.html" class="btn btn-neutral float-left" title="Welcome to Qualcomm QEfficient Documentation!" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="index.html" class="btn btn-neutral float-left" title="Welcome to Efficient-Transformers Documentation!" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
         <a href="Validate.html" class="btn btn-neutral float-right" title="Validated Models" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
