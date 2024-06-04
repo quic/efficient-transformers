@@ -7,19 +7,16 @@
 
 import os
 import shutil
-from typing import Optional, Tuple, Type, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 import QEfficient
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
-from QEfficient.loader.loader import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFFAutoModel
-from QEfficient.loader.loader_factory import (
-    QEFF_MODEL_TYPE,
-    QEFFAutoModelForCausalLM,
-    QEFFBaseModel,
-)
+from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
+from QEfficient.src.base import QEFFBaseModel
+from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
 from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
@@ -371,6 +368,7 @@ def export_for_cloud(model_name: str, qeff_model: QEFFBaseModel,
                      return_path: bool = True,
                      save_fp32_onnx: bool = False,
                      save_fp16_onnx: bool = True)-> Tuple[str, str]:
+    # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM: # type: ignore
         return export_lm_model_for_cloud(model_name=model_name,
                                          qeff_model=qeff_model, # type: ignore
@@ -467,7 +465,7 @@ def qualcomm_efficient_converter(
 
     """
     # Get model_kv first
-    model_kv = model_kv if model_kv else QEFFAutoModel.from_pretrained(pretrained_model_name_or_path=model_name, hf_token=hf_token, cache_dir=cache_dir)
+    model_kv = model_kv if model_kv else QEFFCommonLoader.from_pretrained(pretrained_model_name_or_path=model_name, hf_token=hf_token, cache_dir=cache_dir)
 
     # Transform if required
     if model_kv.is_transformed and not kv:

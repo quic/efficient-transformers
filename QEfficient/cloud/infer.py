@@ -55,9 +55,7 @@ def main(
     if qpc_path_exists:
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
-        # ##################
-        # HF model -> export
-        ####################
+        # Handle onnx model generation
         onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token)
 
         #########

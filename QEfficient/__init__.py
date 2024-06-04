@@ -5,9 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
-from QEfficient.cross_compile import compile  # noqa: F401
+from QEfficient.compile.cross_compile import compile  # noqa: F401
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.loader import QEFFAutoModel  # noqa: F401
+from QEfficient.src import QEffAutoModel, QEFFAutoModelForCausalLM, QEFFCommonLoader  # noqa: F401
 from QEfficient.transformers.transform import transform  # noqa: F401
 
 # Users can use QEfficient.export for exporting models to ONNX

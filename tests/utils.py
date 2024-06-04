@@ -10,9 +10,9 @@ import os
 import shutil
 import unittest
 
+from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient.compile.cross_compile import compile_kv_model_on_cloud_ai_100
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.cross_compile import compile_kv_model_on_cloud_ai_100
-from QEfficient.loader.loader_factory import QEFFAutoModelForCausalLM
 from QEfficient.transformers.transform import transform_lm
 from QEfficient.utils import hf_download, load_hf_tokenizer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants

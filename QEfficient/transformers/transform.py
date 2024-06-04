@@ -10,8 +10,8 @@ import hashlib
 import torch.nn as nn
 import transformers
 
-from QEfficient.loader.loader import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP
-from QEfficient.loader.loader_factory import QEFF_MODEL_TYPE, QEFFBaseModel
+from QEfficient.src.base import QEFFBaseModel
+from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
 from QEfficient.transformers.modeling_attn_mask_utils import (
     QEffAttentionMaskConverter,
     _qeff_prepare_4d_attention_mask,
@@ -115,6 +115,7 @@ def transform(model: QEFFBaseModel, form_factor="cloud"):
     form_factor(str): form factor configuration for optmizing the model, available options=["cloud", "edge"].
     """
     assert form_factor == "cloud", "Only form_factor='cloud' is supported as of now!"
+    #FIXME: move this to class and use model.transform()
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:
         transform_lm(model.model) # type: ignore
         return model

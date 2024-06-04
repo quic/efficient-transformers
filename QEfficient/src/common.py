@@ -12,13 +12,25 @@ QEFF_MODEL_TYPE and the classes that implement the methods i.e.(compile, export 
 QEFFAutoModel provides a common interface for loading the HuggingFace models using either the HF card name of local path of downloaded model.
 """
 import os
+from enum import Enum
 from typing import Any, Dict, Type
 
 from transformers import AutoConfig
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 
-from QEfficient.loader.loader_factory import QEFF_MODEL_TYPE, QEFFAutoModelForCausalLM, QEFFBaseModel
+from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
+from QEfficient.src.base import QEFFBaseModel
 from QEfficient.utils._utils import login_and_download_hf_lm
+
+
+class QEFF_MODEL_TYPE(Enum):
+    """
+    Defines Names of the different varities of transformer models.
+    """
+    CAUSALLM = "LLM"
+    DIFFUSION = "STABLE_DIFFUSION"
+    AWQ = "AWQ"
+
 
 MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP: Dict[QEFF_MODEL_TYPE, Type[QEFFBaseModel]] = {
     QEFF_MODEL_TYPE.CAUSALLM: QEFFAutoModelForCausalLM
@@ -50,7 +62,7 @@ def get_hf_model_type(hf_model_path: str) -> QEFF_MODEL_TYPE:
         raise NotImplementedError(f"model type {type(config)} is not yet supported")
 
 
-class QEFFAutoModel:
+class QEFFCommonLoader:
     """
     Provides HuggingFace model loading interface same as transformers APIs.
     Supports loading any model on HuggingFace.
