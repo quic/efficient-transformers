@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Introduciton Qualcomm Efficient-Transformers &mdash; Efficient-Transformers 1.16 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="_static/jquery.js?v=5d32c60e"></script>
+        <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=a9e34a36"></script>
+        <script src="_static/doctools.js?v=888ff710"></script>
+        <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            Efficient-Transformers
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <!-- Local TOC -->
+              <div class="local-toc"><ul>
+<li><a class="reference internal" href="#">Introduciton Qualcomm Efficient-Transformers</a></li>
+</ul>
+</div>
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">Efficient-Transformers</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Introduciton Qualcomm Efficient-Transformers</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/Introduction.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <p><img alt="alt text" src="_images/Cloud_AI_100.png" /></p>
+<hr class="docutils" />
+<section id="introduciton-qualcomm-efficient-transformers">
+<h1>Introduciton Qualcomm Efficient-Transformers<a class="headerlink" href="#introduciton-qualcomm-efficient-transformers" title="Permalink to this heading"></a></h1>
+<hr class="docutils" />
+<p><em><strong>Latest news</strong></em> : <br></p>
+<ul class="simple">
+<li><p>[coming soon] Support for more popular <a class="reference internal" href="Validate.html#validated-models"><span class="std std-ref">models</span></a> and inference optimization techniques like continuous batching and speculative decoding <br></p></li>
+<li><p>[05/2024] Added support for <a class="reference external" href="https://huggingface.co/mistralai/Mixtral-8x7B-v0.1">Mixtral-8x7B</a> &amp; <a class="reference external" href="https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1">Mistral-7B-Instruct-v0.1</a>.</p></li>
+<li><p>[04/2024] Initial release of <a class="reference external" href="https://github.com/quic/efficient-transformers">efficient transformers</a> for seamless inference on pre-trained LLMs.</p></li>
+</ul>
+<p><strong>Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain</strong></p>
+<p>This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AI 100.
+There are several models which can be directly transformed from a pre-trained original form to a deployment ready optimized form.
+For other models, there is comprehensive documentation to inspire upon the changes needed and How-To(s).</p>
+<p><strong>Typically for LLMs, the library provides:</strong></p>
+<ol class="arabic simple">
+<li><p>Reimplemented blocks from Transformers <link> which enable efficient on-device retention of intermediate states.</p></li>
+<li><p>Graph transformations to enable execution of key operations in lower precision</p></li>
+<li><p>Graph transformations to replace some operations to other mathematically equivalent operations</p></li>
+<li><p>Handling for underflows and overflows in lower precision</p></li>
+<li><p>Patcher modules to map weights of original model’s operations to updated model’s operations</p></li>
+<li><p>Exporter module to export the model source into a ONNX Graph.</p></li>
+<li><p>Sample example applications and demo notebooks</p></li>
+<li><p>Unit test templates.</p></li>
+</ol>
+<p><strong>It is mandatory for each Pull Request to include tests such as</strong>:</p>
+<ol class="arabic simple">
+<li><p>If the PR is for adding support for a model, the tests should include successful execution of the model post changes (the changes included as part of PR) on Pytorch and ONNXRT. Successful exit criteria is MSE between output of original model and updated model.</p></li>
+<li><p>If the PR modifies any common utilities, tests need to be included to execute tests of all models included in the library.</p></li>
+</ol>
+</section>
+
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, Qualcomm.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

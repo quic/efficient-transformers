@@ -10,13 +10,13 @@ Welcome to Efficient-Transformers Documentation!
 <!-- ```{include} ../README.md
    :relative-images: 
 ```   -->
- 
+
 
 ```{toctree}
 :caption: 'Getting Started'
 :maxdepth: 4
- 
-source/Introduction
+
+source/Introduction 
 source/Validate
 ```
 
@@ -44,7 +44,7 @@ source/kv_change
 :caption: 'Python API'
 :maxdepth: 2
 
-source/high_level_api
+source/QEfficient.cloud
 source/low_level_api
 source/other_api
 

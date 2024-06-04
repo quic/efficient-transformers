@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.abspath('..'))
 
 # -- Project information -----------------------------------------------------
 
-project = 'QEfficient Documentation'
+project = 'Efficient-Transformers'
 copyright = '2024, Qualcomm'
 author = 'amitraj'
 
@@ -55,7 +55,7 @@ html_static_path = ['_static']
 source=['.md']
 
 def skip_member(app, what, name, obj, skip, options):
-    if name=="qpc_exists":
+    if name=="qpc_exists":  
         return True
     return skip
 
