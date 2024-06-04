@@ -65,11 +65,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/high_level_api.html">High Level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/low_level_api.html">Low level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/other_api.html">Other API</a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="source/performance.html">Perfromance details</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/other_api.html">Utilities</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -77,6 +73,7 @@
 <li class="toctree-l1"><a class="reference internal" href="source/blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/blogs.html#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
 <ul>
@@ -154,18 +151,18 @@
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/high_level_api.html">High Level API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="source/high_level_api.html#module-QEfficient.cloud.infer">QEfficient.cloud.infer</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/high_level_api.html#module-QEfficient.cloud.execute">QEfficient.cloud.execute</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/high_level_api.html#qefficient-cloud-infer">QEfficient.cloud.infer</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/high_level_api.html#qefficient-cloud-execute">QEfficient.cloud.execute</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="source/low_level_api.html">Low level API</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="source/low_level_api.html#module-QEfficient">QEfficient.transform</a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/low_level_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100">QEfficient.exporter.export_hf_to_cloud_ai_100 module</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/low_level_api.html#module-QEfficient.cloud.compile">QEfficient.cloud.compile</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/low_level_api.html#module-QEfficient.generation.text_generation_inference">QEfficient.generation.text_generation_inference module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/low_level_api.html#qefficient-cloud-compile">QEfficient.cloud.compile</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/low_level_api.html#qefficient-generation-text-generation-inference-module">QEfficient.generation.text_generation_inference module</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="source/other_api.html">Other API</a><ul>
+<li class="toctree-l1"><a class="reference internal" href="source/other_api.html">Utilities</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="source/other_api.html#module-QEfficient.utils.device_utils">QEfficient.utils.device_utils module</a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/other_api.html#module-QEfficient.utils.generate_inputs">QEfficient.utils.generate_inputs module</a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/other_api.html#module-QEfficient.utils.run_utils">QEfficient.utils.run_utils module</a></li>
@@ -176,12 +173,13 @@
 </li>
 </ul>
 </div>
-<div class="toctree-wrapper compound">
-<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="source/performance.html">Perfromance details</a></li>
-</ul>
-</div>
+<!-- ```{toctree}
+:caption: 'Performance'
+:maxdepth: 2
+
+source/performance
+
+``` -->
 <div class="toctree-wrapper compound">
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -189,6 +187,7 @@
 <li class="toctree-l1"><a class="reference internal" href="source/blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/blogs.html#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities</a></li>
 </ul>
 </div>
 <div class="toctree-wrapper compound">

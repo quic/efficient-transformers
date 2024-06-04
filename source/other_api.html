@@ -4,7 +4,7 @@
   <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Other API &mdash; Efficient-Transformers 1.16 documentation</title>
+  <title>Utilities &mdash; Efficient-Transformers 1.16 documentation</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
 
@@ -66,7 +66,7 @@
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="high_level_api.html">High Level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="low_level_api.html">Low level API</a></li>
-<li class="toctree-l1 current"><a class="current reference internal" href="#">Other API</a><ul>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Utilities</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.utils.device_utils">QEfficient.utils.device_utils module</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.utils.device_utils.get_available_device_id"><code class="docutils literal notranslate"><span class="pre">get_available_device_id()</span></code></a></li>
 </ul>
@@ -136,6 +136,7 @@
 <li class="toctree-l1"><a class="reference internal" href="blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
 <li class="toctree-l1"><a class="reference internal" href="blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
 <li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
 <ul>
@@ -156,7 +157,7 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Other API</li>
+      <li class="breadcrumb-item active">Utilities</li>
       <li class="wy-breadcrumbs-aside">
             <a href="../_sources/source/other_api.md.txt" rel="nofollow"> View page source</a>
       </li>
@@ -166,8 +167,8 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="other-api">
-<h1>Other API<a class="headerlink" href="#other-api" title="Permalink to this heading"></a></h1>
+  <section id="utilities">
+<h1>Utilities<a class="headerlink" href="#utilities" title="Permalink to this heading"></a></h1>
 <section id="module-QEfficient.utils.device_utils">
 <span id="qefficient-utils-device-utils-module"></span><h2>QEfficient.utils.device_utils module<a class="headerlink" href="#module-QEfficient.utils.device_utils" title="Permalink to this heading"></a></h2>
 <dl class="py function">
@@ -234,6 +235,11 @@
 <span class="sig-name descname"><span class="pre">update_cloud_ai_100_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">iteration</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">outputs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler.update_cloud_ai_100_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.update_cloud_ai_100_inputs" title="Permalink to this definition"></a></dt>
 <dd><p>Function responsible for updating Prefill stage inputs to create inputs for
 decode stage inputs for ONNX model to be run on ONNXRT.
+———
+:param iteration: int. Current iteration number.
+:inputs: Dict. Previous iteration inputs of Cloud AI 100 execution.
+:outputs: Dict. Previous iteration outputs of Cloud AI 100 execution.
+:inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100)
 ———
 :param iteration: int. Current iteration number.
 :inputs: Dict. Previous iteration inputs of Cloud AI 100 execution.
@@ -306,6 +312,11 @@ decode stage inputs for ONNX model to be run on ONNXRT.
 <dt>Return:</dt><dd><p>generated_ids: numpy.ndarray - output tokens</p>
 </dd>
 </dl>
+<hr class="docutils" />
+<dl class="simple">
+<dt>Return:</dt><dd><p>generated_ids: numpy.ndarray - output tokens</p>
+</dd>
+</dl>
 </dd></dl>
 
 <dl class="py method">
@@ -313,14 +324,6 @@ decode stage inputs for ONNX model to be run on ONNXRT.
 <span class="sig-name descname"><span class="pre">run_kv_model_on_cloud_ai_100</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_cloud_ai_100"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100" title="Permalink to this definition"></a></dt>
 <dd><section id="function-responsible-for-running-onnx-model-on-cloud-ai-100-and-return-the-output-tokens">
 <h3>Function responsible for running ONNX model on Cloud AI 100 and return the output tokens<a class="headerlink" href="#function-responsible-for-running-onnx-model-on-cloud-ai-100-and-return-the-output-tokens" title="Permalink to this heading"></a></h3>
-<dl class="field-list simple">
-<dt class="field-odd">param qpc_path<span class="colon">:</span></dt>
-<dd class="field-odd"><p>str</p>
-</dd>
-<dt class="field-even">device_id<span class="colon">:</span></dt>
-<dd class="field-even"><p>List[int]</p>
-</dd>
-</dl>
 <p>:n_layer : int
 :padding_shape : List[int]</p>
 <dl class="simple">
@@ -335,13 +338,7 @@ decode stage inputs for ONNX model to be run on ONNXRT.
 <span class="sig-name descname"><span class="pre">run_kv_model_on_ort</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_ort"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort" title="Permalink to this definition"></a></dt>
 <dd><section id="function-responsible-for-running-onnx-model-on-onnxruntime-and-return-the-output-tokens">
 <h3>Function responsible for running ONNX model on onnxruntime and return the output tokens<a class="headerlink" href="#function-responsible-for-running-onnx-model-on-onnxruntime-and-return-the-output-tokens" title="Permalink to this heading"></a></h3>
-<dl class="field-list simple">
-<dt class="field-odd">param model_path<span class="colon">:</span></dt>
-<dd class="field-odd"><p>str</p>
-</dd>
-</dl>
-<p>:n_layer : int
-:padding_shape : List[int]</p>
+<p>:padding_shape : List[int]</p>
 <dl class="simple">
 <dt>Return:</dt><dd><p>generated_ids: numpy.ndarray - output tokens</p>
 </dd>
@@ -354,13 +351,7 @@ decode stage inputs for ONNX model to be run on ONNXRT.
 <span class="sig-name descname"><span class="pre">run_kv_model_on_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch" title="Permalink to this definition"></a></dt>
 <dd><section id="function-responsible-for-running-kv-pytorch-model-and-return-the-output-tokens">
 <h3>Function responsible for running KV PyTorch model and return the output tokens<a class="headerlink" href="#function-responsible-for-running-kv-pytorch-model-and-return-the-output-tokens" title="Permalink to this heading"></a></h3>
-<dl class="field-list simple">
-<dt class="field-odd">param model_hf<span class="colon">:</span></dt>
-<dd class="field-odd"><p>pytorch model</p>
-</dd>
-</dl>
-<p>:n_layer : int
-:padding_shape : List[int]</p>
+<p>:padding_shape : List[int]</p>
 <dl class="simple">
 <dt>Return:</dt><dd><p>generated_ids: numpy.ndarray - output tokens</p>
 </dd>
@@ -374,17 +365,20 @@ decode stage inputs for ONNX model to be run on ONNXRT.
 <dd><section id="function-responsible-for-running-onnxrt-session-with-given-inputs-and-passing-retained-state-outputs-to-be-used-for-next-iteration-inputs">
 <h3>Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs<a class="headerlink" href="#function-responsible-for-running-onnxrt-session-with-given-inputs-and-passing-retained-state-outputs-to-be-used-for-next-iteration-inputs" title="Permalink to this heading"></a></h3>
 <dl class="field-list simple">
-<dt class="field-odd">param inputs<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Dict</p>
-</dd>
-<dt class="field-even">session<span class="colon">:</span></dt>
-<dd class="field-even"><p>‘onnxruntime.capi.onnxruntime_inference_collection.InferenceSession’.</p>
-</dd>
 <dt class="field-odd">n_layer<span class="colon">:</span></dt>
 <dd class="field-odd"><p>int</p>
 </dd>
 <dt class="field-even">outputs<span class="colon">:</span></dt>
 <dd class="field-even"><p>Dict</p>
+</dd>
+<dt class="field-odd">session<span class="colon">:</span></dt>
+<dd class="field-odd"><p>‘onnxruntime.capi.onnxruntime_inference_collection.InferenceSession’.</p>
+</dd>
+<dt class="field-even">n_layer<span class="colon">:</span></dt>
+<dd class="field-even"><p>int</p>
+</dd>
+<dt class="field-odd">outputs<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict</p>
 </dd>
 </dl>
 </section>

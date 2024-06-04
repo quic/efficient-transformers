@@ -137,7 +137,11 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Initialization</span>
 <span class="sd">        ---------</span>
+<span class="sd">        ---------</span>
 <span class="sd">        :param tokenizer: tokenizer</span>
+<span class="sd">        :input_str: List[str]</span>
+<span class="sd">        :prompt_len: int</span>
+<span class="sd">        :ctx_len: int</span>
 <span class="sd">        :input_str: List[str]</span>
 <span class="sd">        :prompt_len: int</span>
 <span class="sd">        :ctx_len: int</span>
@@ -159,6 +163,10 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running Huggingface PyTorch model and return the output tokens</span>
 <span class="sd">        :param model_hf: pytorch model</span>
+<span class="sd">        ---------</span>
+
+<span class="sd">        Return:</span>
+<span class="sd">            generated_ids: numpy.ndarray - output tokens</span>
 <span class="sd">        ---------</span>
 
 <span class="sd">        Return:</span>
@@ -186,6 +194,7 @@
 <div class="viewcode-block" id="ApiRunner.run_kv_model_on_pytorch"><a class="viewcode-back" href="../../../source/other_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch">[docs]</a>    <span class="k">def</span> <span class="nf">run_kv_model_on_pytorch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="n">n_layer</span><span class="p">,</span> <span class="n">padding_shape</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running KV PyTorch model and return the output tokens</span>
+<span class="sd">        ---------</span>
 <span class="sd">        ---------</span>
 <span class="sd">        :param model_hf: pytorch model</span>
 <span class="sd">        :n_layer : int</span>
@@ -216,7 +225,11 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs</span>
 <span class="sd">        ---------</span>
+<span class="sd">        ---------</span>
 <span class="sd">        :param inputs: Dict</span>
+<span class="sd">        :session: &#39;onnxruntime.capi.onnxruntime_inference_collection.InferenceSession&#39;.</span>
+<span class="sd">        :n_layer: int</span>
+<span class="sd">        :outputs: Dict</span>
 <span class="sd">        :session: &#39;onnxruntime.capi.onnxruntime_inference_collection.InferenceSession&#39;.</span>
 <span class="sd">        :n_layer: int</span>
 <span class="sd">        :outputs: Dict</span>
@@ -249,6 +262,7 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running ONNX model on onnxruntime and return the output tokens</span>
 <span class="sd">        ---------</span>
+<span class="sd">        ---------</span>
 <span class="sd">        :param model_path: str</span>
 <span class="sd">        :n_layer : int</span>
 <span class="sd">        :padding_shape : List[int]</span>
@@ -279,6 +293,7 @@
 <div class="viewcode-block" id="ApiRunner.run_kv_model_on_cloud_ai_100"><a class="viewcode-back" href="../../../source/other_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100">[docs]</a>    <span class="k">def</span> <span class="nf">run_kv_model_on_cloud_ai_100</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">session</span><span class="p">,</span> <span class="n">n_layer</span><span class="p">,</span> <span class="n">padding_shape</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running ONNX model on Cloud AI 100 and return the output tokens</span>
+<span class="sd">        ---------</span>
 <span class="sd">        ---------</span>
 <span class="sd">        :param qpc_path: str</span>
 <span class="sd">        :device_id: List[int]</span>

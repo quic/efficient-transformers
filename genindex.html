@@ -63,11 +63,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/high_level_api.html">High Level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/low_level_api.html">Low level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/other_api.html">Other API</a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Performance</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="source/performance.html">Perfromance details</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/other_api.html">Utilities</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -75,6 +71,7 @@
 <li class="toctree-l1"><a class="reference internal" href="source/blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/blogs.html#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
 <ul>
@@ -112,7 +109,6 @@
  | <a href="#C"><strong>C</strong></a>
  | <a href="#G"><strong>G</strong></a>
  | <a href="#I"><strong>I</strong></a>
- | <a href="#L"><strong>L</strong></a>
  | <a href="#M"><strong>M</strong></a>
  | <a href="#P"><strong>P</strong></a>
  | <a href="#Q"><strong>Q</strong></a>
@@ -138,8 +134,6 @@
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/other_api.html#QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter.cache_index">cache_index (QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter attribute)</a>
-</li>
-      <li><a href="source/low_level_api.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv_helper">cloud_ai_100_exec_kv_helper() (in module QEfficient.generation.text_generation_inference)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
@@ -174,25 +168,9 @@
   </ul></td>
 </tr></table>
 
-<h2 id="L">L</h2>
-<table style="width: 100%" class="indextable genindextable"><tr>
-  <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/low_level_api.html#QEfficient.generation.text_generation_inference.latency_stats_bertstyle">latency_stats_bertstyle() (in module QEfficient.generation.text_generation_inference)</a>
-</li>
-  </ul></td>
-</tr></table>
-
 <h2 id="M">M</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/low_level_api.html#QEfficient.cloud.compile.main">main() (in module QEfficient.cloud.compile)</a>
-
-      <ul>
-        <li><a href="source/high_level_api.html#QEfficient.cloud.execute.main">(in module QEfficient.cloud.execute)</a>
-</li>
-        <li><a href="source/high_level_api.html#QEfficient.cloud.infer.main">(in module QEfficient.cloud.infer)</a>
-</li>
-      </ul></li>
       <li><a href="source/other_api.html#QEfficient.transformers.modeling_utils.ModelArchitectures">ModelArchitectures (class in QEfficient.transformers.modeling_utils)</a>
 </li>
       <li>
@@ -201,15 +179,7 @@
       <ul>
         <li><a href="source/low_level_api.html#module-QEfficient">QEfficient</a>
 </li>
-        <li><a href="source/low_level_api.html#module-QEfficient.cloud.compile">QEfficient.cloud.compile</a>
-</li>
-        <li><a href="source/high_level_api.html#module-QEfficient.cloud.execute">QEfficient.cloud.execute</a>
-</li>
-        <li><a href="source/high_level_api.html#module-QEfficient.cloud.infer">QEfficient.cloud.infer</a>
-</li>
         <li><a href="source/low_level_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100">QEfficient.exporter.export_hf_to_cloud_ai_100</a>
-</li>
-        <li><a href="source/low_level_api.html#module-QEfficient.generation.text_generation_inference">QEfficient.generation.text_generation_inference</a>
 </li>
         <li><a href="source/other_api.html#module-QEfficient.transformers.modeling_attn_mask_utils">QEfficient.transformers.modeling_attn_mask_utils</a>
 </li>
@@ -262,42 +232,12 @@
 </li>
       </ul></li>
       <li>
-    QEfficient.cloud.compile
-
-      <ul>
-        <li><a href="source/low_level_api.html#module-QEfficient.cloud.compile">module</a>
-</li>
-      </ul></li>
-      <li>
-    QEfficient.cloud.execute
-
-      <ul>
-        <li><a href="source/high_level_api.html#module-QEfficient.cloud.execute">module</a>
-</li>
-      </ul></li>
-      <li>
-    QEfficient.cloud.infer
-
-      <ul>
-        <li><a href="source/high_level_api.html#module-QEfficient.cloud.infer">module</a>
-</li>
-      </ul></li>
-      <li>
     QEfficient.exporter.export_hf_to_cloud_ai_100
 
       <ul>
         <li><a href="source/low_level_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100">module</a>
 </li>
       </ul></li>
-      <li>
-    QEfficient.generation.text_generation_inference
-
-      <ul>
-        <li><a href="source/low_level_api.html#module-QEfficient.generation.text_generation_inference">module</a>
-</li>
-      </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li>
     QEfficient.transformers.modeling_attn_mask_utils
 
@@ -312,6 +252,8 @@
         <li><a href="source/other_api.html#module-QEfficient.transformers.modeling_outputs">module</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li>
     QEfficient.transformers.modeling_utils
 

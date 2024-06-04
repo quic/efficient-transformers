@@ -49,13 +49,13 @@ source/low_level_api
 source/other_api
 
 ```
-```{toctree}
+<!-- ```{toctree}
 :caption: 'Performance'
 :maxdepth: 2
 
 source/performance
 
-```
+``` -->
  
 ```{toctree}
 :caption: 'Blogs'
