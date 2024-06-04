@@ -250,7 +250,7 @@ def cloud_ai_100_exec_kv_helper(
         1,
     )
     cache_index = np.array([0])
-    inputs["cache_index"] = cache_inde
+    inputs["cache_index"] = cache_index
     generated_ids = np.full((batch_size, generation_len - input_len + 1), tokenizer.pad_token_id)
 
     if stream:

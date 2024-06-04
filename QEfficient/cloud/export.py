@@ -12,14 +12,33 @@ from typing import Optional, Union
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
+<<<<<<< HEAD
 from QEfficient.utils import check_and_assign_cache_dir, onnx_exists
+=======
+<<<<<<< HEAD
+from QEfficient.utils import onnx_exists
+=======
+<<<<<<< HEAD
+from QEfficient.utils import hf_download, onnx_exists
+>>>>>>> a62b22d (Rebased)
+from QEfficient.utils.constants import Constants
+>>>>>>> b8ef0fc (Rebased)
 from QEfficient.utils.logging_utils import logger
+=======
+from QEfficient.utils import hf_download
+from QEfficient.utils.constants import Constants
+>>>>>>> d50cb2d (Updated documentation)
 
 # Specifically for Docker images.
 ROOT_DIR = os.path.dirname(os.path.abspath(""))
 
 
+<<<<<<< HEAD
 def get_onnx_model_path(model_name: str, cache_dir: Optional[str] = None, tokenizer: Optional[Union[PreTrainedTokenizerFast, PreTrainedTokenizer]]=None, hf_token: Optional[str] = None, local_model_dir: Optional[str] = None):
+=======
+<<<<<<< HEAD
+def get_onnx_model_path(model_name: str, cache_dir: str, tokenizer: Optional[Union[PreTrainedTokenizerFast, PreTrainedTokenizer]]=None, hf_token: Optional[str] = None):
+>>>>>>> b8ef0fc (Rebased)
     """
     exports the model to onnx if pre-exported file is not found and returns onnx_model_path
     """
@@ -49,20 +68,33 @@ def get_onnx_model_path(model_name: str, cache_dir: Optional[str] = None, tokeni
     return onnx_model_path
 
 
+=======
+<<<<<<< HEAD
+>>>>>>> a62b22d (Rebased)
 def main(
     model_name: str,
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
     local_model_dir: Optional[str] = None,
 ) -> None:
+=======
+def main(model_name: str, cache_dir: str) -> None:
+>>>>>>> d50cb2d (Updated documentation)
     """
     ApI() for exporting to ONNX Model.
     ---------
     :param model_name: str. Hugging Face Model Card name, Example: gpt2.
     :param model_name: str. Hugging Face Model Card name, Example: gpt2.
     :cache_dir: str. Cache dir to store the downloaded huggingface files.
+<<<<<<< HEAD
     :hf_token: str. HuggingFace login token to access private repos.
+<<<<<<< HEAD
     :local_model_dir: str. Path to custom model weights and config files.
+=======
+=======
+
+>>>>>>> d50cb2d (Updated documentation)
+>>>>>>> b8ef0fc (Rebased)
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir,cache_dir)
     get_onnx_model_path(model_name=model_name, cache_dir=cache_dir, hf_token=hf_token, local_model_dir=local_model_dir)

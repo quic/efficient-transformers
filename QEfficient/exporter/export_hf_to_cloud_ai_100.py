@@ -410,20 +410,20 @@ def qualcomm_efficient_converter(
     save_fp16_onnx: bool = True,
 ) -> Tuple[str, str]:
     """
-    Function to convert the input string using the specified model and returns the result.
-
-    Args:
-        model_name (str): The name of the model to be used.
-        model_kv (torch.nn.Module): Transformed KV torch model to be used
-        tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
-        cache_dir (str): Path to cache dir if not specified, default HF cache_dir will be used.
-        onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
-        hf_token (bool): If True, an authentication token will be used. Default is False.
-        seq_len (int, optional): The length of the sequence. Default is 128.
-        kv (bool): If True, key-value pairs will be used. Default is True.
-        return_path (bool): If True, return the base path for models and exported onnx model path
-        save_fp32_onnx (bool); If True, fp32 unclipped version of ONNX will be saved. Default is False.
-        save_fp16_onnx (bool); If false, fp32 unclipped version of ONNX will be deleted. Default is False.
+    API to convert torch Bert style and KV style model to ONNX
+    ---------
+    :param model_name: str. The name of the model to be used.
+    :model_class: type:. The class of the model.
+    :model_kv: torch.nn.Module. Transformed KV torch model to be used
+    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.
+    :onnx_dir_path: str. The path where the model is stored. If None, the model is loaded from the default location.
+    :hf_token: str. Huggingface token to access gated models. Default=None.
+    :seq_len: int. The length of the sequence. Default is 128.
+    :input_str: str. The input string to be processed.
+    :kv: bool. If false, It will export to Bert style. Default=true.
+    :return_path: bool. If True, return the base path for models and exported onnx model path.
+    :save_fp32_onnx: bool. If True, fp32 unclipped version of ONNX will be saved. Default is False.
+    :save_fp16_onnx: bool. If false, fp16 clipped version of ONNX will be deleted. Default is True.
 
     Returns:
         None, if automation is False, else path to exported Onnx file
