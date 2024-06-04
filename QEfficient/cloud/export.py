@@ -45,9 +45,7 @@ def main(
         cache_dir=cache_dir,
         ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5"],
     )
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_hf_path, use_cache=True, padding_side="left", trust_remote_code=True
-    )
+    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
     model = AutoModelForCausalLM.from_pretrained(model_hf_path, use_cache=True)
 
     # Easy and minimal api to update the model to QEff.

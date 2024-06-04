@@ -74,7 +74,7 @@ def convert_to_cloud_bertstyle(
 
     # Load tokenizer
     if tokenizer is None:
-        tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left", trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
     else:
         if tokenizer.padding_side != "left":
             logger.warning("Please use padding_side='left' while initializing the tokenizer")
@@ -257,7 +257,6 @@ def convert_to_cloud_kvstyle(
                 model_hf_path,
                 cache_dir=Constants.CACHE_DIR,
                 use_cache=True,
-                trust_remote_code=True,
                 attn_implementation="eager",
             )
         except Exception as e:
@@ -271,7 +270,7 @@ def convert_to_cloud_kvstyle(
     # Load tokenizer
     if tokenizer is None:
         # todo(ochougul): use cache dir from snapshot download
-        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
