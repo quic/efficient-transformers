@@ -31,20 +31,26 @@ def convert_to_cloud_bertstyle(
     seq_len: int,
 ) -> str:
     """
-    Function to convert the model to Bertstyle approach.
+    API to convert model to Bertstyle approach.
     Bertstyle Approach:
-        1. No Prefill/Decode sepeartly compiled
-        2. No KV retaintion logic.
-        3. KV is everytime computed for all the tokens until EOS/max_length
+        1. No Prefill/Decode separably compiled.
+        2. No KV retention logic.
+        3. KV is every time computed for all the tokens until EOS/max_length.
+    ---------
+    :param model_name: str. The name of the model to be used.
+    :model_class: type:. The class of the model.
+    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.
+    :onnx_dir_path: Path to save exported ONNX file.
+    :model_path: str. The path where the model is stored. If None, the model is loaded from the default location.
+    :hf_token: str. to access gated models.
+    :seq_len: int. The length of the sequence. Default is 128.
+    :input_str: str. The input string to be processed.
+    :return_path: bool. If True, return the base path for models and exported onnx model path
+    :save_fp32_onnx: bool. If True, fp32 unclipped version of ONNX will be saved. Default is False.
+    :save_fp16_onnx: bool. If false, fp16 clipped version of ONNX will be deleted. Default is True.
 
-    Args:
-        tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
-        model_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
-        seq_len (int, optional): The length of the sequence. Default is 128.
-        return_path (bool): If True, return the base path for models and exported onnx model path
-        save_fp32_onnx (bool); If True, fp32 unclipped version of ONNX will be saved. Default is False.
-        save_fp16_onnx (bool); If false, generation of fp32 clipped version of ONNX will be skipped. Default is True.
-
+    Return:
+        Path of exported ONNX file.
     """
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
@@ -148,7 +154,7 @@ def convert_to_cloud_kvstyle(
     seq_len: int,
 ) -> str:
     """
-    Function Modeling changes for kv retention and export to Onnx.
+    API change model for kv retention and export to ONNX.
     KV Style Approach:
         1. This architecture is particularly suitable for autoregressive tasks
         2. where sequence generation involves processing one token at a time
@@ -416,7 +422,7 @@ def qualcomm_efficient_converter(
     :model_class: type:. The class of the model.
     :model_kv: torch.nn.Module. Transformed KV torch model to be used
     :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.
-    :onnx_dir_path: str. The path where the model is stored. If None, the model is loaded from the default location.
+    :onnx_dir_path: str. Path to store ONNx file
     :hf_token: str. Huggingface token to access gated models. Default=None.
     :seq_len: int. The length of the sequence. Default is 128.
     :input_str: str. The input string to be processed.
@@ -426,8 +432,7 @@ def qualcomm_efficient_converter(
     :save_fp16_onnx: bool. If false, fp16 clipped version of ONNX will be deleted. Default is True.
 
     Returns:
-        None, if automation is False, else path to exported Onnx file
-
+       Path of exported ONNX file.
     """
     # Get model_kv first
     model_kv = model_kv if model_kv else QEFFCommonLoader.from_pretrained(pretrained_model_name_or_path=model_name, hf_token=hf_token, cache_dir=cache_dir)

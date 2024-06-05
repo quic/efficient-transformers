@@ -51,11 +51,6 @@ class ApiRunner:
         Function responsible for running Huggingface PyTorch model and return the output tokens
         :param model_hf: pytorch model
         ---------
-
-        Return:
-            generated_ids: numpy.ndarray - output tokens
-        ---------
-
         Return:
             generated_ids: numpy.ndarray - output tokens
         """
@@ -80,7 +75,6 @@ class ApiRunner:
     def run_kv_model_on_pytorch(self, model, n_layer, padding_shape):
         """
         Function responsible for running KV PyTorch model and return the output tokens
-        ---------
         ---------
         :param model_hf: pytorch model
         :n_layer : int
@@ -107,18 +101,22 @@ class ApiRunner:
         print("Completion:", repr(predicted_string))
         return generated_ids
 
-    def run_ort_session(self, inputs, session, n_layer):
+    def run_ort_session(
+        self,
+        inputs,
+        session,
+        n_layer
+        ) -> dict:
+        
         """
         Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
         ---------
-        ---------
-        :param inputs: Dict
+        :param inputs: Dict.
         :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
-        :n_layer: int
-        :outputs: Dict
-        :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
-        :n_layer: int
-        :outputs: Dict
+        :n_layer: int.
+        
+        Return:
+            outputs: Dict
         """
 
         outputs = {}
@@ -146,7 +144,6 @@ class ApiRunner:
     def run_kv_model_on_ort(self, model_path, n_layer, padding_shape):
         """
         Function responsible for running ONNX model on onnxruntime and return the output tokens
-        ---------
         ---------
         :param model_path: str
         :n_layer : int
@@ -196,7 +193,6 @@ class ApiRunner:
         :param padding_shape : List[int]
         :return generated_ids: numpy.ndarray - output tokens
 =======
-        ---------
         ---------
         :param qpc_path: str
         :device_id: List[int]

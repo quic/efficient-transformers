@@ -46,7 +46,6 @@ def main(
     device_group: List[int] = [
         0,
     ],
-<<<<<<< HEAD
 ) -> None:
 <<<<<<< HEAD
     qpc_base_dir_name = get_qpc_dir_name_infer(
@@ -54,9 +53,6 @@ def main(
     )
 =======
     
-=======
-):
->>>>>>> 9063ebd (Added sphinx files in docs)
     """
     Inference command, the model will be downloaded from HF, optimized, compiled, executed on AIC.
     ---------
@@ -71,7 +67,7 @@ def main(
     :prompt_len: int. prompt len for the model to compile.
     :ctx_len: int. Maximum context length for the model to compile.
     :mxfp6: bool. Enable compilation for MXFP6 precision.
-    :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices > 1, it enable multiple card setup.
+clear    :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices > 1, it enable multiple card setup.
 
     """
     

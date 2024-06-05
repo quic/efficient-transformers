@@ -133,7 +133,11 @@ def export_onnx(
     return model_base_name
 
 
-def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_base_name: str) -> str:
+def save_onnx(
+    model: Union[onnx.ModelProto, str],
+    gen_models_path: str, model_base_name: str
+    ) -> str:
+    
     """
     API to save ONNX model and it's data separately if size of ONNX model is greater than 2GB.
     ---------
@@ -169,12 +173,12 @@ def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_ba
     return model_base_name
 
 
-def remove_temp_file(file_path_model: str, file_path_weights: str):
+def remove_temp_file(
+    file_path_model: str, 
+    file_path_weights: str
+    ):
+    
     """
-    API to remove a temporary file
-    ---------
-    :param str file_path: str. Path to the file to be deleted
-    :file_path_weights: str. Path to the weights file
     API to remove a temporary file
     ---------
     :param str file_path: str. Path to the file to be deleted
@@ -312,7 +316,6 @@ def generate_input_files(
     :input_names:
     :inputs:
     :input_list_file:
-
     """
     # inputFiles
     os.makedirs(input_files_path, exist_ok=True)
@@ -339,6 +342,7 @@ def run_model_on_ort(
     pt_outputs: Dict[str, torch.Tensor],
     dtype: bool = True,
 ) -> Tuple[List[str], List[np.ndarray]]:
+    
     """
     API to run ONNX model on ONNX runtime
     ---------
