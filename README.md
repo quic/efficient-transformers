@@ -46,32 +46,9 @@ To get started with efficient-transformers, visit our documentation
 
 * [Validated Models](https://quic.github.io/efficient-transformers/source/Validate.html)
 * [Models coming soon](https://quic.github.io/efficient-transformers/source/Validate.html#models-coming-soon)
-* Installation Guide
-    * [Requirements](https://quic.github.io/efficient-transformers/source/Linux_installation.html#)
-    * [Linux Installation](https://quic.github.io/efficient-transformers/source/Linux_installation.html)
-* Quick Start
-    * [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html#)
-    * [Using High Level API](https://quic.github.io/efficient-transformers/source/quick_start.html#using-high-level-api)
-    * [Using Low level API](https://quic.github.io/efficient-transformers/source/quick_start.html#using-low-level-api)
-    * [Details on KV Cache Optimization for Cloud AI 100](https://quic.github.io/efficient-transformers/source/kv_change.html)
-* Python API
-    * [High Level API](https://quic.github.io/efficient-transformers/source/high_level_api.html) 
-    * [Low Level API](https://quic.github.io/efficient-transformers/source/low_level_api.html)
-    * [Utilities](https://quic.github.io/efficient-transformers/source/other_api.html)
-
-<!-- * Blogs
-    * [Train anywhere, Infer on Qualcomm Cloud AI 100](https://www.qualcomm.com/developer/blog/2024/01/train-anywhere-infer-qualcomm-cloud-ai-100)
-    * [How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100](https://statics.teams.cdn.office.net/evergreen-assets/safelinks/1/atp-safelinks.html)
-    * [Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK](https://www.qualcomm.com/developer/blog/2023/11/power-efficient-acceleration-large-language-models-qualcomm-cloud-ai-sdk)
-
-    * [Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats](https://www.qualcomm.com/developer/blog/2024/01/qualcomm-cloud-ai-100-accelerates-large-language-model-inference-2x-using-microscaling-mx)
-    * [Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities](https://www.qualcomm.com/developer/blog/2024/05/qualcomm-cloud-ai-introduces-efficient-transformers--one-api--in)
-* Reference
-    *  [Qualcomm Cloud AI home](https://www.qualcomm.com/products/technology/processors/cloud-artificial-intelligence)
-    * [Qualcomm Cloud AI SDK download](https://www.qualcomm.com/products/technology/processors/cloud-artificial-intelligence/cloud-ai-100#Software)
-    * [Qualcomm Cloud AI API reference](https://quic.github.io/cloud-ai-sdk-pages/latest/API/)
-    * [User Guide](https://quic.github.io/cloud-ai-sdk-pages/)
-    * [OCP Microscaling Formats (MX) Specification](https://www.qualcomm.com/developer/blog/2024/05/6.%09https:/www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf) -->
+* [Linux Installation Guide](https://quic.github.io/efficient-transformers/source/Linux_installation.html)
+* [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html#)
+* [Python API](https://quic.github.io/efficient-transformers/source/high_level_api.html) 
 
  
 ## Acknowledgements
