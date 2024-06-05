@@ -44,7 +44,7 @@ def main(
 
     # Download tokenizer along with model if it doesn't exist
     model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="left")
+    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="right")
 
     batch_size = get_compilation_batch_size(qpc_path)
     prompt = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
