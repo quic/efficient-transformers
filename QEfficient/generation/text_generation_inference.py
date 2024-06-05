@@ -158,7 +158,7 @@ def cloud_ai_100_exec_kv_helper(
     prompt_len = max([x[session.binding_index_map["input_ids"]][1][1] for x in session.allowed_shapes])
     ctx_len = session.allowed_shapes[0][session.binding_index_map["attention_mask"]][1][1]
     if input_len is None:
-        input_len = prompt_len
+        input_len = max([len(x) for x in tokenizer(prompt, return_tensors="np").input_ids])
     if generation_len is None:
         generation_len = ctx_len
     num_chunks = -(input_len // -prompt_len)  # ceil divide without float
