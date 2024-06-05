@@ -7,6 +7,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 from typing import List, Tuple
 
@@ -42,7 +43,6 @@ def compile_kv_model_on_cloud_ai_100(
     device_group: List[int] = [0],
     **kwargs,
 ) -> Tuple[bool, str]:
-    import shutil
     if kwargs:
         # FIXME
         raise NotImplementedError("Can't handle extra compilation args now!")
@@ -101,7 +101,7 @@ def compile(
     onnx_path: str,
     qpc_path: str,
     num_cores: int,
-    device_group: List[int],
+    device_group: List[int],  #  FIXME: use num_devices instead
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     batch_size: int = 1,
@@ -116,12 +116,16 @@ def compile(
     Api() to compile the Onnx Model on Cloud AI 100 Platform with give config.
     ---------
     :param onnx_path: str. Generated Onnx Model Path.
-    :base_path: str. Base path for the generated models.
+    :param qpc_path: str. Path for saving compiled qpc binaries.
+    :num_cores: int. Number of cores to compile model on.
+    :device_group: List[int]. Used for finding number of devices to compile for.
+    :aic_enable_depth_first: bool. Enables DFS with default memory size, disabled by default.
+    :mos: int. Effort level to reduce the on-chip memory.
     :batch_size: int. Batch size to compile the model for.
     :prompt_len: int. prompt len for the model to compile.
     :ctx_len: int. Maximum context length to compile the model.
     :mxfp6: bool. Enable compilation for MXFP6 precision
-    :num_cores: int. Number of cores to compile model on. default: 16 available option: [1 to 16]
+    :mxint8: Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
     """
 
     os.makedirs(qpc_path, exist_ok=True)
