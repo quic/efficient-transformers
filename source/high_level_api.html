@@ -65,8 +65,14 @@
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul class="current">
 <li class="toctree-l1 current"><a class="current reference internal" href="#">High Level API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="#qefficient-cloud-infer">QEfficient.cloud.infer</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#qefficient-cloud-execute">QEfficient.cloud.execute</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.cloud.infer">QEfficient.cloud.infer</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.cloud.infer.main"><code class="docutils literal notranslate"><span class="pre">main()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.cloud.execute">QEfficient.cloud.execute</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">main()</span></code></a></li>
+</ul>
+</li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="low_level_api.html">Low level API</a></li>
@@ -82,7 +88,7 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="reference.html">Reference 1</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference.html">Reference</a></li>
 </ul>
 
         </div>
@@ -111,11 +117,85 @@
              
   <section id="high-level-api">
 <h1>High Level API<a class="headerlink" href="#high-level-api" title="Permalink to this heading"></a></h1>
-<section id="qefficient-cloud-infer">
-<h2>QEfficient.cloud.infer<a class="headerlink" href="#qefficient-cloud-infer" title="Permalink to this heading"></a></h2>
+<section id="module-QEfficient.cloud.infer">
+<span id="qefficient-cloud-infer"></span><h2>QEfficient.cloud.infer<a class="headerlink" href="#module-QEfficient.cloud.infer" title="Permalink to this heading"></a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.cloud.infer.main">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.cloud.infer.</span></span><span class="sig-name descname"><span class="pre">main</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_cores</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompts_txt_file_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">aic_enable_depth_first</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mos</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">-1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cache_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'/home/ubuntu/amitraj/documentation/efficient-transformers/cache_dir'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hf_token</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">128</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxfp6</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxint8</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_group</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">[0]</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/cloud/infer.html#main"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.cloud.infer.main" title="Permalink to this definition"></a></dt>
+<dd><section id="inference-command-the-model-will-be-downloaded-from-hf-optimized-compiled-executed-on-aic">
+<h3>Inference command, the model will be downloaded from HF, optimized, compiled, executed on AIC.<a class="headerlink" href="#inference-command-the-model-will-be-downloaded-from-hf-optimized-compiled-executed-on-aic" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param model_name<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Hugging Face Model Card name, Example: gpt2.</p>
+</dd>
+<dt class="field-even">num_cores<span class="colon">:</span></dt>
+<dd class="field-even"><p>int. Number of cores to compile model on. Default: 16, available option: [1 to 16].</p>
+</dd>
+<dt class="field-odd">prompt<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Sample prompt for the model text generation.</p>
+</dd>
+<dt class="field-even">aic_enable_depth_first<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool. If passed, this option will be enabled during compilation. Default=False.</p>
+</dd>
+<dt class="field-odd">mos<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. Effort level to reduce the on-chip memory. Default=-1.</p>
+</dd>
+<dt class="field-even">cache_dir<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Cache dir to store the downloaded huggingface files.</p>
+</dd>
+<dt class="field-odd">hf_token<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Huggingface token to access gated models.</p>
+</dd>
+<dt class="field-even">batch_size<span class="colon">:</span></dt>
+<dd class="field-even"><p>int. Batch size for model to compile.</p>
+</dd>
+<dt class="field-odd">prompt_len<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. prompt len for the model to compile.</p>
+</dd>
+<dt class="field-even">ctx_len<span class="colon">:</span></dt>
+<dd class="field-even"><p>int. Maximum context length for the model to compile.</p>
+</dd>
+<dt class="field-odd">mxfp6<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool. Enable compilation for MXFP6 precision.</p>
+</dd>
+<dt class="field-even">device_group<span class="colon">:</span></dt>
+<dd class="field-even"><p>List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enable multiple card setup.</p>
+</dd>
+</dl>
 </section>
-<section id="qefficient-cloud-execute">
-<h2>QEfficient.cloud.execute<a class="headerlink" href="#qefficient-cloud-execute" title="Permalink to this heading"></a></h2>
+</dd></dl>
+
+</section>
+<section id="module-QEfficient.cloud.execute">
+<span id="qefficient-cloud-execute"></span><h2>QEfficient.cloud.execute<a class="headerlink" href="#module-QEfficient.cloud.execute" title="Permalink to this heading"></a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.cloud.execute.main">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.cloud.execute.</span></span><span class="sig-name descname"><span class="pre">main</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qpc_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_group</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompts_txt_file_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cache_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'/home/ubuntu/amitraj/documentation/efficient-transformers/cache_dir'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hf_token</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/cloud/execute.html#main"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.cloud.execute.main" title="Permalink to this definition"></a></dt>
+<dd><section id="api-to-run-the-model-on-cloud-ai-100-platform">
+<h3>API to run the model on Cloud AI 100 platform.<a class="headerlink" href="#api-to-run-the-model-on-cloud-ai-100-platform" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param model_name<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Hugging Face Model Card name, Example: [gpt2].</p>
+</dd>
+<dt class="field-even">prompt<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Sample prompt for the model text generation.</p>
+</dd>
+<dt class="field-odd">qpc_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str.  Path to the save generated binary file after compilation.</p>
+</dd>
+<dt class="field-even">devices<span class="colon">:</span></dt>
+<dd class="field-even"><p>List[int]. Device Ids to be used for compilation. if devices &gt; 1, it enable multiple card setup.</p>
+</dd>
+<dt class="field-odd">cache_dir<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Cache dir to store the downloaded huggingface files.</p>
+</dd>
+<dt class="field-even">hf_token<span class="colon">:</span></dt>
+<dd class="field-even"><p>Huggingface token to access gated models.</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
 </section>
 </section>
 

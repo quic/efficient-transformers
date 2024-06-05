@@ -76,8 +76,15 @@
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_hf_to_cloud_ai_100.qualcomm_efficient_converter"><code class="docutils literal notranslate"><span class="pre">qualcomm_efficient_converter()</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#qefficient-cloud-compile">QEfficient.cloud.compile</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#qefficient-generation-text-generation-inference-module">QEfficient.generation.text_generation_inference module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.cloud.compile">QEfficient.cloud.compile</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.cloud.compile.main"><code class="docutils literal notranslate"><span class="pre">main()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.generation.text_generation_inference">QEfficient.generation.text_generation_inference module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv_helper"><code class="docutils literal notranslate"><span class="pre">cloud_ai_100_exec_kv_helper()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.latency_stats_bertstyle"><code class="docutils literal notranslate"><span class="pre">latency_stats_bertstyle()</span></code></a></li>
+</ul>
+</li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="other_api.html">Utilities</a></li>
@@ -92,7 +99,7 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="reference.html">Reference 1</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference.html">Reference</a></li>
 </ul>
 
         </div>
@@ -291,11 +298,104 @@ Path of exported ONNX file.</p>
 </dd></dl>
 
 </section>
-<section id="qefficient-cloud-compile">
-<h2>QEfficient.cloud.compile<a class="headerlink" href="#qefficient-cloud-compile" title="Permalink to this heading"></a></h2>
+<section id="module-QEfficient.cloud.compile">
+<span id="qefficient-cloud-compile"></span><h2>QEfficient.cloud.compile<a class="headerlink" href="#module-QEfficient.cloud.compile" title="Permalink to this heading"></a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.cloud.compile.main">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.cloud.compile.</span></span><span class="sig-name descname"><span class="pre">main</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">onnx_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qpc_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_cores</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_group</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">aic_enable_depth_first</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mos</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">-1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">128</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxfp6</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxint8</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/cloud/compile.html#main"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.cloud.compile.main" title="Permalink to this definition"></a></dt>
+<dd><p>API to compile the ONNX model on Cloud AI 100 platform with given config.
+API to compile the ONNX model on Cloud AI 100 platform with given config.
+———
+:param onnx_path: str. Generated ONNX model path.
+:qpc_path: str. Path of store compiled qpc binaries file
+:num_cores: int. Number of cores to compile model on. Default: 16, available option: [1 to 16].
+:device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enable multiple card setup.
+:aic_enable_depth_first: bool. If passed, this option will be enabled during compilation. Default=False.
+:mos: int. Effort level to reduce the on-chip memory. Default=-1.
+:param onnx_path: str. Generated ONNX model path.
+:qpc_path: str. Path of store compiled qpc binaries file
+:num_cores: int. Number of cores to compile model on. Default: 16, available option: [1 to 16].
+:device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enable multiple card setup.
+:aic_enable_depth_first: bool. If passed, this option will be enabled during compilation. Default=False.
+:mos: int. Effort level to reduce the on-chip memory. Default=-1.
+:base_path: str. Base path for the generated models.
+:batch_size: int. Batch size for model to compile.
+:batch_size: int. Batch size for model to compile.
+:prompt_len: int. prompt len for the model to compile.
+:ctx_len: int. Maximum context length for the model to compile.
+:mxfp6: bool. Enable compilation for MXFP6 precision.</p>
+<dl class="simple">
+<dt>Return:</dt><dd><p>Path of the QPC files.</p>
+</dd>
+</dl>
+</dd></dl>
+
 </section>
-<section id="qefficient-generation-text-generation-inference-module">
-<h2>QEfficient.generation.text_generation_inference module<a class="headerlink" href="#qefficient-generation-text-generation-inference-module" title="Permalink to this heading"></a></h2>
+<section id="module-QEfficient.generation.text_generation_inference">
+<span id="qefficient-generation-text-generation-inference-module"></span><h2>QEfficient.generation.text_generation_inference module<a class="headerlink" href="#module-QEfficient.generation.text_generation_inference" title="Permalink to this heading"></a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv_helper">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.generation.text_generation_inference.</span></span><span class="sig-name descname"><span class="pre">cloud_ai_100_exec_kv_helper</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PreTrainedTokenizer</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">PreTrainedTokenizerFast</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qpc</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generation_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">[0]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_debug_logs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">write_io_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/generation/text_generation_inference.html#cloud_ai_100_exec_kv_helper"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv_helper" title="Permalink to this definition"></a></dt>
+<dd><section id="api-to-execute-qefficient-transformed-onnx-model-on-cloud-ai-100-using-compiled-qpc-file">
+<h3>API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.<a class="headerlink" href="#api-to-execute-qefficient-transformed-onnx-model-on-cloud-ai-100-using-compiled-qpc-file" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param tokenizer<span class="colon">:</span></dt>
+<dd class="field-odd"><p></p></dd>
+<dt class="field-even">qpc<span class="colon">:</span></dt>
+<dd class="field-even"><p>str.  Path to the save generated binary file after compilation.</p>
+</dd>
+<dt class="field-odd">prompt<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Sample prompt for the model text generation.</p>
+</dd>
+<dt class="field-even">input_len<span class="colon">:</span></dt>
+<dd class="field-even"><p>int. input length of prompt to get number of chunks to execute on Cloud AI 100.</p>
+</dd>
+<dt class="field-odd">generation_len<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. Maximum context length for the model to compile.</p>
+</dd>
+<dt class="field-even">device_id<span class="colon">:</span></dt>
+<dd class="field-even"><p>List[int]. Device Ids to be used for compilation. if len(device_id) &gt; 1, it enable multiple card setup.</p>
+</dd>
+<dt class="field-odd">enable_debug_logs<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool. If True, it enables debugging logs.</p>
+</dd>
+<dt class="field-even">stream<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool. If True enable streamer, which returns tokens one by one as the model generates them.</p>
+</dd>
+<dt class="field-odd">Write_io_dir<span class="colon">:</span></dt>
+<dd class="field-odd"><p></p></dd>
+<dt class="field-even">automation<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool. If true, it print input, output and performance stats.</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.generation.text_generation_inference.latency_stats_bertstyle">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.generation.text_generation_inference.</span></span><span class="sig-name descname"><span class="pre">latency_stats_bertstyle</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qpc</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">seq_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">[0]</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/generation/text_generation_inference.html#latency_stats_bertstyle"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.generation.text_generation_inference.latency_stats_bertstyle" title="Permalink to this definition"></a></dt>
+<dd><section id="api-to-execute-onnx-model-on-cpu">
+<h3>API to execute ONNX model on CPU.<a class="headerlink" href="#api-to-execute-onnx-model-on-cpu" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param model_name<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Hugging Face Model Card name, Example: gpt2.</p>
+</dd>
+<dt class="field-even">qpc<span class="colon">:</span></dt>
+<dd class="field-even"><p>str.  Path to the save generated binary file after compilation.</p>
+</dd>
+<dt class="field-odd">seq_len<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. Sequence length.</p>
+</dd>
+<dt class="field-even">prompt<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Sample prompt for the model text generation.</p>
+</dd>
+<dt class="field-odd">device_id<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[int]. Device Ids to be used for compilation. if devices &gt; 1, it enable multiple card setup.</p>
+</dd>
+</dl>
+</section>
+</dd></dl>
+
 </section>
 </section>
 

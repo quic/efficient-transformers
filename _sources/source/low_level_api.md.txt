@@ -5,7 +5,7 @@
 .. automodule:: QEfficient
    :members:
    :undoc-members:
-   :show-inheritance:
+   :show-inheritance: 
 ``` 
 
 ## QEfficient.exporter.export_hf_to_cloud_ai_100 module
