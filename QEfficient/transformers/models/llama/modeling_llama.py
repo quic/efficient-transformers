@@ -27,6 +27,8 @@ from transformers.models.llama.modeling_llama import (
     repeat_kv,
 )
 
+from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
+
 
 class QEffLlamaAttention(LlamaAttention):
     """
@@ -403,10 +405,7 @@ class QEffLlamaModel(LlamaModel):
                     padding_mask, min_dtype
                 )
             else:
-                query_indices = position_ids.unsqueeze(-1)
-                kv_indices = torch.arange(target_length).view(1, 1, -1)
-                causal_mask = kv_indices > query_indices
-                causal_mask = causal_mask.unsqueeze(1)
+                causal_mask = _update_causal_mask(position_ids=position_ids, target_length=target_length)
 
         if (
             self.config._attn_implementation == "sdpa"

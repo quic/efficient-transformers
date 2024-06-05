@@ -32,6 +32,8 @@ from transformers.models.mistral.modeling_mistral import (
     repeat_kv,
 )
 
+from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
+
 
 class QEffMistralAttention(MistralAttention):
     """
@@ -204,30 +206,13 @@ class QEffMistralModel(MistralModel):
                 sliding_window=self.config.sliding_window,
             )
         elif attention_mask is None:
-            # Causal mask
-            query_indices = position_ids.unsqueeze(-1)
-            kv_indices = torch.arange(past_key_values_length).view(1, -1)
-            # --- Rolling buffer ---
-            pos_max = position_ids.max(1, keepdim=True).values
-            kv_start = (pos_max // past_key_values_length) * past_key_values_length
-            kv_indices_high = kv_indices + kv_start
-            kv_indices_low = torch.where(
-                kv_indices_high < past_key_values_length, kv_indices, kv_indices_high - past_key_values_length
+            # Causal mask with # --- Rolling buffer --- and # Sliding window mask
+            # Change for Cloud AI 100 (vbaddi)
+            attention_mask = _update_causal_mask(
+                position_ids=position_ids,
+                target_length=past_key_values_length,
+                sliding_window=self.config.sliding_window,
             )
-            kv_indices = torch.where(kv_indices_high > pos_max, kv_indices_low, kv_indices_high)
-            kv_indices = kv_indices.unsqueeze(1)
-            # ------
-            causal_mask = kv_indices > query_indices
-            attention_mask = causal_mask
-
-            # Sliding window mask
-            sliding_window = self.config.sliding_window
-            if sliding_window:
-                window_indices = query_indices - sliding_window + 1
-                window_mask = kv_indices < window_indices
-                attention_mask = attention_mask | window_mask
-
-            attention_mask = attention_mask.unsqueeze(1)
         else:
             # 4d mask is passed through the layers
             attention_mask = _prepare_4d_causal_attention_mask(
