@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Overview: module code &mdash; Efficient-Transformers 1.16 documentation</title>
+  <title>QEfficient &mdash; Efficient-Transformers 1.16 documentation</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
 
@@ -96,7 +96,8 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Overview: module code</li>
+          <li class="breadcrumb-item"><a href="index.html">Module code</a></li>
+      <li class="breadcrumb-item active">QEfficient</li>
       <li class="wy-breadcrumbs-aside">
       </li>
   </ul>
@@ -105,20 +106,32 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <h1>All modules for which code is available</h1>
-<ul><li><a href="QEfficient.html">QEfficient</a></li>
-<ul><li><a href="QEfficient/cloud/compile.html">QEfficient.cloud.compile</a></li>
-<li><a href="QEfficient/cloud/execute.html">QEfficient.cloud.execute</a></li>
-<li><a href="QEfficient/cloud/infer.html">QEfficient.cloud.infer</a></li>
-<li><a href="QEfficient/exporter/export_hf_to_cloud_ai_100.html">QEfficient.exporter.export_hf_to_cloud_ai_100</a></li>
-<li><a href="QEfficient/generation/text_generation_inference.html">QEfficient.generation.text_generation_inference</a></li>
-<li><a href="QEfficient/transformers/modeling_attn_mask_utils.html">QEfficient.transformers.modeling_attn_mask_utils</a></li>
-<li><a href="QEfficient/transformers/modeling_outputs.html">QEfficient.transformers.modeling_outputs</a></li>
-<li><a href="QEfficient/transformers/modeling_utils.html">QEfficient.transformers.modeling_utils</a></li>
-<li><a href="QEfficient/utils/device_utils.html">QEfficient.utils.device_utils</a></li>
-<li><a href="QEfficient/utils/generate_inputs.html">QEfficient.utils.generate_inputs</a></li>
-<li><a href="QEfficient/utils/run_utils.html">QEfficient.utils.run_utils</a></li>
-</ul></ul>
+  <h1>Source code for QEfficient</h1><div class="highlight"><pre>
+<span></span><span class="c1"># -----------------------------------------------------------------------------</span>
+<span class="c1">#</span>
+<span class="c1"># Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: BSD-3-Clause</span>
+<span class="c1">#</span>
+<span class="c1"># -----------------------------------------------------------------------------</span>
+
+<span class="kn">import</span> <span class="nn">torch.nn</span> <span class="k">as</span> <span class="nn">nn</span>
+
+<span class="kn">from</span> <span class="nn">QEfficient.transformers.modeling_utils</span> <span class="kn">import</span> <span class="n">transform</span> <span class="k">as</span> <span class="n">transform_hf</span>
+
+
+<div class="viewcode-block" id="transform"><a class="viewcode-back" href="../source/low_level_api.html#QEfficient.transform">[docs]</a><span class="k">def</span> <span class="nf">transform</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;Transformers&quot;</span><span class="p">,</span> <span class="n">form_factor</span><span class="o">=</span><span class="s2">&quot;cloud&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Low level apis in library</span>
+<span class="sd">    ---------</span>
+<span class="sd">    :param model: nn.Module. instance of nn.Module.</span>
+<span class="sd">    :type: str. Transformers | Diffusers, default : Transformers.</span>
+<span class="sd">    :form_factor: str.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="nb">type</span> <span class="o">==</span> <span class="s2">&quot;Transformers&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">transform_hf</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">form_factor</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span></div>
+</pre></div>
 
            </div>
           </div>

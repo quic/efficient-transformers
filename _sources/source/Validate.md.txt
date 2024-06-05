@@ -24,4 +24,4 @@
 * [Jais-30b](https://huggingface.co/core42/jais-30b-chat-v1)
 * [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
 * [Chatglm2-6b](https://huggingface.co/THUDM/chatglm2-6b)
-* [Baichuan2-7B-Base](baichuan-inc/Baichuan2-7B-Base)
+* [Baichuan2-7B-Base](https://huggingface.co/baichuan-inc/Baichuan2-7B-Base)
