@@ -11,7 +11,7 @@ import torch.nn as nn
 import transformers
 
 from QEfficient.src.base import QEFFBaseModel
-from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
+from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE
 from QEfficient.transformers.modeling_attn_mask_utils import (
     QEffAttentionMaskConverter,
     _qeff_prepare_4d_attention_mask,

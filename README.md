@@ -195,7 +195,7 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 **One argument, prompt or prompts_txt_file_path must be passed.<br>
 ***Both save_fp32_onnx and save_fp16_onnx can't be false.
 
-### 1.  Model download and transform
+### 1.  Model download and Optimize for Cloud AI 100
 
 Initialize QEfficient and transform the models, Check the list of supported architectures in the repo.
 
@@ -203,25 +203,19 @@ Initialize QEfficient and transform the models, Check the list of supported arch
 # Initiate the Orignal Transformer model
 import os
 
-
-import QEfficient
-from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 
 # Please uncomment and use appropriate Cache Directory for transformers, in case you don't want to use default ~/.cache dir.
 # os.environ["TRANSFORMERS_CACHE"] = "/local/mnt/workspace/hf_cache"
 
-#ROOT_DIR = os.path.dirname(os.path.abspath(""))
-#CACHE_DIR = os.path.join(ROOT_DIR, "tmp"), you can use a different location for just one model by passing this param as cache_dir in below API.
+# ROOT_DIR = os.path.dirname(os.path.abspath(""))
+# CACHE_DIR = os.path.join(ROOT_DIR, "tmp") #, you can use a different location for just one model by passing this param as cache_dir in below API.
 
 # Model-Card name to be onboarded (This is HF Model Card name) : https://huggingface.co/gpt2-xl
 model_name = "gpt2"  # Similar, we can change model name and generate corresponding models, if we have added the support in the lib.
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, cache_dir=None)
-print(f"{model_name} from hugging-face \n", qeff_model)
-
-# Easy and minimal api to update the model
-model_transformed = QEfficient.transform(qeff_model, form_factor="cloud")
-print("Model after Optimized transformations \n", model_transformed)
+qeff_model = AutoModelForCausalLM.from_pretrained(model_name)
+print(f"{model_name} optmized for AI 100 \n", qeff_model)
 ```
 
 ### 2. ONNX export of transformed model
@@ -229,6 +223,7 @@ print("Model after Optimized transformations \n", model_transformed)
 use the qualcomm_efficient_converter API to export the KV transformed Model to ONNX and Verify on Torch.
 
 ```Python
+import QEfficient
 from QEfficient.utils import load_hf_tokenizer
 # We can now export the modified models to Onnx framework
 # This will generate single Onnx Model for both Prefill and Decode Variations which are optimized for
@@ -244,7 +239,7 @@ from QEfficient.utils import load_hf_tokenizer
 tokenizer = load_hf_tokenizer(model_name, use_cache=True)
 base_path, onnx_path = QEfficient.export(
     model_name=model_name,
-    model_kv=model_transformed,
+    model_kv=qeff_model,
     tokenizer=tokenizer,
     kv=True,
     form_factor="cloud",
@@ -261,7 +256,7 @@ Once, the model is exported, Compile the model on Cloud AI 100 and generate QPC.
 
 generated_qpc_path = QEfficient.compile(
     onnx_path=onnx_path,
-    num_cores=14,
+    num_cores=14,  # You can use `/opt/qti-aic/tools/qaic-util | grep "Nsp Total"` from Apps SDK for this. 
     qpc_path=os.path.dirname(base_path),
     mxfp6=False,
     device_group=[0],
@@ -272,12 +267,12 @@ generated_qpc_path = QEfficient.compile(
 Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/sec
 
 ```Python
-from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv, get_compilation_batch_size
+from QEfficient.generation.text_generation_inference import get_compilation_batch_size
 
 # post compilation, we can print the latency stats for the kv models, We provide API to print token and Latency stats on AI 100
 # We need the compiled prefill and decode qpc to compute the token generated, This is based on Greedy Sampling Approach
 batch_size = get_compilation_batch_size(generated_qpc_path)
-cloud_ai_100_exec_kv(batch_size=batch_size, tokenizer=tokenizer, qpc_path=generated_qpc_path, device_id=[0], prompt=["My name is"])
+QEfficient.cloud_ai_100_exec_kv(batch_size=batch_size, tokenizer=tokenizer, qpc_path=generated_qpc_path, device_id=[0], prompt=["My name is"])
 ```
 End to End demo examples for various models are available in **notebooks** directory. Please check them out.
 
