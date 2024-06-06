@@ -38,6 +38,7 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralSparseMoeBlock,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
+from transformers.models.phi3.modeling_phi3 import Phi3Attention, Phi3ForCausalLM, Phi3Model, Phi3RMSNorm
 
 from QEfficient.customop import CustomRMSNormAIC
 from QEfficient.utils.logging_utils import logger
@@ -75,6 +76,7 @@ from .models.mixtral_moe.modeling_mixtral import (
     QEffMixtralSparseMoeBlock,
 )
 from .models.mpt.modeling_mpt import QEffMptAttention, QEffMptBlock, QEffMptForCausalLM, QEFfMptModel
+from .models.phi3.modeling_phi3 import QEffPhi3Attention, QEffPhi3ForCausalLM, QEffPhi3Model
 
 # Define a named tuple for ModelArchitectures
 # Required for the Automation tool
@@ -125,6 +127,11 @@ TransformersToQEffModulesDict = {
     MixtralForCausalLM: QEffMixtralForCausalLM,
     MixtralRMSNorm: CustomRMSNormAIC,
     MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
+    # Phi3 model layers
+    Phi3Attention: QEffPhi3Attention,
+    Phi3Model: QEffPhi3Model,
+    Phi3ForCausalLM: QEffPhi3ForCausalLM,
+    Phi3RMSNorm: CustomRMSNormAIC,
 }
 
 
