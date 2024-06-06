@@ -9,8 +9,9 @@ import numpy as np
 import onnxruntime
 import torch
 
-from .generate_inputs import InputHandler
 from QEfficient.utils.logging_utils import logger
+
+from .generate_inputs import InputHandler
 
 
 class ApiRunner:
@@ -32,7 +33,7 @@ class ApiRunner:
         :param ctx_len: int
         """
         if tokenizer.padding_side != "left":
-            logger.warning(f"Please use padding_side='left' while initializing the tokenizer")
+            logger.warning("Please use padding_side='left' while initializing the tokenizer")
             tokenizer.padding_side = "left"
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -50,7 +51,6 @@ class ApiRunner:
         :param model_hf: pytorch model
         :return generated_ids: numpy.ndarray - output tokens
         """
-
         input_ids = self.tokenizer.encode(self.prompt[0], return_tensors="pt")
 
         input_ids_len = len(input_ids[0])
@@ -68,6 +68,7 @@ class ApiRunner:
         print("Prompt:", repr(self.prompt))
         print("Completion:", repr(generated_text))
         return generated_ids
+
 
     def run_kv_model_on_pytorch(self, model, n_layer, padding_shape):
         """

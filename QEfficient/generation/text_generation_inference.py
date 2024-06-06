@@ -107,7 +107,7 @@ def get_compilation_batch_size(qpc_path: str):
     return compilation_batch_size
 
 
-def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size):
+def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size) -> List[str]:
     assert (
         prompt is not None or prompts_txt_file_path is not None
     ), "Please pass atleast one argument either using --prompt or --prompts_txt_file_path"
