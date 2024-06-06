@@ -17,6 +17,11 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
+from transformers.models.falcon.modeling_falcon import (
+    FalconAttention,
+    FalconForCausalLM,
+    FalconModel,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
@@ -57,6 +62,11 @@ from .models.codegen.modeling_codegen import (
     QEffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
+)
+from .models.falcon.modeling_falcon import (
+    QEffFalconAttention,
+    QEffFalconForCausalLM,
+    QEffFalconModel,
 )
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
 from .models.llama.modeling_llama import (
@@ -132,6 +142,10 @@ TransformersToQEffModulesDict = {
     Phi3Model: QEffPhi3Model,
     Phi3ForCausalLM: QEffPhi3ForCausalLM,
     Phi3RMSNorm: CustomRMSNormAIC,
+    # Falcon model layers
+    FalconAttention: QEffFalconAttention,
+    FalconForCausalLM: QEffFalconForCausalLM,
+    FalconModel: QEffFalconModel,
 }
 
 
