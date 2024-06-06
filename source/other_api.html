@@ -307,16 +307,11 @@ decode stage inputs for ONNX model to be run on ONNXRT.
 <span class="sig-name descname"><span class="pre">run_hf_model_on_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_hf</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_hf_model_on_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch" title="Permalink to this definition"></a></dt>
 <dd><p>Function responsible for running Huggingface PyTorch model and return the output tokens
 :param model_hf: pytorch model
-———</p>
-<dl class="simple">
-<dt>Return:</dt><dd><p>generated_ids: numpy.ndarray - output tokens</p>
-</dd>
-</dl>
-<hr class="docutils" />
-<dl class="simple">
-<dt>Return:</dt><dd><p>generated_ids: numpy.ndarray - output tokens</p>
-</dd>
-</dl>
+———
+Return:</p>
+<blockquote>
+<div><p>generated_ids: numpy.ndarray - output tokens</p>
+</div></blockquote>
 </dd></dl>
 
 <dl class="py method">
@@ -324,6 +319,14 @@ decode stage inputs for ONNX model to be run on ONNXRT.
 <span class="sig-name descname"><span class="pre">run_kv_model_on_cloud_ai_100</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_cloud_ai_100"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100" title="Permalink to this definition"></a></dt>
 <dd><section id="function-responsible-for-running-onnx-model-on-cloud-ai-100-and-return-the-output-tokens">
 <h3>Function responsible for running ONNX model on Cloud AI 100 and return the output tokens<a class="headerlink" href="#function-responsible-for-running-onnx-model-on-cloud-ai-100-and-return-the-output-tokens" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param qpc_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+<dt class="field-even">device_id<span class="colon">:</span></dt>
+<dd class="field-even"><p>List[int]</p>
+</dd>
+</dl>
 <p>:n_layer : int
 :padding_shape : List[int]</p>
 <dl class="simple">
@@ -338,7 +341,13 @@ decode stage inputs for ONNX model to be run on ONNXRT.
 <span class="sig-name descname"><span class="pre">run_kv_model_on_ort</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_ort"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort" title="Permalink to this definition"></a></dt>
 <dd><section id="function-responsible-for-running-onnx-model-on-onnxruntime-and-return-the-output-tokens">
 <h3>Function responsible for running ONNX model on onnxruntime and return the output tokens<a class="headerlink" href="#function-responsible-for-running-onnx-model-on-onnxruntime-and-return-the-output-tokens" title="Permalink to this heading"></a></h3>
-<p>:padding_shape : List[int]</p>
+<dl class="field-list simple">
+<dt class="field-odd">param model_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+<p>:n_layer : int
+:padding_shape : List[int]</p>
 <dl class="simple">
 <dt>Return:</dt><dd><p>generated_ids: numpy.ndarray - output tokens</p>
 </dd>
@@ -351,7 +360,13 @@ decode stage inputs for ONNX model to be run on ONNXRT.
 <span class="sig-name descname"><span class="pre">run_kv_model_on_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch" title="Permalink to this definition"></a></dt>
 <dd><section id="function-responsible-for-running-kv-pytorch-model-and-return-the-output-tokens">
 <h3>Function responsible for running KV PyTorch model and return the output tokens<a class="headerlink" href="#function-responsible-for-running-kv-pytorch-model-and-return-the-output-tokens" title="Permalink to this heading"></a></h3>
-<p>:padding_shape : List[int]</p>
+<dl class="field-list simple">
+<dt class="field-odd">param model_hf<span class="colon">:</span></dt>
+<dd class="field-odd"><p>pytorch model</p>
+</dd>
+</dl>
+<p>:n_layer : int
+:padding_shape : List[int]</p>
 <dl class="simple">
 <dt>Return:</dt><dd><p>generated_ids: numpy.ndarray - output tokens</p>
 </dd>
@@ -361,24 +376,22 @@ decode stage inputs for ONNX model to be run on ONNXRT.
 
 <dl class="py method">
 <dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_ort_session">
-<span class="sig-name descname"><span class="pre">run_ort_session</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">session</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_ort_session"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_ort_session" title="Permalink to this definition"></a></dt>
+<span class="sig-name descname"><span class="pre">run_ort_session</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">session</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">dict</span></span></span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_ort_session"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_ort_session" title="Permalink to this definition"></a></dt>
 <dd><section id="function-responsible-for-running-onnxrt-session-with-given-inputs-and-passing-retained-state-outputs-to-be-used-for-next-iteration-inputs">
 <h3>Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs<a class="headerlink" href="#function-responsible-for-running-onnxrt-session-with-given-inputs-and-passing-retained-state-outputs-to-be-used-for-next-iteration-inputs" title="Permalink to this heading"></a></h3>
 <dl class="field-list simple">
+<dt class="field-odd">param inputs<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict.</p>
+</dd>
+<dt class="field-even">session<span class="colon">:</span></dt>
+<dd class="field-even"><p>‘onnxruntime.capi.onnxruntime_inference_collection.InferenceSession’.</p>
+</dd>
 <dt class="field-odd">n_layer<span class="colon">:</span></dt>
-<dd class="field-odd"><p>int</p>
+<dd class="field-odd"><p>int.</p>
 </dd>
-<dt class="field-even">outputs<span class="colon">:</span></dt>
-<dd class="field-even"><p>Dict</p>
-</dd>
-<dt class="field-odd">session<span class="colon">:</span></dt>
-<dd class="field-odd"><p>‘onnxruntime.capi.onnxruntime_inference_collection.InferenceSession’.</p>
-</dd>
-<dt class="field-even">n_layer<span class="colon">:</span></dt>
-<dd class="field-even"><p>int</p>
-</dd>
-<dt class="field-odd">outputs<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Dict</p>
+</dl>
+<dl class="simple">
+<dt>Return:</dt><dd><p>outputs: Dict</p>
 </dd>
 </dl>
 </section>

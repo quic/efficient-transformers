@@ -160,7 +160,6 @@
 <dt class="sig sig-object py" id="QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_bertstyle">
 <span class="sig-prename descclassname"><span class="pre">QEfficient.exporter.export_hf_to_cloud_ai_100.</span></span><span class="sig-name descname"><span class="pre">convert_to_cloud_bertstyle</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_class</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">type</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">onnx_dir_path</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hf_token</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">seq_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_str</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'My</span> <span class="pre">Name</span> <span class="pre">is'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">save_fp32_onnx</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">save_fp16_onnx</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/exporter/export_hf_to_cloud_ai_100.html#convert_to_cloud_bertstyle"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_bertstyle" title="Permalink to this definition"></a></dt>
 <dd><p>API to convert model to Bertstyle approach.
-API to convert model to Bertstyle approach.
 Bertstyle Approach:</p>
 <blockquote>
 <div><ol class="arabic simple">
@@ -173,26 +172,29 @@ Bertstyle Approach:</p>
 <dt class="field-odd">Tokenizer<span class="colon">:</span></dt>
 <dd class="field-odd"><p>HF_AutoTokenizer. Tokenizer to prepare inputs.</p>
 </dd>
-<dt class="field-even">Model_path<span class="colon">:</span></dt>
-<dd class="field-even"><p>str. The path where the model is stored. If None, the model is loaded from the default location.</p>
+<dt class="field-even">Onnx_dir_path<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path to save exported ONNX file.</p>
 </dd>
-<dt class="field-odd">Hf_token<span class="colon">:</span></dt>
-<dd class="field-odd"><p>str. to access gated models.</p>
+<dt class="field-odd">Model_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. The path where the model is stored. If None, the model is loaded from the default location.</p>
 </dd>
-<dt class="field-even">Seq_len<span class="colon">:</span></dt>
-<dd class="field-even"><p>int. The length of the sequence. Default is 128.</p>
+<dt class="field-even">Hf_token<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. to access gated models.</p>
 </dd>
-<dt class="field-odd">Input_str<span class="colon">:</span></dt>
-<dd class="field-odd"><p>str. The input string to be processed.</p>
+<dt class="field-odd">Seq_len<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. The length of the sequence. Default is 128.</p>
 </dd>
-<dt class="field-even">Return_path<span class="colon">:</span></dt>
-<dd class="field-even"><p>bool. If True, return the base path for models and exported onnx model path</p>
+<dt class="field-even">Input_str<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. The input string to be processed.</p>
 </dd>
-<dt class="field-odd">Save_fp32_onnx<span class="colon">:</span></dt>
-<dd class="field-odd"><p>bool. If True, fp32 unclipped version of ONNX will be saved. Default is False.</p>
+<dt class="field-odd">Return_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool. If True, return the base path for models and exported onnx model path</p>
 </dd>
-<dt class="field-even">Save_fp16_onnx<span class="colon">:</span></dt>
-<dd class="field-even"><p>bool. If false, fp16 clipped version of ONNX will be deleted. Default is True.</p>
+<dt class="field-even">Save_fp32_onnx<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool. If True, fp32 unclipped version of ONNX will be saved. Default is False.</p>
+</dd>
+<dt class="field-odd">Save_fp16_onnx<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool. If false, fp16 clipped version of ONNX will be deleted. Default is True.</p>
 </dd>
 </dl>
 <dl class="simple">
@@ -205,7 +207,6 @@ Bertstyle Approach:</p>
 <dt class="sig sig-object py" id="QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_kvstyle">
 <span class="sig-prename descclassname"><span class="pre">QEfficient.exporter.export_hf_to_cloud_ai_100.</span></span><span class="sig-name descname"><span class="pre">convert_to_cloud_kvstyle</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_class</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">type</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_kv</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Module</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">onnx_dir_path</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hf_token</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">seq_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_str</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'My</span> <span class="pre">Name</span> <span class="pre">is'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">save_fp32_onnx</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">save_fp16_onnx</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/exporter/export_hf_to_cloud_ai_100.html#convert_to_cloud_kvstyle"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_kvstyle" title="Permalink to this definition"></a></dt>
 <dd><p>API change model for kv retention and export to ONNX.
-API change model for kv retention and export to ONNX.
 KV Style Approach:</p>
 <blockquote>
 <div><ol class="arabic simple">
@@ -269,7 +270,7 @@ KV Style Approach:</p>
 <dd class="field-even"><p>HF_AutoTokenizer. Tokenizer to prepare inputs.</p>
 </dd>
 <dt class="field-odd">onnx_dir_path<span class="colon">:</span></dt>
-<dd class="field-odd"><p>str. The path where the model is stored. If None, the model is loaded from the default location.</p>
+<dd class="field-odd"><p>str. Path to store ONNx file</p>
 </dd>
 <dt class="field-even">hf_token<span class="colon">:</span></dt>
 <dd class="field-even"><p>str. Huggingface token to access gated models. Default=None.</p>
@@ -294,8 +295,7 @@ KV Style Approach:</p>
 </dd>
 </dl>
 <dl class="simple">
-<dt>Returns:</dt><dd><p>Path of exported ONNX file.
-Path of exported ONNX file.</p>
+<dt>Returns:</dt><dd><p>Path of exported ONNX file.</p>
 </dd>
 </dl>
 </section>
@@ -307,31 +307,48 @@ Path of exported ONNX file.</p>
 <dl class="py function">
 <dt class="sig sig-object py" id="QEfficient.cloud.compile.main">
 <span class="sig-prename descclassname"><span class="pre">QEfficient.cloud.compile.</span></span><span class="sig-name descname"><span class="pre">main</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">onnx_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qpc_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_cores</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_group</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">aic_enable_depth_first</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mos</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">-1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">128</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxfp6</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxint8</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/cloud/compile.html#main"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.cloud.compile.main" title="Permalink to this definition"></a></dt>
-<dd><p>API to compile the ONNX model on Cloud AI 100 platform with given config.
-API to compile the ONNX model on Cloud AI 100 platform with given config.
-———
-:param onnx_path: str. Generated ONNX model path.
-:qpc_path: str. Path of store compiled qpc binaries file
-:num_cores: int. Number of cores to compile model on. Default: 16, available option: [1 to 16].
-:device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enable multiple card setup.
-:aic_enable_depth_first: bool. If passed, this option will be enabled during compilation. Default=False.
-:mos: int. Effort level to reduce the on-chip memory. Default=-1.
-:param onnx_path: str. Generated ONNX model path.
-:qpc_path: str. Path of store compiled qpc binaries file
-:num_cores: int. Number of cores to compile model on. Default: 16, available option: [1 to 16].
-:device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enable multiple card setup.
-:aic_enable_depth_first: bool. If passed, this option will be enabled during compilation. Default=False.
-:mos: int. Effort level to reduce the on-chip memory. Default=-1.
-:base_path: str. Base path for the generated models.
-:batch_size: int. Batch size for model to compile.
-:batch_size: int. Batch size for model to compile.
-:prompt_len: int. prompt len for the model to compile.
-:ctx_len: int. Maximum context length for the model to compile.
-:mxfp6: bool. Enable compilation for MXFP6 precision.</p>
+<dd><section id="api-to-compile-the-onnx-model-on-cloud-ai-100-platform-with-given-config">
+<h3>API to compile the ONNX model on Cloud AI 100 platform with given config.<a class="headerlink" href="#api-to-compile-the-onnx-model-on-cloud-ai-100-platform-with-given-config" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">param onnx_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Generated ONNX model path.</p>
+</dd>
+<dt class="field-even">qpc_path<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Path of store compiled qpc binaries file</p>
+</dd>
+<dt class="field-odd">num_cores<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. Number of cores to compile model on. Default: 16, available option: [1 to 16].</p>
+</dd>
+<dt class="field-even">device_group<span class="colon">:</span></dt>
+<dd class="field-even"><p>List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enable multiple card setup.</p>
+</dd>
+<dt class="field-odd">aic_enable_depth_first<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool. If passed, this option will be enabled during compilation. Default=False.</p>
+</dd>
+<dt class="field-even">mos<span class="colon">:</span></dt>
+<dd class="field-even"><p>int. Effort level to reduce the on-chip memory. Default=-1.</p>
+</dd>
+<dt class="field-odd">batch_size<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. Batch size for model to compile.</p>
+</dd>
+<dt class="field-even">prompt_len<span class="colon">:</span></dt>
+<dd class="field-even"><p>int. prompt len for the model to compile.</p>
+</dd>
+<dt class="field-odd">ctx_len<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. Maximum context length for the model to compile.</p>
+</dd>
+<dt class="field-even">mxfp6<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool. Compress constant MatMul weights to MXFP6 E2M3, default is no compression.</p>
+</dd>
+<dt class="field-odd">mxint8<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool. Compress Present/Past KV to MXINT8 using CustomIO config, default is False.</p>
+</dd>
+</dl>
 <dl class="simple">
 <dt>Return:</dt><dd><p>Path of the QPC files.</p>
 </dd>
 </dl>
+</section>
 </dd></dl>
 
 </section>

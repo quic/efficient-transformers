@@ -187,7 +187,6 @@
 <span class="sd">    :seq_len: int. Sequence length.</span>
 <span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
 <span class="sd">    :device_id: List[int]. Device Ids to be used for compilation. if devices &gt; 1, it enable multiple card setup.</span>
-<span class="sd">    </span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">session</span> <span class="o">=</span> <span class="n">QAICInferenceSession</span><span class="p">(</span><span class="n">qpc</span><span class="p">,</span> <span class="n">device_id</span><span class="p">)</span>
     <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">transformers</span><span class="o">.</span><span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">padding_side</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">)</span>
@@ -281,23 +280,6 @@
 <span class="sd">    :Write_io_dir: </span>
 <span class="sd">    :automation: bool. If true, it print input, output and performance stats.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-<span class="w">    </span>
-<span class="w">    </span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file. </span>
-<span class="sd">    ---------</span>
-<span class="sd">    :param tokenizer: </span>
-<span class="sd">    :qpc: str.  Path to the save generated binary file after compilation.</span>
-<span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
-<span class="sd">    :input_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.</span>
-<span class="sd">    :generation_len: int. Maximum context length for the model to compile.</span>
-<span class="sd">    :device_id: List[int]. Device Ids to be used for compilation. if len(device_id) &gt; 1, it enable multiple card setup.</span>
-<span class="sd">    :enable_debug_logs: bool. If True, it enables debugging logs.</span>
-<span class="sd">    :stream: bool. If True enable streamer, which returns tokens one by one as the model generates them.</span>
-<span class="sd">    :Write_io_dir: </span>
-<span class="sd">    :automation: bool. If true, it print input, output and performance stats.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    
     <span class="k">if</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">padding_side</span> <span class="o">!=</span> <span class="s2">&quot;left&quot;</span><span class="p">:</span>
         <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Please use padding_side=&#39;left&#39; while initializing the tokenizer&quot;</span><span class="p">)</span>
         <span class="n">tokenizer</span><span class="o">.</span><span class="n">padding_side</span> <span class="o">=</span> <span class="s2">&quot;left&quot;</span>

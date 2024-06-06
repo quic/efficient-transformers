@@ -156,7 +156,6 @@
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    API to compile the ONNX model on Cloud AI 100 platform with given config.</span>
-<span class="sd">    API to compile the ONNX model on Cloud AI 100 platform with given config.</span>
 <span class="sd">    ---------</span>
 <span class="sd">    :param onnx_path: str. Generated ONNX model path.</span>
 <span class="sd">    :qpc_path: str. Path of store compiled qpc binaries file</span>
@@ -164,23 +163,14 @@
 <span class="sd">    :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enable multiple card setup.</span>
 <span class="sd">    :aic_enable_depth_first: bool. If passed, this option will be enabled during compilation. Default=False.</span>
 <span class="sd">    :mos: int. Effort level to reduce the on-chip memory. Default=-1.</span>
-<span class="sd">    :param onnx_path: str. Generated ONNX model path.</span>
-<span class="sd">    :qpc_path: str. Path of store compiled qpc binaries file</span>
-<span class="sd">    :num_cores: int. Number of cores to compile model on. Default: 16, available option: [1 to 16].</span>
-<span class="sd">    :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enable multiple card setup.</span>
-<span class="sd">    :aic_enable_depth_first: bool. If passed, this option will be enabled during compilation. Default=False.</span>
-<span class="sd">    :mos: int. Effort level to reduce the on-chip memory. Default=-1.</span>
-<span class="sd">    :base_path: str. Base path for the generated models.</span>
-<span class="sd">    :batch_size: int. Batch size for model to compile.</span>
 <span class="sd">    :batch_size: int. Batch size for model to compile.</span>
 <span class="sd">    :prompt_len: int. prompt len for the model to compile.</span>
 <span class="sd">    :ctx_len: int. Maximum context length for the model to compile.</span>
-<span class="sd">    :mxfp6: bool. Enable compilation for MXFP6 precision.</span>
+<span class="sd">    :mxfp6: bool. Compress constant MatMul weights to MXFP6 E2M3, default is no compression.</span>
+<span class="sd">    :mxint8: bool. Compress Present/Past KV to MXINT8 using CustomIO config, default is False.</span>
 
 <span class="sd">    Return:</span>
 <span class="sd">        Path of the QPC files.</span>
-
-
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>

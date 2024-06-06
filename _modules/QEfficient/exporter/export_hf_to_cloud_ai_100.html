@@ -144,7 +144,6 @@
 
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    API to convert model to Bertstyle approach.</span>
-<span class="sd">    API to convert model to Bertstyle approach.</span>
 <span class="sd">    Bertstyle Approach:</span>
 <span class="sd">        1. No Prefill/Decode separably compiled.</span>
 <span class="sd">        2. No KV retention logic.</span>
@@ -153,6 +152,7 @@
 <span class="sd">    :param model_name: str. The name of the model to be used.</span>
 <span class="sd">    :model_class: type:. The class of the model.</span>
 <span class="sd">    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.</span>
+<span class="sd">    :onnx_dir_path: Path to save exported ONNX file.</span>
 <span class="sd">    :model_path: str. The path where the model is stored. If None, the model is loaded from the default location.</span>
 <span class="sd">    :hf_token: str. to access gated models.</span>
 <span class="sd">    :seq_len: int. The length of the sequence. Default is 128.</span>
@@ -163,7 +163,6 @@
 
 <span class="sd">    Return:</span>
 <span class="sd">        Path of exported ONNX file.</span>
-
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="c1"># todo (amitraj) Optimize the onnx export</span>
     <span class="k">if</span> <span class="n">onnx_dir_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
@@ -313,7 +312,6 @@
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    API change model for kv retention and export to ONNX.</span>
-<span class="sd">    API change model for kv retention and export to ONNX.</span>
 <span class="sd">    KV Style Approach:</span>
 <span class="sd">        1. This architecture is particularly suitable for autoregressive tasks</span>
 <span class="sd">        2. where sequence generation involves processing one token at a time</span>
@@ -353,7 +351,6 @@
     <span class="k">if</span> <span class="n">model_kv</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">model_kv</span><span class="p">,</span> <span class="s2">&quot;qeff_transformed&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
             <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span>
-                <span class="s2">&quot;Model is not transformed, Please first use QEfficient.transform to transform the model.&quot;</span>
                 <span class="s2">&quot;Model is not transformed, Please first use QEfficient.transform to transform the model.&quot;</span>
             <span class="p">)</span>
         <span class="n">model</span> <span class="o">=</span> <span class="n">model_kv</span>
@@ -556,7 +553,7 @@
 <span class="sd">    :model_class: type:. The class of the model.</span>
 <span class="sd">    :model_kv: torch.nn.Module. Transformed KV torch model to be used</span>
 <span class="sd">    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.</span>
-<span class="sd">    :onnx_dir_path: str. The path where the model is stored. If None, the model is loaded from the default location.</span>
+<span class="sd">    :onnx_dir_path: str. Path to store ONNx file</span>
 <span class="sd">    :hf_token: str. Huggingface token to access gated models. Default=None.</span>
 <span class="sd">    :seq_len: int. The length of the sequence. Default is 128.</span>
 <span class="sd">    :input_str: str. The input string to be processed.</span>
@@ -567,11 +564,8 @@
 
 <span class="sd">    Returns:</span>
 <span class="sd">       Path of exported ONNX file.</span>
-<span class="sd">       Path of exported ONNX file.</span>
-
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="n">model_kv</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">kv</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;For transformed model kv must be True&quot;</span><span class="p">)</span>
         <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;For transformed model kv must be True&quot;</span><span class="p">)</span>
 
     <span class="k">if</span> <span class="n">form_factor</span> <span class="o">==</span> <span class="s2">&quot;cloud&quot;</span><span class="p">:</span>
