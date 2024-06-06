@@ -13,7 +13,6 @@ import transformers
 from transformers.cache_utils import DynamicCache
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
-    CodeGenBlock,
     CodeGenForCausalLM,
     CodeGenModel,
 )
@@ -59,7 +58,6 @@ from .modeling_outputs import (
 )
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
-    QEffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
@@ -123,7 +121,6 @@ TransformersToQEffModulesDict = {
     MptForCausalLM: QEffMptForCausalLM,
     # CodeGen model layers
     CodeGenAttention: QEffCodeGenAttention,
-    CodeGenBlock: QEffCodeGenBlock,
     CodeGenModel: QEffCodeGenModel,
     CodeGenForCausalLM: QEffCodeGenForCausalLM,
     # Mistral model layers
