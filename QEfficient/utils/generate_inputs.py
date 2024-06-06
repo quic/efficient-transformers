@@ -21,7 +21,7 @@ class InputHandler:
         :param ctx_len: int
         """
         if tokenizer.padding_side != "left":
-            logger.warning(f"Please use padding_side='left' while initializing the tokenizer")
+            logger.warning("Please use padding_side='left' while initializing the tokenizer")
             tokenizer.padding_side = "left"
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token_id = tokenizer.eos_token_id
