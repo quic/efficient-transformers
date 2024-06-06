@@ -67,25 +67,24 @@ def get_tokenizer(model_name):
     :param model_name: str
     :return tokenizer
     """
-    model_hf_path = hf_download(repo_id=model_name, allow_patterns=["*.json"])
+    model_hf_path = hf_download(repo_id=model_name, allow_patterns=["*.json"], cache_dir=Constants.CACHE_DIR)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_hf_path, padding_side="right")
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
     return tokenizer
 
 
-def load_pytorch_model(model_name, model_class):
+def load_pytorch_model(model_config):
     """
     Function to load model from huggingface and transform to KV model
-    :param model_name: str
-    :param model_class: type
+    :param model_config: json object
     :return model_hf
     """
     model_path = hf_download(
-        repo_id=model_name, ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"]
+        repo_id=model_config["model_name"], ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"], cache_dir=Constants.CACHE_DIR
     )
-    model_hf = model_class.from_pretrained(
-        model_path, use_cache=True, num_hidden_layers=1, attn_implementation="eager"
+    model_hf = model_config["model_class"].from_pretrained(
+        model_path, use_cache=True, num_hidden_layers=model_config["n_layer"], attn_implementation="eager"
     )  # Run models for single layers only
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
@@ -136,7 +135,7 @@ def set_up(model_config, device_group=[0]):
         Constants.CTX_LEN,
     )
     mxfp6 = False
-    model_hf, params = load_pytorch_model(model_config["model_name"], model_config["model_class"])
+    model_hf, params = load_pytorch_model(model_config)
     qpc_gt_32gb = is_qpc_size_gt_32gb(params, mxfp6)
     try:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
@@ -159,14 +158,11 @@ def set_up(model_config, device_group=[0]):
         model_config["model_name"],
         model_config["model_class"],
     )
-    try:
-        ort_tokens = api_runner.run_kv_model_on_ort(
-            onnx_model_path,
-            model_config["n_layer"],
-            model_config["padding_shape"],
-        )
-    except Exception as e:
-        print(f"ONNX Model run on onnxrt failed due to : {e}")
+    ort_tokens = api_runner.run_kv_model_on_ort(
+        onnx_model_path,
+        model_config["n_layer"],
+        model_config["padding_shape"],
+    )
 
     setup_info = {}
     setup_info["model_config"] = model_config
