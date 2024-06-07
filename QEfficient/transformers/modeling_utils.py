@@ -43,6 +43,7 @@ from transformers.models.mixtral.modeling_mixtral import (
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 from transformers.models.phi3.modeling_phi3 import Phi3Attention, Phi3ForCausalLM, Phi3Model, Phi3RMSNorm
+from transformers.models.qwen2.modeling_qwen2 import Qwen2Attention, Qwen2ForCausalLM, Qwen2Model
 
 from QEfficient.customop import CustomRMSNormAIC
 from QEfficient.utils.logging_utils import logger
@@ -85,6 +86,7 @@ from .models.mixtral_moe.modeling_mixtral import (
 )
 from .models.mpt.modeling_mpt import QEffMptAttention, QEffMptBlock, QEffMptForCausalLM, QEFfMptModel
 from .models.phi3.modeling_phi3 import QEffPhi3Attention, QEffPhi3ForCausalLM, QEffPhi3Model
+from .models.qwen2.modeling_qwen2 import QEffQwen2Attention, QEffQwen2ForCausalLM, QEffQwen2Model
 
 # Define a named tuple for ModelArchitectures
 # Required for the Automation tool
@@ -97,7 +99,10 @@ my_architectures = ModelArchitectures(
         CodeGenForCausalLM.__name__,
         LlamaForCausalLM.__name__,
         MistralForCausalLM.__name__,
-        # MixtralForCausalLM.__name__,
+        MixtralForCausalLM.__name__,
+        Phi3ForCausalLM.__name__,
+        FalconForCausalLM.__name__,
+        Qwen2ForCausalLM.__name__,
     ]
 )
 
@@ -143,6 +148,10 @@ TransformersToQEffModulesDict = {
     FalconAttention: QEffFalconAttention,
     FalconForCausalLM: QEffFalconForCausalLM,
     FalconModel: QEffFalconModel,
+    # Qwen2 model layers
+    Qwen2Attention: QEffQwen2Attention,
+    Qwen2ForCausalLM: QEffQwen2ForCausalLM,
+    Qwen2Model: QEffQwen2Model,
 }
 
 
