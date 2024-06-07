@@ -1,0 +1,16 @@
+{
+    "model_name" : ["gpt2","gpt2-medium","TinyLlama/TinyLlama-1.1B-Chat-v1.0","Salesforce/codegen-350M-mono","wtang06/mpt-125m-c4"],
+    "num_cores" : [14],
+    "prompt" : ["My name is"],
+    "prompts_txt_file_path" : ["examples/prompts.txt"],
+    "aic_enable_depth_first" : [0],
+    "mos" : [-1],
+    "cache_dir" : [],
+    "hf_token" : ["NA"],
+    "batch_size" : [1],
+    "prompt_len" : [32],
+    "ctx_len" : [128],
+    "mxfp6" : [0],
+    "mxint8" : [0,1],
+    "device_group" : [[0]]
+}

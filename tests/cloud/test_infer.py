@@ -1,83 +1,75 @@
+
+# -----------------------------------------------------------------------------
+#
+# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
 import os
 import pytest
 import QEfficient
-
-from QEfficient.utils.constants import Constants, QEFF_MODELS_DIR
 from typing import List
 import QEfficient.cloud.infer
-from QEfficient.cloud.infer import main
+from QEfficient.cloud.infer import main as infer
 
-
-@pytest.mark.parametrize("model_name", ["gpt2"])
-@pytest.mark.parametrize("num_cores", [8])
-@pytest.mark.parametrize("prompt",["My name is"])
-@pytest.mark.parametrize("aic_enable_depth_first",[False])
-@pytest.mark.parametrize("mos",[-1])
-@pytest.mark.parametrize("cache_dir",[Constants.CACHE_DIR])
-@pytest.mark.parametrize("hf_token",[None])
-@pytest.mark.parametrize("batch_size",[1])
-@pytest.mark.parametrize("prompt_len",[32])
-@pytest.mark.parametrize("ctx_len",[128])
-@pytest.mark.parametrize("mxfp6",[False])
-@pytest.mark.parametrize("device_group",[[1]])
-@pytest.mark.run(after="test_execute")
-
-def test_main(setup, mocker):
+def test_infer(setup, mocker):
+    """
+    test_infer is a HL infer api testing function,
+    checks infer api code flow, object creations, internal api calls, internal returns.
+    ---------
+    Parameters:
+    setup: is a fixture defined in conftest.py module.
+    mocker: mocker is itself a pytest fixture, uses to mock or spy internal functions.
+    ---------
+    Ref: https://docs.pytest.org/en/7.1.x/how-to/fixtures.html
+    Ref: https://pytest-mock.readthedocs.io/en/latest/usage.html
+    """
     ms = setup
-
-    hf_download_spy = mocker.spy(QEfficient.cloud.infer,"hf_download")
+    get_qpc_dir_name_infer_spy = mocker.spy(QEfficient.cloud.infer,"get_qpc_dir_name_infer")
+    check_batch_size_and_num_prompts_spy = mocker.spy(QEfficient.cloud.infer,"check_batch_size_and_num_prompts")
+    load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.infer,"load_hf_tokenizer")
     qpc_exists_spy = mocker.spy(QEfficient.cloud.infer,"qpc_exists")
-    onnx_exists_spy = mocker.spy(QEfficient.cloud.infer,"onnx_exists")
-    transform_spy = mocker.spy(QEfficient,"transform")
-    qualcomm_efficient_converter_spy = mocker.spy(QEfficient.cloud.infer,"qualcomm_efficient_converter")
-    compile_spy = mocker.spy(QEfficient.cloud.infer,"compile")
-    latency_stats_kv_spy = mocker.spy(QEfficient.cloud.infer,"latency_stats_kv")
+    get_onnx_model_path_spy = mocker.spy(QEfficient.cloud.infer,"get_onnx_model_path")
+    compile_spy = mocker.spy(QEfficient,"compile")
+    cloud_ai_100_exec_kv_spy = mocker.spy(QEfficient.cloud.infer,"cloud_ai_100_exec_kv")
 
-    # AutoTokenizer_from_pretrained_spy = mocker.spy(QEfficient.cloud.infer,"AutoTokenizer.from_pretrained")
-    # AutoModelForCausalLM_from_pretrained_spy = mocker.spy(QEfficient.cloud.infer,"AutoModelForCausalLM.from_pretrained")
-
-    main(
+    infer(
             model_name = ms.model_name,
             num_cores = ms.num_cores,
             prompt = ms.prompt,
+            prompts_txt_file_path = ms.prompts_txt_file_path,
             aic_enable_depth_first = ms.aic_enable_depth_first,
             mos = ms.mos,
+            
             hf_token = ms.hf_token,
             batch_size = ms.batch_size,
             prompt_len = ms.prompt_len,
             ctx_len = ms.ctx_len,
             mxfp6 = ms.mxfp6,
-            device_group = ms.device_group)
-    
-    assert os.path.isdir(ms.model_hf_path())
-    assert os.path.isdir(ms.model_card_dir())
-    assert os.path.isdir(ms.qpc_dir_path())
-    assert os.path.isdir(ms.onnx_dir_path())
-    assert os.path.isfile(ms.onnx_model_path())
+            mxint8 = ms.mxint8,
+            device_group = ms.device_group,
+            )
+    # prompt fucntion check
+    get_qpc_dir_name_infer_spy.assert_called_once()
+    check_batch_size_and_num_prompts_spy.assert_called_once()
+    lst = check_batch_size_and_num_prompts_spy.spy_return
+    assert bool(lst) and isinstance(lst, list) and all(isinstance(elem, str) for elem in lst)
 
+    # tokenizer check
+    load_hf_tokenizer_spy.assert_called_once()
 
-    hf_download_spy.assert_called_once()
-
-    # if qpc already exist then only execute function will be run
-    if qpc_exists_spy.spy_return == True:
-        print("____________qpc exist_________________")
-        latency_stats_kv_spy.assert_called_once()
-    
-    # if onnx already exist then only compile and execute function will be run
-    elif onnx_exists_spy.spy_return == True:
-        print("____________onnx exist_________________")
-        compile_spy.assert_called_once()
-        assert compile_spy.spy_return == ms.generated_qpc_path()
-        latency_stats_kv_spy.assert_called_once()
-    
-    # otherwise every low lwvel api will be run
+    # qpc exist check
+    qpc_exists_spy.assert_called_once()
+    if qpc_exists_spy.spy_return[0] == True:
+        print("\n____________qpc exist_________________\n")
+        assert ms.qpc_dir_path() == qpc_exists_spy.spy_return[1]
+        assert os.path.isdir(ms.qpc_dir_path())
     else:
-        print("____________otherwise_________________")
-        transform_spy.assert_called_once()
-        qualcomm_efficient_converter_spy.assert_called_once()
-        assert qualcomm_efficient_converter_spy.spy_return == ms.base_path_and_generated_onnx_path()
+        get_onnx_model_path_spy.assert_called_once()
+        assert get_onnx_model_path_spy.spy_return == ms.onnx_model_path()
         compile_spy.assert_called_once()
-        assert compile_spy.spy_return == ms.generated_qpc_path()
-        latency_stats_kv_spy.assert_called_once()
+        assert compile_spy.spy_return == ms.qpc_dir_path()
+
+    cloud_ai_100_exec_kv_spy.assert_called_once()       
 
     
