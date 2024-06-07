@@ -36,8 +36,10 @@ def convert_to_cloud_bertstyle(
         1. No Prefill/Decode separably compiled.
         2. No KV retention logic.
         3. KV is every time computed for all the tokens until EOS/max_length.
+    
     ---------
-    :param model_name: str. The name of the model to be used.
+
+    :model_name: str. The name of the model to be used. 
     :model_class: type:. The class of the model.
     :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.
     :onnx_dir_path: Path to save exported ONNX file.
@@ -155,25 +157,27 @@ def convert_to_cloud_kvstyle(
 ) -> str:
     """
     API change model for kv retention and export to ONNX.
-    KV Style Approach:
+    KV Style Approach-
         1. This architecture is particularly suitable for autoregressive tasks
         2. where sequence generation involves processing one token at a time
         3. And contextual information from earlier tokens is crucial for predicting the next token.
-        4. The inclusion of a kV cache enhances the efficiency of the decoding process, making it more computationally efficient.
+        4. The inclusion of a kV cache enhances the efficiency of the decoding process, making it more computationally efficient.    
+    ---------
+    
+    :model_name: str. Hugging Face Model Card name, Example: [gpt2].
+    :model_class: type. The class of the model.
+    :model_kv: torch.nn.Module. Transformed KV torch model to be used
+    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.
+    :onnx_dir_path: str. The path where the model is stored. If None, the model is loaded from the default location.
+    :hf_token: str. Huggingface token to access gated models. Default=None.
+    :seq_len: int. The length of the sequence. Default=128.
+    :input_str: str. The input string to be processed. Default=Constants.input_str.
+    :return_path: bool. If True, return the base path for models and exported onnx model path. Default=Constants.seq_length.
+    :save_fp32_onnx: bool. If True, fp32 unclipped version of ONNX will be saved. Default is False.
+    :save_fp16_onnx: bool. If false, fp16 clipped version of ONNX will be deleted. Default is True.
 
-    Args:
-        model_name (str): The name of the model to be used.
-        model_class (type): The class of the model.
-        model_kv (torch.nn.Module): Transformed KV torch model to be used
-        tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
-        onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
-        hf_token (str): If hf_token passed, it will be used for authentication for gated. Default is None.
-        seq_len (int, optional): The length of the sequence. Default is 128.
-        input_str (str): The input string to be processed.
-        return_path (bool): If True, return the base path for models and exported onnx model path
-        save_fp32_onnx (bool); If True, fp32 unclipped version of ONNX will be saved. Default is False.
-        save_fp16_onnx (bool); If false, generation of fp32 clipped version of ONNX will be skipped. Default is True.
-
+    Returns:
+        Path of exported ONNX file.
     """
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
@@ -418,7 +422,8 @@ def qualcomm_efficient_converter(
     """
     API to convert torch Bert style and KV style model to ONNX.
     ---------
-    :param model_name: str. The name of the model to be used.
+    
+    :model_name: str. The name of the model to be used.
     :model_class: type:. The class of the model.
     :model_kv: torch.nn.Module. Transformed KV torch model to be used
     :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.

@@ -8,7 +8,7 @@
    :members:
    :show-inheritance:
 ```
-
+                  
 ## QEfficient.utils.generate_inputs module
 
 ```{eval-rst}
