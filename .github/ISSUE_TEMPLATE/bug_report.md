@@ -12,10 +12,8 @@ A clear and concise description of what the bug is.
 
 **To Reproduce**
 Steps to reproduce the behavior:
-1. Take model '...'
-2. Run command '....'
-3. Scroll down to '....'
-4. See error
+1. Command Used to run / script used 
+2. Error details
 
 **Expected behavior**
 A clear and concise description of what you expected to happen.
@@ -23,8 +21,9 @@ A clear and concise description of what you expected to happen.
 **Screenshots**
 If applicable, add screenshots to help explain your problem.
 
-**Desktop (please complete the following information):**
+**Environment (please complete the following information):**
  - OS: [e.g. iOS]
+ - Environment details with packages version etc.
  - Version/Branch/Commit ID [e.g. 22]
 
 **Additional context**
