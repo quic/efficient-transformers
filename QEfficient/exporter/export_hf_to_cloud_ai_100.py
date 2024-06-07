@@ -208,11 +208,11 @@ def convert_to_cloud_kvstyle(
         tokenizer.padding_side = "right"
 
     if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-        
-    # If Pad token is out of range of vocab size
-    if tokenizer.pad_token_id >= tokenizer.vocab_size:
-        tokenizer.pad_token_id = tokenizer.vocab_size - 1
+        # If Pad token is out of range of vocab size
+        if tokenizer.pad_token_id >= tokenizer.vocab_size:
+            tokenizer.pad_token_id = tokenizer.vocab_size - 1
+        else:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
 
     assert qeff_model.is_transformed, f"please pass the {qeff_model.__class__.__name__} after transform API"
 
