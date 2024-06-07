@@ -436,7 +436,7 @@ def qualcomm_efficient_converter(
     :save_fp32_onnx: bool. If True, fp32 unclipped version of ONNX will be saved. Default is False.
     :save_fp16_onnx: bool. If false, fp16 clipped version of ONNX will be deleted. Default is True.
 
-    Returns:
+    Returns:   
        Path of exported ONNX file.
     """
     # Get model_kv first
