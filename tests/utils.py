@@ -67,7 +67,7 @@ def get_tokenizer(model_name):
     :param model_name: str
     :return tokenizer
     """
-    model_hf_path = hf_download(repo_id=model_name, allow_patterns=["*.json"], cache_dir=Constants.CACHE_DIR)
+    model_hf_path = hf_download(repo_id=model_name, allow_patterns=["*.json"])
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_hf_path, padding_side="right")
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -81,7 +81,7 @@ def load_pytorch_model(model_config):
     :return model_hf
     """
     model_path = hf_download(
-        repo_id=model_config["model_name"], ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"], cache_dir=Constants.CACHE_DIR
+        repo_id=model_config["model_name"], ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"]
     )
     model_hf = model_config["model_class"].from_pretrained(
         model_path, use_cache=True, num_hidden_layers=model_config["n_layer"], attn_implementation="eager"

@@ -21,6 +21,10 @@
       "model_class": "Qwen2ForCausalLM"
     },
     {
+      "model_name": "bigcode/starcoder2-3b",
+      "model_class": "StarcodeForCausalLM"
+    },
+    {
       "model_name":"mistralai/Mixtral-8x7B-Instruct-v0.1",
       "model_class":"MixtralForCausalLM"
     }
