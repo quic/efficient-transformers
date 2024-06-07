@@ -9,8 +9,6 @@ from collections import namedtuple
 from typing import Dict, Type
 
 import torch.nn as nn
-import transformers
-from transformers.cache_utils import DynamicCache
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenForCausalLM,
@@ -47,7 +45,6 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
 
 from QEfficient.customop import CustomRMSNormAIC
 
-from .cache_utils import QEffDynamicCache
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QEffCodeGenForCausalLM,
