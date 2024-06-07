@@ -203,17 +203,6 @@ def convert_to_cloud_kvstyle(
     if not (save_fp32_onnx or save_fp16_onnx):
         raise AttributeError("save_fp32_onnx and save_fp16_onnx can't be false")
 
-    if tokenizer.padding_side != "right":
-        logger.warning("Please use padding_side='right' while initializing the tokenizer")
-        tokenizer.padding_side = "right"
-
-    if tokenizer.pad_token_id is None:
-        # If Pad token is out of range of vocab size
-        if tokenizer.pad_token_id >= tokenizer.vocab_size:
-            tokenizer.pad_token_id = tokenizer.vocab_size - 1
-        else:
-            tokenizer.pad_token_id = tokenizer.eos_token_id
-
     assert qeff_model.is_transformed, f"please pass the {qeff_model.__class__.__name__} after transform API"
 
     # Decide path for saving exported ONNX files.

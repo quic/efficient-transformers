@@ -128,6 +128,12 @@ def load_hf_tokenizer(model_name: str, cache_dir: Optional[str] = None, hf_token
     model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
     #FIXME(ochougul): should this always return left padded tokenizer?
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
+    if tokenizer.pad_token_id is None:
+        # If Pad token is out of range of vocab size
+        if tokenizer.pad_token_id >= tokenizer.vocab_size:
+            tokenizer.pad_token_id = tokenizer.vocab_size - 1
+        else:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
     return tokenizer
 
 
