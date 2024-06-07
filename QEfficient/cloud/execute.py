@@ -6,17 +6,14 @@
 # -----------------------------------------------------------------------------
 
 import argparse
-from typing import List
-
-from huggingface_hub import login
-from transformers import AutoTokenizer
+from typing import List, Optional
 
 from QEfficient.generation.text_generation_inference import (
     check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
     get_compilation_batch_size,
 )
-from QEfficient.utils import hf_download
+from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 
 
@@ -24,10 +21,10 @@ def main(
     model_name: str,
     qpc_path: str,
     device_group: List[int],
-    prompt: str = None,
-    prompts_txt_file_path: str = None,
-    cache_dir: str = Constants.CACHE_DIR,
-    hf_token: str = None,
+    prompt: Optional[str] = None,  # type: ignore
+    prompts_txt_file_path: Optional[str] = None,
+    cache_dir: Optional[str] = Constants.CACHE_DIR,
+    hf_token: Optional[str] = None,
 ):
     """
     APi() to run the Model on Cloud AI 100 Platform.
@@ -39,15 +36,10 @@ def main(
     :prompts_txt_file_path: str. Path to txt file for multiple input prompts
     """
 
-    if hf_token is not None:
-        login(hf_token)
-
-    # Download tokenizer along with model if it doesn't exist
-    model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, use_cache=True, padding_side="right")
+    tokenizer = load_hf_tokenizer(model_name, cache_dir, hf_token)
 
     batch_size = get_compilation_batch_size(qpc_path)
-    prompt = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
+    prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
 
     # Execute
     cloud_ai_100_exec_kv(

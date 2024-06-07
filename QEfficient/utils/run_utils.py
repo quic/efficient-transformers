@@ -52,7 +52,6 @@ class ApiRunner:
         :param model_hf: pytorch model
         :return generated_ids: numpy.ndarray - output tokens
         """
-
         input_ids = self.tokenizer.encode(self.prompt[0], return_tensors="pt")
 
         input_ids_len = len(input_ids[0])
@@ -70,6 +69,7 @@ class ApiRunner:
         print("Prompt:", repr(self.prompt))
         print("Completion:", repr(generated_text))
         return generated_ids
+
 
     def run_kv_model_on_pytorch(self, model, n_layer, padding_shape):
         """

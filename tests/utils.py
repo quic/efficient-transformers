@@ -10,12 +10,11 @@ import os
 import shutil
 import unittest
 
-import transformers
-
-import QEfficient
+from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.exporter.export_utils import compile_kv_model_on_cloud_ai_100
-from QEfficient.utils import hf_download
+from QEfficient.transformers.transform import transform_lm
+from QEfficient.utils import hf_download, load_hf_tokenizer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
 from QEfficient.utils.device_utils import get_available_device_id, is_multi_qranium_setup_available, is_qpc_size_gt_32gb
 from QEfficient.utils.run_utils import ApiRunner
@@ -67,10 +66,7 @@ def get_tokenizer(model_name):
     :param model_name: str
     :return tokenizer
     """
-    model_hf_path = hf_download(repo_id=model_name, allow_patterns=["*.json"])
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model_hf_path, padding_side="right")
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+    tokenizer = load_hf_tokenizer(model_name=model_name)
     return tokenizer
 
 
@@ -97,7 +93,7 @@ def transform_pt_model_with_qeff(model_hf):
     :param model_hf: pytorch model
     :return model_kv
     """
-    model_kv = QEfficient.transform(model_hf, type="Transformers", form_factor="cloud")
+    model_kv = transform_lm(model_hf)
     model_kv.eval()
     return model_kv
 
@@ -112,8 +108,7 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
     onnx_dir_path = os.path.join(QEFF_MODELS_DIR, model_name)
     base_path, onnx_model_path = qualcomm_efficient_converter(
         model_name=model_name,
-        model_class=model_class,
-        model_kv=model_kv,
+        model_kv=QEFFAutoModelForCausalLM(model=model_kv), # type: ignore
         tokenizer=tokenizer,
         onnx_dir_path=onnx_dir_path,
         kv=True,

@@ -5,12 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 import shutil
-import subprocess
 import sys
-from logging import error, info
+from logging import info
 from typing import Dict, List, Tuple, Union
 
 import numpy as np
@@ -101,8 +99,8 @@ def export_onnx(
             custom_opsets={"com.qti.aisw.onnx": 1},
         )
     except Exception as e:
-        error("Exporting to ONNX failed. {}".format(e))
-        return
+        raise RuntimeError("Exporting to ONNX failed. {}".format(e))
+        
 
     onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
@@ -303,7 +301,7 @@ def generate_input_files(
         fp.write(",".join(filenames))
         fp.write("\n")
 
-
+# FIXME(ochougul/quic-mamta): Remove duplication with APIRunner
 def run_model_on_ort(
     onnx_path: str,
     inputs: Dict[str, torch.Tensor],
@@ -349,94 +347,3 @@ def run_model_on_ort(
         print(f"Failed to run the onnx {onnx_path} model in onnx runtime:%s", e)
         print("\n=============================================================\n")
         return input_names, None
-
-
-def run_model_on_cloud_ai_100(
-    onnx_path: str,
-    onnx_symbol_defs: Dict[str, int] = {},
-    **kwargs,
-) -> bool:
-    args = [
-        "/opt/qti-aic/exec/qaic-exec",
-        f"-m={onnx_path}",
-        "-aic-hw",
-        "-aic-hw-version=2.0",
-    ]
-    for onnx_symbol, onnx_def in onnx_symbol_defs.items():
-        args.append(f"-onnx-define-symbol={onnx_symbol},{onnx_def}")
-    for k, v in kwargs.items():
-        k = k.replace("_", "-")
-        if isinstance(v, bool):
-            if v:
-                args.append(f"-{k}")
-            continue
-        args.append(f"-{k}={v}")
-
-    info("Running compiler:", " ".join(args))
-    result = subprocess.run(args)
-    return result.returncode == 0
-
-
-def compile_kv_model_on_cloud_ai_100(
-    onnx_path: str,
-    specializations_json: str,
-    num_cores: int,
-    base_path: str,
-    mxfp6: bool,
-    custom_io_path: str,
-    aic_enable_depth_first: bool,
-    mos: int = -1,
-    device_group: List[int] = [0],
-    **kwargs,
-) -> bool:
-    import shutil
-
-    aic_binary_dir = os.path.join(base_path, "qpcs")
-
-    if os.path.isdir(aic_binary_dir):
-        shutil.rmtree(aic_binary_dir)
-
-    assert os.path.isfile(
-        specializations_json
-    ), f"Please use 'from QEfficient.cloud.compile import main as compile', as {specializations_json} file was not found"
-    assert os.path.isfile(custom_io_path), f"{custom_io_path} file was not found!"
-    command = [
-        "/opt/qti-aic/exec/qaic-exec",
-        f"-m={onnx_path}",
-        "-aic-hw",
-        "-aic-hw-version=2.0",
-        f"-network-specialization-config={specializations_json}",
-        "-convert-to-fp16",
-        "-retained-state",
-        f"-aic-num-cores={num_cores}",
-        f"-custom-IO-list-file={custom_io_path}",
-        "-compile-only",
-        f"-aic-binary-dir={aic_binary_dir}",
-    ]
-    if mxfp6:
-        command.append("-mxfp6-matmul")
-    if mos > 0:
-        command.append(f"-mos={mos}")
-    if aic_enable_depth_first:
-        command.append("-aic-enable-depth-first")
-    if len(device_group) > 1:
-        mdp_ts_config = {
-            "connections": [{"devices": list(range(len(device_group))), "type": "p2p"}],
-            "partitions": [
-                {
-                    "name": "Partition0",
-                    "devices": [{"deviceId": device, "numCores": num_cores} for device in range(len(device_group))],
-                }
-            ],
-        }
-        mdp_ts_config_path = os.path.join(base_path, "mdp_ts_config.json")
-        with open(mdp_ts_config_path, "w") as file:
-            json.dump(mdp_ts_config, file, indent=4)
-        command.append(f"-mdp-load-partition-config={mdp_ts_config_path}")
-    print("Running AI 100 compiler:", " ".join(command))
-    result = subprocess.run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"Compilation Failed!!\n\nSTDOUT\n{result.stdout}\n\nSTDERR\n{result.stderr}")
-
-    print("\n===================== Compilation Done! =====================\n")
-    return result.returncode == 0, aic_binary_dir

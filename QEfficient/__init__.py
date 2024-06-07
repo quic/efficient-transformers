@@ -5,16 +5,11 @@
 #
 # -----------------------------------------------------------------------------
 
-import torch.nn as nn
-from QEfficient.transformers.modeling_utils import transform as transform_hf
+from QEfficient.compile.compile_helper import compile  # noqa: F401
+from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
+from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv  # noqa: F401
+from QEfficient.src import QEffAutoModel, QEFFAutoModelForCausalLM, QEFFCommonLoader  # noqa: F401
+from QEfficient.transformers.transform import transform  # noqa: F401
 
-
-def transform(model: nn.Module, type="Transformers", form_factor="cloud"):
-    """Low level apis in library
-    model : instance of nn.Module
-    type : Transformers | Diffusers, default : Transformers
-    """
-    if type == "Transformers":
-        return transform_hf(model, form_factor)
-    else:
-        raise NotImplementedError
+# Users can use QEfficient.export for exporting models to ONNX
+export = qualcomm_efficient_converter
