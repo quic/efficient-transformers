@@ -13,19 +13,20 @@ class QEffFormatter(logging.Formatter):
     Formatter class used to set colors for printing different logging levels of messages on console.
     """
 
-    grey = "\x1b[38;20m"
-    yellow = "\x1b[33;20m"
-    red = "\x1b[31;20m"
-    bold_red = "\x1b[31;1m"
-    reset = "\x1b[0m"
-    format = "%(levelname)s - %(name)s - %(message)s  (%(filename)s:%(lineno)d)"
+    cyan: str = "\x1b[38;5;14m"
+    yellow: str = "\x1b[33;20m"
+    red: str = "\x1b[31;20m"
+    bold_red: str = "\x1b[31;1m"
+    reset: str = "\x1b[0m"
+    common_format: str = "%(levelname)s - %(name)s - %(message)s" # type: ignore
+    format_with_line_info = "%(levelname)s - %(name)s - %(message)s  (%(filename)s:%(lineno)d)" # type: ignore
 
     FORMATS = {
-        logging.DEBUG: grey + format + reset,
-        logging.INFO: grey + format + reset,
-        logging.WARNING: yellow + format + reset,
-        logging.ERROR: red + format + reset,
-        logging.CRITICAL: bold_red + format + reset,
+        logging.DEBUG: cyan + format_with_line_info + reset,
+        logging.INFO: cyan + common_format + reset,
+        logging.WARNING: yellow + common_format + reset,
+        logging.ERROR: red + format_with_line_info + reset,
+        logging.CRITICAL: bold_red + format_with_line_info + reset,
     }
 
     def format(self, record):
@@ -45,7 +46,7 @@ def create_logger() -> logging.Logger:
 
     # create console handler and set level to debug
     ch = logging.StreamHandler()
-    ch.setLevel(logging.WARNING)
+    ch.setLevel(logging.INFO)
     # define formatter
     ch.setFormatter(QEffFormatter())
 

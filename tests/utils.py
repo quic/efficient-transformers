@@ -5,18 +5,34 @@
 #
 # -----------------------------------------------------------------------------
 
+import functools
 import os
 import shutil
+import unittest
 
-import transformers
-
-import QEfficient
+from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.exporter.export_utils import compile_kv_model_on_cloud_ai_100
-from QEfficient.utils import hf_download
+from QEfficient.transformers.transform import transform_lm
+from QEfficient.utils import hf_download, load_hf_tokenizer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
-from QEfficient.utils.device_utils import get_available_device_id
+from QEfficient.utils.device_utils import get_available_device_id, is_multi_qranium_setup_available, is_qpc_size_gt_32gb
 from QEfficient.utils.run_utils import ApiRunner
+
+
+def skip_if_mq_not_enabled(test_method):
+    """
+    Wrapper function to skip test if MQ setup not enabled
+    """
+
+    @functools.wraps(test_method)
+    def wrapper(self):
+        if self.setup_info["qpc_gt_32gb"] and (not is_multi_qranium_setup_available()):
+            raise unittest.SkipTest("Skip because MQ set up not available")
+
+        return test_method(self)
+
+    return wrapper
 
 
 def prepare_work_dir(work_dir):
@@ -50,10 +66,7 @@ def get_tokenizer(model_name):
     :param model_name: str
     :return tokenizer
     """
-    model_hf_path = hf_download(repo_id=model_name, allow_patterns=["*.json"])
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model_hf_path, padding_side="left")
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+    tokenizer = load_hf_tokenizer(model_name=model_name)
     return tokenizer
 
 
@@ -67,9 +80,12 @@ def load_pytorch_model(model_name, model_class):
     model_path = hf_download(
         repo_id=model_name, ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"]
     )
-    model_hf = model_class.from_pretrained(model_path, use_cache=True)
+    model_hf = model_class.from_pretrained(
+        model_path, use_cache=True, num_hidden_layers=1
+    )  # Run models for single layers only
+    params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
-    return model_hf
+    return model_hf, params
 
 
 def transform_pt_model_with_qeff(model_hf):
@@ -78,7 +94,7 @@ def transform_pt_model_with_qeff(model_hf):
     :param model_hf: pytorch model
     :return model_kv
     """
-    model_kv = QEfficient.transform(model_hf, type="Transformers", form_factor="cloud")
+    model_kv = transform_lm(model_hf)
     model_kv.eval()
     return model_kv
 
@@ -93,8 +109,7 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
     onnx_dir_path = os.path.join(QEFF_MODELS_DIR, model_name)
     base_path, onnx_model_path = qualcomm_efficient_converter(
         model_name=model_name,
-        model_class=model_class,
-        model_kv=model_kv,
+        model_kv=QEFFAutoModelForCausalLM(model=model_kv), # type: ignore
         tokenizer=tokenizer,
         onnx_dir_path=onnx_dir_path,
         kv=True,
@@ -103,7 +118,7 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
     return base_path, onnx_model_path
 
 
-def set_up(model_config):
+def set_up(model_config, device_group=[0]):
     """
     Set up function to set up the test environment for TestQEfficientModel class
     :param None
@@ -115,8 +130,9 @@ def set_up(model_config):
         Constants.PROMPT_LEN,
         Constants.CTX_LEN,
     )
-
-    model_hf = load_pytorch_model(model_config["model_name"], model_config["model_class"])
+    mxfp6 = False
+    model_hf, params = load_pytorch_model(model_config["model_name"], model_config["model_class"])
+    qpc_gt_32gb = is_qpc_size_gt_32gb(params, mxfp6)
     try:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
     except Exception as e:
@@ -138,18 +154,19 @@ def set_up(model_config):
         model_config["model_name"],
         model_config["model_class"],
     )
-    try:
-        ort_tokens = api_runner.run_kv_model_on_ort(
-            onnx_model_path,
-            model_config["n_layer"],
-            model_config["padding_shape"],
-        )
-    except Exception as e:
-        print(f"ONNX Model run on onnxrt failed due to : {e}")
+
+    ort_tokens = api_runner.run_kv_model_on_ort(
+        onnx_model_path,
+        model_config["n_layer"],
+        model_config["padding_shape"],
+    )
+
 
     setup_info = {}
     setup_info["model_config"] = model_config
+    setup_info["device_group"] = device_group
     setup_info["api_runner"] = api_runner
+    setup_info["qpc_gt_32gb"] = qpc_gt_32gb
     setup_info["pytorch_hf_tokens"] = pytorch_hf_tokens
     setup_info["pytorch_kv_tokens"] = pytorch_kv_tokens
     setup_info["base_path"] = base_path
@@ -175,7 +192,7 @@ def get_cloud_ai_100_tokens(setup_info):
             mxfp6=False,
             custom_io_path=os.path.join(setup_info["base_path"], "custom_io_fp16.yaml"),
             aic_enable_depth_first=False,
-            device_group=[0],
+            device_group=setup_info["device_group"],
         )
         from QEfficient.generation.cloud_infer import QAICInferenceSession
 

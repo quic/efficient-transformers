@@ -98,15 +98,16 @@ def latency_stats_bertstyle(
 
 
 def get_compilation_batch_size(qpc_path: str):
-    qpc_base_path = os.path.dirname(qpc_path)
+    qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
     specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
+    logger.info(f"specialization_file_path : {specialization_file_path}")
     with open(specialization_file_path, "r") as file:
         data = json.load(file)
     compilation_batch_size = int(data["specializations"][0]["batch_size"])
     return compilation_batch_size
 
 
-def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size):
+def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size) -> List[str]:
     assert (
         prompt is not None or prompts_txt_file_path is not None
     ), "Please pass atleast one argument either using --prompt or --prompts_txt_file_path"
