@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 import transformers
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
+from QEfficient.utils._utils import padding_check_and_fix
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.logging_utils import logger
@@ -70,8 +71,10 @@ def latency_stats_bertstyle(
 ):
     session = QAICInferenceSession(qpc, device_id)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+    
+    #check and fix tokenizer viability
+    padding_check_and_fix(tokenizer)
+    
     inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
     next_token_id = inputs["input_ids"][0, -1]
     cur_len = inputs["attention_mask"].sum().item()

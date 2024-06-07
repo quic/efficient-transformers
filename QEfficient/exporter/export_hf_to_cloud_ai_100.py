@@ -17,7 +17,7 @@ from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generat
 from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
 from QEfficient.src.base import QEFFBaseModel
 from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
-from QEfficient.utils._utils import load_hf_tokenizer
+from QEfficient.utils._utils import load_hf_tokenizer,padding_check_and_fix
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
 
@@ -55,12 +55,8 @@ def convert_to_cloud_bertstyle(
     if not (save_fp32_onnx or save_fp16_onnx):
         raise AttributeError("save_fp32_onnx and save_fp16_onnx can't be false")
 
-    if tokenizer.padding_side != "left":
-        logger.warning("Please use padding_side='left' while initializing the tokenizer")
-        tokenizer.padding_side = "left"
-
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+    #check and fix tokenizer viability
+    padding_check_and_fix(tokenizer)
 
     # Decide path for saving exported ONNX files.
     fp32_model_name, fp16_model_name = export_bertstyle_model_to_onnx(
@@ -436,12 +432,8 @@ def export_lm_model_for_cloud(
     if not (save_fp32_onnx or save_fp16_onnx):
         raise AttributeError("save_fp32_onnx and save_fp16_onnx can't be false")
 
-    if tokenizer.padding_side != "right":
-        logger.warning("Please use padding_side='right' while initializing the tokenizer")
-        tokenizer.padding_side = "right"
-
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+     # If Pad token is out of range of vocab size
+    padding_check_and_fix(tokenizer)
 
     if qeff_model.is_transformed:
         fp32_model_name, fp16_model_name = export_kvstyle_transformed_model_to_onnx(
