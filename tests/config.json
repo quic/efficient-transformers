@@ -31,6 +31,10 @@
     {
       "model_name": "Felladrin/Minueza-32M-Base",
       "model_class": "MistralForCausalLM"
+    },
+    {
+      "model_name":"mistralai/Mixtral-8x7B-Instruct-v0.1",
+      "model_class":"MixtralForCausalLM"
     }
   ]
 }
