@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-from QEfficient.utils.logging_utils import logger
 from typing import Union
+
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.utils._utils import (  # noqa: F401
@@ -16,6 +16,7 @@ from QEfficient.utils._utils import (  # noqa: F401
     onnx_exists,
     qpc_exists,
 )
+from QEfficient.utils.logging_utils import logger
 
 
 def padding_check_and_fix(

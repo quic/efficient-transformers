@@ -10,9 +10,6 @@ import onnxruntime
 import torch
 import onnx
 
-from QEfficient.utils.logging_utils import logger
-from QEfficient.utils import padding_check_and_fix
-
 from .generate_inputs import InputHandler
 
 
@@ -34,8 +31,6 @@ class ApiRunner:
         :param prompt_len: int
         :param ctx_len: int
         """
-        #check and fix tokenizer viability
-        padding_check_and_fix(tokenizer)
         
         self.tokenizer = tokenizer
         self.prompt = prompt

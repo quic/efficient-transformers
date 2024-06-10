@@ -12,9 +12,10 @@ import requests
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
+
+from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
-from QEfficient.utils import padding_check_and_fix
 
 
 def login_and_download_hf_lm(model_name, *args, **kwargs):

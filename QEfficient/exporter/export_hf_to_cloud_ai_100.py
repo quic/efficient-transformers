@@ -8,15 +8,17 @@
 import os
 import shutil
 from typing import Optional, Tuple, Union
+
 import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
+
 import QEfficient
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
 from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
 from QEfficient.src.base import QEFFBaseModel
 from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
-from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils import padding_check_and_fix
+from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
 
@@ -54,9 +56,6 @@ def convert_to_cloud_bertstyle(
     if not (save_fp32_onnx or save_fp16_onnx):
         raise AttributeError("save_fp32_onnx and save_fp16_onnx can't be false")
 
-    #check and fix tokenizer viability
-    padding_check_and_fix(tokenizer)
-
     # Decide path for saving exported ONNX files.
     fp32_model_name, fp16_model_name = export_bertstyle_model_to_onnx(
         model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len, save_fp32_onnx, save_fp16_onnx
@@ -77,10 +76,12 @@ def export_bertstyle_model_to_onnx(
     os.makedirs(onnx_dir_path, exist_ok=True)
 
     input_str = Constants.input_str
+    
+    #check and fix tokenizer viability
+    padding_check_and_fix(tokenizer)
+    
     # Preprocess inputs
     if seq_len > 0:
-        if tokenizer.pad_token_id is None:
-            tokenizer.pad_token_id = tokenizer.eos_token_id
         inputs = tokenizer(
             input_str,
             return_tensors="pt",
@@ -213,20 +214,15 @@ def convert_to_cloud_kvstyle(
             return onnx_dir_path, os.path.join(onnx_dir_path, f"{fp32_model_name}.onnx")
 
 
-def export_kvstyle_transformed_model_to_onnx(
-    model_name: str,
-    transformed_model: torch.nn.Module,
-    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-    onnx_dir_path: str,
-    seq_len: int,
-    save_fp32_onnx: Optional[bool] = False,
-    save_fp16_onnx: Optional[bool] = True,
-):
-    tokenizer.pad_token_id = tokenizer.eos_token_id if tokenizer.pad_token_id is None else tokenizer.pad_token_id
+def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model: torch.nn.Module, tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+                                          onnx_dir_path: str, seq_len: int, save_fp32_onnx: Optional[bool] = False, save_fp16_onnx: Optional[bool] = True):  
 
     # Disabling requires_grad on all parameters
     for j, p in enumerate(transformed_model.parameters()):
         p.requires_grad_(False)
+
+    #check and fix tokenizer viability
+    padding_check_and_fix(tokenizer)
 
     # Preprocess inputs
     # Build inputs for prefill
@@ -430,9 +426,6 @@ def export_lm_model_for_cloud(
 
     if not (save_fp32_onnx or save_fp16_onnx):
         raise AttributeError("save_fp32_onnx and save_fp16_onnx can't be false")
-
-     # If Pad token is out of range of vocab size
-    padding_check_and_fix(tokenizer)
 
     if qeff_model.is_transformed:
         fp32_model_name, fp16_model_name = export_kvstyle_transformed_model_to_onnx(
