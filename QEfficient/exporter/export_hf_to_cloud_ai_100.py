@@ -8,16 +8,15 @@
 import os
 import shutil
 from typing import Optional, Tuple, Union
-
 import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
-
 import QEfficient
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
 from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
 from QEfficient.src.base import QEFFBaseModel
 from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
-from QEfficient.utils._utils import load_hf_tokenizer,padding_check_and_fix
+from QEfficient.utils._utils import load_hf_tokenizer
+from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
 

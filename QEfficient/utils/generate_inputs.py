@@ -7,9 +7,7 @@
 
 import numpy as np
 import torch
-
-from QEfficient.utils.logging_utils import logger
-from QEfficient.utils._utils import padding_check_and_fix
+from QEfficient.utils import padding_check_and_fix
 
 
 class InputHandler:
