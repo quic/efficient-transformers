@@ -1,11 +1,11 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
 
-"""PyTorch Mistral model."""
+"""PyTorch Starcoder2 model."""
 
 import math
 from typing import List, Optional, Tuple, Union
@@ -19,14 +19,11 @@ from transformers.modeling_attn_mask_utils import (
     _prepare_4d_causal_attention_mask,
     _prepare_4d_causal_attention_mask_for_sdpa,
 )
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPast,
-    CausalLMOutputWithPast,
-)
-from transformers.models.mistral.modeling_mistral import (
-    MistralAttention,
-    MistralForCausalLM,
-    MistralModel,
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from transformers.models.starcoder2.modeling_starcoder2 import (
+    Starcoder2Attention,
+    Starcoder2ForCausalLM,
+    Starcoder2Model,
     apply_rotary_pos_emb,
     logger,
     repeat_kv,
@@ -35,11 +32,13 @@ from transformers.models.mistral.modeling_mistral import (
 from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
 
 
-class QEffMistralAttention(MistralAttention):
+class QEffStarcoder2Attention(Starcoder2Attention):
+    """Multi-headed attention from 'Attention Is All You Need' paper"""
+
     """
-    Copied from MistralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
+    Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/starcoder2/modeling_starcoder2.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
     """
 
     def forward(
@@ -74,7 +73,8 @@ class QEffMistralAttention(MistralAttention):
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "position_ids": position_ids}  # Specific to RoPE models
+            # Update the cache_kwargs with position_ids for Cloud AI 100
+            cache_kwargs = {"sin": sin, "cos": cos, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         # repeat k/v heads if n_kv_heads < n_heads
@@ -98,7 +98,7 @@ class QEffMistralAttention(MistralAttention):
             attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
 
         # upcast attention to fp32
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(value_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
 
@@ -112,6 +112,7 @@ class QEffMistralAttention(MistralAttention):
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
 
         attn_output = self.o_proj(attn_output)
+        attn_output = nn.functional.dropout(attn_output, p=self.residual_dropout, training=self.training)
 
         if not output_attentions:
             attn_weights = None
@@ -119,11 +120,12 @@ class QEffMistralAttention(MistralAttention):
         return attn_output, attn_weights, past_key_value
 
 
-class QEffMistralModel(MistralModel):
+class QEffStarcoder2Model(Starcoder2Model):
     """
-    Copied from MistralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
+    Copied from Starcoder2: https://github.com/huggingface/transformers/blob/main/src/transformers/models/starcoder2/modeling_starcoder2.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
+    - update causal attention mask
     """
 
     def forward(
@@ -155,7 +157,6 @@ class QEffMistralModel(MistralModel):
             batch_size, seq_length, _ = inputs_embeds.shape
         else:
             raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
-
         if self.gradient_checkpointing and self.training:
             if use_cache:
                 logger.warning_once(
@@ -188,7 +189,7 @@ class QEffMistralModel(MistralModel):
             if is_padding_right:
                 raise ValueError(
                     "You are attempting to perform batched generation with padding_side='right'"
-                    " this may lead to unexpected behaviour for Flash Attention version of Mistral. Make sure to "
+                    " this may lead to unexpected behaviour for Flash Attention version of Starcoder2. Make sure to "
                     " call `tokenizer.padding_side  = 'left'` before tokenizing the input. "
                 )
 
@@ -206,13 +207,8 @@ class QEffMistralModel(MistralModel):
                 sliding_window=self.config.sliding_window,
             )
         elif attention_mask is None:
-            # Causal mask with # --- Rolling buffer --- and # Sliding window mask
-            # Change for Cloud AI 100 (vbaddi)
-            attention_mask = _update_causal_mask(
-                position_ids=position_ids,
-                target_length=past_key_values_length,
-                sliding_window=self.config.sliding_window,
-            )
+            # update attention mask for Cloud Ai 100
+            attention_mask = _update_causal_mask(position_ids, past_key_values_length, self.config.sliding_window)
         else:
             # 4d mask is passed through the layers
             attention_mask = _prepare_4d_causal_attention_mask(
@@ -224,6 +220,7 @@ class QEffMistralModel(MistralModel):
             )
 
         hidden_states = inputs_embeds
+        hidden_states = nn.functional.dropout(hidden_states, p=self.embedding_dropout, training=self.training)
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
@@ -282,11 +279,12 @@ class QEffMistralModel(MistralModel):
         )
 
 
-class QEffMistralForCausalLM(MistralForCausalLM):
+class QEffStarcoder2ForCausalLM(Starcoder2ForCausalLM):
     """
-    Copied from MistralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
+    Copied from Starcoder2: https://github.com/huggingface/transformers/blob/main/src/transformers/models/starcoder2/modeling_starcoder2.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
+    - update the hidden_states, and fix for onnx model
     """
 
     def forward(
@@ -314,10 +312,10 @@ class QEffMistralForCausalLM(MistralForCausalLM):
         Example:
 
         ```python
-        >>> from transformers import AutoTokenizer, MistralForCausalLM
+        >>> from transformers import AutoTokenizer, Starcoder2ForCausalLM
 
-        >>> model = MistralForCausalLM.from_pretrained("mistralai/Mistral-7B-v0.1")
-        >>> tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1")
+        >>> model = Starcoder2ForCausalLM.from_pretrained("bigcode/starcoder2-7b_16k")
+        >>> tokenizer = AutoTokenizer.from_pretrained("bigcode/starcoder2-7b_16k")
 
         >>> prompt = "Hey, are you conscious? Can you talk to me?"
         >>> inputs = tokenizer(prompt, return_tensors="pt")
@@ -347,9 +345,9 @@ class QEffMistralForCausalLM(MistralForCausalLM):
             return_dict=return_dict,
         )
 
-        # Cast to int32 to avoid ONNXRT issue
-        logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
+        # Cast to INT32 to avoid issue while running in ONNXRT
+        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
 

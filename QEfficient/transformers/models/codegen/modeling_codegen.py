@@ -11,59 +11,25 @@ import torch
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
+from transformers.cache_utils import DynamicCache
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
-    CodeGenBlock,
     CodeGenForCausalLM,
     CodeGenModel,
-    create_sinusoidal_positions,
+    apply_rotary_pos_emb,
     logger,
-    rotate_every_two,
 )
 
-from QEfficient.transformers.modeling_attn_mask_utils import QEffAttentionMaskConverter
-from QEfficient.transformers.modeling_outputs import QEffBaseModelOutputWithPast, QEffCausalLMOutputWithPast
-
-
-# Copied from transformers.models.gptj.modeling_gptj.apply_rotary_pos_emb
-def apply_rotary_pos_emb(tensor: torch.Tensor, sin: torch.Tensor, cos: torch.Tensor) -> torch.Tensor:
-    *sin_shape, sin_last_shape = sin.shape
-    sin = sin.reshape(-1, 1).repeat(1, 2).reshape(*sin_shape, 1, 2 * sin_last_shape)
-    *cos_shape, cos_last_shape = cos.shape
-    cos = cos.reshape(-1, 1).repeat(1, 2).reshape(*cos_shape, 1, 2 * cos_last_shape)
-    return (tensor * cos) + (rotate_every_two(tensor) * sin)
+from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
 
 
 class QEffCodeGenAttention(CodeGenAttention):
     """
     Copied from CodeGenAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/codegen/modeling_codegen.py
     The only differences are:
-    - Remove the causal mask register function which is tensor of max sequence length
+    - add new args position idx for the cache_kwargs for kv retention
     """
-
-    def __init__(self, config):
-        super().__init__()
-
-        max_positions = config.max_position_embeddings
-
-        self.attn_dropout = nn.Dropout(config.attn_pdrop)
-        self.resid_dropout = nn.Dropout(config.resid_pdrop)
-
-        self.embed_dim = config.hidden_size
-        self.num_attention_heads = config.num_attention_heads
-        self.head_dim = self.embed_dim // self.num_attention_heads
-        if self.head_dim * self.num_attention_heads != self.embed_dim:
-            raise ValueError(
-                f"embed_dim must be divisible by num_attention_heads (got `embed_dim`: {self.embed_dim} and"
-                f" `num_attention_heads`: {self.num_attention_heads})."
-            )
-        self.scale_attn = torch.sqrt(torch.tensor(self.head_dim, dtype=torch.float32)).to(torch.get_default_dtype())
-        self.qkv_proj = nn.Linear(self.embed_dim, self.embed_dim * 3, bias=False)
-
-        self.out_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
-        self.rotary_dim = config.rotary_dim
-        pos_embd_dim = self.rotary_dim or self.embed_dim
-        self.embed_positions = create_sinusoidal_positions(max_positions, pos_embd_dim)
 
     def _attn(
         self,
@@ -106,7 +72,6 @@ class QEffCodeGenAttention(CodeGenAttention):
         self,
         hidden_states: Optional[torch.FloatTensor],
         layer_past: Optional[Tuple[torch.Tensor]] = None,
-        cache_index: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
@@ -116,11 +81,6 @@ class QEffCodeGenAttention(CodeGenAttention):
         Tuple[torch.Tensor, Tuple[torch.Tensor]],
         Optional[Tuple[torch.Tensor, Tuple[torch.Tensor], Tuple[torch.Tensor, ...]]],
     ]:
-        """
-        Copied from CodeGenAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/codegen/modeling_codegen.py
-        The only differences are:
-        - add new args cache idx for the kv retention
-        """
         qkv = self.qkv_proj(hidden_states)
         # TODO(enijkamp): factor out number of logical TPU-v4 cores or make forward pass agnostic
         mp_num = 4
@@ -162,13 +122,13 @@ class QEffCodeGenAttention(CodeGenAttention):
         query = query.permute(0, 2, 1, 3)
 
         if layer_past is not None:
-            past_key = layer_past[0]
-            past_value = layer_past[1]
-            kv_indices = torch.arange(key.shape[2]) + cache_index
-            past_key[:, :, kv_indices] = key
-            past_value[:, :, kv_indices] = value
-            key = past_key
-            value = past_value
+            # Update the cache_kwargs with position_ids for Cloud AI 100
+            past_key_value = layer_past
+            cache_kwargs = {"position_ids": position_ids}
+            pkv = DynamicCache()
+            pkv.key_cache.append(past_key_value[0])
+            pkv.value_cache.append(past_key_value[1])
+            key, value = pkv.update(key, value, 0, cache_kwargs)
 
         if use_cache is True:
             # Note that this cast is quite ugly, but is not implemented before ROPE as k_rot in the original codebase is always in fp32.
@@ -191,65 +151,18 @@ class QEffCodeGenAttention(CodeGenAttention):
         return outputs  # a, present, (attentions)
 
 
-class QEffCodeGenBlock(CodeGenBlock):
-    """
-    Copied from CodeGenBlock: https://github.com/huggingface/transformers/blob/main/src/transformers/models/codegen/modeling_codegen.py
-    The only differences are:
-    - add new args cache idx for the kv retention
-    """
-
-    def forward(
-        self,
-        hidden_states: Optional[torch.FloatTensor],
-        layer_past: Optional[Tuple[torch.Tensor]] = None,
-        cache_index: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = False,
-        output_attentions: Optional[bool] = False,
-    ) -> Union[
-        Tuple[torch.Tensor],
-        Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor, ...]]],
-    ]:
-        residual = hidden_states
-        hidden_states = self.ln_1(hidden_states)
-        attn_outputs = self.attn(
-            hidden_states=hidden_states,
-            layer_past=layer_past,
-            cache_index=cache_index,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-        )
-        attn_output = attn_outputs[0]  # output_attn: a, present, (attentions)
-        outputs = attn_outputs[1:]
-
-        feed_forward_hidden_states = self.mlp(hidden_states)
-        hidden_states = attn_output + feed_forward_hidden_states + residual
-
-        if use_cache:
-            outputs = (hidden_states,) + outputs
-        else:
-            outputs = (hidden_states,) + outputs[1:]
-
-        return outputs  # hidden_states, present, (attentions)
-
-
 class QEffCodeGenModel(CodeGenModel):
     """
     Copied from CodeGenModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/codegen/modeling_codegen.py
     The only differences are:
-    - add new args cache idx for the kv retention
+     - add new args position idx for the cache_kwargs for kv retention
+     - update causal attention mask
     """
 
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
-        cache_index: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -259,7 +172,7 @@ class QEffCodeGenModel(CodeGenModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, QEffBaseModelOutputWithPast]:
+    ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -273,8 +186,10 @@ class QEffCodeGenModel(CodeGenModel):
             self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
             input_shape = input_ids.size()
             input_ids = input_ids.view(-1, input_shape[-1])
+            batch_size = input_ids.shape[0]
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
+            batch_size = inputs_embeds.shape[0]
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
@@ -290,27 +205,32 @@ class QEffCodeGenModel(CodeGenModel):
             past_length = past_key_values[0][0].size(-2)
 
         if position_ids is None:
-            position_ids = torch.arange(
-                past_length,
-                input_shape[-1] + past_length,
-                dtype=torch.long,
-                device=device,
-            )
+            position_ids = torch.arange(past_length, input_shape[-1] + past_length, dtype=torch.long, device=device)
             position_ids = position_ids.unsqueeze(0)
 
         # Attention mask.
-        seq_len = input_shape[-1]
-        if cache_index is not None:
-            attention_mask[:, cache_index + seq_len - 1] = True
-            attention_mask_retained = attention_mask
+        if attention_mask is not None:
+            if batch_size <= 0:
+                raise ValueError("batch_size has to be defined and > 0")
+            attention_mask = attention_mask.view(batch_size, -1)
+            # We create a 3D attention mask from a 2D tensor mask.
+            # Sizes are [batch_size, 1, 1, to_seq_length]
+            # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
+            # this attention mask is more simple than the triangular masking of causal attention
+            # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
+            attention_mask = attention_mask[:, None, None, :]
 
-        attention_mask = QEffAttentionMaskConverter(True).to_4d(
-            attention_mask,
-            seq_len,
-            torch.float32,
-            past_length if past_length > 0 else seq_len,
-            cache_index,
-        )
+            # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+            # masked positions, this operation will create a tensor which is 0.0 for
+            # positions we want to attend and the dtype's smallest value for masked positions.
+            # Since we are adding it to the raw scores before the softmax, this is
+            # effectively the same as removing these entirely.
+            attention_mask = attention_mask.to(dtype=self.dtype)  # fp16 compatibility
+            attention_mask = (1.0 - attention_mask) * torch.finfo(self.dtype).min
+
+        elif attention_mask is None:
+            # 4d mask is passed through the layers
+            attention_mask = _update_causal_mask(position_ids=position_ids, target_length=past_length)
 
         # Prepare head mask if needed
         # 1.0 in head_mask indicate we keep the head
@@ -361,7 +281,6 @@ class QEffCodeGenModel(CodeGenModel):
                 outputs = block(
                     hidden_states=hidden_states,
                     layer_past=layer_past,
-                    cache_index=cache_index,
                     attention_mask=attention_mask,
                     position_ids=position_ids,
                     head_mask=head_mask[i],
@@ -384,23 +303,13 @@ class QEffCodeGenModel(CodeGenModel):
             all_hidden_states = all_hidden_states + (hidden_states,)
 
         if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    presents,
-                    all_hidden_states,
-                    all_self_attentions,
-                ]
-                if v is not None
-            )
+            return tuple(v for v in [hidden_states, presents, all_hidden_states, all_self_attentions] if v is not None)
 
-        return QEffBaseModelOutputWithPast(
+        return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=presents,
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
-            attention_mask_RetainedState=attention_mask_retained if cache_index is not None else None,
         )
 
 
@@ -415,7 +324,6 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
-        cache_index: Optional[torch.BoolTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -426,7 +334,7 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, QEffCausalLMOutputWithPast]:
+    ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
             Labels for language modeling. Note that the labels **are shifted** inside the model, i.e. you can set
@@ -438,7 +346,6 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,
-            cache_index=cache_index,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
@@ -449,12 +356,15 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        hidden_states = transformer_outputs[0]
 
         # make sure sampling in fp16 works correctly and
         # compute loss in fp32 to match with mesh-tf version
         # https://github.com/EleutherAI/gpt-neo/blob/89ce74164da2fb16179106f54e2269b5da8db333/models/gpt2/gpt2.py#L179
-        lm_logits = self.lm_head(hidden_states[:, -1:]).to(torch.float32)
+
+        # Cast to INT32 to avoid issue while running in ONNXRT
+        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = transformer_outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        lm_logits = self.lm_head(hidden_states)
 
         loss = None
         if labels is not None:
@@ -473,11 +383,10 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
             output = (lm_logits,) + transformer_outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
-        return QEffCausalLMOutputWithPast(
+        return CausalLMOutputWithPast(
             loss=loss,
             logits=lm_logits,
             past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
-            attention_mask_RetainedState=transformer_outputs.attention_mask_RetainedState,
         )

@@ -63,7 +63,9 @@ def convert_to_cloud_bertstyle(
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
     # Decide path for saving exported ONNX files.
-    fp32_model_name, fp16_model_name = export_bertstyle_model_to_onnx(model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len, save_fp32_onnx, save_fp16_onnx) # type: ignore
+    fp32_model_name, fp16_model_name = export_bertstyle_model_to_onnx(
+        model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len, save_fp32_onnx, save_fp16_onnx
+    )  # type: ignore
 
     # return the model path for automation.
     if return_path:
@@ -73,7 +75,9 @@ def convert_to_cloud_bertstyle(
             return onnx_dir_path, os.path.join(onnx_dir_path, f"{fp32_model_name}.onnx")
 
 
-def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, seq_len, save_fp32_onnx, save_fp16_onnx):
+def export_bertstyle_model_to_onnx(
+    model_name, model, tokenizer, onnx_dir_path, seq_len, save_fp32_onnx, save_fp16_onnx
+):
     model_base_name = model_name.replace("/", "_") + "_bertstyle"
     os.makedirs(onnx_dir_path, exist_ok=True)
 
@@ -156,8 +160,8 @@ def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, 
         inputs=inputs,
         input_list_file=input_list_file,
     )
-    
-    return fp32_model_name,fp16_model_name
+
+    return fp32_model_name, fp16_model_name
 
 
 def convert_to_cloud_kvstyle(
@@ -198,11 +202,10 @@ def convert_to_cloud_kvstyle(
 
     if not (save_fp32_onnx or save_fp16_onnx):
         raise AttributeError("save_fp32_onnx and save_fp16_onnx can't be false")
-    
 
-    if tokenizer.padding_side != "left":
-        logger.warning("Please use padding_side='left' while initializing the tokenizer")
-        tokenizer.padding_side = "left"
+    if tokenizer.padding_side != "right":
+        logger.warning("Please use padding_side='right' while initializing the tokenizer")
+        tokenizer.padding_side = "right"
 
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -210,7 +213,9 @@ def convert_to_cloud_kvstyle(
     assert qeff_model.is_transformed, f"please pass the {qeff_model.__class__.__name__} after transform API"
 
     # Decide path for saving exported ONNX files.
-    fp32_model_name, fp16_model_name = export_kvstyle_transformed_model_to_onnx(model_name, qeff_model.model,  tokenizer, onnx_dir_path, seq_len, save_fp32_onnx, save_fp16_onnx) # type: ignore
+    fp32_model_name, fp16_model_name = export_kvstyle_transformed_model_to_onnx(
+        model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len, save_fp32_onnx, save_fp16_onnx
+    )  # type: ignore
 
     # return the model path for automation.
     if return_path:
@@ -220,69 +225,100 @@ def convert_to_cloud_kvstyle(
             return onnx_dir_path, os.path.join(onnx_dir_path, f"{fp32_model_name}.onnx")
 
 
-def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model: torch.nn.Module, tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-                                          onnx_dir_path: str, seq_len: int, save_fp32_onnx: Optional[bool] = False, save_fp16_onnx: Optional[bool] = True):
-    
-    if tokenizer.padding_side != "left":
-        logger.warning("Please use padding_side='left' while initializing the tokenizer")
-        tokenizer.padding_side = "left"
-
-    tokenizer.pad_token_id = tokenizer.eos_token_id if tokenizer.pad_token_id is None else tokenizer.pad_token_id    
+def export_kvstyle_transformed_model_to_onnx(
+    model_name: str,
+    transformed_model: torch.nn.Module,
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+    onnx_dir_path: str,
+    seq_len: int,
+    save_fp32_onnx: Optional[bool] = False,
+    save_fp16_onnx: Optional[bool] = True,
+):
+    tokenizer.pad_token_id = tokenizer.eos_token_id if tokenizer.pad_token_id is None else tokenizer.pad_token_id
 
     # Disabling requires_grad on all parameters
     for j, p in enumerate(transformed_model.parameters()):
         p.requires_grad_(False)
 
     # Preprocess inputs
-    input_str = ["My name is Sarah.", "I live in London."]
-    if seq_len > 0:
-        inputs = tokenizer(input_str, return_tensors="pt", padding=True)
-        batch_size, prompt_len = inputs["input_ids"].shape
-        inputs["input_ids"] = torch.concat(
-            [
-                inputs["input_ids"],
-                torch.full((batch_size, seq_len - prompt_len), tokenizer.pad_token_id),
-            ],
-            1,
-        )
-        inputs["attention_mask"] = torch.concat(
-            [
-                inputs["attention_mask"],
-                torch.zeros((batch_size, seq_len - prompt_len), dtype=torch.int64),
-            ],
-            1,
-        )
-        inputs["position_ids"] = (inputs["attention_mask"].cumsum(1) - 1) * inputs["attention_mask"]
-    else:
-        inputs = tokenizer(input_str, return_tensors="pt")
+    # Build inputs for prefill
+    assert seq_len > 0, "Need seq_len to be greater than zero"
+    inputs = tokenizer(Constants.input_str, return_tensors="pt")
+    batch_size, prompt_len = inputs["input_ids"].shape
+    inputs.pop("attention_mask")
+    inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
 
+    config = transformed_model.config
+    if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
+        n_heads = config.n_head
+        d_head = config.n_embd // config.n_head
+        n_layer = config.n_layer
+    elif hasattr(config, "num_key_value_heads") and hasattr(
+        config, "num_attention_heads"
+    ):  # Check for num_key_value_heads (Llama/Mistral)
+        n_heads = config.num_key_value_heads
+        d_head = config.hidden_size // config.num_attention_heads
+        n_layer = config.num_hidden_layers
+    elif hasattr(config, "n_heads"):  # Check for n_heads and d_model in the config (MPT Model)
+        n_heads = config.n_heads
+        d_head = config.d_model // config.n_heads
+        n_layer = config.n_layers
+    elif hasattr(config, "multi_query"):  # Check for Falcon
+        multi_query_value = getattr(config, "multi_query")
+        if multi_query_value:
+            n_heads = 1  # MQA
+            d_head = config.hidden_size // config.num_attention_heads
+            n_layer = 1  # Due to multi query
+        else:
+            n_heads = config.num_attention_heads
+            d_head = config.hidden_size // config.num_attention_heads
+            n_layer = config.num_hidden_layers
+    else:
+        raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
+    inputs["past_key_values"] = [
+        tuple(
+            [
+                torch.zeros(
+                    batch_size,
+                    n_heads,
+                    seq_len,  # seq_len for running decode loop
+                    d_head,
+                    dtype=torch.float32,
+                )
+                for _ in range(2)
+            ]
+        )
+        for _ in range(n_layer)
+    ]
 
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
-
 
     # Raise error if expected outputs are not present
     assert "logits" in output_names, "logits not found in output"
     assert "past_key_values" in output_names, "past_key_values not found in output"
 
     # Build inputs for next iteration from outputs
-    cache_index = torch.tensor(prompt_len)
-    inputs["input_ids"] = tokenizer(["I have"] * 2, return_tensors="pt").input_ids[:, -2:]
-    inputs["position_ids"] = inputs["attention_mask"].sum(1, keepdim=True)
-    inputs["position_ids"] = inputs["position_ids"].repeat(1, 2) + torch.arange(2).view(1, 2)
-    inputs["attention_mask"] = inputs["attention_mask"].bool()
-    inputs["cache_index"] = cache_index
-
-    # Add past_key_values into inputs
-    inputs["past_key_values"] = tuple([(key.detach(), value.detach()) for key, value in pt_outputs.past_key_values])
+    # Build inputs for decode
+    inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
+    inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
+    print(tokenizer.batch_decode(inputs["input_ids"]))
+    # Run PyTorch inference for decode in loop
+    # todo: vbaddi, fix it to verify on Cloud AI 100.
+    for i in range(0):
+        pt_outputs = transformed_model(**inputs)
+        inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
+        inputs["position_ids"] += 1
+        print(tokenizer.batch_decode(inputs["input_ids"]))
+    # To avoid issues in onnx export
+    inputs["position_ids"] = torch.full((batch_size, 1), seq_len - 1)
 
     # Run PyTorch inference with past
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
 
-
     # Add pkv into output_names
-    pkv = tuple([(key.detach(), value.detach()) for key, value in pt_outputs.past_key_values])
+    pkv = inputs["past_key_values"]
     pkv_idx = output_names.index("past_key_values")
     key_value_names = [f"past_{x}.{i}" for i in range(len(pkv)) for x in ["key", "value"]]
     output_names[pkv_idx : pkv_idx + 1] = [x + "_RetainedState" for x in key_value_names]
@@ -293,7 +329,6 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model:
     for i, (key, value) in enumerate(pkv_out):
         pt_outputs[f"past_key.{i}_RetainedState"] = key
         pt_outputs[f"past_value.{i}_RetainedState"] = value
-
 
     model_base_name = model_name.replace("/", "_") + "_kv"
     os.makedirs(onnx_dir_path, exist_ok=True)
@@ -306,6 +341,7 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model:
         model_base_name=model_base_name,
     )
 
+    # fp32_model_name = simplify_onnx(onnx_dir_path, fp32_model_name, mutable_initializer=True)
     # Replace nested past_key_values inputs with separate KV tensors
     inputs.pop("past_key_values")
     for i, (key, value) in enumerate(pkv):
@@ -358,34 +394,48 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model:
         inputs=inputs,
         input_list_file=input_list_file,
     )
-    
+
     return fp32_model_name, fp16_model_name
 
 
-def export_for_cloud(model_name: str, qeff_model: QEFFBaseModel,
-                     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-                     onnx_dir_path: str, seq_length: int = Constants.seq_length,
-                     return_path: bool = True,
-                     save_fp32_onnx: bool = False,
-                     save_fp16_onnx: bool = True)-> Tuple[str, str]:
+def export_for_cloud(
+    model_name: str,
+    qeff_model: QEFFBaseModel,
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+    onnx_dir_path: str,
+    seq_length: int = Constants.seq_length,
+    return_path: bool = True,
+    save_fp32_onnx: bool = False,
+    save_fp16_onnx: bool = True,
+) -> Tuple[str, str]:
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
-    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM: # type: ignore
-        return export_lm_model_for_cloud(model_name=model_name,
-                                         qeff_model=qeff_model, # type: ignore
-                                         tokenizer=tokenizer,
-                                         onnx_dir_path=onnx_dir_path,
-                                         seq_length=seq_length,
-                                         return_path=return_path,
-                                         save_fp16_onnx=save_fp16_onnx,
-                                         save_fp32_onnx=save_fp32_onnx)
+    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
+        return export_lm_model_for_cloud(
+            model_name=model_name,
+            qeff_model=qeff_model,  # type: ignore
+            tokenizer=tokenizer,
+            onnx_dir_path=onnx_dir_path,
+            seq_length=seq_length,
+            return_path=return_path,
+            save_fp16_onnx=save_fp16_onnx,
+            save_fp32_onnx=save_fp32_onnx,
+        )
     else:
-        raise NotImplementedError(f"Only model type {QEFFAutoModelForCausalLM.__class__.__name__} is supported for export, got {type(qeff_model)}")
-    
+        raise NotImplementedError(
+            f"Only model type {QEFFAutoModelForCausalLM.__class__.__name__} is supported for export, got {type(qeff_model)}"
+        )
 
-def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausalLM,
-                              tokenizer:Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-                              onnx_dir_path: str, seq_length: int, return_path:bool,
-                              save_fp32_onnx:bool, save_fp16_onnx: bool):
+
+def export_lm_model_for_cloud(
+    model_name: str,
+    qeff_model: QEFFAutoModelForCausalLM,
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+    onnx_dir_path: str,
+    seq_length: int,
+    return_path: bool,
+    save_fp32_onnx: bool,
+    save_fp16_onnx: bool,
+):
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
@@ -393,13 +443,12 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
     if not (save_fp32_onnx or save_fp16_onnx):
         raise AttributeError("save_fp32_onnx and save_fp16_onnx can't be false")
 
-    if tokenizer.padding_side != "left":
-        logger.warning("Please use padding_side='left' while initializing the tokenizer")
-        tokenizer.padding_side = "left"
+    if tokenizer.padding_side != "right":
+        logger.warning("Please use padding_side='right' while initializing the tokenizer")
+        tokenizer.padding_side = "right"
 
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
-
 
     if qeff_model.is_transformed:
         fp32_model_name, fp16_model_name = export_kvstyle_transformed_model_to_onnx(
@@ -409,19 +458,20 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
             onnx_dir_path=onnx_dir_path,
             seq_len=seq_length,
             save_fp32_onnx=save_fp32_onnx,
-            save_fp16_onnx=save_fp16_onnx) # type: ignore
+            save_fp16_onnx=save_fp16_onnx,
+        )  # type: ignore
 
     else:
         fp32_model_name, fp16_model_name = export_bertstyle_model_to_onnx(
             model_name=model_name,
             model=qeff_model.model,
-            tokenizer=tokenizer, 
+            tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
             seq_len=seq_length,
             save_fp32_onnx=save_fp32_onnx,
-            save_fp16_onnx=save_fp16_onnx) # type: ignore
+            save_fp16_onnx=save_fp16_onnx,
+        )  # type: ignore
 
-    
     # return the model path for automation.
     if return_path:
         if save_fp16_onnx:
@@ -432,15 +482,15 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
 
 def qualcomm_efficient_converter(
     model_name: str,
-    model_kv: QEFFBaseModel = None, # type: ignore
-    tokenizer: Optional[Union[PreTrainedTokenizer, PreTrainedTokenizerFast]]=None,
+    model_kv: QEFFBaseModel = None,  # type: ignore
+    tokenizer: Optional[Union[PreTrainedTokenizer, PreTrainedTokenizerFast]] = None,
     cache_dir: Optional[str] = None,
-    onnx_dir_path: Optional[str]=None,
+    onnx_dir_path: Optional[str] = None,
     hf_token: Optional[str] = None,
     seq_length: int = Constants.seq_length,
     kv: bool = True,
     return_path: bool = True,
-    form_factor: str="cloud",
+    form_factor: str = "cloud",
     save_fp32_onnx: bool = False,
     save_fp16_onnx: bool = True,
 ) -> Tuple[str, str]:
@@ -465,21 +515,29 @@ def qualcomm_efficient_converter(
 
     """
     # Get model_kv first
-    model_kv = model_kv if model_kv else QEFFCommonLoader.from_pretrained(pretrained_model_name_or_path=model_name, hf_token=hf_token, cache_dir=cache_dir)
+    model_kv = (
+        model_kv
+        if model_kv
+        else QEFFCommonLoader.from_pretrained(
+            pretrained_model_name_or_path=model_name, hf_token=hf_token, cache_dir=cache_dir
+        )
+    )
 
     # Transform if required
     if model_kv.is_transformed and not kv:
         raise AttributeError("Transformed model is passed while requsting to convert non-transformed model")
-    
+
     model_kv = model_kv if model_kv.is_transformed else QEfficient.transform(model_kv) if kv else model_kv
 
     if onnx_dir_path is None:
         model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
         onnx_dir_path = os.path.join(model_card_dir, "onnx")
-    
+
     # Load tokenizer if not passed
-    tokenizer = tokenizer if tokenizer else load_hf_tokenizer(model_name=model_name, hf_token=hf_token, cache_dir=cache_dir)
-    
+    tokenizer = (
+        tokenizer if tokenizer else load_hf_tokenizer(model_name=model_name, hf_token=hf_token, cache_dir=cache_dir)
+    )
+
     if form_factor == "cloud":
         return export_for_cloud(
             model_name=model_name,
@@ -489,7 +547,8 @@ def qualcomm_efficient_converter(
             seq_length=seq_length,
             return_path=return_path,
             save_fp16_onnx=save_fp16_onnx,
-            save_fp32_onnx=save_fp32_onnx)
+            save_fp32_onnx=save_fp32_onnx,
+        )
     else:
         # [TODO]: Apply the class transformation to make changes for the KV models in edge use cases
         # model = QEfficient.transform(model_hf, type="Transformers", form_factor="edge")

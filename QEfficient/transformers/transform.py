@@ -12,19 +12,7 @@ import transformers
 
 from QEfficient.src.base import QEFFBaseModel
 from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE
-from QEfficient.transformers.modeling_attn_mask_utils import (
-    QEffAttentionMaskConverter,
-    _qeff_prepare_4d_attention_mask,
-    _qeff_prepare_4d_causal_attention_mask,
-)
-from QEfficient.transformers.modeling_outputs import (
-    QEffBaseModelOutputWithPast,
-    QEffBaseModelOutputWithPastAndCrossAttentions,
-    QEffCausalLMOutputWithCrossAttentions,
-    QEffCausalLMOutputWithPast,
-    QEffMoeCausalLMOutputWithPast,
-    QEffMoeModelOutputWithPast,
-)
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
 from QEfficient.utils.logging_utils import logger
 
@@ -87,22 +75,10 @@ def transform_lm(model: nn.Module) -> nn.Module:
         prior_params_hash == later_params_hash
     ), "Weights were changed in the transform process, please report an issue"
 
-    # Replace the modeling output classes
-    transformers.modeling_outputs.BaseModelOutputWithPastAndCrossAttentions = (
-        QEffBaseModelOutputWithPastAndCrossAttentions
-    )
-    transformers.modeling_outputs.CausalLMOutputWithCrossAttentions = QEffCausalLMOutputWithCrossAttentions
-    transformers.modeling_outputs.BaseModelOutputWithPast = QEffBaseModelOutputWithPast
-    transformers.modeling_outputs.CausalLMOutputWithPast = QEffCausalLMOutputWithPast
-    transformers.modeling_outputs.MoeCausalLMOutputWithPast = QEffMoeCausalLMOutputWithPast
-    transformers.modeling_outputs.MoeModelOutputWithPast = QEffMoeModelOutputWithPast
+    # Replace the Dyanmic cache utils update api
+    transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update
 
-    # Replace the modeling attn util classes and functions
-    transformers.modeling_attn_mask_utils.AttentionMaskConverter = QEffAttentionMaskConverter
-    transformers.modeling_attn_mask_utils._prepare_4d_attention_mask = _qeff_prepare_4d_attention_mask
-    transformers.modeling_attn_mask_utils._prepare_4d_causal_attention_mask = _qeff_prepare_4d_causal_attention_mask
-
-    setattr(model,'qeff_transformed',True)
+    setattr(model, "qeff_transformed", True)
     return model.eval()
 
 
@@ -115,9 +91,9 @@ def transform(model: QEFFBaseModel, form_factor="cloud"):
     form_factor(str): form factor configuration for optmizing the model, available options=["cloud", "edge"].
     """
     assert form_factor == "cloud", "Only form_factor='cloud' is supported as of now!"
-    #FIXME: move this to class and use model.transform()
+    # FIXME: move this to class and use model.transform()
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:
-        transform_lm(model.model) # type: ignore
+        transform_lm(model.model)  # type: ignore
         return model
     else:
         raise NotImplementedError(f"Recieved unsupported class of type {type(model)}")
