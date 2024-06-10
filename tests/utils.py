@@ -77,7 +77,8 @@ def load_pytorch_model(model_config):
     :return model_hf
     """
     model_path = hf_download(
-        repo_id=model_config["model_name"], ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf"]
+        repo_id=model_config["model_name"],
+        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
     model_hf = model_config["model_class"].from_pretrained(
         model_path, use_cache=True, num_hidden_layers=model_config["n_layer"], attn_implementation="eager"
@@ -108,7 +109,7 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
     onnx_dir_path = os.path.join(QEFF_MODELS_DIR, model_name)
     base_path, onnx_model_path = qualcomm_efficient_converter(
         model_name=model_name,
-        model_kv=QEFFAutoModelForCausalLM(model=model_kv), # type: ignore
+        model_kv=QEFFAutoModelForCausalLM(model=model_kv),  # type: ignore
         tokenizer=tokenizer,
         onnx_dir_path=onnx_dir_path,
         kv=True,
@@ -138,14 +139,11 @@ def set_up(model_config, device_group=[0]):
         print(f"Pytorch HuggingFace Pytorch Model run failed due to : {e}")
 
     model_kv = transform_pt_model_with_qeff(model_hf)
-    try:
-        pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(
-            model_kv,
-            model_config["n_layer"],
-            model_config["padding_shape"],
-        )
-    except Exception as e:
-        print(f"Pytorch KV Cache Model run failed due to : {e}")
+    pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(
+        model_kv,
+        model_config["n_layer"],
+        model_config["padding_shape"],
+    )
 
     base_path, onnx_model_path = export_onnx(
         model_kv,

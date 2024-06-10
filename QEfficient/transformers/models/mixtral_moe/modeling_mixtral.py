@@ -38,7 +38,7 @@ class QEffMixtralAttention(MixtralAttention):
     """
     Copied from MixtralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
     """
 
     def forward(
@@ -173,10 +173,10 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
 # Copied from transformers.models.mistral.modeling_mistral.MistralModel with MISTRAL->MIXTRAL,Mistral->Mixtral
 class QEffMixtralModel(MixtralModel):
     """
-    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`MixtralDecoderLayer`]
-
-    Args:
-        config: MixtralConfig
+    Copied from MixtralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
+    The only differences are:
+    - add new args position idx for the cache_kwargs for kv retention
+    - update causal attention mask
     """
 
     # Ignore copy
@@ -355,7 +355,8 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
     """
     Copied from MixtralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
+    - update the hidden_states, and fix for onnx model
     """
 
     def forward(

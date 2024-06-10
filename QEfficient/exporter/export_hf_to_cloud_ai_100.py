@@ -305,7 +305,7 @@ def export_kvstyle_transformed_model_to_onnx(
     print(tokenizer.batch_decode(inputs["input_ids"]))
     # Run PyTorch inference for decode in loop
     # todo: vbaddi, fix it to verify on Cloud AI 100.
-    for i in range(0):
+    for i in range(1):
         pt_outputs = transformed_model(**inputs)
         inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
         inputs["position_ids"] += 1

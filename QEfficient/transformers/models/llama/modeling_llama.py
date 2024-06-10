@@ -34,7 +34,7 @@ class QEffLlamaAttention(LlamaAttention):
     """
     Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
     """
 
     def forward(
@@ -124,7 +124,8 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
     """
     Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
+    - update the hidden_states, and fix for onnx model
     """
 
     def forward(
@@ -227,7 +228,8 @@ class QEffLlamaModel(LlamaModel):
     """
     Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
+    - update causal attention mask
     """
 
     def forward(

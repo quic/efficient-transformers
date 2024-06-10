@@ -33,7 +33,7 @@ class QEffPhi3Attention(Phi3Attention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     """
-    Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
+    Copied from Phi3ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/phi3/modeling_phi3.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
@@ -123,7 +123,7 @@ class QEffPhi3Attention(Phi3Attention):
 
 class QEffPhi3Model(Phi3Model):
     """
-    Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
+    Copied from Phi3ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/phi3/modeling_phi3.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask
@@ -271,7 +271,7 @@ class QEffPhi3Model(Phi3Model):
 
 class QEffPhi3ForCausalLM(Phi3ForCausalLM):
     """
-    Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
+    Copied from Phi3ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/phi3/modeling_phi3.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update the hidden_states, and fix for onnx model

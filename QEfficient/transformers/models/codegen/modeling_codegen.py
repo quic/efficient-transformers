@@ -317,7 +317,8 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
     """
     Copied from CodeGenForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/codegen/modeling_codegen.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
+    - update the hidden_states, and fix for onnx model
     """
 
     def forward(

@@ -10,12 +10,14 @@ from typing import Optional, Tuple, Union
 import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
+from transformers.cache_utils import DynamicCache
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPastAndCrossAttentions,
+    CausalLMOutputWithCrossAttentions,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model, logger
 
-from QEfficient.transformers.modeling_outputs import (
-    QEffBaseModelOutputWithPastAndCrossAttentions,
-    QEffCausalLMOutputWithCrossAttentions,
-)
+from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
 
 
 class QEffGPT2LMHeadModel(GPT2LMHeadModel):
@@ -29,7 +31,6 @@ class QEffGPT2LMHeadModel(GPT2LMHeadModel):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
-        cache_index: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -42,7 +43,7 @@ class QEffGPT2LMHeadModel(GPT2LMHeadModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, QEffCausalLMOutputWithCrossAttentions]:
+    ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
             Labels for language modeling. Note that the labels **are shifted** inside the model, i.e. you can set
@@ -54,7 +55,6 @@ class QEffGPT2LMHeadModel(GPT2LMHeadModel):
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,
-            cache_index=cache_index,  # Forward the cache index to transformer model
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
@@ -67,14 +67,17 @@ class QEffGPT2LMHeadModel(GPT2LMHeadModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        hidden_states = transformer_outputs[0]
+
+        # Cast to INT32 to avoid issue while running in ONNXRT
+        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = transformer_outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        lm_logits = self.lm_head(hidden_states)
+        lm_logits = lm_logits.float()
 
         # Set device for model parallelism
         if self.model_parallel:
             torch.cuda.set_device(self.transformer.first_device)
             hidden_states = hidden_states.to(self.lm_head.weight.device)
-
-        lm_logits = self.lm_head(hidden_states[:, -1:])
 
         loss = None
         if labels is not None:
@@ -91,13 +94,12 @@ class QEffGPT2LMHeadModel(GPT2LMHeadModel):
             output = (lm_logits,) + transformer_outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
-        return QEffCausalLMOutputWithCrossAttentions(
+        return CausalLMOutputWithCrossAttentions(
             loss=loss,
             logits=lm_logits,
             past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
-            attention_mask_RetainedState=transformer_outputs.attention_mask_RetainedState,
             cross_attentions=transformer_outputs.cross_attentions,
         )
 
@@ -113,8 +115,8 @@ class QEffGPT2Block(GPT2Block):
         self,
         hidden_states: Optional[Tuple[torch.FloatTensor]],
         layer_past: Optional[Tuple[torch.Tensor]] = None,
-        cache_index: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
@@ -129,8 +131,8 @@ class QEffGPT2Block(GPT2Block):
         attn_outputs = self.attn(
             hidden_states,
             layer_past=layer_past,
-            cache_index=cache_index,
             attention_mask=attention_mask,
+            position_ids=position_ids,
             head_mask=head_mask,
             use_cache=use_cache,
             output_attentions=output_attentions,
@@ -187,7 +189,6 @@ class QEffGPT2Model(GPT2Model):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
-        cache_index: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -199,7 +200,7 @@ class QEffGPT2Model(GPT2Model):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, QEffBaseModelOutputWithPastAndCrossAttentions]:
+    ) -> Union[Tuple, BaseModelOutputWithPastAndCrossAttentions]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -214,7 +215,6 @@ class QEffGPT2Model(GPT2Model):
             input_shape = input_ids.size()
             input_ids = input_ids.view(-1, input_shape[-1])
             batch_size = input_ids.shape[0]
-            seq_length = input_ids.shape[1]
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
             batch_size = inputs_embeds.shape[0]
@@ -225,8 +225,6 @@ class QEffGPT2Model(GPT2Model):
 
         if token_type_ids is not None:
             token_type_ids = token_type_ids.view(-1, input_shape[-1])
-        if position_ids is not None:
-            position_ids = position_ids.view(-1, input_shape[-1])
 
         if past_key_values is None:
             past_length = 0
@@ -234,52 +232,42 @@ class QEffGPT2Model(GPT2Model):
         else:
             past_length = past_key_values[0][0].size(-2)
         if position_ids is None:
-            position_ids = torch.arange(
-                past_length,
-                input_shape[-1] + past_length,
-                dtype=torch.long,
-                device=device,
-            )
-            position_ids = position_ids.unsqueeze(0).view(-1, input_shape[-1])
+            position_ids = torch.arange(past_length, input_shape[-1] + past_length, dtype=torch.long, device=device)
+            position_ids = position_ids.unsqueeze(0)
 
-        # GPT2Attention mask.
+        # Attention mask.
         if attention_mask is not None:
-            if batch_size <= 0:
-                raise ValueError("batch_size has to be defined and > 0")
             attention_mask = attention_mask.view(batch_size, -1)
+            if self._attn_implementation == "flash_attention_2":
+                attention_mask = attention_mask if 0 in attention_mask else None
+            else:
+                # We create a 3D attention mask from a 2D tensor mask.
+                # Sizes are [batch_size, 1, 1, to_seq_length]
+                # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
+                # this attention mask is more simple than the triangular masking of causal attention
+                # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
+                attention_mask = attention_mask[:, None, None, :]
 
-            # Added for Optimized KV model creation
-            if cache_index is not None:
-                attention_mask[:, cache_index + seq_length - 1] = True
-                attention_mask_retained = attention_mask.clone()
-
-            # We create a 3D attention mask from a 2D tensor mask.
-            # Sizes are [batch_size, 1, 1, to_seq_length]
-            # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
-            # this attention mask is more simple than the triangular masking of causal attention
-            # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
-            attention_mask = attention_mask[:, None, None, :]
-
-            # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
-            # masked positions, this operation will create a tensor which is 0.0 for
-            # positions we want to attend and the dtype's smallest value for masked positions.
-            # Since we are adding it to the raw scores before the softmax, this is
-            # effectively the same as removing these entirely.
-            attention_mask = attention_mask.to(dtype=self.dtype)  # fp16 compatibility
-            attention_mask = (1.0 - attention_mask) * torch.finfo(torch.float16).min
+                # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+                # masked positions, this operation will create a tensor which is 0.0 for
+                # positions we want to attend and the dtype's smallest value for masked positions.
+                # Since we are adding it to the raw scores before the softmax, this is
+                # effectively the same as removing these entirely.
+                attention_mask = attention_mask.to(dtype=self.dtype)  # fp16 compatibility
+                attention_mask = (1.0 - attention_mask) * torch.finfo(self.dtype).min
+        elif attention_mask is None:
+            # update attention mask for Cloud Ai 100
+            attention_mask = _update_causal_mask(position_ids, past_length, None)
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
         if self.config.add_cross_attention and encoder_hidden_states is not None:
-            (
-                encoder_batch_size,
-                encoder_sequence_length,
-                _,
-            ) = encoder_hidden_states.size()
+            encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
             encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
                 encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
-            encoder_attention_mask = self.invert_attention_mask(encoder_attention_mask)
+            if self._attn_implementation != "flash_attention_2":
+                encoder_attention_mask = self.invert_attention_mask(encoder_attention_mask)
         else:
             encoder_attention_mask = None
 
@@ -329,29 +317,23 @@ class QEffGPT2Model(GPT2Model):
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             if self.gradient_checkpointing and self.training:
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        # None for past_key_value
-                        return module(*inputs, use_cache, output_attentions)
-
-                    return custom_forward
-
-                outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(block),
+                outputs = self._gradient_checkpointing_func(
+                    block.__call__,
                     hidden_states,
                     None,
                     attention_mask,
                     head_mask[i],
                     encoder_hidden_states,
                     encoder_attention_mask,
+                    use_cache,
+                    output_attentions,
                 )
             else:
                 outputs = block(
                     hidden_states,
                     layer_past=layer_past,
-                    cache_index=cache_index,
                     attention_mask=attention_mask,
+                    position_ids=position_ids,
                     head_mask=head_mask[i],
                     encoder_hidden_states=encoder_hidden_states,
                     encoder_attention_mask=encoder_attention_mask,
@@ -384,22 +366,15 @@ class QEffGPT2Model(GPT2Model):
         if not return_dict:
             return tuple(
                 v
-                for v in [
-                    hidden_states,
-                    presents,
-                    all_hidden_states,
-                    all_self_attentions,
-                    all_cross_attentions,
-                ]
+                for v in [hidden_states, presents, all_hidden_states, all_self_attentions, all_cross_attentions]
                 if v is not None
             )
 
-        return QEffBaseModelOutputWithPastAndCrossAttentions(
+        return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
             past_key_values=presents,
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
-            attention_mask_RetainedState=attention_mask_retained if past_length > 0 else None,
             cross_attentions=all_cross_attentions,
         )
 
@@ -411,15 +386,12 @@ class QEffGPT2Attention(GPT2Attention):
     - add new args cache idx for the kv retention
     """
 
-    def _attn(self, query, key, value, kv_indices, attention_mask=None, head_mask=None):
+    def _attn(self, query, key, value, attention_mask=None, head_mask=None):
         attn_weights = torch.matmul(query, key.transpose(-1, -2))
 
         if self.scale_attn_weights:
             attn_weights = attn_weights / torch.full(
-                [],
-                value.size(-1) ** 0.5,
-                dtype=attn_weights.dtype,
-                device=attn_weights.device,
+                [], value.size(-1) ** 0.5, dtype=attn_weights.dtype, device=attn_weights.device
             )
 
         # Layer-wise attention scaling
@@ -429,22 +401,16 @@ class QEffGPT2Attention(GPT2Attention):
         if not self.is_cross_attention:
             # if only "normal" attention layer implements causal mask
             query_length, key_length = query.size(-2), key.size(-2)
-
-            if kv_indices is None:
-                causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
-            else:
-                causal_mask = self.bias[:, :, kv_indices, :key_length]
-
-            mask_value = torch.finfo(torch.float16).min
-
+            causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
+            mask_value = -10000.0
             # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
             # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
-            mask_value = torch.full([], mask_value, dtype=attn_weights.dtype).to(attn_weights.device)
+            mask_value = torch.full([], mask_value, dtype=attn_weights.dtype, device=attn_weights.device)
             attn_weights = torch.where(causal_mask, attn_weights.to(attn_weights.dtype), mask_value)
 
         if attention_mask is not None:
             # Apply the attention mask
-            attn_weights = attn_weights + attention_mask
+            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
@@ -464,8 +430,8 @@ class QEffGPT2Attention(GPT2Attention):
         self,
         hidden_states: Optional[Tuple[torch.FloatTensor]],
         layer_past: Optional[Tuple[torch.Tensor]] = None,
-        cache_index: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
@@ -491,26 +457,22 @@ class QEffGPT2Attention(GPT2Attention):
 
         if layer_past is not None:
             # Added for optimized GPT Attention for AI 100 KV Retention
-            past_key = layer_past[0]
-            past_value = layer_past[1]
-            seq_length = key.shape[2]
-
-            assert value.shape[2] == seq_length
-            kv_indices = torch.arange(seq_length) + cache_index
-            past_key[:, :, kv_indices] = key
-            past_value[:, :, kv_indices] = value
-            key = past_key
-            value = past_value
+            # Update the cache_kwargs with position_ids for Cloud AI 100
+            cache_kwargs = {"position_ids": position_ids}
+            pkv = DynamicCache()
+            pkv.key_cache.append(layer_past[0])
+            pkv.value_cache.append(layer_past[1])
+            key, value = pkv.update(key, value, 0, cache_kwargs)
 
         if use_cache is True:
             present = (key, value)
         else:
             present = None
 
-        if layer_past is not None:
-            attn_output, attn_weights = self._attn(query, key, value, kv_indices, attention_mask, head_mask)
+        if self.reorder_and_upcast_attn:
+            attn_output, attn_weights = self._upcast_and_reordered_attn(query, key, value, attention_mask, head_mask)
         else:
-            attn_output, attn_weights = self._attn(query, key, value, None, attention_mask, head_mask)
+            attn_output, attn_weights = self._attn(query, key, value, attention_mask, head_mask)
 
         attn_output = self._merge_heads(attn_output, self.num_heads, self.head_dim)
         attn_output = self.c_proj(attn_output)

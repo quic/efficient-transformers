@@ -39,7 +39,7 @@ class QEffMistralAttention(MistralAttention):
     """
     Copied from MistralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
     """
 
     def forward(
@@ -123,7 +123,8 @@ class QEffMistralModel(MistralModel):
     """
     Copied from MistralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
+    - update causal attention mask
     """
 
     def forward(
@@ -286,7 +287,8 @@ class QEffMistralForCausalLM(MistralForCausalLM):
     """
     Copied from MistralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
+    - update the hidden_states, and fix for onnx model
     """
 
     def forward(
