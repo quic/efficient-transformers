@@ -13,8 +13,6 @@ from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-import QEfficient
-import QEfficient.utils
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
@@ -130,7 +128,8 @@ def load_hf_tokenizer(model_name: str, cache_dir: Optional[str] = None, hf_token
     model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
     
-    QEfficient.utils.padding_check_and_fix(tokenizer)
+    #check and fix tokenizer viability
+    padding_check_and_fix(tokenizer)
     
     return tokenizer
 
@@ -144,5 +143,28 @@ def get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp
     )
 
     return qpc_base_dir_name
+
+
+def padding_check_and_fix(
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]
+):
+    """
+    Checks Tokenizer paddding side and pad_token_id viability.
+    --------
+    
+    Tokeinizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer to check and fix.
+    """
+    
+    if tokenizer.padding_side != "left":
+        logger.warning("Please use padding_side='left' while initializing the tokenizer")
+        tokenizer.padding_side = "left"
+    
+    if tokenizer.pad_token_id is None:
+        # If Pad token is out of range of vocab size
+        if tokenizer.eos_token_id < tokenizer.vocab_size:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+        else:
+            tokenizer.pad_token_id = tokenizer.vocab_size - 1
+            
 
 

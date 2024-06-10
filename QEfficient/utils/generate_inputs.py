@@ -8,8 +8,7 @@
 import numpy as np
 import torch
 
-import QEfficient
-import QEfficient.utils
+from QEfficient.utils import padding_check_and_fix
 
 
 class InputHandler:
@@ -22,7 +21,7 @@ class InputHandler:
         :param ctx_len: int
         """
         #check and fix tokenizer viability
-        QEfficient.utils.padding_check_and_fix(tokenizer)
+        padding_check_and_fix(tokenizer)
         
         self.tokenizer = tokenizer
         self.input_str = input_str

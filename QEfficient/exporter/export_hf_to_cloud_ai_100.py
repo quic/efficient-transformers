@@ -17,7 +17,7 @@ from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generat
 from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
 from QEfficient.src.base import QEFFBaseModel
 from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
-import QEfficient.utils
+from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
@@ -78,7 +78,7 @@ def export_bertstyle_model_to_onnx(
     input_str = Constants.input_str
     
     #check and fix tokenizer viability
-    QEfficient.utils.padding_check_and_fix(tokenizer)
+    padding_check_and_fix(tokenizer)
     
     # Preprocess inputs
     if seq_len > 0:
@@ -222,7 +222,7 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model:
         p.requires_grad_(False)
 
     #check and fix tokenizer viability
-    QEfficient.utils.padding_check_and_fix(tokenizer)
+    padding_check_and_fix(tokenizer)
 
     # Preprocess inputs
     # Build inputs for prefill
