@@ -67,7 +67,7 @@ class QEFFBaseModel(ABC):
         return self._runtime
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_path: str, *args, **kwargs):
         raise NotImplementedError("Must implement for child classes")
 
     @property

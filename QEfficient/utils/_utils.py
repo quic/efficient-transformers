@@ -35,7 +35,6 @@ def hf_download(
     repo_id: Optional[str] = None,
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
-    allow_patterns: Optional[List[str]] = None,
     ignore_patterns: Optional[List[str]] = None,
 ):
     # Setup cache and local dir
@@ -57,7 +56,6 @@ def hf_download(
                 revision="main",
                 resume_download=True,
                 token=hf_token,
-                allow_patterns=allow_patterns,
                 ignore_patterns=ignore_patterns,
             )
             break
