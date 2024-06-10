@@ -24,7 +24,7 @@ class QEffGPT2LMHeadModel(GPT2LMHeadModel):
     """
     Copied from GPT2LMHeadModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
     """
 
     def forward(

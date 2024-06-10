@@ -5,52 +5,28 @@
 #
 # -----------------------------------------------------------------------------
 
-import math
 from typing import Optional, Tuple, Union
 
 import torch
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
+from transformers.cache_utils import DynamicCache
+from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPastAndCrossAttentions,
+    CausalLMOutputWithCrossAttentions,
+)
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel, logger
 
-from QEfficient.transformers.modeling_attn_mask_utils import _qeff_prepare_4d_causal_attention_mask
-from QEfficient.transformers.modeling_outputs import (
-    QEffBaseModelOutputWithPastAndCrossAttentions,
-    QEffCausalLMOutputWithCrossAttentions,
-)
-
-
-def build_mpt_alibi_tensor(num_heads, sequence_length, attention_mask, alibi_bias_max=8, device=None):
-    r"""
-    Link to paper: https://arxiv.org/abs/2108.12409 - Alibi tensor is not causal as the original paper mentions, it
-    relies on a translation invariance of softmax for quick implementation. This implementation has been copied from
-    the alibi implementation of MPT source code that led to slightly different results than the Bloom alibi:
-    https://huggingface.co/mosaicml/mpt-7b/blob/main/attention.py#L292
-    """
-    alibi = ((attention_mask.long().cumsum(1) - attention_mask.long().sum(1, keepdim=True)) * attention_mask.long())[
-        :, None, None
-    ]
-    num_heads_power_of_2 = 2 ** math.ceil(math.log2(num_heads))
-
-    base = torch.arange(1, num_heads_power_of_2 + 1, dtype=torch.float32, device=device)
-    base = base * (alibi_bias_max / num_heads_power_of_2)
-
-    slopes = 1.0 / torch.pow(2, base)
-    slopes = slopes.view(1, num_heads, 1, 1)
-
-    if num_heads_power_of_2 != num_heads:
-        slopes = torch.concat([slopes[1::2], slopes[::2]])[:num_heads]
-
-    alibi = alibi * slopes
-    return alibi
+from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
 
 
 class QEffMptAttention(MptAttention):
     """
     Copied from MptForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mpt/modeling_mpt.py
     The only differences are:
-    - add new args cache idx for the kv retention
+    - add new args position idx for the cache_kwargs for kv retention
     """
 
     def forward(
@@ -58,9 +34,9 @@ class QEffMptAttention(MptAttention):
         hidden_states: torch.Tensor,
         position_bias: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
-        cache_index: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = None,
     ):
         batch_size, seq_length = hidden_states.shape[:2]
 
@@ -72,25 +48,36 @@ class QEffMptAttention(MptAttention):
 
         if past_key_value is not None:
             if len(past_key_value) != 0:
-                seq_len = key_states.shape[2]
-                assert value_states.shape[2] == seq_len
-                kv_indices = torch.arange(seq_len) + cache_index
-                past_key_value[0][:, :, kv_indices] = key_states
-                past_key_value[1][:, :, kv_indices] = value_states
-                key_states = past_key_value[0]
-                value_states = past_key_value[1]
-
+                cache_kwargs = {"position_ids": position_ids}
+                pkv = DynamicCache()
+                pkv.key_cache.append(past_key_value[0])
+                pkv.value_cache.append(past_key_value[1])
+                key_states, value_states = pkv.update(key_states, value_states, 0, cache_kwargs)
+        if use_cache:
             past_key_value = (key_states, value_states)
         else:
-            past_key_value = (key_states, value_states)
+            past_key_value = None
 
         attention_scores = torch.matmul(query_states, key_states.transpose(-1, -2)) * self.softmax_scale
 
+        query_length = seq_length if past_key_value is None else seq_length + past_key_value[0].shape[2]
+
         if position_bias is not None:
+            if len(position_bias.shape) != 3:
+                raise ValueError(f"Expecting position_bias shape to be 3 dimensions, got {len(position_bias.shape)}")
+            key_length = key_states.shape[-2]
+
+            position_bias_query_index = max(0, position_bias.size(1) - query_length)
+            position_bias_key_index = max(0, position_bias.size(2) - key_length)
+
+            position_bias = position_bias[:, position_bias_query_index:, position_bias_key_index:]
+
             attention_scores = attention_scores + position_bias
 
         if attention_mask is not None:
-            attention_scores = attention_scores.masked_fill(attention_mask, torch.finfo(query_states.dtype).min)
+            attention_scores = torch.where(
+                attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attention_scores
+            )
 
         # (batch_size, n_heads, seq_length, key_length)
         attn_weights = nn.functional.softmax(attention_scores.float(), dim=-1).to(value_states.dtype)
@@ -116,7 +103,6 @@ class QEffMptBlock(MptBlock):
         position_bias: torch.Tensor,
         attention_mask: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
-        cache_index: Optional[torch.LongTensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache: bool = False,
         output_attentions: bool = False,
@@ -131,10 +117,10 @@ class QEffMptBlock(MptBlock):
         attn_outputs, attn_weights, past_key_value = self.attn(
             layernorm_output,
             position_bias=position_bias,
-            attention_mask=attention_mask,
             position_ids=position_ids,
-            cache_index=cache_index,
+            attention_mask=attention_mask,
             past_key_value=layer_past,
+            use_cache=use_cache,
         )
 
         hidden_states = self.resid_attn_dropout(attn_outputs) + residual
@@ -164,22 +150,18 @@ class QEFfMptModel(MptModel):
     - add new args cache idx for the kv retention
     """
 
-    def build_mpt_alibi_tensor(self, num_heads, sequence_length, attention_mask, alibi_bias_max=8, device=None):
-        return build_mpt_alibi_tensor(num_heads, sequence_length, attention_mask, alibi_bias_max, device)
-
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
-        cache_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple[torch.Tensor, ...], QEffBaseModelOutputWithPastAndCrossAttentions]:
+    ) -> Union[Tuple[torch.Tensor, ...], BaseModelOutputWithPastAndCrossAttentions]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -221,57 +203,30 @@ class QEFfMptModel(MptModel):
         if past_key_values[0] is not None:
             past_key_values_length = past_key_values[0][0].shape[2]
             seq_length_with_past = seq_length_with_past + past_key_values_length
-            if cache_index is not None:
-                seq_length_with_past = past_key_values_length
 
-        if cache_index is not None:
-            attention_mask[:, cache_index + seq_length - 1] = True
-            attention_mask_RetainedState = attention_mask
+        alibi = self.build_mpt_alibi_tensor(self.num_heads, self.config.max_seq_len, device=hidden_states.device)
 
-        if attention_mask is None:
-            attention_mask = torch.ones((batch_size, seq_length_with_past), device=hidden_states.device)
-        else:
-            attention_mask = attention_mask.to(hidden_states.device)
+        if attention_mask is not None:
+            causal_mask = _prepare_4d_causal_attention_mask(
+                attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
+            )
+            causal_mask = causal_mask.bool()
+        elif attention_mask is None:
+            causal_mask = _update_causal_mask(position_ids=position_ids, target_length=past_key_values_length)
 
-        attention_mask_RetainedState = attention_mask
-        alibi = self.build_mpt_alibi_tensor(
-            self.num_heads,
-            self.config.max_seq_len,
-            attention_mask=attention_mask,
-            device=hidden_states.device,
-        )
-
-        causal_mask = _qeff_prepare_4d_causal_attention_mask(
-            attention_mask,
-            input_shape=(batch_size, seq_length),
-            inputs_embeds=inputs_embeds,
-            past_key_values_length=past_key_values_length,
-            cache_index=cache_index,
-        )
-
-        for i, (block, layer_past) in enumerate(zip(self.blocks, past_key_values)):
+        for block, layer_past in zip(self.blocks, past_key_values):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             if self.gradient_checkpointing and self.training:
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        # None for past_key_value
-                        return module(
-                            *inputs,
-                            use_cache=use_cache,
-                            output_attentions=output_attentions,
-                        )
-
-                    return custom_forward
-
-                outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(block),
+                outputs = self._gradient_checkpointing_func(
+                    block.__call__,
                     hidden_states,
                     alibi,
                     causal_mask,
                     layer_past,
+                    use_cache,
+                    output_attentions,
                 )
             else:
                 outputs = block(
@@ -279,7 +234,6 @@ class QEFfMptModel(MptModel):
                     layer_past=layer_past,
                     attention_mask=causal_mask,
                     position_ids=position_ids,
-                    cache_index=cache_index,
                     use_cache=use_cache,
                     output_attentions=output_attentions,
                     position_bias=alibi,
@@ -299,23 +253,13 @@ class QEFfMptModel(MptModel):
             all_hidden_states = all_hidden_states + (hidden_states,)
 
         if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    presents,
-                    all_hidden_states,
-                    all_self_attentions,
-                ]
-                if v is not None
-            )
+            return tuple(v for v in [hidden_states, presents, all_hidden_states, all_self_attentions] if v is not None)
 
-        return QEffBaseModelOutputWithPastAndCrossAttentions(
+        return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
             past_key_values=presents,
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
-            attention_mask_RetainedState=attention_mask_RetainedState,
         )
 
 
@@ -329,17 +273,16 @@ class QEffMptForCausalLM(MptForCausalLM):
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
-        cache_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple[torch.Tensor], QEffCausalLMOutputWithCrossAttentions]:
+    ) -> Union[Tuple[torch.Tensor], CausalLMOutputWithCrossAttentions]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
             Labels for language modeling. Note that the labels **are shifted** inside the model, i.e. you can set
@@ -353,16 +296,18 @@ class QEffMptForCausalLM(MptForCausalLM):
             past_key_values=past_key_values,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            cache_index=cache_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        hidden_states = transformer_outputs[0]
 
-        lm_logits = self.lm_head(hidden_states[:, -1:])
+        # Cast to INT32 to avoid issue while running in ONNXRT
+        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = transformer_outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        lm_logits = self.lm_head(hidden_states)
+        lm_logits = lm_logits.float()
 
         loss = None
         if labels is not None:
@@ -375,19 +320,17 @@ class QEffMptForCausalLM(MptForCausalLM):
             # Flatten the tokens
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(
-                shift_logits.view(batch_size * seq_length, vocab_size),
-                shift_labels.view(batch_size * seq_length),
+                shift_logits.view(batch_size * seq_length, vocab_size), shift_labels.view(batch_size * seq_length)
             )
 
         if not return_dict:
             output = (lm_logits,) + transformer_outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
-        return QEffCausalLMOutputWithCrossAttentions(
+        return CausalLMOutputWithCrossAttentions(
             loss=loss,
             logits=lm_logits,
             past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
-            attention_mask_RetainedState=transformer_outputs.attention_mask_RetainedState,
         )
