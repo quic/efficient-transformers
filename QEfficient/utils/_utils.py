@@ -127,9 +127,7 @@ def load_hf_tokenizer(model_name: str, cache_dir: Optional[str] = None, hf_token
     # Download tokenizer along with model if it doesn't exist
     model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
-    
-    #check and fix tokenizer viability
-    padding_check_and_fix(tokenizer)
+    padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     
     return tokenizer
 
@@ -145,16 +143,13 @@ def get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp
     return qpc_base_dir_name
 
 
-def padding_check_and_fix(
-    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]
-):
+def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]) -> None:
     """
-    Checks Tokenizer paddding side and pad_token_id viability.
+    Checks and fixes tokenizer paddding side and pad_token_id viability. 
     --------
     
-    Tokeinizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer to check and fix.
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer to check and fix.
     """
-    
     if tokenizer.padding_side != "left":
         logger.warning("Please use padding_side='left' while initializing the tokenizer")
         tokenizer.padding_side = "left"
@@ -166,5 +161,3 @@ def padding_check_and_fix(
         else:
             tokenizer.pad_token_id = tokenizer.vocab_size - 1
             
-
-

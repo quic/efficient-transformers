@@ -71,10 +71,7 @@ def latency_stats_bertstyle(
 ):
     session = QAICInferenceSession(qpc, device_id)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
-    
-    #check and fix tokenizer viability
-    padding_check_and_fix(tokenizer)
-    
+    padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
     next_token_id = inputs["input_ids"][0, -1]
     cur_len = inputs["attention_mask"].sum().item()
