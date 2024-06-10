@@ -5,6 +5,10 @@
       "model_class": "LlamaForCausalLM"
     },
     {
+      "model_name": "gpt2",
+      "model_class": "GPT2LMHeadModel"
+    },
+    {
       "model_name": "Salesforce/codegen-350M-mono",
       "model_class": "CodeGenForCausalLM"
     },
