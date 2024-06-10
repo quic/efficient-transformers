@@ -14,8 +14,8 @@ import numpy as np
 import transformers
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
+import QEfficient
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.logging_utils import logger
 
 io_files = []
@@ -73,7 +73,7 @@ def latency_stats_bertstyle(
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
     
     #check and fix tokenizer viability
-    padding_check_and_fix(tokenizer)
+    QEfficient.utils.padding_check_and_fix(tokenizer)
     
     inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
     next_token_id = inputs["input_ids"][0, -1]

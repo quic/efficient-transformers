@@ -13,7 +13,8 @@ from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.utils import padding_check_and_fix
+import QEfficient
+import QEfficient.utils
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
@@ -129,7 +130,7 @@ def load_hf_tokenizer(model_name: str, cache_dir: Optional[str] = None, hf_token
     model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
     
-    padding_check_and_fix(tokenizer)
+    QEfficient.utils.padding_check_and_fix(tokenizer)
     
     return tokenizer
 
