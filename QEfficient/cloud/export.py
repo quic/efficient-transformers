@@ -20,7 +20,7 @@ from QEfficient.utils.logging_utils import logger
 ROOT_DIR = os.path.dirname(os.path.abspath(""))
 
 
-def get_onnx_model_path(model_name: str, cache_dir: str, tokenizer: Optional[Union[PreTrainedTokenizerFast, PreTrainedTokenizer]]=None, hf_token: Optional[str] = None):
+def get_onnx_model_path(model_name: str, model_path: str, cache_dir: str, tokenizer: Optional[Union[PreTrainedTokenizerFast, PreTrainedTokenizer]]=None, hf_token: Optional[str] = None):
     """
     exports the model to onnx if pre-exported file is not found and returns onnx_model_path
     """
@@ -35,6 +35,7 @@ def get_onnx_model_path(model_name: str, cache_dir: str, tokenizer: Optional[Uni
         logger.info(f"Exporting Pytorch {model_name} model to ONNX...")
         _, generated_onnx_model_path = qualcomm_efficient_converter(
                 model_name=model_name,
+                model_path=model_path,
                 tokenizer=tokenizer,
                 onnx_dir_path=onnx_dir_path,
                 kv=True,

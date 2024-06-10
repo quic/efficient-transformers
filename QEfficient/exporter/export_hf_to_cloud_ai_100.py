@@ -432,6 +432,7 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
 
 def qualcomm_efficient_converter(
     model_name: str,
+    model_path: str,
     model_kv: QEFFBaseModel = None, # type: ignore
     tokenizer: Optional[Union[PreTrainedTokenizer, PreTrainedTokenizerFast]]=None,
     cache_dir: Optional[str] = None,
@@ -465,7 +466,7 @@ def qualcomm_efficient_converter(
 
     """
     # Get model_kv first
-    model_kv = model_kv if model_kv else QEFFCommonLoader.from_pretrained(pretrained_model_name_or_path=model_name, hf_token=hf_token, cache_dir=cache_dir)
+    model_kv = model_kv if model_kv else QEFFCommonLoader.from_pretrained(pretrained_model_name=model_name, pretrained_model_path=model_path, hf_token=hf_token, cache_dir=cache_dir)
 
     # Transform if required
     if model_kv.is_transformed and not kv:
@@ -478,7 +479,7 @@ def qualcomm_efficient_converter(
         onnx_dir_path = os.path.join(model_card_dir, "onnx")
     
     # Load tokenizer if not passed
-    tokenizer = tokenizer if tokenizer else load_hf_tokenizer(model_name=model_name, hf_token=hf_token, cache_dir=cache_dir)
+    tokenizer = tokenizer if tokenizer else load_hf_tokenizer(model_name=model_name, hf_token=hf_token, cache_dir=cache_dir, model_path=model_path)
     
     if form_factor == "cloud":
         return export_for_cloud(
