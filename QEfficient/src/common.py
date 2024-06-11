@@ -73,13 +73,13 @@ class QEFFCommonLoader:
             f"using the `{self.__class__.__name__}.from_pretrained(pretrained_model_path)`")
     
     @classmethod
-    def from_pretrained(cls, pretrained_model_name: str, pretrained_model_path: str, *args, **kwargs) -> QEFFBaseModel:
+    def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs) -> QEFFBaseModel:
         """
         Downloads HuggingFace model if already doesn't exist locally, returns QEffAutoModel object based on type of model.
         """
-        pretrained_model_path = pretrained_model_path if os.path.isdir(pretrained_model_path) \
-            else login_and_download_hf_lm(pretrained_model_name, *args, **kwargs)
-        model_type = get_hf_model_type(hf_model_path=pretrained_model_path)
+        pretrained_model_name_or_path = pretrained_model_name_or_path if os.path.isdir(pretrained_model_name_or_path) \
+            else login_and_download_hf_lm(pretrained_model_name_or_path, *args, **kwargs)
+        model_type = get_hf_model_type(hf_model_path=pretrained_model_name_or_path)
         qeff_auto_model_class = MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP[model_type]
         assert issubclass(qeff_auto_model_class, QEFFBaseModel), f"Expected class that inherits {QEFFBaseModel}, got {type(qeff_auto_model_class)}"
 
