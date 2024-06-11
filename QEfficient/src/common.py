@@ -84,3 +84,4 @@ class QEFFCommonLoader:
         assert issubclass(qeff_auto_model_class, QEFFBaseModel), f"Expected class that inherits {QEFFBaseModel}, got {type(qeff_auto_model_class)}"
 
         return qeff_auto_model_class.from_pretrained(pretrained_model_name_or_path=pretrained_model_name_or_path)
+    
