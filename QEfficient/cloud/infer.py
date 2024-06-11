@@ -49,7 +49,7 @@ def main(
 ) -> None:
     qpc_base_dir_name = get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group)
     prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
-    tokenizer = load_hf_tokenizer(model_name=model_name, cache_dir=cache_dir, hf_token=hf_token)
+    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name, cache_dir=cache_dir, hf_token=hf_token)
 
     qpc_path_exists, qpc_dir_path = qpc_exists(model_name, qpc_base_dir_name)
     # Handle qpc generation

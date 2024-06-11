@@ -14,8 +14,9 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 import QEfficient
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
+from QEfficient.src._transformers import QEFFAutoModelForCausalLMCPUORTRuntimeArgs
 from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
-from QEfficient.src.base import QEFFBaseModel
+from QEfficient.src.base import QEFFBaseModel, Runtime
 from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
 from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
@@ -488,6 +489,8 @@ def export_lm_model_for_cloud(
             save_fp16_onnx=save_fp16_onnx,
         )  # type: ignore
 
+    cpu_ort_args = QEFFAutoModelForCausalLMCPUORTRuntimeArgs(onnx_model_path=fp16_model_name)
+    qeff_model.set_runtime(runtime=Runtime.CPU_ORT, runtime_args=cpu_ort_args)
     # return the model path for automation.
     if return_path:
         if save_fp16_onnx:
@@ -552,7 +555,7 @@ def qualcomm_efficient_converter(
 
     # Load tokenizer if not passed
     tokenizer = (
-        tokenizer if tokenizer else load_hf_tokenizer(model_name=model_name, hf_token=hf_token, cache_dir=cache_dir)
+        tokenizer if tokenizer else load_hf_tokenizer(pretrained_model_name_or_path=model_name, hf_token=hf_token, cache_dir=cache_dir)
     )
 
     if form_factor == "cloud":
