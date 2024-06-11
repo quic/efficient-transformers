@@ -35,7 +35,6 @@ def hf_download(
     repo_id: Optional[str] = None,
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
-    allow_patterns: Optional[List[str]] = None,
     ignore_patterns: Optional[List[str]] = None,
 ):
     # Setup cache and local dir
@@ -57,7 +56,6 @@ def hf_download(
                 revision="main",
                 resume_download=True,
                 token=hf_token,
-                allow_patterns=allow_patterns,
                 ignore_patterns=ignore_patterns,
             )
             break
@@ -128,6 +126,7 @@ def load_hf_tokenizer(model_name: str, cache_dir: Optional[str] = None, hf_token
     model_hf_path = local_model_dir if local_model_dir else hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
     #FIXME(ochougul): should this always return left padded tokenizer?
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
+    return tokenizer, model_hf_path
     return tokenizer, model_hf_path
 
 
