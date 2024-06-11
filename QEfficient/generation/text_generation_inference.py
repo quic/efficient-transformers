@@ -170,8 +170,6 @@ def cloud_ai_100_exec_kv_helper(
 
     inputs = tokenizer(prompt, return_tensors="np", padding=True)
     position_ids_update = inputs["attention_mask"].sum(1, keepdims=True)
-    if input_len is None:
-        input_len = max([len(x) for x in tokenizer(prompt, return_tensors="np").input_ids])
     if generation_len is None:
         generation_len = ctx_len
     padded_len = inputs["input_ids"].shape[1]
@@ -183,7 +181,7 @@ def cloud_ai_100_exec_kv_helper(
         streamer = transformers.TextStreamer(tokenizer)
         streamer.on_finalized_text(prompt[0] + " ")
 
-    # Prepare inputs for prefill
+    # Prepare inputs for prefill/first iteration
     start = perf_counter()
     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
     inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)

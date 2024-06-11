@@ -21,7 +21,7 @@ from transformers.models.codegen.modeling_codegen import (
     logger,
 )
 
-from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
 class QEffCodeGenAttention(CodeGenAttention):
@@ -230,7 +230,7 @@ class QEffCodeGenModel(CodeGenModel):
 
         elif attention_mask is None:
             # 4d mask is passed through the layers
-            attention_mask = _update_causal_mask(position_ids=position_ids, target_length=past_length)
+            attention_mask = _create_causal_mask(position_ids=position_ids, target_length=past_length)
 
         # Prepare head mask if needed
         # 1.0 in head_mask indicate we keep the head

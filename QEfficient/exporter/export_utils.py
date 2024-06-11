@@ -17,24 +17,6 @@ import onnxruntime
 import torch
 from onnx import external_data_helper, numpy_helper
 
-# import onnxsim
-# def simplify_onnx(gen_models_path: str, model_base_name: str, **kwargs) -> str:
-#     try:
-#         simple_model, check = onnxsim.simplify(
-#             f"{gen_models_path}/{model_base_name}.onnx", **kwargs
-#         )
-#         assert check, "Failed verification of simplified model"
-#         return save_onnx(simple_model, gen_models_path, model_base_name + "_simplified")
-#     except Exception as e:
-#         print(f"Skipping simplifier: {e}")
-#         onnx.shape_inference.infer_shapes_path(
-#             f"{gen_models_path}/{model_base_name}.onnx",
-#             f"{gen_models_path}/{model_base_name}_inf.onnx",
-#             True,
-#             True,
-#             True,
-#         )
-#         return save_onnx(model_base_name + "_inf", gen_models_path, model_base_name)
 
 def export_onnx(
     pt_model: torch.nn.Module,
@@ -100,7 +82,6 @@ def export_onnx(
         )
     except Exception as e:
         raise RuntimeError("Exporting to ONNX failed. {}".format(e))
-        
 
     onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
@@ -300,6 +281,7 @@ def generate_input_files(
     with open(input_list_file, "w") as fp:
         fp.write(",".join(filenames))
         fp.write("\n")
+
 
 # FIXME(ochougul/quic-mamta): Remove duplication with APIRunner
 def run_model_on_ort(

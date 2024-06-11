@@ -27,7 +27,7 @@ from transformers.models.llama.modeling_llama import (
     repeat_kv,
 )
 
-from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
 class QEffLlamaAttention(LlamaAttention):
@@ -407,7 +407,7 @@ class QEffLlamaModel(LlamaModel):
                     padding_mask, min_dtype
                 )
             else:
-                causal_mask = _update_causal_mask(position_ids=position_ids, target_length=target_length)
+                causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
 
         if (
             self.config._attn_implementation == "sdpa"

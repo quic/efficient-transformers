@@ -32,7 +32,7 @@ from transformers.models.mistral.modeling_mistral import (
     repeat_kv,
 )
 
-from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
 class QEffMistralAttention(MistralAttention):
@@ -209,7 +209,7 @@ class QEffMistralModel(MistralModel):
         elif attention_mask is None:
             # Causal mask with # --- Rolling buffer --- and # Sliding window mask
             # Change for Cloud AI 100 (vbaddi)
-            attention_mask = _update_causal_mask(
+            attention_mask = _create_causal_mask(
                 position_ids=position_ids,
                 target_length=past_key_values_length,
                 sliding_window=self.config.sliding_window,

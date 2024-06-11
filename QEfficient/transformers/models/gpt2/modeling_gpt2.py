@@ -17,7 +17,7 @@ from transformers.modeling_outputs import (
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model, logger
 
-from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
 class QEffGPT2LMHeadModel(GPT2LMHeadModel):
@@ -257,7 +257,7 @@ class QEffGPT2Model(GPT2Model):
                 attention_mask = (1.0 - attention_mask) * torch.finfo(self.dtype).min
         elif attention_mask is None:
             # update attention mask for Cloud Ai 100
-            attention_mask = _update_causal_mask(position_ids, past_length, None)
+            attention_mask = _create_causal_mask(position_ids, past_length, None)
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]

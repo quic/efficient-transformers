@@ -29,7 +29,7 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     repeat_kv,
 )
 
-from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
 class QEffStarcoder2Attention(Starcoder2Attention):
@@ -208,7 +208,7 @@ class QEffStarcoder2Model(Starcoder2Model):
             )
         elif attention_mask is None:
             # update attention mask for Cloud Ai 100
-            attention_mask = _update_causal_mask(position_ids, past_key_values_length, self.config.sliding_window)
+            attention_mask = _create_causal_mask(position_ids, past_key_values_length, self.config.sliding_window)
         else:
             # 4d mask is passed through the layers
             attention_mask = _prepare_4d_causal_attention_mask(

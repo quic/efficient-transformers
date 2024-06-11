@@ -26,7 +26,7 @@ from transformers.models.phi3.modeling_phi3 import (
     repeat_kv,
 )
 
-from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
 class QEffPhi3Attention(Phi3Attention):
@@ -200,7 +200,7 @@ class QEffPhi3Model(Phi3Model):
             attention_mask = attention_mask if (attention_mask is not None and 0 in attention_mask) else None
         elif attention_mask is None:
             # update attention mask for Cloud Ai 100
-            attention_mask = _update_causal_mask(position_ids, past_key_values_length, self.config.sliding_window)
+            attention_mask = _create_causal_mask(position_ids, past_key_values_length, self.config.sliding_window)
         else:
             # 4d mask is passed through the layers
             attention_mask = _prepare_4d_causal_attention_mask(

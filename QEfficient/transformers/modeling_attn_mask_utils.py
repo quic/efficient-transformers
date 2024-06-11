@@ -12,7 +12,7 @@ import torch
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 
 
-def _update_causal_mask(
+def _create_causal_mask(
     position_ids,
     target_length,
     sliding_window: Optional[int] = None,

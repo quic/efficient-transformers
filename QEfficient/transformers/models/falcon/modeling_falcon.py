@@ -29,7 +29,7 @@ from transformers.models.falcon.modeling_falcon import (
     logger,
 )
 
-from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
 class QEffFalconAttention(FalconAttention):
@@ -347,7 +347,7 @@ class QEffFalconModel(FalconModel):
                 )
         else:
             # 4d mask is passed through the layers
-            attention_mask = _update_causal_mask(position_ids=position_ids, target_length=past_key_values_length)
+            attention_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values_length)
 
         # Prepare head mask if needed
         # 1.0 in head_mask indicate we keep the head

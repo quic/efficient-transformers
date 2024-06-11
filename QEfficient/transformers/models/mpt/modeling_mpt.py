@@ -19,7 +19,7 @@ from transformers.modeling_outputs import (
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel, logger
 
-from QEfficient.transformers.modeling_attn_mask_utils import _update_causal_mask
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
 class QEffMptAttention(MptAttention):
@@ -212,7 +212,7 @@ class QEFfMptModel(MptModel):
             )
             causal_mask = causal_mask.bool()
         elif attention_mask is None:
-            causal_mask = _update_causal_mask(position_ids=position_ids, target_length=past_key_values_length)
+            causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values_length)
 
         for block, layer_past in zip(self.blocks, past_key_values):
             if output_hidden_states:
