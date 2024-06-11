@@ -154,17 +154,6 @@ def cloud_ai_100_exec_kv_helper(
     # Load QPC
     session = QAICInferenceSession(qpc, device_id, enable_debug_logs=enable_debug_logs)
 
-    # Read prompt and ctx len from session
-    prompt_len = max([x[session.binding_index_map["input_ids"]][1][1] for x in session.allowed_shapes])
-    ctx_len = session.allowed_shapes[0][session.binding_index_map["attention_mask"]][1][1]
-    if input_len is None:
-        input_len = max([len(x) for x in tokenizer(prompt, return_tensors="np").input_ids])
-    if generation_len is None:
-        generation_len = ctx_len
-    num_chunks = -(input_len // -prompt_len)  # ceil divide without float
-    input_len = num_chunks * prompt_len  # Convert input_len to a multiple of prompt_len
-    assert input_len <= ctx_len, "input_len should be less than ctx_len"
-
     # Skip inputs/outputs
     session.skip_buffers([x for x in session.input_names + session.output_names if x.startswith("past_")])
 
@@ -180,12 +169,13 @@ def cloud_ai_100_exec_kv_helper(
     prompt = prompt[:batch_size]  # Truncate prompts to required size
 
     inputs = tokenizer(prompt, return_tensors="np", padding=True)
-    input_len = inputs["attention_mask"].sum(1, keepdims=True)
+    position_ids_update = inputs["attention_mask"].sum(1, keepdims=True)
+    input_len = max([len(x) for x in tokenizer(prompt, return_tensors="np").input_ids])
     padded_len = inputs["input_ids"].shape[1]
     num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
     padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
     if generation_len is None:
-        generation_len = ctx_len - input_len.max()
+        generation_len = ctx_len
     assert generation_len > 0, "generation length should be greater than zero"
     generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
     if stream:
@@ -209,7 +199,7 @@ def cloud_ai_100_exec_kv_helper(
 
     # Get first token
     inputs["input_ids"] = outputs["logits"].argmax(2)
-    inputs["position_ids"] = input_len
+    inputs["position_ids"] = position_ids_update
     generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
     finished_sequences = inputs["input_ids"] == tokenizer.eos_token_id
     if stream:
@@ -258,7 +248,7 @@ def print_latency_stats_kv(
         print()
         print("input=", prompt)
         print("output=", generated_texts)
-        print("Prefill time a.k.a TTFT is=", round(prefill_time, 2))
+        print("Prefill time a.k.a TTFT is=", round(prefill_time * batch_size, 2))
         print("Decode token/sec is=", round(decode_perf * batch_size, 2))
         print("Total token/sec is=", round(total_perf * batch_size, 2))
         print("Total (E2E) inference time is=", round(total_time, 2))
@@ -267,7 +257,7 @@ def print_latency_stats_kv(
 
     print("===================== Performance Stats =====================")
     if batch_size > 1:
-        print("Prefill time a.k.a TTFT (batch) is :", round(prefill_time, 2), "s")
+        print("Prefill time a.k.a TTFT (batch) is :", round(prefill_time * batch_size, 2), "s")
         print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s")
         print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s")
         print("Total (E2E) inference time (batch) is=", round(total_time, 2), "s")
