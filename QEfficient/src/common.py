@@ -82,5 +82,5 @@ class QEFFCommonLoader:
         model_type = get_hf_model_type(hf_model_path=pretrained_model_name_or_path)
         qeff_auto_model_class = MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP[model_type]
         assert issubclass(qeff_auto_model_class, QEFFBaseModel), f"Expected class that inherits {QEFFBaseModel}, got {type(qeff_auto_model_class)}"
-
+        
         return qeff_auto_model_class.from_pretrained(pretrained_model_name_or_path=pretrained_model_name_or_path)
