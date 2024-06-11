@@ -15,8 +15,9 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 import QEfficient
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
+from QEfficient.src._transformers import QEFFAutoModelForCausalLMCPUORTRuntimeArgs
 from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
-from QEfficient.src.base import QEFFBaseModel
+from QEfficient.src.base import QEFFBaseModel, Runtime
 from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
 from QEfficient.utils import load_hf_tokenizer, padding_check_and_fix
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
@@ -404,6 +405,8 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
             onnx_dir_path=onnx_dir_path,
             seq_len=seq_length) # type: ignore
 
+    cpu_ort_args = QEFFAutoModelForCausalLMCPUORTRuntimeArgs(onnx_model_path=fp16_model_name)
+    qeff_model.set_runtime(runtime=Runtime.CPU_ORT, runtime_args=cpu_ort_args)
     # return the model path for automation.
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
