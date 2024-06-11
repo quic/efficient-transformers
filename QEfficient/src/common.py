@@ -70,7 +70,7 @@ class QEFFCommonLoader:
     def __init__(self, *args: Any, **kwds: Any) -> None:
         raise EnvironmentError(
             f"{self.__class__.__name__} is designed to be instantiated "
-            f"using the `{self.__class__.__name__}.from_pretrained(pretrained_model_path)`")
+            f"using the `{self.__class__.__name__}.from_pretrained(pretrained_model_name_or_path)`")
     
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs) -> QEFFBaseModel:
@@ -82,5 +82,5 @@ class QEFFCommonLoader:
         model_type = get_hf_model_type(hf_model_path=pretrained_model_name_or_path)
         qeff_auto_model_class = MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP[model_type]
         assert issubclass(qeff_auto_model_class, QEFFBaseModel), f"Expected class that inherits {QEFFBaseModel}, got {type(qeff_auto_model_class)}"
-        
+
         return qeff_auto_model_class.from_pretrained(pretrained_model_name_or_path=pretrained_model_name_or_path)

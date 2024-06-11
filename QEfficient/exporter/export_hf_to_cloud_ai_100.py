@@ -432,7 +432,6 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
 
 def qualcomm_efficient_converter(
     model_name: str,
-    model_path: str,
     model_kv: QEFFBaseModel = None, # type: ignore
     local_model_dir: Optional[str] = None,
     tokenizer: Optional[Union[PreTrainedTokenizer, PreTrainedTokenizerFast]]=None,

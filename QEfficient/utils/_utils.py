@@ -36,7 +36,6 @@ def hf_download(
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
     allow_patterns: Optional[List[str]] = None,
-    allow_patterns: Optional[List[str]] = None,
     ignore_patterns: Optional[List[str]] = None,
 ):
     # Setup cache and local dir
