@@ -75,12 +75,7 @@ class QEffDynamicCache(DynamicCache):
             ctx_indices = torch.arange(ctx_len)[None, None, ...]
             gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
             invalid_mask = ctx_indices > gather_limit
-            if torch.onnx.is_in_onnx_export():
-                # remove post the backend compiler fix is in mainline sdk
-                # invalid_gather_idx = torch.iinfo(torch.int32).max
-                invalid_gather_idx = ctx_len - 1
-            else:
-                invalid_gather_idx = 0
+            invalid_gather_idx = torch.iinfo(torch.int32).max
             ctx_indices = torch.where(invalid_mask, invalid_gather_idx, ctx_indices)
             k_out = CtxGatherFunc.apply(k_out, batch_index, ctx_indices)
             v_out = CtxGatherFunc.apply(v_out, batch_index, ctx_indices)
