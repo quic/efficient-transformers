@@ -28,7 +28,6 @@ def convert_to_cloud_bertstyle(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_len: int,
-    return_path: bool,
 ):
     """
     Function to convert the model to Bertstyle approach.
@@ -41,7 +40,6 @@ def convert_to_cloud_bertstyle(
         tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
         model_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
         seq_len (int, optional): The length of the sequence. Default is 128.
-        return_path (bool): If True, return the base path for models and exported onnx model path
 
     """
     if os.path.exists(onnx_dir_path):
@@ -116,7 +114,7 @@ def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, 
 
     # Fix onnx for fp16
     # Clip the values to fp16 ranges to avoid over/under flow in AI 100
-    fp16_model_name = fix_onnx_fp16(
+    model_name = fix_onnx_fp16(
         inputs=inputs,
         output_names=output_names,
         ort_outputs=ort_outputs,
@@ -144,7 +142,6 @@ def convert_to_cloud_kvstyle(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_len: int,
-    return_path: bool
 ):
     """
     Function Modeling changes for kv retention and export to Onnx.
@@ -163,7 +160,6 @@ def convert_to_cloud_kvstyle(
         hf_token (str): If hf_token passed, it will be used for authentication for gated. Default is None.
         seq_len (int, optional): The length of the sequence. Default is 128.
         input_str (str): The input string to be processed.
-        return_path (bool): If True, return the base path for models and exported onnx model path
 
     """
     if os.path.exists(onnx_dir_path):
@@ -343,16 +339,14 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model:
 
 def export_for_cloud(model_name: str, qeff_model: QEFFBaseModel,
                      tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-                     onnx_dir_path: str, seq_length: int = Constants.seq_length,
-                     return_path: bool = True)-> Tuple[str, str]:
+                     onnx_dir_path: str, seq_length: int = Constants.seq_length)-> Tuple[str, str]:
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM: # type: ignore
         return export_lm_model_for_cloud(model_name=model_name,
                                          qeff_model=qeff_model, # type: ignore
                                          tokenizer=tokenizer,
                                          onnx_dir_path=onnx_dir_path,
-                                         seq_length=seq_length,
-                                         return_path=return_path)
+                                         seq_length=seq_length)
     else:
         raise NotImplementedError(
             f"Only model type {QEFFAutoModelForCausalLM.__class__.__name__} is supported for export, got {type(qeff_model)}"
@@ -360,7 +354,7 @@ def export_for_cloud(model_name: str, qeff_model: QEFFBaseModel,
 
 def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausalLM,
                               tokenizer:Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-                              onnx_dir_path: str, seq_length: int, return_path:bool):
+                              onnx_dir_path: str, seq_length: int):
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
@@ -394,7 +388,6 @@ def qualcomm_efficient_converter(
     hf_token: Optional[str] = None,
     seq_length: int = Constants.seq_length,
     kv: bool = True,
-    return_path: bool = True,
     form_factor: str="cloud",
 ) -> Tuple[str, str]:
     """
@@ -409,7 +402,6 @@ def qualcomm_efficient_converter(
         hf_token (bool): If True, an authentication token will be used. Default is False.
         seq_len (int, optional): The length of the sequence. Default is 128.
         kv (bool): If True, key-value pairs will be used. Default is True.
-        return_path (bool): If True, return the base path for models and exported onnx model path
 
     Returns:
         None, if automation is False, else path to exported Onnx file
@@ -445,8 +437,7 @@ def qualcomm_efficient_converter(
             qeff_model=model_kv,
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
-            seq_length=seq_length,
-            return_path=return_path)
+            seq_length=seq_length)
     else:
         # [TODO]: Apply the class transformation to make changes for the KV models in edge use cases
         # model = QEfficient.transform(model_hf, type="Transformers", form_factor="edge")
