@@ -35,12 +35,12 @@ def convert_to_cloud_bertstyle(
     """
     Function to convert the model to Bertstyle approach.
     Bertstyle Approach:
-        1. No Prefill/Decode sepeartly compiled
-        2. No KV retaintion logic.
-        3. KV is everytime computed for all the tokens until EOS/max_length
+        1. No Prefill/Decode separately compiled
+        2. No KV retention logic.
+        3. KV is every time computed for all the tokens until EOS/max_length
 
     Args:
-        tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
+        tokenizer (HF AutoTokenizer): Tokenizer to prepare inputs.
         model_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
         seq_len (int, optional): The length of the sequence. Default is 128.
         return_path (bool): If True, return the base path for models and exported onnx model path
@@ -170,6 +170,7 @@ def convert_to_cloud_kvstyle(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_len: int,
+    full_batch_size: int,
     return_path: bool,
     save_fp32_onnx: bool,
     save_fp16_onnx: bool,
@@ -186,7 +187,7 @@ def convert_to_cloud_kvstyle(
         model_name (str): The name of the model to be used.
         model_class (type): The class of the model.
         model_kv (torch.nn.Module): Transformed KV torch model to be used
-        tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
+        tokenizer (HF AutoTokenizer): Tokenizer to prepare inputs.
         onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
         hf_token (str): If hf_token passed, it will be used for authentication for gated. Default is None.
         seq_len (int, optional): The length of the sequence. Default is 128.
@@ -214,7 +215,7 @@ def convert_to_cloud_kvstyle(
 
     # Decide path for saving exported ONNX files.
     fp32_model_name, fp16_model_name = export_kvstyle_transformed_model_to_onnx(
-        model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len, save_fp32_onnx, save_fp16_onnx
+        model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len, full_batch_size, save_fp32_onnx, save_fp16_onnx
     )  # type: ignore
 
     # return the model path for automation.
@@ -231,6 +232,7 @@ def export_kvstyle_transformed_model_to_onnx(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_len: int,
+    full_batch_size: int,
     save_fp32_onnx: Optional[bool] = False,
     save_fp16_onnx: Optional[bool] = True,
 ):
@@ -243,10 +245,12 @@ def export_kvstyle_transformed_model_to_onnx(
     # Preprocess inputs
     # Build inputs for prefill
     assert seq_len > 0, "Need seq_len to be greater than zero"
-    inputs = tokenizer(Constants.input_str, return_tensors="pt")
+    inputs = tokenizer(Constants.input_str, return_tensors="pt", padding=True)
     batch_size, prompt_len = inputs["input_ids"].shape
     inputs.pop("attention_mask")
-    inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
+    inputs["position_ids"] = torch.arange(prompt_len).view(1, prompt_len)
+    batch_index = torch.arange(1).view(-1, 1)
+    inputs["batch_index"] = batch_index
 
     config = transformed_model.config
     if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
@@ -254,8 +258,7 @@ def export_kvstyle_transformed_model_to_onnx(
         d_head = config.n_embd // config.n_head
         n_layer = config.n_layer
     elif hasattr(config, "num_key_value_heads") and hasattr(
-        config, "num_attention_heads"
-    ):  # Check for num_key_value_heads (Llama/Mistral)
+        config, "num_attention_heads"):  # Check for num_key_value_heads (Llama/Mistral)
         n_heads = config.num_key_value_heads
         d_head = config.hidden_size // config.num_attention_heads
         n_layer = config.num_hidden_layers
@@ -275,11 +278,12 @@ def export_kvstyle_transformed_model_to_onnx(
             n_layer = config.num_hidden_layers
     else:
         raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
+    
     inputs["past_key_values"] = [
         tuple(
             [
                 torch.zeros(
-                    batch_size,
+                    full_batch_size,
                     n_heads,
                     seq_len,  # seq_len for running decode loop
                     d_head,
@@ -300,22 +304,30 @@ def export_kvstyle_transformed_model_to_onnx(
 
     # Build inputs for next iteration from outputs
     # Build inputs for decode
-    inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
-    inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-    print(tokenizer.batch_decode(inputs["input_ids"]))
+    input_ids = pt_outputs.logits.detach().argmax(2)
+    inputs["input_ids"] = torch.full((full_batch_size, 1), tokenizer.pad_token_id)
+    inputs["input_ids"][batch_index.view(-1)] = input_ids
+    position_ids = inputs["position_ids"].max(1, keepdim=True).values + 1
+    inputs["position_ids"] = torch.full((full_batch_size, 1), 0)
+    inputs["position_ids"][batch_index.view(-1)] = position_ids
+    inputs["batch_index"] = torch.arange(full_batch_size).view(-1, 1)
+    print(tokenizer.batch_decode(input_ids))
+
     # Run PyTorch inference for decode in loop
     # todo: vbaddi, fix it to verify on Cloud AI 100.
     for i in range(0):
         pt_outputs = transformed_model(**inputs)
         inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
         inputs["position_ids"] += 1
-        print(tokenizer.batch_decode(inputs["input_ids"]))
+        print("Encoder inputs",tokenizer.batch_decode(inputs["input_ids"]))
+    
     # To avoid issues in onnx export
-    inputs["position_ids"] = torch.full((batch_size, 1), seq_len - 1)
+    inputs["position_ids"] = torch.full((full_batch_size, 1), seq_len - 1)
 
     # Run PyTorch inference with past
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
+    print("Decoder inputs",tokenizer.batch_decode(inputs["input_ids"]))
 
     # Add pkv into output_names
     pkv = inputs["past_key_values"]
@@ -403,6 +415,7 @@ def export_for_cloud(
     qeff_model: QEFFBaseModel,
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
+    full_batch_size: int,
     seq_length: int = Constants.seq_length,
     return_path: bool = True,
     save_fp32_onnx: bool = False,
@@ -416,6 +429,7 @@ def export_for_cloud(
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length,
+            full_batch_size = full_batch_size,
             return_path=return_path,
             save_fp16_onnx=save_fp16_onnx,
             save_fp32_onnx=save_fp32_onnx,
@@ -432,6 +446,7 @@ def export_lm_model_for_cloud(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_length: int,
+    full_batch_size: int,
     return_path: bool,
     save_fp32_onnx: bool,
     save_fp16_onnx: bool,
@@ -457,6 +472,7 @@ def export_lm_model_for_cloud(
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
             seq_len=seq_length,
+            full_batch_size=full_batch_size,
             save_fp32_onnx=save_fp32_onnx,
             save_fp16_onnx=save_fp16_onnx,
         )  # type: ignore
@@ -486,6 +502,7 @@ def qualcomm_efficient_converter(
     tokenizer: Optional[Union[PreTrainedTokenizer, PreTrainedTokenizerFast]] = None,
     cache_dir: Optional[str] = None,
     onnx_dir_path: Optional[str] = None,
+    full_batch_size:Optional[int] = 1,
     hf_token: Optional[str] = None,
     seq_length: int = Constants.seq_length,
     kv: bool = True,
@@ -500,7 +517,7 @@ def qualcomm_efficient_converter(
     Args:
         model_name (str): The name of the model to be used.
         model_kv (torch.nn.Module): Transformed KV torch model to be used
-        tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
+        tokenizer (HF AutoTokenizer): Tokenizer to prepare inputs.
         cache_dir (str): Path to cache dir if not specified, default HF cache_dir will be used.
         onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
         hf_token (bool): If True, an authentication token will be used. Default is False.
@@ -525,7 +542,7 @@ def qualcomm_efficient_converter(
 
     # Transform if required
     if model_kv.is_transformed and not kv:
-        raise AttributeError("Transformed model is passed while requsting to convert non-transformed model")
+        raise AttributeError("Transformed model is passed while requesting to convert non-transformed model")
 
     model_kv = model_kv if model_kv.is_transformed else QEfficient.transform(model_kv) if kv else model_kv
 
@@ -544,6 +561,7 @@ def qualcomm_efficient_converter(
             qeff_model=model_kv,
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
+            full_batch_size=full_batch_size,
             seq_length=seq_length,
             return_path=return_path,
             save_fp16_onnx=save_fp16_onnx,

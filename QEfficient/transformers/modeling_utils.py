@@ -89,7 +89,7 @@ from .models.starcoder2.modeling_starcoder2 import (
 # Required for the Automation tool
 ModelArchitectures = namedtuple("ModelArchitectures", ["architectures"])
 # Create an instance of the named tuple
-my_architectures = ModelArchitectures(
+get_lists_of_cb_qeff_models = ModelArchitectures(
     [
         LlamaForCausalLM.__name__,
         MistralForCausalLM.__name__,

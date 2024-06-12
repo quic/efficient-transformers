@@ -1,0 +1,5 @@
+qeff_models
+QEfficient_Library.egg-info
+cache_dir
+.vscode
+**/__pycache__/

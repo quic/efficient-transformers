@@ -14,16 +14,20 @@ from typing import List, Tuple
 from QEfficient.utils.logging_utils import logger
 
 
-def create_and_dump_specializations(batch_size: int, prompt_len: int, ctx_len: int, path: str):
+def create_and_dump_specializations(batch_size: int,full_batch_size: int, prompt_len: int, ctx_len: int, path: str):
     # Create
     specializations = {
         "specializations": [
             {
                 "batch_size": str(batch_size),
+                 "full_batch_size": str(full_batch_size),
                 "seq_len": str(prompt_len),
                 "ctx_len": str(ctx_len),
             },
-            {"batch_size": str(batch_size), "seq_len": "1", "ctx_len": str(ctx_len)},
+            {"batch_size": str(full_batch_size),
+              "full_batch_size": str(full_batch_size),
+             "seq_len": "1",
+             "ctx_len": str(ctx_len)},
         ]
     }
     # Dump
@@ -102,6 +106,7 @@ def compile(
     qpc_path: str,
     num_cores: int,
     device_group: List[int],  #  FIXME: use num_devices instead
+    full_batch_size: int,
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     batch_size: int = 1,
@@ -121,6 +126,7 @@ def compile(
     :device_group: List[int]. Used for finding number of devices to compile for.
     :aic_enable_depth_first: bool. Enables DFS with default memory size, disabled by default.
     :mos: int. Effort level to reduce the on-chip memory.
+    :full_batch_size: int. No of decode batch size to compile the model for.
     :batch_size: int. Batch size to compile the model for.
     :prompt_len: int. prompt len for the model to compile.
     :ctx_len: int. Maximum context length to compile the model.
@@ -131,8 +137,7 @@ def compile(
     os.makedirs(qpc_path, exist_ok=True)
     specialization_json_path = os.path.join(qpc_path, "specializations.json")
     create_and_dump_specializations(
-        batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, path=specialization_json_path
-    )
+        batch_size=batch_size,full_batch_size=full_batch_size, prompt_len=prompt_len, ctx_len=ctx_len, path=specialization_json_path)
 
     # Select the customIO config based on the mx flag.
     if mxint8:

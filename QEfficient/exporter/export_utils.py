@@ -46,7 +46,6 @@ def export_onnx(
     # Inspect the model's forward method arguments
     pt_model_code = pt_model.forward.__code__
     pt_input_names = pt_model_code.co_varnames[1 : pt_model_code.co_argcount]
-
     # Arrange the inputs in proper order to make tracing work properly
     pt_inputs = []
     input_names = []
@@ -61,7 +60,6 @@ def export_onnx(
             pt_inputs.append(inputs[input_name])
         else:
             pt_inputs.append(None)
-
     # Create dynamic axes dict for inputs that need to have dynamic input shapes
     seq_len_inputs = {
         "input_ids",
@@ -71,7 +69,6 @@ def export_onnx(
         "encoder_outputs",
     }
     decoder_seq_inputs = {"decoder_input_ids", "decoder_attention_mask"}
-
     dynamic_axes = {}
     for iname in input_names:
         if iname in seq_len_inputs:
@@ -80,65 +77,22 @@ def export_onnx(
             dynamic_axes[iname] = {0: "batch_size", 1: "decoder_seq_len"}
         elif iname.startswith("past_"):
             # KV-cache (batch_size, num_heads, past_len, embed_dim)
-            dynamic_axes[iname] = {0: "batch_size", 2: "ctx_len"}
+            dynamic_axes[iname] = {0: "full_batch_size", 2: "ctx_len"}
+        elif iname == "batch_index":
+            dynamic_axes[iname] = {0: "batch_size"}
     if "past_key.0" in input_names and "attention_mask" in input_names:
         dynamic_axes["attention_mask"] = {0: "batch_size", 1: "ctx_len"}
-
-    # return input_names, output_names, model_base_name
-    os.makedirs(f"{gen_models_path}_tmp", exist_ok=True)
-    try:
-        info("Exporting to ONNX...")
-        torch.onnx.export(
-            pt_model,
-            tuple(pt_inputs),
-            f"{gen_models_path}_tmp/{model_base_name}.onnx",
-            input_names=input_names,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            opset_version=13,
-            custom_opsets={"com.qti.aisw.onnx": 1},
-        )
-    except Exception as e:
-        raise RuntimeError("Exporting to ONNX failed. {}".format(e))
-        
-
-    onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx")
-    loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
-    shutil.rmtree(f"{gen_models_path}_tmp")
-    os.makedirs(f"{gen_models_path}", exist_ok=True)
-    info("Clearing files .. ")
-
-    # Check if model uses external data format to save the weight tensors
-    # model_uses_external_data = check_model_uses_external_data(loaded_model)
-    # if model_uses_external_data:
-    # Save model to single weight file
-    info("ONNX model uses external data. Saving as external data.")
-    onnx.save_model(
-        loaded_model,
-        os.path.join(gen_models_path, f"{model_base_name}.onnx"),
-        save_as_external_data=True,
-        all_tensors_to_one_file=True,
-        location=f"{model_base_name}.onnxweights.data",
-        size_threshold=1024,
-        convert_attribute=False,
+    
+    torch.onnx.export(
+        pt_model,
+        tuple(pt_inputs),
+        f"{gen_models_path}/{model_base_name}.onnx",
+        input_names=input_names,
+        output_names=output_names,
+        dynamic_axes=dynamic_axes,
+        opset_version=13,
     )
-    onnx.checker.check_model(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
-
-    # Run shape inference in intial model itself
-    onnx.shape_inference.infer_shapes_path(
-        os.path.join(gen_models_path, f"{model_base_name}.onnx"),
-        os.path.join(gen_models_path, f"{model_base_name}.onnx"),
-        True,
-        True,
-        True,
-    )
-
-    info(f"input names {input_names}")
-    info(f"output names {output_names}")
-    info(f"Initial Model Export Completed...{model_base_name}")
-
     return model_base_name
-
 
 def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_base_name: str) -> str:
     if isinstance(model, str):

@@ -116,8 +116,7 @@ def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size) 
             logger.warning("Found inputs passed using txt file as well as CLI, taking inputs from given txt file")
         prompt = read_prompts_txt_file(prompts_txt_file_path)
     if isinstance(prompt, str):
-        prompt = [prompt]
-
+        prompt = eval(prompt)
     num_prompts = len(prompt)
     if batch_size > 1:
         assert (
@@ -133,11 +132,44 @@ def read_prompts_txt_file(prompts_txt_file_path: str):
             prompt.append(line.strip())
     return prompt
 
+def create_decode_inputs(decode_batch_size, tokenizer, batch_index, ctx_len):
+    """
+    This function creates the decode inputs.
+
+    Returns:
+        dict: The decode inputs.
+    """
+    decode_inputs = {}
+    # Create position IDs filled with zeros
+    decode_inputs["position_ids"] = np.zeros((decode_batch_size, 1), np.int64)
+    # Create input IDs filled with the pad token ID
+    decode_inputs["input_ids"] = np.full((decode_batch_size, 1), tokenizer.pad_token_id)
+    decode_inputs["batch_index"] = batch_index
+    # Create attention mask filled with zeros
+    decode_inputs["attention_mask"] = np.zeros((decode_batch_size, ctx_len), dtype=bool)
+    return decode_inputs
+
+def run_prefill(prompt, tokenizer, session, num_chunks, padded_len, prefill_seq_len, write_io_dir):
+    inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
+    inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+    # Need to use -1 as position_ids for invalid tokens
+
+    # Run prefill
+    for i in range(num_chunks):
+        chunk_inputs = inputs.copy()
+        chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+        chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+        outputs = session.run(chunk_inputs)
+        if write_io_dir:
+                write_io_files(inputs, outputs, write_io_dir, "prefill", "aic_batch_io", True, False)
+
+    return outputs
 
 def cloud_ai_100_exec_kv_helper(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc: str,
     prompt: List[str],
+    full_batch_size: int = 1,
     input_len: Optional[int] = None,
     generation_len: Optional[int] = None,
     device_id: List[int] = [0],
@@ -161,21 +193,46 @@ def cloud_ai_100_exec_kv_helper(
     batch_size, _, ctx_len, _ = session.bindings[session.binding_index_map["past_key.0"]].dims
     prefill_seq_len = max(
         [x[session.binding_index_map["input_ids"]][1][1] for x in session.allowed_shapes]
-        + [session.bindings[session.binding_index_map["input_ids"]].dims[1]]
-    )
+        + [session.bindings[session.binding_index_map["input_ids"]].dims[1]])
+    
+    # Initiate a prefill queue. 
+    prefill_queue = []
 
-    if len(prompt) < batch_size:
-        prompt = prompt * -(batch_size // -len(prompt))  # Repeat prompt to required size
-    prompt = prompt[:batch_size]  # Truncate prompts to required size
+    # FIXME need to support batch size and/or decode batch size.
+    # if len(prompt) < batch_size:
+    #     prompt = prompt * -(batch_size // -len(prompt))  # Repeat prompt to required size
+    # prompt = prompt[:batch_size]  # Truncate prompts to required size
 
-    inputs = tokenizer(prompt, return_tensors="np", padding=True)
-    input_len = inputs["attention_mask"].sum(1, keepdims=True)
-    padded_len = inputs["input_ids"].shape[1]
-    num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
-    padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+    # Truncate prompts to required size
+    if len(prompt) < full_batch_size:
+        print(f"Repeating prompt {full_batch_size} times")
+        prompt = prompt * -(full_batch_size // -len(prompt))  # Repeat prompt to required size
+    prompt = prompt[:full_batch_size]
+   
+    # add all prompts to the prefill queue
+    prefill_queue = list(prompt)
+    logger.info(f"Request queue initially:  {prefill_queue}")  
+    
+    # initialize batch index
+    batch_index = np.reshape(np.array(np.arange(batch_size), np.int64), (batch_size, 1))
+
+    # Create decoder input dict 
+    decode_inputs = create_decode_inputs(full_batch_size, tokenizer, batch_index, ctx_len)
+
+    # initialize empty list to store generated tokens for each prompt
+    generated_ids = [[] for _ in range(full_batch_size)]
+    # store the length of each prompt requested
+    input_lengths = [0 for _ in range(full_batch_size)]
+    # store the number of prompts processed out of the prompt_queue
+    num_prompts_processed = 0
+    # initialize dynamic container which will hold all the global request ids (position in prompt request queue)
+    # of the prompts currently being processed
+    current_batch_req_ids = []
+    
     if generation_len is None:
-        generation_len = ctx_len - input_len.max()
+        generation_len = ctx_len #- input_len.max()
     assert generation_len > 0, "generation length should be greater than zero"
+    
     generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
     if stream:
         streamer = transformers.TextStreamer(tokenizer)
@@ -183,31 +240,67 @@ def cloud_ai_100_exec_kv_helper(
 
     # Prepare inputs for prefill
     start = perf_counter()
-    inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
-    inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
-    # Need to use -1 as position_ids for invalid tokens
+    # inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
+    # inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+    # # Need to use -1 as position_ids for invalid tokens
 
-    # Run prefill
-    for i in range(num_chunks):
-        chunk_inputs = inputs.copy()
-        chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
-        chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
-        outputs = session.run(chunk_inputs)
-        if write_io_dir:
-            write_io_files(inputs, outputs, write_io_dir, "prefill", "aic_batch_io", True, False)
+    # # Run prefill
+    # for i in range(num_chunks):
+    #     chunk_inputs = inputs.copy()
+    #     chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+    #     chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+    #     outputs = session.run(chunk_inputs)
+    
+    # run prefill and accumulate results for all inputs in the queue. 
+    for decode_batch_id in range(full_batch_size):
+        prompt = prefill_queue[decode_batch_id] # Get the prompt from the prefill queue
+        inputs = tokenizer(prompt, return_tensors="np", padding=True) # Tokenize the input. 
+        input_len = inputs["attention_mask"].sum(1, keepdims=True) # Generate input length from the attention mask
+        padded_len = inputs["input_ids"].shape[1] # calculate the padded length
+        num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
 
-    # Get first token
-    inputs["input_ids"] = outputs["logits"].argmax(2)
-    inputs["position_ids"] = input_len
-    generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
-    finished_sequences = inputs["input_ids"] == tokenizer.eos_token_id
-    if stream:
-        streamer.put(inputs["input_ids"][0])
+        assert padded_len <= ctx_len, "input_len should be less than ctx_len"\
+        
+        # TODO need to store the attention mask and position ids for each batch element so that we can access them
+        # at decode time
+        # inputs["position_ids"] = (np.cumsum(inputs["attention_mask"][0:1], 1) - 1) * inputs["attention_mask"][0:1]
+        # inputs["attention_mask"] = np.concatenate(
+        #     [inputs["attention_mask"].astype(bool),np.zeros((full_batch_size, ctx_len - input_len), dtype=bool),], 1,)
+        
+        # cache_index = np.array([[0]], np.int64)
+        batch_index = np.array([[decode_batch_id]], np.int64)
+        # inputs["cache_index"] = cache_index
+        inputs["batch_index"] = batch_index
+        # run prefill for num_chunks
+        outputs =  run_prefill(prompt, tokenizer, session, num_chunks, padded_len, prefill_seq_len, write_io_dir)
+        
+        logits = outputs["logits"]
+        print("##############logits.shape", logits.shape)
+    
+        # Get output token
+        inputs["input_ids"] = outputs["logits"].argmax(2)
+        inputs["position_ids"] = input_len
+        generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
+        finished_sequences = inputs["input_ids"] == tokenizer.eos_token_id
+        if stream:
+            streamer.put(inputs["input_ids"][0])
+        
+        # FIXME assumes that prefill queue will always be popped from the front
+        current_batch_req_ids.append(decode_batch_id)
+        input_lengths[current_batch_req_ids[decode_batch_id]] = inputs["input_len"]
+        num_prompts_processed += 1
+        # update generated id list for this request, right after running prefill
+        generated_ids[current_batch_req_ids[decode_batch_id]].append(inputs["input_ids"][0, 0])
+        # pop the front of the prefill queue
+        # assumes that prefill queue will always be popped from the front
+        prefill_queue = prefill_queue[1:]
 
     # Decode loop
     loop_start = perf_counter()
     for num_token in range(1, generation_len):
         outputs = session.run(inputs)
+
         if write_io_dir:
             write_io_files(inputs, outputs, write_io_dir, "decode", "aic_batch_io", True, False)
             write_io_dir = None
@@ -225,6 +318,7 @@ def cloud_ai_100_exec_kv_helper(
 
     end = perf_counter()
     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+    print("generated_texts", generated_texts)
 
     for i in range(1 if stream else 0, batch_size):
         print()
@@ -280,6 +374,7 @@ def cloud_ai_100_exec_kv(
     stream: bool = True,
     write_io_dir: Optional[str] = None,
     automation=False,
+    full_batch_size: int = 1,
 ):
     if batch_size == 1:
         prefill_time = []
@@ -298,6 +393,7 @@ def cloud_ai_100_exec_kv(
                 enable_debug_logs=enable_debug_logs,
                 stream=stream,
                 write_io_dir=write_io_dir,
+                full_batch_size=full_batch_size,
             )
             generated_texts.append(latency_stats[0])
             prefill_time.append(latency_stats[1])

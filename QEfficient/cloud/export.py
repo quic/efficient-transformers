@@ -20,7 +20,7 @@ from QEfficient.utils.logging_utils import logger
 ROOT_DIR = os.path.dirname(os.path.abspath(""))
 
 
-def get_onnx_model_path(model_name: str, cache_dir: str, tokenizer: Optional[Union[PreTrainedTokenizerFast, PreTrainedTokenizer]]=None, hf_token: Optional[str] = None):
+def get_onnx_model_path(model_name: str, cache_dir: str, full_batch_size:int, tokenizer: Optional[Union[PreTrainedTokenizerFast, PreTrainedTokenizer]]=None, hf_token: Optional[str] = None):
     """
     exports the model to onnx if pre-exported file is not found and returns onnx_model_path
     """
@@ -37,6 +37,7 @@ def get_onnx_model_path(model_name: str, cache_dir: str, tokenizer: Optional[Uni
                 model_name=model_name,
                 tokenizer=tokenizer,
                 onnx_dir_path=onnx_dir_path,
+                full_batch_size=full_batch_size,
                 kv=True,
                 form_factor="cloud",
                 return_path=True,
@@ -53,6 +54,7 @@ def get_onnx_model_path(model_name: str, cache_dir: str, tokenizer: Optional[Uni
 def main(
     model_name: str,
     cache_dir: str,
+    full_batch_size:int,
     hf_token: Optional[str] = None,
 ) -> None:
     """
@@ -62,7 +64,7 @@ def main(
     :cache_dir: str. Cache dir to store the downloaded huggingface files.
     :hf_token: str. HuggingFace login token to access private repos.
     """
-    get_onnx_model_path(model_name=model_name, cache_dir=cache_dir, hf_token=hf_token)
+    get_onnx_model_path(model_name=model_name, cache_dir=cache_dir,full_batch_size=full_batch_size, hf_token=hf_token)
 
 
 if __name__ == "__main__":
@@ -77,6 +79,13 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models"
+    )
+    parser.add_argument(
+        "--full_batch_size",
+        "--full-batch-size",
+        type=int,
+        default=1,
+        help="Batch size for text generation"
     )
     args = parser.parse_args()
     main(**args.__dict__)

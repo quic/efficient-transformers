@@ -31,6 +31,7 @@ from QEfficient.utils.logging_utils import logger
 def main(
     model_name: str,
     num_cores: int,
+    full_batch_size: int,
     prompt: Optional[str] = None, # type: ignore
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
@@ -56,7 +57,7 @@ def main(
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
-        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token)
+        onnx_model_path = get_onnx_model_path(model_name, cache_dir, full_batch_size, tokenizer, hf_token)
 
         #########
         # Compile
@@ -66,6 +67,7 @@ def main(
                 qpc_path=os.path.dirname(qpc_dir_path),   # We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation
                 num_cores=num_cores,
                 batch_size=batch_size,
+                full_batch_size=full_batch_size,
                 prompt_len=prompt_len,
                 ctx_len=ctx_len,
                 mxfp6=mxfp6,
@@ -150,6 +152,13 @@ if __name__ == "__main__":
         type=int,
         default=-1,
         help="Effort level to reduce the on-chip memory",
+    )
+    parser.add_argument(
+        "--full_batch_size",
+        "--full_batch_size",
+        type=int,
+        default=1,
+        help="Batch size for text generation"
     )
     #FIXME: Add verbose feature
     parser.add_argument(
