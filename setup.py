@@ -31,10 +31,6 @@ INSTALL_REQUIRES = [
     "protobuf==3.20.2",
     "onnxscript==0.1.0.dev20240327",
     "pytest",
-    "pytest-mock",
-    "pytest-order",
-    "pytest-html",
-    "pytest-cov",
     "sympy",
 ]
 
@@ -44,8 +40,16 @@ QUALITY_REQUIRES = [
     "hf_doc_builder @ git+https://github.com/huggingface/doc-builder.git",
 ]
 
+PYTEST_REQUIRES = [
+    "pytest-mock",
+    "pytest-order",
+    "pytest-html",
+    "pytest-cov",
+]
+
 EXTRAS_REQUIRE = {
     "quality": QUALITY_REQUIRES,
+    "test" : PYTEST_REQUIRES,
 }
 
 setup(

@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+# "gpt2-medium","TinyLlama/TinyLlama-1.1B-Chat-v1.0","Salesforce/codegen-350M-mono","wtang06/mpt-125m-c4"
 import os
 import pytest
 import QEfficient
@@ -114,7 +115,7 @@ def pytest_generate_tests(metafunc):
     Ref: https://docs.pytest.org/en/7.3.x/how-to/parametrize.html
     """
     json_data = None
-    json_file  = os.path.join(ROOT_DIR,"tests", "HL_testing_input.json")
+    json_file  = os.path.join(ROOT_DIR,"tests","HL_testing_input.json")
     with open(json_file,'r') as file:
         json_data =  json.load(file)
     print("\n**************JSON data***************\n\n",json_data)
