@@ -8,6 +8,7 @@
 import os
 from typing import Any, List, Optional, Union
 
+from numpy import full
 import torch.nn as nn
 from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
@@ -113,7 +114,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self.runtime = runtime
 
     def export_and_compile(self, num_cores: int, device_group: List[int], batch_size: int = 1, prompt_len: int = 32, ctx_len: int = 128,
-                mxfp6: bool = True, mxint8: bool = False, mos: int = -1, aic_enable_depth_first: bool = False, qpc_dir_suffix: Optional[str] = None) -> str:
+                mxfp6: bool = True, mxint8: bool = False, mos: int = -1, aic_enable_depth_first: bool = False, qpc_dir_suffix: Optional[str] = None,
+                full_batch_size: int = 1) -> str:
         """
         Exports the Pytorch model to ONNX and saves it locally.
         -------------
@@ -123,7 +125,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         """
         self.export()
         self.compile(num_cores=num_cores, device_group=device_group, batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len,
-                     mxfp6=mxfp6, mxint8=mxint8, mos=mos, aic_enable_depth_first=aic_enable_depth_first, qpc_dir_suffix=qpc_dir_suffix)
+                     mxfp6=mxfp6, mxint8=mxint8, mos=mos, aic_enable_depth_first=aic_enable_depth_first, qpc_dir_suffix=qpc_dir_suffix,
+                     full_batch_size=full_batch_size)
         return self.cloud_ai_100_runtime_args.qpc_dir_path
 
     
@@ -135,15 +138,18 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         return onnx_path
 
     def compile(self, num_cores: int, device_group: List[int], batch_size: int = 1, prompt_len: int = 32, ctx_len: int = 128,
-                mxfp6: bool = True, mxint8: bool = False, mos: int = -1, aic_enable_depth_first: bool = False, qpc_dir_suffix: Optional[str] = None) -> str:
+                mxfp6: bool = True, mxint8: bool = False, mos: int = -1, aic_enable_depth_first: bool = False, qpc_dir_suffix: Optional[str] = None,
+                full_batch_size: int = 1) -> str:
         # Prepare qpc dir path
         qpc_base_dir_name = get_qpc_dir_name_infer(num_cores=num_cores, mos=mos, batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, mxfp6=mxfp6, mxint8=mxint8, device_group=device_group)
+        qpc_base_dir_name = qpc_base_dir_name + "_" + qpc_dir_suffix if qpc_dir_suffix else qpc_base_dir_name
         _, qpc_dir_path = qpc_exists(model_name = self.get_model_card_name(), qpc_base_dir_name=qpc_base_dir_name)
-        qpc_dir_path = os.path.join(os.path.dirname(qpc_dir_path), os.path.split(qpc_dir_path)[-1] + "_" + qpc_dir_suffix) if qpc_dir_suffix else qpc_dir_path
 
         # Compile
-        QEfficient.compile(onnx_path=self.ort_runtime_args.onnx_model_path, qpc_path=qpc_dir_path, num_cores=num_cores, device_group=device_group, aic_enable_depth_first=aic_enable_depth_first,
-                           mos=mos, batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, mxfp6=mxfp6, mxint8=mxint8)
+        QEfficient.compile(onnx_path=self.ort_runtime_args.onnx_model_path, qpc_path=os.path.dirname(qpc_dir_path),
+                           num_cores=num_cores, device_group=device_group, aic_enable_depth_first=aic_enable_depth_first,
+                           mos=mos, batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, mxfp6=mxfp6,
+                           mxint8=mxint8, full_batch_size=full_batch_size)
         cloud_ai_100_runtime_args = QEFFAutoModelForCausalLMAI100RuntimeArgs(qpc_dir_path=qpc_dir_path, device_group=device_group)
         self.set_runtime(runtime=Runtime.AI_100, runtime_args=cloud_ai_100_runtime_args)
         
