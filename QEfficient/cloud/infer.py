@@ -16,8 +16,7 @@ from QEfficient.generation.text_generation_inference import (
     check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
 )
-from QEfficient.utils import get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
-from QEfficient.utils.constants import Constants
+from QEfficient.utils import get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists, check_and_assign_cache_dir
 from QEfficient.utils.logging_utils import logger
 
 """
@@ -36,7 +35,7 @@ def main(
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
     mos: int = -1,
-    cache_dir: str = Constants.CACHE_DIR,
+    cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
     batch_size: int = 1,
     prompt_len: int = 32,
@@ -49,7 +48,9 @@ def main(
 ) -> None:
     qpc_base_dir_name = get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group)
     prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
-    tokenizer = load_hf_tokenizer(model_name=model_name, cache_dir=cache_dir, hf_token=hf_token, local_model_dir=local_model_dir)
+    check_and_assign_cache_dir(local_model_dir,cache_dir)
+
+    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), cache_dir=cache_dir, hf_token=hf_token, local_model_dir=local_model_dir)
 
     qpc_path_exists, qpc_dir_path = qpc_exists(model_name, qpc_base_dir_name)
     # Handle qpc generation
@@ -100,7 +101,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cache-dir",
         "--cache_dir",
-        default=Constants.CACHE_DIR,
+        default=None,
         required=False,
         help="Cache dir to store HF Downloads",
     )

@@ -12,4 +12,5 @@ from QEfficient.utils._utils import (  # noqa: F401
     login_and_download_hf_lm,
     onnx_exists,
     qpc_exists,
+    check_and_assign_cache_dir
 )

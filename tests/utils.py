@@ -66,7 +66,7 @@ def get_tokenizer(model_name):
     :param model_name: str
     :return tokenizer
     """
-    tokenizer = load_hf_tokenizer(model_name=model_name)
+    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     return tokenizer
 
 

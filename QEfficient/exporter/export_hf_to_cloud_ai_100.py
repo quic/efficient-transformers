@@ -451,6 +451,7 @@ def qualcomm_efficient_converter(
     Args:
         model_name (str): The name of the model to be used.
         model_kv (torch.nn.Module): Transformed KV torch model to be used
+        local_model_dir(str): Path to custom model weights and config files
         tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
         cache_dir (str): Path to cache dir if not specified, default HF cache_dir will be used.
         onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
@@ -479,7 +480,7 @@ def qualcomm_efficient_converter(
         onnx_dir_path = os.path.join(model_card_dir, "onnx")
     
     # Load tokenizer if not passed
-    tokenizer = tokenizer if tokenizer else load_hf_tokenizer(model_name=model_name, hf_token=hf_token, cache_dir=cache_dir, local_model_dir=local_model_dir)
+    tokenizer = tokenizer if tokenizer else load_hf_tokenizer(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), hf_token=hf_token, cache_dir=cache_dir, local_model_dir=local_model_dir)
     
     if form_factor == "cloud":
         return export_for_cloud(
