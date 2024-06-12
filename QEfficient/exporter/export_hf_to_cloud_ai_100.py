@@ -489,7 +489,7 @@ def export_lm_model_for_cloud(
             save_fp16_onnx=save_fp16_onnx,
         )  # type: ignore
 
-    cpu_ort_args = QEFFAutoModelForCausalLMCPUORTRuntimeArgs(onnx_model_path=fp16_model_name)
+    cpu_ort_args = QEFFAutoModelForCausalLMCPUORTRuntimeArgs(onnx_model_path=os.path.join(onnx_dir_path, f"{fp16_model_name}.onnx"))
     qeff_model.set_runtime(runtime=Runtime.CPU_ORT, runtime_args=cpu_ort_args)
     # return the model path for automation.
     if return_path:
@@ -552,6 +552,7 @@ def qualcomm_efficient_converter(
     if onnx_dir_path is None:
         model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
         onnx_dir_path = os.path.join(model_card_dir, "onnx")
+        os.makedirs(onnx_dir_path, exist_ok=True)
 
     # Load tokenizer if not passed
     tokenizer = (
