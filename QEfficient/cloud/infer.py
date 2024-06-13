@@ -48,7 +48,7 @@ def main(
 ) -> None:
     qpc_base_dir_name = get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group)
     prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
-    check_and_assign_cache_dir(local_model_dir,cache_dir)
+    cache_dir = check_and_assign_cache_dir(local_model_dir,cache_dir)
 
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), cache_dir=cache_dir, hf_token=hf_token, local_model_dir=local_model_dir)
 

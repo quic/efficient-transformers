@@ -145,3 +145,4 @@ def check_and_assign_cache_dir(local_model_dir, cache_dir):
         logger.warning(f"Both local_model_dir ({local_model_dir}) and cache_dir ({cache_dir}) given. Using local_model_dir.")
     elif local_model_dir is None and cache_dir is None:
         cache_dir = Constants.CACHE_DIR
+        return cache_dir
