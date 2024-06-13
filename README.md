@@ -247,7 +247,6 @@ base_path, onnx_path = QEfficient.export(
     tokenizer=tokenizer,
     kv=True,
     form_factor="cloud",
-    return_path=True,
 )
 ```
 
