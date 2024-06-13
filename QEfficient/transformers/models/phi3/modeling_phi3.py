@@ -1,32 +1,27 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
 
+"""PyTorch Phi-3 model."""
 
 import math
 from typing import List, Optional, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
 from transformers.cache_utils import Cache, DynamicCache
-from transformers.modeling_attn_mask_utils import (
-    _prepare_4d_causal_attention_mask,
-    _prepare_4d_causal_attention_mask_for_sdpa,
-)
-from transformers.modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
-from transformers.models.mixtral.modeling_mixtral import (
-    MixtralAttention,
-    MixtralForCausalLM,
-    MixtralModel,
-    MixtralSparseMoeBlock,
+from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from transformers.models.phi3.modeling_phi3 import (
+    Phi3Attention,
+    Phi3ForCausalLM,
+    Phi3Model,
     apply_rotary_pos_emb,
-    load_balancing_loss_func,
     logger,
     repeat_kv,
 )
@@ -34,9 +29,11 @@ from transformers.models.mixtral.modeling_mixtral import (
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
-class QEffMixtralAttention(MixtralAttention):
+class QEffPhi3Attention(Phi3Attention):
+    """Multi-headed attention from 'Attention Is All You Need' paper"""
+
     """
-    Copied from MixtralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
+    Copied from Phi3ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/phi3/modeling_phi3.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
@@ -50,11 +47,15 @@ class QEffMixtralAttention(MixtralAttention):
         output_attentions: bool = False,
         use_cache: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        logger.warning_once("You are not running the flash-attention implementation, expect numerical differences.")
+
         bsz, q_len, _ = hidden_states.size()
 
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
+        qkv = self.qkv_proj(hidden_states)
+        query_pos = self.num_heads * self.head_dim
+        query_states = qkv[..., :query_pos]
+        key_states = qkv[..., query_pos : query_pos + self.num_key_value_heads * self.head_dim]
+        value_states = qkv[..., query_pos + self.num_key_value_heads * self.head_dim :]
 
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
@@ -69,11 +70,13 @@ class QEffMixtralAttention(MixtralAttention):
                     "with a layer index."
                 )
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos, sin = self.rotary_emb(value_states, position_ids, seq_len=kv_seq_len)
+
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "position_ids": position_ids}  # Specific to RoPE models
+            # Update the cache_kwargs with position_ids for Cloud AI 100
+            cache_kwargs = {"sin": sin, "cos": cos, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         # repeat k/v heads if n_kv_heads < n_heads
@@ -93,11 +96,12 @@ class QEffMixtralAttention(MixtralAttention):
                 raise ValueError(
                     f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                 )
-
             attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+
         # upcast attention to fp32
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(value_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
+
         attn_output = torch.matmul(attn_weights, value_states)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
@@ -117,69 +121,14 @@ class QEffMixtralAttention(MixtralAttention):
         return attn_output, attn_weights, past_key_value
 
 
-MIXTRAL_ATTENTION_CLASSES = {
-    "eager": MixtralAttention,
-}
-
-
-class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
+class QEffPhi3Model(Phi3Model):
     """
-    This implementation is
-    strictly equivalent to standard MoE with full capacity (no
-    dropped tokens). It's faster since it formulates MoE operations
-    in terms of block-sparse operations to accomodate imbalanced
-    assignments of tokens to experts, whereas standard MoE either
-    (1) drop tokens at the cost of reduced performance or (2) set
-    capacity factor to number of experts and thus waste computation
-    and memory on padding.
-    """
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """ """
-        batch_size, sequence_length, hidden_dim = hidden_states.shape
-        hidden_states = hidden_states.view(-1, hidden_dim)
-        # router_logits: (batch * sequence_length, n_experts)
-        router_logits = self.gate(hidden_states)
-
-        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
-        routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-        routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
-        # we cast back to the input dtype
-        routing_weights = routing_weights.to(hidden_states.dtype)
-
-        final_hidden_states = torch.zeros(
-            (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
-        )
-
-        # One hot encode the selected experts to create an expert mask
-        # this will be used to easily index which expert is going to be sollicitated
-        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
-
-        # Loop over all available experts in the model and perform the computation on each expert
-        for expert_idx in range(self.num_experts):
-            expert_layer = self.experts[expert_idx]
-            expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
-            current_hidden_states = expert_layer(hidden_states) * (((routing_weights * expert_mask_tr).sum(1))[:, None])
-            current_hidden_states = torch.where(
-                (routing_weights * expert_mask_tr).sum(1).to(torch.bool)[:, None],
-                current_hidden_states,
-                torch.tensor(0.0),
-            )
-            final_hidden_states = final_hidden_states + current_hidden_states
-        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-        return final_hidden_states, router_logits
-
-
-# Copied from transformers.models.mistral.modeling_mistral.MistralModel with MISTRAL->MIXTRAL,Mistral->Mixtral
-class QEffMixtralModel(MixtralModel):
-    """
-    Copied from MixtralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
+    Copied from Phi3ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/phi3/modeling_phi3.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask
     """
 
-    # Ignore copy
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -190,13 +139,9 @@ class QEffMixtralModel(MixtralModel):
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
-        output_router_logits: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, MoeModelOutputWithPast]:
+    ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_router_logits = (
-            output_router_logits if output_router_logits is not None else self.config.output_router_logits
-        )
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
@@ -206,13 +151,13 @@ class QEffMixtralModel(MixtralModel):
 
         # retrieve input_ids and inputs_embeds
         if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both decoder_input_ids and decoder_inputs_embeds at the same time")
+            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
-            batch_size, seq_length = input_ids.shape
+            batch_size, seq_length = input_ids.shape[:2]
         elif inputs_embeds is not None:
-            batch_size, seq_length, _ = inputs_embeds.shape
+            batch_size, seq_length = inputs_embeds.shape[:2]
         else:
-            raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
+            raise ValueError("You have to specify either input_ids or inputs_embeds")
 
         past_key_values_length = 0
 
@@ -246,31 +191,16 @@ class QEffMixtralModel(MixtralModel):
             if is_padding_right:
                 raise ValueError(
                     "You are attempting to perform batched generation with padding_side='right'"
-                    " this may lead to unexpected behaviour for Flash Attention version of Mixtral. Make sure to "
+                    " this may lead to unexpected behaviour for Flash Attention version of Phi3. Make sure to "
                     " call `tokenizer.padding_side  = 'left'` before tokenizing the input. "
                 )
 
         if self._attn_implementation == "flash_attention_2":
             # 2d mask is passed through the layers
             attention_mask = attention_mask if (attention_mask is not None and 0 in attention_mask) else None
-        elif self._attn_implementation == "sdpa" and not output_attentions:
-            # output_attentions=True can not be supported when using SDPA, and we fall back on
-            # the manual implementation that requires a 4D causal mask in all cases.
-            attention_mask = _prepare_4d_causal_attention_mask_for_sdpa(
-                attention_mask,
-                (batch_size, seq_length),
-                inputs_embeds,
-                past_key_values_length,
-                sliding_window=self.config.sliding_window,
-            )
         elif attention_mask is None:
-            # Causal mask with # --- Rolling buffer --- and # Sliding window mask
-            # Change for Cloud AI 100 (vbaddi)
-            attention_mask = _create_causal_mask(
-                position_ids=position_ids,
-                target_length=past_key_values_length,
-                sliding_window=self.config.sliding_window,
-            )
+            # update attention mask for Cloud Ai 100
+            attention_mask = _create_causal_mask(position_ids, past_key_values_length, self.config.sliding_window)
         else:
             # 4d mask is passed through the layers
             attention_mask = _prepare_4d_causal_attention_mask(
@@ -286,7 +216,6 @@ class QEffMixtralModel(MixtralModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        all_router_logits = () if output_router_logits else None
         next_decoder_cache = None
 
         for decoder_layer in self.layers:
@@ -301,7 +230,6 @@ class QEffMixtralModel(MixtralModel):
                     position_ids,
                     past_key_values,
                     output_attentions,
-                    output_router_logits,
                     use_cache,
                 )
             else:
@@ -311,7 +239,6 @@ class QEffMixtralModel(MixtralModel):
                     position_ids=position_ids,
                     past_key_value=past_key_values,
                     output_attentions=output_attentions,
-                    output_router_logits=output_router_logits,
                     use_cache=use_cache,
                 )
 
@@ -323,9 +250,6 @@ class QEffMixtralModel(MixtralModel):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
-            if output_router_logits:
-                all_router_logits += (layer_outputs[-1],)
-
         hidden_states = self.norm(hidden_states)
 
         # add hidden states from the last decoder layer
@@ -335,25 +259,19 @@ class QEffMixtralModel(MixtralModel):
         next_cache = None
         if use_cache:
             next_cache = next_decoder_cache.to_legacy_cache() if use_legacy_cache else next_decoder_cache
-
         if not return_dict:
-            return tuple(
-                v
-                for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_router_logits]
-                if v is not None
-            )
-        return MoeModelOutputWithPast(
+            return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
+        return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=next_cache,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
-            router_logits=all_router_logits,
         )
 
 
-class QEffMixtralForCausalLM(MixtralForCausalLM):
+class QEffPhi3ForCausalLM(Phi3ForCausalLM):
     """
-    Copied from MixtralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
+    Copied from Phi3ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/phi3/modeling_phi3.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update the hidden_states, and fix for onnx model
@@ -370,40 +288,29 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
-        output_router_logits: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, MoeCausalLMOutputWithPast]:
+    ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
             labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
                 Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
                 config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
                 (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
-
         Returns:
-
         Example:
-
         ```python
-        >>> from transformers import AutoTokenizer, MixtralForCausalLM
-
-        >>> model = MixtralForCausalLM.from_pretrained("mistralai/Mixtral-8x7B-v0.1")
-        >>> tokenizer = AutoTokenizer.from_pretrained("mistralai/Mixtral-8x7B-v0.1")
-
-        >>> prompt = "Hey, are you conscious? Can you talk to me?"
+        >>> from transformers import AutoTokenizer, Phi3ForCausalLM
+        >>> model = Phi3ForCausalLM.from_pretrained("microsoft/phi-3-mini-4k-instruct")
+        >>> tokenizer = AutoTokenizer.from_pretrained("microsoft/phi-3-mini-4k-instruct")
+        >>> prompt = "This is an example script ."
         >>> inputs = tokenizer(prompt, return_tensors="pt")
-
         >>> # Generate
         >>> generate_ids = model.generate(inputs.input_ids, max_length=30)
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-        "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
+        'This is an example script .\n Certainly! Below is a sample script that demonstrates a simple task, such as calculating the sum'
         ```"""
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_router_logits = (
-            output_router_logits if output_router_logits is not None else self.config.output_router_logits
-        )
-
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
@@ -419,13 +326,12 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            output_router_logits=output_router_logits,
             return_dict=return_dict,
         )
 
-        # Cast to int32 to avoid ONNXRT issue
-        logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
+        # Cast to INT32 to avoid issue while running in ONNXRT
+        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
 
@@ -442,29 +348,14 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
             shift_labels = shift_labels.to(shift_logits.device)
             loss = loss_fct(shift_logits, shift_labels)
 
-        aux_loss = None
-        if output_router_logits:
-            aux_loss = load_balancing_loss_func(
-                outputs.router_logits if return_dict else outputs[-1],
-                self.num_experts,
-                self.num_experts_per_tok,
-                attention_mask,
-            )
-            if labels is not None:
-                loss += self.router_aux_loss_coef * aux_loss.to(loss.device)  # make sure to reside in the same device
-
         if not return_dict:
             output = (logits,) + outputs[1:]
-            if output_router_logits:
-                output = (aux_loss,) + output
             return (loss,) + output if loss is not None else output
 
-        return MoeCausalLMOutputWithPast(
+        return CausalLMOutputWithPast(
             loss=loss,
-            aux_loss=aux_loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
-            router_logits=outputs.router_logits,
         )

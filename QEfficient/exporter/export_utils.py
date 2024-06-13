@@ -82,7 +82,6 @@ def export_onnx(
         )
     except Exception as e:
         raise RuntimeError("Exporting to ONNX failed. {}".format(e))
-        
 
     onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
@@ -282,6 +281,7 @@ def generate_input_files(
     with open(input_list_file, "w") as fp:
         fp.write(",".join(filenames))
         fp.write("\n")
+
 
 # FIXME(ochougul/quic-mamta): Remove duplication with APIRunner
 def run_model_on_ort(
