@@ -28,7 +28,7 @@ def convert_to_cloud_bertstyle(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_len: int,
-):
+) -> str:
     """
     Function to convert the model to Bertstyle approach.
     Bertstyle Approach:
@@ -47,12 +47,12 @@ def convert_to_cloud_bertstyle(
         shutil.rmtree(onnx_dir_path)
         
     # Decide path for saving exported ONNX files.
-    fp32_model_name, fp16_model_name = export_bertstyle_model_to_onnx(model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len) # type: ignore
+    model_name = export_bertstyle_model_to_onnx(model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len) # type: ignore
 
     # return the model path for automation.
     return onnx_dir_path, os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
-def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, seq_len):
+def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, seq_len) -> str:
     model_base_name = model_name.replace("/", "_") + "_bertstyle"
     os.makedirs(onnx_dir_path, exist_ok=True)
 
@@ -142,7 +142,7 @@ def convert_to_cloud_kvstyle(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_len: int,
-):
+) -> str:
     """
     Function Modeling changes for kv retention and export to Onnx.
     KV Style Approach:
@@ -175,8 +175,10 @@ def convert_to_cloud_kvstyle(
     return onnx_dir_path, os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
-def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model: torch.nn.Module, tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-                                          onnx_dir_path: str, seq_len: int):  
+def export_kvstyle_transformed_model_to_onnx(model_name: str,
+                                             transformed_model: torch.nn.Module,
+                                             tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+                                             onnx_dir_path: str, seq_len: int) -> str:  
 
     # Disabling requires_grad on all parameters
     for j, p in enumerate(transformed_model.parameters()):
@@ -339,7 +341,7 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str, transformed_model:
 
 def export_for_cloud(model_name: str, qeff_model: QEFFBaseModel,
                      tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-                     onnx_dir_path: str, seq_length: int = Constants.seq_length)-> Tuple[str, str]:
+                     onnx_dir_path: str, seq_length: int = Constants.seq_length) -> str:
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM: # type: ignore
         return export_lm_model_for_cloud(model_name=model_name,
@@ -354,7 +356,7 @@ def export_for_cloud(model_name: str, qeff_model: QEFFBaseModel,
 
 def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausalLM,
                               tokenizer:Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-                              onnx_dir_path: str, seq_length: int):
+                              onnx_dir_path: str, seq_length: int) -> str:
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
@@ -389,7 +391,7 @@ def qualcomm_efficient_converter(
     seq_length: int = Constants.seq_length,
     kv: bool = True,
     form_factor: str="cloud",
-) -> Tuple[str, str]:
+) -> str:
     """
     Function to convert the input string using the specified model and returns the result.
 
