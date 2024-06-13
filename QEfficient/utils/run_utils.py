@@ -8,6 +8,7 @@
 import numpy as np
 import onnxruntime
 import torch
+import onnx
 
 from QEfficient.utils.logging_utils import logger
 
@@ -32,9 +33,9 @@ class ApiRunner:
         :param prompt_len: int
         :param ctx_len: int
         """
-        if tokenizer.padding_side != "left":
-            logger.warning("Please use padding_side='left' while initializing the tokenizer")
-            tokenizer.padding_side = "left"
+        if tokenizer.padding_side != "right":
+            logger.warning("Please use padding_side='right' while initializing the tokenizer")
+            tokenizer.padding_side = "right"
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token_id = tokenizer.eos_token_id
         self.tokenizer = tokenizer
@@ -124,7 +125,6 @@ class ApiRunner:
 
         outputs["past_key_values"] = present_key_values
         outputs["logits"] = ort_outputs["logits"]
-        outputs["attention_mask"] = ort_outputs["attention_mask_RetainedState"]
 
         return outputs
 
@@ -137,7 +137,19 @@ class ApiRunner:
         :return generated_ids: numpy.ndarray - output tokens
         """
 
-        session = onnxruntime.InferenceSession(model_path)
+        # todo:vbaddi; find a better version to do this changes
+        # Currently the gathernd invalid index is set to INT MAX(FP16) and hence fails in OnnxRuntime
+        # Changing the constant value from INT MAX to -1. Fixes the issue.
+        m = onnx.load(model_path, load_external_data=False)
+        for node in m.graph.node:
+            if node.op_type == "Constant":
+                np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t)
+                if len(np_tensor.shape) == 0 and np_tensor.item() == 65504:
+                    node.attribute[0].t.raw_data = np.array(-1).tobytes()
+        
+        onnxruntime_model = model_path[:-5] + "_ort.onnx"
+        onnx.save(m, onnxruntime_model)
+        session = onnxruntime.InferenceSession(onnxruntime_model)
 
         generated_ids = []
         inputs = self.input_handler.prepare_ort_inputs(n_layer, padding_shape)
@@ -174,8 +186,7 @@ class ApiRunner:
         for i in range(1, self.gen_len):
             generated_ids.append(outputs["logits"].argmax(-1).reshape(-1, 1))
             inputs = self.input_handler.update_cloud_ai_100_inputs(i, inputs, outputs)
-            session.skip_buffers(["attention_mask"])
-            session.skip_buffers([x for x in session.input_names if x.startswith("past_")])
+            session.skip_buffers([x for x in session.input_names + session.output_names if x.startswith("past_")])
             outputs = session.run(inputs)
 
         generated_ids.append(outputs["logits"].argmax(-1).reshape(-1, 1))
