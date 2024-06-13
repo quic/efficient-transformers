@@ -172,7 +172,7 @@ def convert_to_cloud_kvstyle(
     model_name = export_kvstyle_transformed_model_to_onnx(model_name, qeff_model.model,  tokenizer, onnx_dir_path, seq_len) # type: ignore
 
     # return the model path for automation.
-    return onnx_dir_path, os.path.join(onnx_dir_path, f"{model_name}.onnx")
+    return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
 def export_kvstyle_transformed_model_to_onnx(model_name: str,
@@ -378,7 +378,7 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
             seq_len=seq_length) # type: ignore
 
     # return the model path for automation.
-    return onnx_dir_path, os.path.join(onnx_dir_path, f"{model_name}.onnx")
+    return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
 def qualcomm_efficient_converter(
