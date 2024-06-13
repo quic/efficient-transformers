@@ -77,7 +77,6 @@ if __name__ == "__main__":
         "--cache_dir",
         "--cache-dir",
         required=False,
-        default=None,
         help="Cache_dir to store the HF files",
     )
     parser.add_argument(

@@ -142,6 +142,6 @@ def get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp
 
 def check_and_assign_cache_dir(local_model_dir, cache_dir):
     if local_model_dir is not None and cache_dir is not None:
-        logger.warning(f"Both local model dir ({local_model_dir}) and cache dir ({cache_dir}) given. Using local model dir.")
-    elif cache_dir is None:
+        logger.warning(f"Both local_model_dir ({local_model_dir}) and cache_dir ({cache_dir}) given. Using local_model_dir.")
+    elif local_model_dir is None and cache_dir is None:
         cache_dir = Constants.CACHE_DIR
