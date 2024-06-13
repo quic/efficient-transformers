@@ -44,6 +44,10 @@ def get_config(model_config):
             n_heads = 1  # MQA
             d_head = config.hidden_size // config.num_attention_heads
             n_layer = 1  # Due to multi query
+        else:
+            n_heads = config.num_attention_heads
+            d_head = config.hidden_size // config.num_attention_heads
+            n_layer = 1
     else:
         raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
 

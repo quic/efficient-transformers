@@ -12,6 +12,10 @@
 *Latest news* :fire: <br>
 
 - [coming soon] Support for more popular [models](#models-coming-soon) and inference optimization techniques like continuous batching and speculative decoding <br>
+- [06/2024] Added support for [Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)
+- [06/2024] Added support for [StarCoder2-15B](https://huggingface.co/bigcode/starcoder2-15b)
+- [06/2024] Added support for [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
+- [06/2024] Added support for [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1)
 - [06/2024] Added support for [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5)
 - [05/2024] Added support for [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) & [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1).
 - [04/2024] Initial release of [efficient transformers](https://github.com/quic/efficient-transformers) for seamless inference on pre-trained LLMs.
@@ -56,13 +60,14 @@ For other models, there is comprehensive documentation to inspire upon the chang
 * [Vicuna-v0](https://huggingface.co/lmsys/vicuna-13b-delta-v0)
 * [Vicuna-v1.3](https://huggingface.co/lmsys/vicuna-13b-v1.3)
 * [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5)
-
+* [Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)
+* [StarCoder2-15B](https://huggingface.co/bigcode/starcoder2-15b)
+* [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
+* [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1)
+* [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) 
 
 ## Models Coming Soon
  
-* [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) 
-* [Starcoder2-15b](https://huggingface.co/bigcode/starcoder2-15b) 
-* [Phi-3](https://huggingface.co/microsoft/Phi-3-mini-128k-instruct)
 * [Jais-13b](https://huggingface.co/core42/jais-13b)
 * [Jais-30b](https://huggingface.co/core42/jais-30b-chat-v1)
 * [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
