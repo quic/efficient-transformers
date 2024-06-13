@@ -10,7 +10,6 @@ import QEfficient
 import QEfficient.cloud.export
 from QEfficient.cloud.export import main as export
 
-# @pytest.mark.order(1)
 def test_export(setup, mocker):
     """
     test_export is a HL export api testing function,
@@ -21,7 +20,7 @@ def test_export(setup, mocker):
     mocker: mocker is itself a pytest fixture, uses to mock or spy internal functions.
     """
     ms = setup
-    
+    ms.remove_dirs()
     get_onnx_model_path_spy = mocker.spy(QEfficient.cloud.export,"get_onnx_model_path")
     export(model_name=ms.model_name,hf_token=ms.hf_token)
     get_onnx_model_path_spy.assert_called_once()

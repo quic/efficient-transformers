@@ -4,13 +4,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-# "gpt2-medium","TinyLlama/TinyLlama-1.1B-Chat-v1.0","Salesforce/codegen-350M-mono","wtang06/mpt-125m-c4"
 import os
+import shutil
 import pytest
 import QEfficient
 import json
 from typing import List
 from QEfficient.utils.constants import Constants, QEFF_MODELS_DIR, ROOT_DIR
+from QEfficient.utils import get_qpc_dir_name_infer
 
 class model_setup:
     """
@@ -56,10 +57,7 @@ class model_setup:
         return str(os.path.join(QEFF_MODELS_DIR, str(self.model_name)))
     
     def qpc_base_dir_name(self):
-        return( f"qpc_{self.num_cores}cores_{self.batch_size}BS_{self.prompt_len}PL_{self.ctx_len}CL_{self.mos}MOS_"
-        + f"{len(self.device_group)}"
-        + "devices"
-        + ("_mxfp6_mxint8" if (self.mxfp6 and self.mxint8) else "_mxfp6" if self.mxfp6 else "_fp16_mxint8" if self.mxint8 else "_fp16"))
+        return get_qpc_dir_name_infer(self.num_cores, self.mos, self.batch_size, self.prompt_len, self.ctx_len, self.mxfp6, self.mxint8, self.device_group)
     
     def qpc_dir_path(self):
         return str(os.path.join(self.model_card_dir(), self.qpc_base_dir_name(), "qpcs"))
@@ -84,6 +82,9 @@ class model_setup:
             return str(os.path.join(self.onnx_dir_path(), "custom_io_int8.yaml"))
         else:
             return str(os.path.join(self.onnx_dir_path(), "custom_io_fp16.yaml"))
+    def remove_dirs(self):
+        if os.path.exists(QEFF_MODELS_DIR):
+            shutil.rmtree(QEFF_MODELS_DIR)
 
 @pytest.fixture
 def setup(model_name,num_cores,prompt,prompts_txt_file_path,aic_enable_depth_first,mos,cache_dir,hf_token,batch_size,prompt_len,ctx_len,mxfp6,mxint8,device_group):
@@ -94,17 +95,7 @@ def setup(model_name,num_cores,prompt,prompts_txt_file_path,aic_enable_depth_fir
     Args: same as set up initialization
     Return: model_setup class object
     """
-    if hf_token == "NA" and prompts_txt_file_path == "NA":
-        return model_setup(model_name,num_cores,prompt,None,bool(aic_enable_depth_first),mos,cache_dir,None,batch_size,prompt_len,ctx_len,bool(mxfp6),bool(mxint8),device_group)
-    
-    elif prompts_txt_file_path == "NA":
-        return model_setup(model_name,num_cores,prompt,None,bool(aic_enable_depth_first),mos,cache_dir,hf_token,batch_size,prompt_len,ctx_len,bool(mxfp6),bool(mxint8),device_group)
-
-    elif hf_token == "NA":
-        return model_setup(model_name,num_cores,prompt,prompts_txt_file_path,bool(aic_enable_depth_first),mos,cache_dir,None,batch_size,prompt_len,ctx_len,bool(mxfp6),bool(mxint8),device_group)
-
-    else:
-        return model_setup(model_name,num_cores,prompt,prompts_txt_file_path,bool(aic_enable_depth_first),mos,cache_dir,hf_token,batch_size,prompt_len,ctx_len,bool(mxfp6),bool(mxint8),device_group)
+    yield model_setup(model_name,num_cores,prompt,prompts_txt_file_path,bool(aic_enable_depth_first),mos,cache_dir,hf_token,batch_size,prompt_len,ctx_len,bool(mxfp6),bool(mxint8),device_group)
 
 def pytest_generate_tests(metafunc):  
     """
@@ -115,7 +106,7 @@ def pytest_generate_tests(metafunc):
     Ref: https://docs.pytest.org/en/7.3.x/how-to/parametrize.html
     """
     json_data = None
-    json_file  = os.path.join(ROOT_DIR,"tests","HL_testing_input.json")
+    json_file  = os.path.join(ROOT_DIR,"tests","cloud","HL_testing_input.json")
     with open(json_file,'r') as file:
         json_data =  json.load(file)
     print("\n**************JSON data***************\n\n",json_data)
