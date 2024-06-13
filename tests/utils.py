@@ -114,7 +114,7 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
         onnx_dir_path=onnx_dir_path,
         kv=True,
     )
-    return base_path, onnx_model_path
+    return onnx_model_path
 
 
 def set_up(model_config, device_group=[0]):
