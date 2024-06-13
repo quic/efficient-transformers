@@ -339,16 +339,23 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str,
     
     return model_name
 
-def export_for_cloud(model_name: str, qeff_model: QEFFBaseModel,
-                     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-                     onnx_dir_path: str, seq_length: int = Constants.seq_length) -> str:
+
+def export_for_cloud(
+    model_name: str,
+    qeff_model: QEFFBaseModel,
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+    onnx_dir_path: str,
+    seq_length: int = Constants.seq_length,
+) -> Tuple[str, str]:
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
-    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM: # type: ignore
-        return export_lm_model_for_cloud(model_name=model_name,
-                                         qeff_model=qeff_model, # type: ignore
-                                         tokenizer=tokenizer,
-                                         onnx_dir_path=onnx_dir_path,
-                                         seq_length=seq_length)
+    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
+        return export_lm_model_for_cloud(
+            model_name=model_name,
+            qeff_model=qeff_model,  # type: ignore
+            tokenizer=tokenizer,
+            onnx_dir_path=onnx_dir_path,
+            seq_length=seq_length,
+        )
     else:
         raise NotImplementedError(
             f"Only model type {QEFFAutoModelForCausalLM.__class__.__name__} is supported for export, got {type(qeff_model)}"
