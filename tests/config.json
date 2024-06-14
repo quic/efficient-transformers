@@ -1,6 +1,10 @@
 {
   "models": [
     {
+      "model_name":"EleutherAI/gpt-j-6b",
+      "model_class":"GPTJForCausalLM"
+    },
+    {
       "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
       "model_class": "LlamaForCausalLM"
     },

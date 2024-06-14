@@ -14,7 +14,7 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
-from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
+from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconForCausalLM,
@@ -57,7 +57,7 @@ from .models.falcon.modeling_falcon import (
     QEffFalconModel,
 )
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
-from .models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJBlock, QEffGPTJForCausalLM, QEffGPTJModel
+from .models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJForCausalLM, QEffGPTJModel
 from .models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaForCausalLM,
@@ -113,7 +113,6 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     GPT2LMHeadModel: QEffGPT2LMHeadModel,
     # GPTJ model layers
     GPTJModel: QEffGPTJModel,
-    GPTJBlock: QEffGPTJBlock,
     GPTJAttention: QEffGPTJAttention,
     GPTJForCausalLM: QEffGPTJForCausalLM,
     # Llama model layers
