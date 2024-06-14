@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 from typing import Optional, Tuple, Union
 
 import torch
@@ -8,16 +15,15 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-
-from transformers.utils.import_utils import is_torch_fx_proxy
 from transformers.models.gptj.modeling_gptj import(
+    get_embed_positions,
     GPTJAttention,
     GPTJModel,
     GPTJForCausalLM,
     logger,
-    get_embed_positions,
-    rotate_every_two
+    rotate_every_two,
 )
+from transformers.utils.import_utils import is_torch_fx_proxy
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
