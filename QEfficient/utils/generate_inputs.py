@@ -8,6 +8,8 @@
 import numpy as np
 import torch
 
+from QEfficient.utils.logging_utils import logger
+
 
 class InputHandler:
     def __init__(self, tokenizer, input_str, prompt_len, ctx_len):
@@ -18,6 +20,11 @@ class InputHandler:
         :param prompt_len: int
         :param ctx_len: int
         """
+        if tokenizer.padding_side != "right":
+            logger.warning("Please use padding_side='right' while initializing the tokenizer")
+            tokenizer.padding_side = "right"
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
         self.tokenizer = tokenizer
         self.input_str = input_str
         self.prompt_len = prompt_len
@@ -28,26 +35,36 @@ class InputHandler:
         Function responsible for creating Prefill stage tensor inputs for PyTorch model.
         :param n_layer : int
         :param padding_shape : List[int]
-        :return inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
+        :return inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
             self.input_str,
             return_tensors="pt",
-            padding="max_length",
-            max_length=self.prompt_len,
+            padding=True,
         )
-        batch_size, input_len = inputs["input_ids"].shape
-        inputs["attention_mask"] = torch.concat(
+        input_ids = inputs["input_ids"]
+        batch_size, input_len = input_ids.shape
+        inputs.pop("attention_mask")
+        position_ids = torch.arange(input_len).view(1, -1)
+        print(batch_size, input_len, position_ids)
+
+        inputs["input_ids"] = torch.concat(
             [
-                inputs["attention_mask"],
-                torch.zeros((batch_size, self.ctx_len - self.prompt_len), dtype=torch.int64),
+                input_ids,
+                torch.ones((batch_size, self.prompt_len - input_len), dtype=torch.int64)
+                * (self.tokenizer.pad_token_id),
             ],
             1,
         )
-        inputs["position_ids"] = ((torch.cumsum(inputs["attention_mask"], 1) - 1) * inputs["attention_mask"])[
-            :, : inputs["input_ids"].shape[1]
-        ]
+
+        inputs["position_ids"] = torch.concat(
+            [
+                position_ids,
+                torch.ones((batch_size, self.prompt_len - input_len), dtype=torch.int64) * (-1),
+            ],
+            1,
+        )
 
         past_key_values = []
         for i in range(n_layer):
@@ -57,7 +74,6 @@ class InputHandler:
             past_key_values.append(pkv)
 
         inputs["past_key_values"] = tuple(past_key_values)
-        inputs["cache_index"] = torch.tensor(0)
 
         return inputs
 
@@ -67,20 +83,15 @@ class InputHandler:
         :param iteration:int
         :param inputs: Dict
         :param pt_outputs: Dict
-        :return inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
+        :return inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         updated_inputs = {}
         updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
-        if iteration == 1:
-            updated_inputs["attention_mask"] = inputs["attention_mask"].bool()
-        else:
-            updated_inputs["attention_mask"] = pt_outputs["attention_mask_RetainedState"].bool()
-        updated_inputs["position_ids"] = updated_inputs["attention_mask"].sum(1, keepdim=True)
+        updated_inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
         updated_inputs["past_key_values"] = tuple(
             [(key.detach(), value.detach()) for key, value in pt_outputs["past_key_values"]]
         )
-        updated_inputs["cache_index"] = torch.tensor(iteration + self.prompt_len - 1)
 
         return updated_inputs
 
@@ -89,54 +100,46 @@ class InputHandler:
         Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.
         :param n_layer : int
         :param padding_shape : List[int]
-        :return inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
+        :return inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         model_inputs = self.tokenizer(
             self.input_str,
             return_tensors="np",
-            padding="max_length",
-            max_length=self.prompt_len,
+            padding=True,
         )
         input_ids = model_inputs["input_ids"]
-        attention_mask = model_inputs["attention_mask"]
-        position_ids = (np.cumsum(attention_mask, axis=1) - 1) * attention_mask
 
         inputs = {}
         inputs["input_ids"] = input_ids
 
         batch_size, input_len = inputs["input_ids"].shape
+        position_ids = np.arange(input_len).reshape(1, -1)
+        print(batch_size, input_len, position_ids)
+
+        if len(input_ids.shape) == 1:
+            inputs["input_ids"] = input_ids.astype(np.int64)[:, np.newaxis]
+        else:
+            input_ids = np.concatenate(
+                [
+                    input_ids,
+                    np.ones((batch_size, self.prompt_len - input_len)) * (self.tokenizer.pad_token_id),
+                ],
+                axis=1,
+            ).astype(np.int64)
+            inputs["input_ids"] = input_ids.astype(np.int64)
 
         if len(position_ids.shape) == 1:
             inputs["position_ids"] = position_ids.astype(np.int64)[:, np.newaxis]
         else:
             position_ids = np.concatenate(
                 [
-                    np.zeros((position_ids.shape[0], self.prompt_len - input_len)),
                     position_ids,
+                    np.ones((batch_size, self.prompt_len - input_len)) * (-1),
                 ],
                 axis=1,
             ).astype(np.int64)
             inputs["position_ids"] = position_ids.astype(np.int64)
-
-        if attention_mask.shape[-1] != self.ctx_len:
-            attention_mask = np.concatenate(
-                [
-                    np.zeros((input_ids.shape[0], self.prompt_len - input_len)),
-                    attention_mask,
-                ],
-                axis=1,
-            ).astype(bool)
-            attention_mask = np.concatenate(
-                [
-                    attention_mask,
-                    np.zeros((input_ids.shape[0], self.ctx_len - self.prompt_len)),
-                ],
-                axis=1,
-            ).astype(bool)
-        inputs["attention_mask"] = attention_mask.astype(bool)
-
-        inputs["cache_index"] = np.array(0)
 
         for i in range(n_layer):
             inputs["past_key." + str(i)] = np.zeros((padding_shape), dtype=np.float32)
@@ -151,14 +154,13 @@ class InputHandler:
         :param inputs: Dict
         :param ort_outputs: Dict
         :param n_layer : int
-        :return inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
+        :return inputs: Dict - input_ids, position_ids, past_key_values
         """
 
-        attention_mask = ort_outputs["attention_mask"]
         past_key_values = ort_outputs["past_key_values"]
 
         input_ids = ort_outputs["logits"].argmax(-1)
-        position_ids = np.sum(attention_mask, axis=1)
+        position_ids = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
 
         if len(input_ids.shape) == 1:
             inputs["input_ids"] = input_ids.astype(np.int64)[:, np.newaxis]
@@ -169,13 +171,10 @@ class InputHandler:
             inputs["position_ids"] = position_ids.astype(np.int64)[:, np.newaxis]
         else:
             inputs["position_ids"] = position_ids.astype(np.int64)
-        inputs["attention_mask"] = attention_mask.astype(bool)
 
         for i in range(n_layer):
             inputs["past_key." + str(i)] = past_key_values[i * 2]
             inputs["past_value." + str(i)] = past_key_values[i * 2 + 1]
-
-        inputs["cache_index"] = np.array(iteration + self.prompt_len - 1)
 
         return inputs
 
@@ -184,56 +183,51 @@ class InputHandler:
         Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on Cloud AI 100.
         :param n_layer : int
         :param padding_shape : List[int]
-        :return inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
+        :return inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         model_inputs = self.tokenizer(
             self.input_str,
             return_tensors="np",
-            padding="max_length",
-            max_length=self.prompt_len,
+            padding=True,
         )
         input_ids = model_inputs["input_ids"]
-        attention_mask = model_inputs["attention_mask"]
-        position_ids = (np.cumsum(attention_mask, axis=1) - 1) * attention_mask
 
         inputs = {}
         inputs["input_ids"] = input_ids
 
         batch_size, input_len = inputs["input_ids"].shape
+        position_ids = np.arange(input_len).reshape(1, -1)
+        print(batch_size, input_len, position_ids)
+
+        if len(input_ids.shape) == 1:
+            inputs["input_ids"] = input_ids.astype(np.int64)[:, np.newaxis]
+        else:
+            input_ids = np.concatenate(
+                [
+                    input_ids,
+                    np.ones((batch_size, self.prompt_len - input_len)) * (self.tokenizer.pad_token_id),
+                ],
+                axis=1,
+            ).astype(np.int64)
+            inputs["input_ids"] = input_ids.astype(np.int64)
 
         if len(position_ids.shape) == 1:
             inputs["position_ids"] = position_ids.astype(np.int64)[:, np.newaxis]
         else:
             position_ids = np.concatenate(
                 [
-                    np.zeros((batch_size, self.prompt_len - position_ids.shape[1])),
                     position_ids,
+                    np.ones((batch_size, self.prompt_len - input_len)) * (-1),
                 ],
                 axis=1,
             ).astype(np.int64)
             inputs["position_ids"] = position_ids.astype(np.int64)
 
-        if attention_mask.shape[-1] != self.ctx_len:
-            attention_mask = np.concatenate(
-                [np.zeros((batch_size, self.prompt_len - input_len)), attention_mask],
-                axis=1,
-            ).astype(bool)
-            attention_mask = np.concatenate(
-                [
-                    attention_mask,
-                    np.zeros((input_ids.shape[0], self.ctx_len - self.prompt_len)),
-                ],
-                axis=1,
-            ).astype(bool)
-        inputs["attention_mask"] = attention_mask.astype(bool)
-
-        inputs["cache_index"] = np.array([0], np.int64)
-
         for i in range(n_layer):
             inputs["past_key." + str(i)] = np.zeros((padding_shape), dtype=np.float16)
             inputs["past_value." + str(i)] = np.zeros((padding_shape), dtype=np.float16)
-
+        
         return inputs
 
     def update_cloud_ai_100_inputs(self, iteration, inputs, outputs):
@@ -243,16 +237,14 @@ class InputHandler:
         :param iteration:int
         :param inputs: Dict
         :param outputs: Dict
-        :return inputs: Dict - input_ids, position_ids, cache_index
-        (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100)
+        :return inputs: Dict - input_ids, position_ids
         """
 
         updated_inputs = {}
 
-        attention_mask = outputs["attention_mask_RetainedState"]
-
         input_ids = outputs["logits"].argmax(-1)
-        position_ids = np.sum(attention_mask, axis=1)
+        position_ids = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
+
         if len(input_ids.shape) == 1:
             updated_inputs["input_ids"] = input_ids.astype(np.int64)[:, np.newaxis]
         else:
@@ -260,14 +252,6 @@ class InputHandler:
         if len(position_ids.shape) == 1:
             updated_inputs["position_ids"] = position_ids.astype(np.int64)[:, np.newaxis]
         else:
-            updated_inputs = np.concatenate(
-                [
-                    np.zeros((position_ids.shape[0], self.prompt_len - position_ids.shape[1])),
-                    position_ids,
-                ],
-                axis=1,
-            ).astype(np.int64)
             updated_inputs["position_ids"] = position_ids.astype(np.int64)
-        updated_inputs["cache_index"] = np.array([iteration + self.prompt_len - 1], np.int64)
 
         return updated_inputs

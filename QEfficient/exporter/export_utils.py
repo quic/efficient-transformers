@@ -5,18 +5,15 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 import shutil
-import subprocess
 import sys
-from logging import error, info
+from logging import info
 from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import onnx
 import onnxruntime
-import onnxsim
 import torch
 from onnx import external_data_helper, numpy_helper
 
@@ -84,8 +81,7 @@ def export_onnx(
             custom_opsets={"com.qti.aisw.onnx": 1},
         )
     except Exception as e:
-        error("Exporting to ONNX failed. {}".format(e))
-        return
+        raise RuntimeError("Exporting to ONNX failed. {}".format(e))
 
     onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
@@ -149,12 +145,6 @@ def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_ba
         onnx.save(model, f=f"{gen_models_path}/{model_base_name}.onnx")
 
     return model_base_name
-
-
-def simplify_onnx(gen_models_path: str, model_base_name: str, **kwargs) -> str:
-    simple_model, check = onnxsim.simplify(f"{gen_models_path}/{model_base_name}.onnx", **kwargs)
-    assert check, "Failed verification of simplified model"
-    return save_onnx(simple_model, gen_models_path, model_base_name + "_simplified")
 
 
 def remove_temp_file(file_path_model, file_path_weights):
@@ -293,6 +283,7 @@ def generate_input_files(
         fp.write("\n")
 
 
+# FIXME(ochougul/quic-mamta): Remove duplication with APIRunner
 def run_model_on_ort(
     onnx_path: str,
     inputs: Dict[str, torch.Tensor],
@@ -329,99 +320,12 @@ def run_model_on_ort(
         past_value_mean = past_key_sum / num
         print(f"past_keys (mean) \t\t {past_key_mean}")
         print(f"past_value (mean) \t\t {past_value_mean}")
+        print("\n=============================================================\n")
 
         return input_names, ort_outputs
     except Exception as e:
         model = onnx.load(onnx_path, load_external_data=False)
         input_names = [x.name for x in model.graph.input]
         print(f"Failed to run the onnx {onnx_path} model in onnx runtime:%s", e)
+        print("\n=============================================================\n")
         return input_names, None
-
-
-def run_model_on_cloud_ai_100(
-    onnx_path: str,
-    onnx_symbol_defs: Dict[str, int] = {},
-    **kwargs,
-) -> bool:
-    args = [
-        "/opt/qti-aic/exec/qaic-exec",
-        f"-m={onnx_path}",
-        "-aic-hw",
-        "-aic-hw-version=2.0",
-    ]
-    for onnx_symbol, onnx_def in onnx_symbol_defs.items():
-        args.append(f"-onnx-define-symbol={onnx_symbol},{onnx_def}")
-    for k, v in kwargs.items():
-        k = k.replace("_", "-")
-        if isinstance(v, bool):
-            if v:
-                args.append(f"-{k}")
-            continue
-        args.append(f"-{k}={v}")
-
-    info("Running compiler:", " ".join(args))
-    result = subprocess.run(args)
-    return result.returncode == 0
-
-
-def compile_kv_model_on_cloud_ai_100(
-    onnx_path: str,
-    specializations_json: str,
-    num_cores: int,
-    base_path: str,
-    mxfp6: bool,
-    custom_io_path: str,
-    aic_enable_depth_first: bool,
-    mos: int = -1,
-    device_group: List[int]=[0],
-    **kwargs,
-) -> bool:
-    import shutil
-
-    aic_binary_dir =  os.path.join(base_path, "qpcs")
-
-    if os.path.isdir(aic_binary_dir):
-        shutil.rmtree(aic_binary_dir)
-
-    assert os.path.isfile(specializations_json), f"Please use 'from QEfficient.cloud.compile import main as compile', as {specializations_json} file was not found"
-    assert os.path.isfile(custom_io_path), f"{custom_io_path} file was not found!"
-    command = [
-        "/opt/qti-aic/exec/qaic-exec",
-        f"-m={onnx_path}",
-        "-aic-hw",
-        "-aic-hw-version=2.0",
-        f"-network-specialization-config={specializations_json}",
-        "-convert-to-fp16",
-        "-retained-state",
-        f"-aic-num-cores={num_cores}",
-        f"-custom-IO-list-file={custom_io_path}",
-        "-compile-only",
-        f"-aic-binary-dir={aic_binary_dir}",
-    ]
-    if mxfp6:
-        command.append("-mxfp6-matmul")
-    if (mos>0):
-        command.append(f"-mos={mos}")
-    if aic_enable_depth_first:
-        command.append("-aic-enable-depth-first")
-    if len(device_group) > 1:
-        mdp_ts_config = {
-            "connections": [{"devices": device_group, "type": "p2p"}],
-            "partitions": [
-                {
-                    "name": "Partition0",
-                    "devices": [{"deviceId": device, "numCores": num_cores} for device in device_group],
-                }
-            ],
-        }
-        mdp_ts_config_path = os.path.join(base_path, f"mdp_ts_config.json")
-        with open(mdp_ts_config_path, "w") as file:
-            json.dump(mdp_ts_config, file, indent=4)
-        command.append(f"-mdp-load-partition-config={mdp_ts_config_path}")
-    print("Running AI 100 compiler:", " ".join(command))
-    result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-    if result.returncode !=0:
-        raise RuntimeError("Compilation Failed!!, please check compilation arguments.")
-
-    print(f"\n=============== Compilation Done! ===============\n")
-    return result.returncode == 0, aic_binary_dir

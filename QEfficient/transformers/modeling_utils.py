@@ -5,72 +5,83 @@
 #
 # -----------------------------------------------------------------------------
 
-import hashlib
 from collections import namedtuple
+from typing import Dict, Type
 
 import torch.nn as nn
-import transformers
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
-    CodeGenBlock,
     CodeGenForCausalLM,
     CodeGenModel,
 )
-from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
-from transformers.models.llama.modeling_llama import (
-    LlamaAttention,
-    LlamaDecoderLayer,
-    LlamaForCausalLM,
-    LlamaModel,
-    LlamaRMSNorm,
+from transformers.models.falcon.modeling_falcon import (
+    FalconAttention,
+    FalconForCausalLM,
+    FalconModel,
 )
+from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
+from transformers.models.llama.modeling_llama import LlamaAttention, LlamaForCausalLM, LlamaModel, LlamaRMSNorm
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
-    MistralDecoderLayer,
     MistralForCausalLM,
     MistralModel,
     MistralRMSNorm,
-    MistralRotaryEmbedding,
+)
+from transformers.models.mixtral.modeling_mixtral import (
+    MixtralAttention,
+    MixtralForCausalLM,
+    MixtralModel,
+    MixtralRMSNorm,
+    MixtralSparseMoeBlock,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
+from transformers.models.phi3.modeling_phi3 import Phi3Attention, Phi3ForCausalLM, Phi3Model, Phi3RMSNorm
+from transformers.models.qwen2.modeling_qwen2 import Qwen2Attention, Qwen2ForCausalLM, Qwen2Model, Qwen2RMSNorm
+from transformers.models.starcoder2.modeling_starcoder2 import (
+    Starcoder2Attention,
+    Starcoder2ForCausalLM,
+    Starcoder2Model,
+)
 
 from QEfficient.customop import CustomRMSNormAIC
-from QEfficient.utils.logging_utils import logger
 
-from .modeling_attn_mask_utils import (
-    QEffAttentionMaskConverter,
-    _qeff_prepare_4d_attention_mask,
-    _qeff_prepare_4d_causal_attention_mask,
-)
-from .modeling_outputs import (
-    QEffBaseModelOutputWithPast,
-    QEffBaseModelOutputWithPastAndCrossAttentions,
-    QEffCausalLMOutputWithCrossAttentions,
-    QEffCausalLMOutputWithPast,
-)
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
-    QEffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
+)
+from .models.falcon.modeling_falcon import (
+    QEffFalconAttention,
+    QEffFalconForCausalLM,
+    QEffFalconModel,
 )
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
 from .models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJBlock, QEffGPTJForCausalLM, QEffGPTJModel
 from .models.llama.modeling_llama import (
     QEffLlamaAttention,
-    QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
 )
 from .models.mistral.modeling_mistral import (
     QEffMistralAttention,
-    QEffMistralDecoderLayer,
     QEffMistralForCausalLM,
     QEffMistralModel,
-    QEffMistralRotaryEmbedding,
+)
+from .models.mixtral_moe.modeling_mixtral import (
+    QEffMixtralAttention,
+    QEffMixtralForCausalLM,
+    QEffMixtralModel,
+    QEffMixtralSparseMoeBlock,
 )
 from .models.mpt.modeling_mpt import QEffMptAttention, QEffMptBlock, QEffMptForCausalLM, QEFfMptModel
+from .models.phi3.modeling_phi3 import QEffPhi3Attention, QEffPhi3ForCausalLM, QEffPhi3Model
+from .models.qwen2.modeling_qwen2 import QEffQwen2Attention, QEffQwen2ForCausalLM, QEffQwen2Model
+from .models.starcoder2.modeling_starcoder2 import (
+    QEffStarcoder2Attention,
+    QEffStarcoder2ForCausalLM,
+    QEffStarcoder2Model,
+)
 
 # Define a named tuple for ModelArchitectures
 # Required for the Automation tool
@@ -84,13 +95,18 @@ my_architectures = ModelArchitectures(
         CodeGenForCausalLM.__name__,
         LlamaForCausalLM.__name__,
         MistralForCausalLM.__name__,
+        MixtralForCausalLM.__name__,
+        Phi3ForCausalLM.__name__,
+        FalconForCausalLM.__name__,
+        Qwen2ForCausalLM.__name__,
+        Starcoder2ForCausalLM.__name__,
     ]
 )
 
 # Define a transformers layers to QEff layers dictionary
 # While onboarding new models make sure to add the new layer maps to this dictionary.
-TransformersToQEffModulesDict = {
-    # GPT2 model layers
+TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
+    # GPT model layers
     GPT2Model: QEffGPT2Model,
     GPT2Block: QEffGPT2Block,
     GPT2Attention: QEffGPT2Attention,
@@ -104,7 +120,6 @@ TransformersToQEffModulesDict = {
     LlamaModel: QEffLlamaModel,
     LlamaAttention: QEffLlamaAttention,
     LlamaForCausalLM: QEffLlamaForCausalLM,
-    LlamaDecoderLayer: QEffLlamaDecoderLayer,
     LlamaRMSNorm: CustomRMSNormAIC,
     # MPT model layers
     MptAttention: QEffMptAttention,
@@ -113,95 +128,35 @@ TransformersToQEffModulesDict = {
     MptForCausalLM: QEffMptForCausalLM,
     # CodeGen model layers
     CodeGenAttention: QEffCodeGenAttention,
-    CodeGenBlock: QEffCodeGenBlock,
     CodeGenModel: QEffCodeGenModel,
     CodeGenForCausalLM: QEffCodeGenForCausalLM,
     # Mistral model layers
     MistralAttention: QEffMistralAttention,
     MistralModel: QEffMistralModel,
-    MistralDecoderLayer: QEffMistralDecoderLayer,
     MistralForCausalLM: QEffMistralForCausalLM,
-    MistralRotaryEmbedding: QEffMistralRotaryEmbedding,
     MistralRMSNorm: CustomRMSNormAIC,
+    # Mixtral model layers
+    MixtralAttention: QEffMixtralAttention,
+    MixtralModel: QEffMixtralModel,
+    MixtralForCausalLM: QEffMixtralForCausalLM,
+    MixtralRMSNorm: CustomRMSNormAIC,
+    MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
+    # Phi3 model layers
+    Phi3Attention: QEffPhi3Attention,
+    Phi3Model: QEffPhi3Model,
+    Phi3ForCausalLM: QEffPhi3ForCausalLM,
+    Phi3RMSNorm: CustomRMSNormAIC,
+    # Falcon model layers
+    FalconAttention: QEffFalconAttention,
+    FalconForCausalLM: QEffFalconForCausalLM,
+    FalconModel: QEffFalconModel,
+    # Qwen2 model layers
+    Qwen2Attention: QEffQwen2Attention,
+    Qwen2ForCausalLM: QEffQwen2ForCausalLM,
+    Qwen2Model: QEffQwen2Model,
+    Qwen2RMSNorm: CustomRMSNormAIC,
+    # Starcoder2 model layers
+    Starcoder2Attention: QEffStarcoder2Attention,
+    Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
+    Starcoder2Model: QEffStarcoder2Model,
 }
-
-
-def get_params_hash(model: nn.Module) -> str:
-    """
-    Creates a Hash of all the parameters values i.e. weights using SHA256 algo.
-    --------
-    :param model: torch.nn.Module. Base PyTorch model.
-    :returns: str. Hash string
-    """
-    hasher = hashlib.sha256()
-    for _, params in model.named_parameters():
-        hasher.update(params.data.numpy().tobytes())
-
-    return hasher.hexdigest()
-
-
-def replace_module_with_qeff_layers(model: nn.Module) -> None:
-    """
-    Replaces the transformers nn.Module classes with optmized QEff classes in place.
-    ----------
-    :param model: torch.nn.Module. Base PyTorch model.
-    """
-    # Replace if module class is registed in TransformersToQEffModulesDict
-    target_module = TransformersToQEffModulesDict.get(model.__class__)
-    if target_module is not None:
-        model.__class__ = target_module
-
-    # Iterate over child modules
-    for _, module in model.named_children():
-        replace_module_with_qeff_layers(module)
-
-
-def transform(model: nn.Module, form_factor: str = "cloud") -> nn.Module:
-    """
-    Replaces some Transformers' methods for equivalent methods optimized for AI 100.
-    ---------
-    Args:
-    param model (torch.nn.Module): PyTorch model.
-    form_factor(str): form factor configuration for optmizing the model, available options=["cloud", "edge"].
-
-    Returns:
-    torch.nn.Module: PyTorch Module with replaced QEff layers.
-    """
-
-    # Introducnig qeff_transformed attribue in model to check status of transform
-    if getattr(model, "qeff_transformed", False):
-        print("Model is already transformed")
-        return model
-
-    if form_factor == "cloud":
-        # Get Hash of all params for checking later
-        prior_params_hash = get_params_hash(model)
-        logger.warning(f"The model {model.__class__} layers has been upadted to QEff layers in-place")
-        # Replace with QEff layers
-        replace_module_with_qeff_layers(model)
-
-        # Check with new params hash
-        later_params_hash = get_params_hash(model)
-        assert (
-            prior_params_hash == later_params_hash
-        ), "Weights were changed in the transform process, please report an issue"
-
-        # Replace the modeling output classes
-        transformers.modeling_outputs.BaseModelOutputWithPastAndCrossAttentions = (
-            QEffBaseModelOutputWithPastAndCrossAttentions
-        )
-        transformers.modeling_outputs.CausalLMOutputWithCrossAttentions = QEffCausalLMOutputWithCrossAttentions
-        transformers.modeling_outputs.BaseModelOutputWithPast = QEffBaseModelOutputWithPast
-        transformers.modeling_outputs.CausalLMOutputWithPast = QEffCausalLMOutputWithPast
-
-        # Replace the modeling attn util classes and functions
-        transformers.modeling_attn_mask_utils.AttentionMaskConverter = QEffAttentionMaskConverter
-        transformers.modeling_attn_mask_utils._prepare_4d_attention_mask = _qeff_prepare_4d_attention_mask
-        transformers.modeling_attn_mask_utils._prepare_4d_causal_attention_mask = _qeff_prepare_4d_causal_attention_mask
-
-        setattr(model, "qeff_transformed", True)
-        return model.eval()
-
-    elif form_factor == "edge":
-        # Add changes for the edge usecase
-        raise NotImplementedError("We currently only support cloud form factor!")
