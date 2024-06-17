@@ -10,8 +10,6 @@ import os
 import shutil
 import unittest
 
-import onnx
-
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
