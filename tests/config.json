@@ -1,10 +1,6 @@
 {
   "models": [
     {
-      "model_name":"EleutherAI/gpt-j-6b",
-      "model_class":"GPTJForCausalLM"
-    },
-    {
       "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
       "model_class": "LlamaForCausalLM"
     },
@@ -39,6 +35,10 @@
     {
       "model_name": "wtang06/mpt-125m-c4",
       "model_class": "MptForCausalLM"
+    },
+    {
+      "model_name":"EleutherAI/gpt-j-6b",
+      "model_class":"GPTJForCausalLM"
     },
     {
       "model_name":"mistralai/Mixtral-8x7B-Instruct-v0.1",
