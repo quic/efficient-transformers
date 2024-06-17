@@ -38,10 +38,11 @@ def convert_to_cloud_bertstyle(
         3. KV is everytime computed for all the tokens until EOS/max_length
 
     Args:
+        model_name (str): The name of the model to be used.
+        qeff_model (QEFFBaseModel): Transformed KV torch model to be used
         tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
-        model_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
+        onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
         seq_len (int, optional): The length of the sequence. Default is 128.
-
     """
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
@@ -155,14 +156,10 @@ def convert_to_cloud_kvstyle(
 
     Args:
         model_name (str): The name of the model to be used.
-        model_class (type): The class of the model.
-        model_kv (torch.nn.Module): Transformed KV torch model to be used
+        qeff_model (QEFFBaseModel): Transformed KV torch model to be used
         tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
         onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
-        hf_token (str): If hf_token passed, it will be used for authentication for gated. Default is None.
         seq_len (int, optional): The length of the sequence. Default is 128.
-        input_str (str): The input string to be processed.
-
     """
     warnings.warn("\033[93mThis function will be deprecated soon, use QEfficient.export instead\033[0m", DeprecationWarning, stacklevel=2)
     if os.path.exists(onnx_dir_path):
@@ -415,6 +412,7 @@ def qualcomm_efficient_converter(
         hf_token (bool): If True, an authentication token will be used. Default is False.
         seq_len (int, optional): The length of the sequence. Default is 128.
         kv (bool): If True, key-value pairs will be used. Default is True.
+        form_factor (str): form_factor of the hardware, currently only accepts "cloud".
 
     Returns:
         None, if automation is False, else path to exported Onnx file
