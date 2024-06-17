@@ -62,7 +62,7 @@ class InputHandler:
             ],
             1,
         )
-        
+
         past_key_values = []
         for i in range(n_layer):
             past_key = torch.zeros((padding_shape), dtype=torch.float32)
@@ -121,7 +121,7 @@ class InputHandler:
             ],
             axis=1,
         ).astype(np.int64)
-        
+
         for i in range(n_layer):
             inputs["past_key." + str(i)] = np.zeros((padding_shape), dtype=np.float32)
             inputs["past_value." + str(i)] = np.zeros((padding_shape), dtype=np.float32)
@@ -182,7 +182,7 @@ class InputHandler:
         for i in range(n_layer):
             inputs["past_key." + str(i)] = np.zeros((padding_shape), dtype=np.float16)
             inputs["past_value." + str(i)] = np.zeros((padding_shape), dtype=np.float16)
-        
+
         return inputs
 
     def update_cloud_ai_100_inputs(self, iteration, inputs, outputs):
