@@ -22,7 +22,6 @@ class InputHandler:
         """
         #check and fix tokenizer viability
         padding_check_and_fix(tokenizer)
-        
         self.tokenizer = tokenizer
         self.input_str = input_str
         self.prompt_len = prompt_len

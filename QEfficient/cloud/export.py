@@ -33,7 +33,7 @@ def get_onnx_model_path(model_name: str, cache_dir: str, tokenizer: Optional[Uni
         ####################
         # Export to the Onnx
         logger.info(f"Exporting Pytorch {model_name} model to ONNX...")
-        generated_onnx_model_path = qualcomm_efficient_converter(
+        _, generated_onnx_model_path = qualcomm_efficient_converter(
                 model_name=model_name,
                 tokenizer=tokenizer,
                 onnx_dir_path=onnx_dir_path,

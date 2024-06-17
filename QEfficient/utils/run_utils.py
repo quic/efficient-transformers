@@ -6,9 +6,9 @@
 # -----------------------------------------------------------------------------
 
 import numpy as np
+import onnx
 import onnxruntime
 import torch
-import onnx
 
 from .generate_inputs import InputHandler
 

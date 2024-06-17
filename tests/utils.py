@@ -107,7 +107,7 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
     :return onnx_model_path : str
     """
     onnx_dir_path = os.path.join(QEFF_MODELS_DIR, model_name)
-    onnx_model_path = qualcomm_efficient_converter(
+    _, onnx_model_path = qualcomm_efficient_converter(
         model_name=model_name,
         model_kv=QEFFAutoModelForCausalLM(model=model_kv),  # type: ignore
         tokenizer=tokenizer,

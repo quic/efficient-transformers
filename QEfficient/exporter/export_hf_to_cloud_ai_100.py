@@ -7,6 +7,7 @@
 
 import os
 import shutil
+import warnings
 from typing import Optional, Tuple, Union
 
 import torch
@@ -50,7 +51,8 @@ def convert_to_cloud_bertstyle(
     model_name = export_bertstyle_model_to_onnx(model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len) # type: ignore
 
     # return the model path for automation.
-    return onnx_dir_path, os.path.join(onnx_dir_path, f"{model_name}.onnx")
+    return os.path.join(onnx_dir_path, f"{model_name}.onnx")
+
 
 def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, seq_len) -> str:
     model_base_name = model_name.replace("/", "_") + "_bertstyle"
@@ -162,6 +164,7 @@ def convert_to_cloud_kvstyle(
         input_str (str): The input string to be processed.
 
     """
+    warnings.warn("\033[93mThis function will be deprecated soon, use QEfficient.export instead\033[0m", DeprecationWarning, stacklevel=2)
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
@@ -346,7 +349,7 @@ def export_for_cloud(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_length: int = Constants.seq_length,
-) -> Tuple[str, str]:
+) -> str:
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
         return export_lm_model_for_cloud(
@@ -398,7 +401,8 @@ def qualcomm_efficient_converter(
     seq_length: int = Constants.seq_length,
     kv: bool = True,
     form_factor: str="cloud",
-) -> str:
+) -> Tuple[str, str]:
+  
     """
     Function to convert the input string using the specified model and returns the result.
 
@@ -416,6 +420,7 @@ def qualcomm_efficient_converter(
         None, if automation is False, else path to exported Onnx file
 
     """
+    warnings.warn("\033[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m", DeprecationWarning, stacklevel=2)
     # Get model_kv first
     model_kv = (
         model_kv
@@ -441,12 +446,13 @@ def qualcomm_efficient_converter(
     )
 
     if form_factor == "cloud":
-        return export_for_cloud(
+        generated_onnx_model_path = export_for_cloud(
             model_name=model_name,
             qeff_model=model_kv,
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length)
+        return onnx_dir_path, generated_onnx_model_path
     else:
         # [TODO]: Apply the class transformation to make changes for the KV models in edge use cases
         # model = QEfficient.transform(model_hf, type="Transformers", form_factor="edge")
