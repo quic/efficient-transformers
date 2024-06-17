@@ -119,14 +119,14 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
     return onnx_exists_bool, onnx_dir_path, onnx_model_path
 
 
-def load_hf_tokenizer(model_name: str, cache_dir: Optional[str] = None, hf_token: Optional[str] = None, padding_side:str = "left", **kwargs) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
+def load_hf_tokenizer(model_name: str, cache_dir: Optional[str] = None, hf_token: Optional[str] = None, padding_side:str = "right", **kwargs) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
     logger.info(f"Loading Tokenizer for {model_name}")
     if hf_token is not None:
         login(hf_token)
 
     # Download tokenizer along with model if it doesn't exist
     model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
-    #FIXME(ochougul): should this always return left padded tokenizer?
+    #FIXME(ochougul): should this always return right padded tokenizer?
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
     return tokenizer
 
