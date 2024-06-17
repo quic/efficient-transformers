@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+"""PyTorch GPT-J model."""
+
 from typing import Optional, Tuple, Union
 
 import torch
@@ -15,17 +17,18 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-from transformers.models.gptj.modeling_gptj import(
-    get_embed_positions,
+from transformers.models.gptj.modeling_gptj import (
     GPTJAttention,
-    GPTJModel,
     GPTJForCausalLM,
+    GPTJModel,
+    get_embed_positions,
     logger,
     rotate_every_two,
 )
 from transformers.utils.import_utils import is_torch_fx_proxy
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+
 
 def apply_rotary_pos_emb(tensor: torch.Tensor, sin: torch.Tensor, cos: torch.Tensor) -> torch.Tensor:
     *sin_shape, sin_last_shape = sin.shape
@@ -34,7 +37,16 @@ def apply_rotary_pos_emb(tensor: torch.Tensor, sin: torch.Tensor, cos: torch.Ten
     cos = cos.reshape(-1, 1).repeat(1, 2).reshape(*cos_shape, 1, 2 * cos_last_shape)
     return (tensor * cos) + (rotate_every_two(tensor) * sin)
 
+
 class QEffGPTJAttention(GPTJAttention):
+    """Multi-headed attention from 'Attention Is All You Need' paper"""
+
+    """
+    Copied from GPTJAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gptj/modeling_gptj.py
+    The only differences are:
+    - add new args position idx for the cache_kwargs for kv retention
+    """
+
     def _attn(
         self,
         query,
@@ -157,8 +169,15 @@ class QEffGPTJAttention(GPTJAttention):
 
         return outputs  # a, present, (attentions)
 
+
 class QEffGPTJModel(GPTJModel):
-    
+    """
+    Copied from GPTJModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gptj/modeling_gptj.py
+    The only differences are:
+    - add new args position idx for the cache_kwargs for kv retention
+    - update causal attention mask
+    """
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -231,7 +250,6 @@ class QEffGPTJModel(GPTJModel):
             else:
                 # update attention mask for Cloud AI 100
                 attention_mask = _create_causal_mask(position_ids, past_length, None)
-
 
         # Prepare head mask if needed
         # 1.0 in head_mask indicate we keep the head
@@ -328,9 +346,16 @@ class QEffGPTJModel(GPTJModel):
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
         )
-    
+
+
 class QEffGPTJForCausalLM(GPTJForCausalLM):
-       
+    """
+    Copied from GPTJForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gptj/modeling_gptj.py
+    The only differences are:
+    - add new args position idx for the cache_kwargs for kv retention
+    - update the hidden_states, and fix for onnx model
+    """
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,

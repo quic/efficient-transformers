@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+"""PyTorch Codegen model."""
+
 from typing import Optional, Tuple, Union
 
 import torch

@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+"""PyTorch Falcon model."""
+
 import math
 import warnings
 from typing import Optional, Tuple, Union
@@ -34,7 +36,7 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 class QEffFalconAttention(FalconAttention):
     """
-    Copied from FalconForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/falcon/modeling_falcon.py
+    Copied from FalconAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/falcon/modeling_falcon.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
@@ -214,7 +216,7 @@ FALCON_ATTENTION_CLASSES = {"eager": FalconAttention, "sdpa": FalconAttention}
 
 class QEffFalconModel(FalconModel):
     """
-    Copied from FalconForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/falcon/modeling_falcon.py
+    Copied from FalconModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/falcon/modeling_falcon.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask

@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+"""PyTorch MPT model."""
+
 from typing import Optional, Tuple, Union
 
 import torch
@@ -24,7 +26,7 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 class QEffMptAttention(MptAttention):
     """
-    Copied from MptForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mpt/modeling_mpt.py
+    Copied from MptAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mpt/modeling_mpt.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
@@ -92,7 +94,7 @@ class QEffMptAttention(MptAttention):
 
 class QEffMptBlock(MptBlock):
     """
-    Copied from MptForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mpt/modeling_mpt.py
+    Copied from MptBlock: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mpt/modeling_mpt.py
     The only differences are:
     - add new args cache idx for the kv retention
     """
@@ -145,7 +147,7 @@ class QEffMptBlock(MptBlock):
 
 class QEFfMptModel(MptModel):
     """
-    Copied from MptForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mpt/modeling_mpt.py
+    Copied from MptModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mpt/modeling_mpt.py
     The only differences are:
     - add new args cache idx for the kv retention
     """

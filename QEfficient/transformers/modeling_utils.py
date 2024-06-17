@@ -14,13 +14,13 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
-from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconForCausalLM,
     FalconModel,
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
+from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
 from transformers.models.llama.modeling_llama import LlamaAttention, LlamaForCausalLM, LlamaModel, LlamaRMSNorm
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
@@ -87,7 +87,7 @@ from .models.starcoder2.modeling_starcoder2 import (
 # Required for the Automation tool
 ModelArchitectures = namedtuple("ModelArchitectures", ["architectures"])
 # Create an instance of the named tuple
-my_architectures = ModelArchitectures(
+qeff_supported_architectures = ModelArchitectures(
     [
         GPT2LMHeadModel.__name__,
         GPTJForCausalLM.__name__,
