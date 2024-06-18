@@ -30,7 +30,6 @@ INSTALL_REQUIRES = [
     "numpy==1.23.0",
     "protobuf==3.20.2",
     "onnxscript==0.1.0.dev20240327",
-    "pytest",
     "sympy",
 ]
 
@@ -41,10 +40,8 @@ QUALITY_REQUIRES = [
 ]
 
 PYTEST_REQUIRES = [
+    "pytest",
     "pytest-mock",
-    "pytest-order",
-    "pytest-html",
-    "pytest-cov",
 ]
 
 EXTRAS_REQUIRE = {

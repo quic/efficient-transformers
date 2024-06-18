@@ -52,7 +52,7 @@ def get_onnx_model_path(model_name: str, cache_dir: str, tokenizer: Optional[Uni
 
 def main(
     model_name: str,
-    cache_dir: str =None,
+    cache_dir: str,
     hf_token: Optional[str] = None,
 ) -> None:
     """

@@ -82,9 +82,6 @@ class model_setup:
             return str(os.path.join(self.onnx_dir_path(), "custom_io_int8.yaml"))
         else:
             return str(os.path.join(self.onnx_dir_path(), "custom_io_fp16.yaml"))
-    def remove_dirs(self):
-        if os.path.exists(QEFF_MODELS_DIR):
-            shutil.rmtree(QEFF_MODELS_DIR)
 
 @pytest.fixture
 def setup(model_name,num_cores,prompt,prompts_txt_file_path,aic_enable_depth_first,mos,cache_dir,hf_token,batch_size,prompt_len,ctx_len,mxfp6,mxint8,device_group):
@@ -150,12 +147,26 @@ def pytest_collection_modifyitems(items):
         num_tests = len(items)
         modules = {item: item.module.__name__ for item in items}
         items[:] = sorted(items, key=lambda x: run_first.index(modules[x]) if modules[x] in run_first else len(items))
-        num_funcs = num_tests//len(run_first)
+        non_cloud_tests = []
+        for itm in items:
+            if modules[itm] not in run_first:
+                non_cloud_tests.append(itm)
+        
+        num_cloud_tests = len(items) - len(non_cloud_tests)
+        num_cloud_test_cases = num_cloud_tests//len(run_first)
         final_items = []
-        for i in range(num_funcs):
+        for i in range(num_cloud_test_cases):
             for j in range(len(run_first)):
-                final_items.append(items[i+j*num_funcs])
+                final_items.append(items[i+j*num_cloud_test_cases])
         
         final_items.insert(0,final_items[3])
+        final_items.extend(non_cloud_tests)
         items[:] = final_items
         print("\n*************Final Test script/functions execution order****************\n\n",items)
+
+@pytest.fixture
+def clean_up_after_test():
+    yield
+    if os.path.exists(QEFF_MODELS_DIR):
+        shutil.rmtree(QEFF_MODELS_DIR)
+        print(f'\n...............Cleaned up {QEFF_MODELS_DIR}')

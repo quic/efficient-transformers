@@ -13,6 +13,7 @@ from typing import List
 import QEfficient.cloud.infer
 from QEfficient.cloud.infer import main as infer
 
+@pytest.mark.usefixtures("clean_up_after_test")
 def test_infer(setup, mocker):
     """
     test_infer is a HL infer api testing function,
@@ -68,6 +69,5 @@ def test_infer(setup, mocker):
         compile_spy.assert_called_once()
         assert compile_spy.spy_return == ms.qpc_dir_path()
     cloud_ai_100_exec_kv_spy.assert_called_once()
-    ms.remove_dirs()
 
     
