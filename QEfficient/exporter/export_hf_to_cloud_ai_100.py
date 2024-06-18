@@ -60,7 +60,6 @@ def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, 
     os.makedirs(onnx_dir_path, exist_ok=True)
 
     input_str = Constants.input_str
-    padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     # Preprocess inputs
     if seq_len > 0:
         inputs = tokenizer(
