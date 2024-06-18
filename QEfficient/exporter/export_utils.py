@@ -169,8 +169,7 @@ def fix_onnx_fp16(
     ort_outputs: List[np.ndarray],
     gen_models_path: str,
     model_base_name: str,
-    pt_outputs: Dict[str, torch.Tensor],
-    save_fp32_onnx: bool = False,
+    pt_outputs: Dict[str, torch.Tensor]
 ) -> str:
     finfo = np.finfo(np.float16)
     fp16_max = finfo.max
@@ -215,11 +214,11 @@ def fix_onnx_fp16(
         info("Found constants out of FP16 range, clipped to FP16 range")
 
         # remove the fp32 version of the model files to save space.
-        if not save_fp32_onnx:
-            remove_temp_file(
-                os.path.join(gen_models_path, f"{model_base_name}.onnx"),
-                os.path.join(gen_models_path, f"{model_base_name}.onnxweights.data"),
-            )
+        remove_temp_file(
+            os.path.join(gen_models_path, f"{model_base_name}.onnx"),
+            os.path.join(gen_models_path, f"{model_base_name}.onnxweights.data"),
+        )
+        
         model_base_name += "_clipped_fp16"
         onnx.save_model(
             model,
@@ -295,7 +294,7 @@ def run_model_on_ort(
         if dtype:
             info_string = "fp32"
         else:
-            info_string = "fp16"
+            info_string = "fp32 clipped"
         ort_session = onnxruntime.InferenceSession(onnx_path)
         input_names = [x.name for x in ort_session.get_inputs()]
         ort_outputs = ort_session.run(
