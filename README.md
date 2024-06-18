@@ -12,6 +12,10 @@
 *Latest news* :fire: <br>
 
 - [coming soon] Support for more popular [models](#models-coming-soon) and inference optimization techniques like continuous batching and speculative decoding <br>
+- [06/2024] Added support for [Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)
+- [06/2024] Added support for [StarCoder2-15B](https://huggingface.co/bigcode/starcoder2-15b)
+- [06/2024] Added support for [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
+- [06/2024] Added support for [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1)
 - [06/2024] Added support for [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5)
 - [05/2024] Added support for [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) & [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1).
 - [04/2024] Initial release of [efficient transformers](https://github.com/quic/efficient-transformers) for seamless inference on pre-trained LLMs.
@@ -56,13 +60,14 @@ For other models, there is comprehensive documentation to inspire upon the chang
 * [Vicuna-v0](https://huggingface.co/lmsys/vicuna-13b-delta-v0)
 * [Vicuna-v1.3](https://huggingface.co/lmsys/vicuna-13b-v1.3)
 * [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5)
-
+* [Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)
+* [StarCoder2-15B](https://huggingface.co/bigcode/starcoder2-15b)
+* [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
+* [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1)
+* [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) 
 
 ## Models Coming Soon
  
-* [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) 
-* [Starcoder2-15b](https://huggingface.co/bigcode/starcoder2-15b) 
-* [Phi-3](https://huggingface.co/microsoft/Phi-3-mini-128k-instruct)
 * [Jais-13b](https://huggingface.co/core42/jais-13b)
 * [Jais-30b](https://huggingface.co/core42/jais-30b-chat-v1)
 * [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
@@ -188,12 +193,11 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 | Low Level APIs | Sample use | Arguments         | 
 |-----------------|------------|-------------------|
 |  QEfficient.transform    |   [click here](#1-model-download-and-transform)         |  <li>model : $\color{green} {Mandatory}$</li><li>form_factor : Optional [Default-"cloud"]</li>  | 
-| QEfficient.export |     [click here](#2-onnx-export-of-transformed-model)       |   <li>mode_name : $\color{green} {Mandatory}$</li><li>model_kv : Optional </li><li>tokenizer : Optional</li><li>onnx_path : Optional </li><li>hf_token : Optional</li><li>seq_length : Optional [Default-128]</li><li>kv : Optional [Default-$\color{green} {True}$]</li><li>return_path : Optional [Default-False]</li><li>form_factor : Optional [Default-"cloud"]</li><li>***save_fp32_onnx : Optional [Default-False]</li><li>***save_fp16_onnx : Optional [Default-True]</li>| 
+| QEfficient.export |     [click here](#2-onnx-export-of-transformed-model)       |   <li>mode_name : $\color{green} {Mandatory}$</li><li>model_kv : Optional </li><li>tokenizer : Optional</li><li>onnx_dir_path : Optional </li><li>hf_token : Optional</li><li>seq_length : Optional [Default-128]</li><li>kv : Optional [Default-$\color{green} {True}$]</li><li>form_factor : Optional [Default-"cloud"]</li>| 
 |     QEfficient.compile | [click here](#3-compile-on-cloud-ai-100) | <li>onnx_path : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li><li>num_cores : $\color{green} {Mandatory}$</li><li>device_group  : $\color{green} {Mandatory}$</li>  <li>batch_size : Optional [Default-1]</li> <li>prompt_len : Optional [Default-32]</li><li>ctx_len : Optional [Default-128]</li><li>aic_enable_depth_first : Optional [Default-False]</li> <li>mos : Optional [Defaul= -1]</li> <li>mxint8 : Optional [Defaul-False]</li><li>mxfp6 : Optional [Default-True]</li>| 
 |QEfficient.cloud_ai_100_exec_kv | [click here](#4-run-benchmark)  | <li>batch_size : $\color{green} {Mandatory}$</li> <li>tokenizer : $\color{green} {Mandatory}$</li> <li>qpc_path : $\color{green} {Mandatory}$</li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li><li>input_len : Optional [Default-None]</li> <li>generation_len : Optional [Default-None]</li> <li>device_id : Optional [Default-[0]]</li> <li>enable_debug_logs : Optional [Default-False]</li> <li>stream : Optional [Default-True]</li> <li>write_io_dir : Optional</li><li>automation : Optional [Default-False]</li>| 
 
 **One argument, prompt or prompts_txt_file_path must be passed.<br>
-***Both save_fp32_onnx and save_fp16_onnx can't be false.
 
 ### 1.  Model download and Optimize for Cloud AI 100
 
@@ -243,7 +247,6 @@ base_path, onnx_path = QEfficient.export(
     tokenizer=tokenizer,
     kv=True,
     form_factor="cloud",
-    return_path=True,
 )
 ```
 

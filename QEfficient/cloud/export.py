@@ -39,7 +39,6 @@ def get_onnx_model_path(model_name: str, cache_dir: str, tokenizer: Optional[Uni
                 onnx_dir_path=onnx_dir_path,
                 kv=True,
                 form_factor="cloud",
-                return_path=True,
                 hf_token=hf_token,
                 cache_dir=cache_dir
             ) # type: ignore
