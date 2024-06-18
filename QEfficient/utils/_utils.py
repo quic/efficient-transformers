@@ -150,11 +150,12 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
     
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer to check and fix.
     """
-    if tokenizer.padding_side != "left":
-        logger.warning("Please use padding_side='left' while initializing the tokenizer")
-        tokenizer.padding_side = "left"
+    if tokenizer.padding_side != "right":
+        logger.warning("Please use padding_side='right' while initializing the tokenizer")
+        tokenizer.padding_side = "right"
     
     if tokenizer.pad_token_id is None:
+        assert tokenizer.eos_token_id is not None, "Found tokenizer.eos_token_id to be None, expected int"
         # If Pad token is out of range of vocab size
         if tokenizer.eos_token_id < tokenizer.vocab_size:
             tokenizer.pad_token_id = tokenizer.eos_token_id
