@@ -151,7 +151,7 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer to check and fix.
     """
     if tokenizer.padding_side != "right":
-        logger.warning("Please use padding_side='right' while initializing the tokenizer")
+        logger.warning(f"Setting tokenizer padding_side to 'right', got {tokenizer.padding_side}")
         tokenizer.padding_side = "right"
     
     if tokenizer.pad_token_id is None:
