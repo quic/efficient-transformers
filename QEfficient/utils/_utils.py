@@ -126,8 +126,9 @@ def load_hf_tokenizer(model_name: str, cache_dir: Optional[str] = None, hf_token
 
     # Download tokenizer along with model if it doesn't exist
     model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
-    #FIXME(ochougul): should this always return left padded tokenizer?
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
+    padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
+    
     return tokenizer
 
 
@@ -140,3 +141,24 @@ def get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp
     )
 
     return qpc_base_dir_name
+
+
+def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]) -> None:
+    """
+    Checks and fixes tokenizer paddding side and pad_token_id viability. 
+    --------
+    
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer to check and fix.
+    """
+    if tokenizer.padding_side != "right":
+        logger.warning(f"Setting tokenizer padding_side to 'right', got {tokenizer.padding_side}")
+        tokenizer.padding_side = "right"
+    
+    if tokenizer.pad_token_id is None:
+        assert tokenizer.eos_token_id is not None, "Found tokenizer.eos_token_id to be None, expected int"
+        # If Pad token is out of range of vocab size
+        if tokenizer.eos_token_id < tokenizer.vocab_size:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+        else:
+            tokenizer.pad_token_id = tokenizer.vocab_size - 1
+            
