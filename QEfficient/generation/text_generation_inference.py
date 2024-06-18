@@ -15,6 +15,7 @@ import transformers
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.logging_utils import logger
 
 io_files = []
@@ -70,8 +71,7 @@ def latency_stats_bertstyle(
 ):
     session = QAICInferenceSession(qpc, device_id)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+    padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
     next_token_id = inputs["input_ids"][0, -1]
     cur_len = inputs["attention_mask"].sum().item()
@@ -145,94 +145,84 @@ def cloud_ai_100_exec_kv_helper(
     stream: bool = True,
     write_io_dir: Optional[str] = None,
 ):
-    if tokenizer.padding_side != "left":
-        logger.warning("Please use padding_side='left' while initializing the tokenizer")
-        tokenizer.padding_side = "left"
+    if tokenizer.padding_side != "right":
+        logger.warning("Please use padding_side='right' while initializing the tokenizer")
+        tokenizer.padding_side = "right"
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
     # Load QPC
     session = QAICInferenceSession(qpc, device_id, enable_debug_logs=enable_debug_logs)
 
+    # Skip inputs/outputs
+    session.skip_buffers([x for x in session.input_names + session.output_names if x.startswith("past_")])
+
     # Read prompt and ctx len from session
-    prompt_len = max([x[session.binding_index_map["input_ids"]][1][1] for x in session.allowed_shapes])
-    ctx_len = session.allowed_shapes[0][session.binding_index_map["attention_mask"]][1][1]
-    if input_len is None:
-        input_len = max([len(x) for x in tokenizer(prompt, return_tensors="np").input_ids])
+    batch_size, _, ctx_len, _ = session.bindings[session.binding_index_map["past_key.0"]].dims
+    prefill_seq_len = max(
+        [x[session.binding_index_map["input_ids"]][1][1] for x in session.allowed_shapes]
+        + [session.bindings[session.binding_index_map["input_ids"]].dims[1]]
+    )
+
+    if len(prompt) < batch_size:
+        prompt = prompt * -(batch_size // -len(prompt))  # Repeat prompt to required size
+    prompt = prompt[:batch_size]  # Truncate prompts to required size
+
+    inputs = tokenizer(prompt, return_tensors="np", padding=True)
+    position_ids_update = inputs["attention_mask"].sum(1, keepdims=True)
     if generation_len is None:
         generation_len = ctx_len
-    num_chunks = -(input_len // -prompt_len)  # ceil divide without float
-    input_len = num_chunks * prompt_len  # Convert input_len to a multiple of prompt_len
-    assert input_len <= ctx_len, "input_len should be less than ctx_len"
-
-    # Skip inputs/outputs
-    session.skip_buffers([x for x in session.input_names if x.startswith("past_")])
-    session.skip_buffers([x for x in session.output_names if x.endswith("_RetainedState")])
-
-    # Prepare inputs for first iteration
-    start = perf_counter()
-    inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=input_len)
-    batch_size = inputs["input_ids"].shape[0]
-    inputs["position_ids"] = (np.cumsum(inputs["attention_mask"], 1) - 1) * inputs["attention_mask"]
-    inputs["attention_mask"] = np.concatenate(
-        [
-            inputs["attention_mask"].astype(bool),
-            np.zeros((batch_size, ctx_len - input_len), dtype=bool),
-        ],
-        1,
-    )
-    cache_index = np.array([0])
-    inputs["cache_index"] = cache_index
-    generated_ids = np.full((batch_size, generation_len - input_len + 1), tokenizer.pad_token_id)
-
+    padded_len = inputs["input_ids"].shape[1]
+    num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
+    padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+    assert generation_len > 0, "generation length should be greater than zero"
+    generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
     if stream:
-        print(0, prompt[0], end=" ", flush=True)
+        streamer = transformers.TextStreamer(tokenizer)
+        streamer.on_finalized_text(prompt[0] + " ")
+
+    # Prepare inputs for prefill/first iteration
+    start = perf_counter()
+    inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
+    inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+    # Need to use -1 as position_ids for invalid tokens
 
     # Run prefill
     for i in range(num_chunks):
         chunk_inputs = inputs.copy()
-        chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prompt_len : (i + 1) * prompt_len]
-        chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prompt_len : (i + 1) * prompt_len]
-        chunk_inputs["attention_mask"] = inputs["attention_mask"].copy()
-        chunk_inputs["attention_mask"][:, (i + 1) * prompt_len :] = False
+        chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+        chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
         outputs = session.run(chunk_inputs)
         if write_io_dir:
             write_io_files(inputs, outputs, write_io_dir, "prefill", "aic_batch_io", True, False)
-        cache_index += prompt_len
 
     # Get first token
-    logits = outputs["logits"]
-    if len(logits.shape) == 2:
-        logits = np.expand_dims(logits, 1)
-    next_token_id = logits.argmax(2)
-    inputs["input_ids"] = next_token_id
-    inputs["position_ids"] = inputs.pop("attention_mask").sum(1, keepdims=True)
-    generated_ids[:, cache_index[0] - input_len] = next_token_id.squeeze(1)
+    inputs["input_ids"] = outputs["logits"].argmax(2)
+    inputs["position_ids"] = position_ids_update
+    generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
+    finished_sequences = inputs["input_ids"] == tokenizer.eos_token_id
     if stream:
-        print(tokenizer.decode(next_token_id[0]), end=" ", flush=True)
+        streamer.put(inputs["input_ids"][0])
 
-    # Skip attention_mask from next iteration to use retained attention_mask
-    session.skip_buffers(["attention_mask"])
+    # Decode loop
     loop_start = perf_counter()
-    finished_sequences = next_token_id == tokenizer.eos_token_id
-    while not finished_sequences.all() and cache_index[0] < generation_len:
+    for num_token in range(1, generation_len):
         outputs = session.run(inputs)
         if write_io_dir:
             write_io_files(inputs, outputs, write_io_dir, "decode", "aic_batch_io", True, False)
             write_io_dir = None
 
         # Prepare inputs for next iteration
-        logits = outputs["logits"]
-        if len(logits.shape) == 2:
-            logits = np.expand_dims(logits, 1)
-        next_token_id = logits.argmax(2)
-        finished_sequences |= next_token_id == tokenizer.eos_token_id
-        inputs["input_ids"] = next_token_id
+        inputs["input_ids"] = outputs["logits"].argmax(2)
         inputs["position_ids"] += 1
-        cache_index += 1
-        generated_ids[:, cache_index[0] - input_len] = next_token_id.squeeze(1)
+        generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
+        finished_sequences |= inputs["input_ids"] == tokenizer.eos_token_id
         if stream:
-            print(tokenizer.decode(next_token_id[0]), end=" ", flush=True)
+            streamer.put(inputs["input_ids"][0])
+
+        if finished_sequences.all():
+            break
+
     end = perf_counter()
     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
@@ -240,13 +230,13 @@ def cloud_ai_100_exec_kv_helper(
         print()
         print(i, prompt[i], generated_texts[i])
 
-    prefill_time = loop_start - start
-    decode_perf = (cache_index.item() - input_len - 1) / (end - loop_start)
-    total_perf = (cache_index.item() - input_len) / (end - start)
+    prefill_perf = 1 / (loop_start - start)
+    decode_perf = (num_token - 1) / (end - loop_start)
+    total_perf = num_token / (end - start)
     total_time = end - start
     print()
 
-    latency_stats = (generated_texts, prefill_time, decode_perf, total_perf, total_time)
+    latency_stats = (generated_texts, prefill_perf, decode_perf, total_perf, total_time)
     return latency_stats
 
 

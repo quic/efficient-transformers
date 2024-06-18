@@ -18,15 +18,15 @@ except Exception as error:
     assert False, "Error: Could not open '%s' due %s\n" % (filepath, error)
 
 INSTALL_REQUIRES = [
-    "transformers==4.36.2",
+    "transformers==4.41.2",
     "torch@https://download.pytorch.org/whl/cpu/torch-2.0.0%2Bcpu-cp38-cp38-linux_x86_64.whl#sha256=354f281351cddb590990089eced60f866726415f7b287db5105514aa3c5f71ca",
     "datasets==2.7.0",
     "fsspec==2023.6.0",
     "multidict==6.0.4",
     "urllib3<2",
     "sentencepiece==0.1.98",
-    "onnx==1.15.0",
-    "onnxruntime==1.12.1",
+    "onnx==1.16.0",
+    "onnxruntime==1.16.3",
     "numpy==1.23.0",
     "protobuf==3.20.2",
     "onnxscript==0.1.0.dev20240327",
