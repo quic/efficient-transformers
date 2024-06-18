@@ -8,7 +8,7 @@
 import numpy as np
 import torch
 
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils import padding_check_and_fix
 
 
 class InputHandler:
@@ -20,11 +20,8 @@ class InputHandler:
         :param prompt_len: int
         :param ctx_len: int
         """
-        if tokenizer.padding_side != "right":
-            logger.warning("Please use padding_side='right' while initializing the tokenizer")
-            tokenizer.padding_side = "right"
-        if tokenizer.pad_token_id is None:
-            tokenizer.pad_token_id = tokenizer.eos_token_id
+        #check and fix tokenizer viability
+        padding_check_and_fix(tokenizer)
         self.tokenizer = tokenizer
         self.input_str = input_str
         self.prompt_len = prompt_len

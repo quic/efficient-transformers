@@ -6,11 +6,9 @@
 # -----------------------------------------------------------------------------
 
 import numpy as np
+import onnx
 import onnxruntime
 import torch
-import onnx
-
-from QEfficient.utils.logging_utils import logger
 
 from .generate_inputs import InputHandler
 
@@ -33,11 +31,7 @@ class ApiRunner:
         :param prompt_len: int
         :param ctx_len: int
         """
-        if tokenizer.padding_side != "right":
-            logger.warning("Please use padding_side='right' while initializing the tokenizer")
-            tokenizer.padding_side = "right"
-        if tokenizer.pad_token_id is None:
-            tokenizer.pad_token_id = tokenizer.eos_token_id
+        
         self.tokenizer = tokenizer
         self.prompt = prompt
         self.prompt_len = prompt_len
