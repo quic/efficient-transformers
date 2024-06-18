@@ -37,7 +37,7 @@
       "model_class": "MptForCausalLM"
     },
     {
-      "model_name":"EleutherAI/gpt-j-6b",
+      "model_name":"hakurei/gpt-j-random-tinier",
       "model_class":"GPTJForCausalLM"
     },
     {
