@@ -39,7 +39,7 @@ pipeline
                     pip install --upgrade pip setuptools
                     pip install torch==2.0.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu --no-deps
                     pip install /opt/qti-aic/dev/lib/x86_64/qaic-0.0.1-py3-none-any.whl
-                    pip install -e .
+                    pip install -e .[test]
                 '''
             }
         }

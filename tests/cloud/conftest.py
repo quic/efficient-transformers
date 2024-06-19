@@ -4,14 +4,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+import json  # noqa: I001
 import os
 import shutil
-import pytest
-import QEfficient
-import json
-from typing import List
-from QEfficient.utils.constants import Constants, QEFF_MODELS_DIR, ROOT_DIR
+import pytest # type: ignore
 from QEfficient.utils import get_qpc_dir_name_infer
+from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
 
 class model_setup:
     """
@@ -114,8 +112,8 @@ def pytest_generate_tests(metafunc):
         and 'hf_token' in metafunc.fixturenames and 'batch_size' in metafunc.fixturenames and 'prompt_len' in metafunc.fixturenames 
         and 'ctx_len' in metafunc.fixturenames and 'mxfp6' in metafunc.fixturenames and 'mxint8' in metafunc.fixturenames
         and 'device_group' in metafunc.fixturenames):
-
-        metafunc.parametrize("model_name", json_data['model_name'])
+        
+        metafunc.parametrize("model_name", json_data['model_name'], ids=lambda x: "model_name=" + str(x))
         metafunc.parametrize("num_cores", json_data['num_cores'])
         metafunc.parametrize("prompt",json_data['prompt'])
         metafunc.parametrize("prompts_txt_file_path",json_data['prompts_txt_file_path'])
@@ -144,7 +142,6 @@ def pytest_collection_modifyitems(items):
     print("\n*************Initial Test script/functions execution order****************\n\n",items)
     if len(items)>=4:
         run_first = ["test_export","test_compile","test_execute","test_infer"]
-        num_tests = len(items)
         modules = {item: item.module.__name__ for item in items}
         items[:] = sorted(items, key=lambda x: run_first.index(modules[x]) if modules[x] in run_first else len(items))
         non_cloud_tests = []
@@ -170,3 +167,8 @@ def clean_up_after_test():
     if os.path.exists(QEFF_MODELS_DIR):
         shutil.rmtree(QEFF_MODELS_DIR)
         print(f'\n...............Cleaned up {QEFF_MODELS_DIR}')
+
+def pytest_sessionfinish(session,exitstatus):
+    if os.path.exists(Constants.CACHE_DIR):
+        shutil.rmtree(Constants.CACHE_DIR)
+        print(f'\n.............Cleaned up {Constants.CACHE_DIR}')

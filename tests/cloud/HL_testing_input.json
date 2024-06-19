@@ -1,4 +1,5 @@
 {
+    "license": "SEE LICENSE IN LICENSE FILE",
     "model_name" : ["gpt2","TinyLlama/TinyLlama-1.1B-Chat-v1.0","Salesforce/codegen-350M-mono","wtang06/mpt-125m-c4"],
     "num_cores" : [8,16],
     "prompt" : ["My name is"],
