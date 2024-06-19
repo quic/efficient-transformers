@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -144,6 +144,7 @@ def cloud_ai_100_exec_kv_helper(
     enable_debug_logs: bool = False,
     stream: bool = True,
     write_io_dir: Optional[str] = None,
+    session=None,
 ):
     if tokenizer.padding_side != "right":
         logger.warning("Please use padding_side='right' while initializing the tokenizer")
@@ -151,8 +152,9 @@ def cloud_ai_100_exec_kv_helper(
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    # Load QPC
-    session = QAICInferenceSession(qpc, device_id, enable_debug_logs=enable_debug_logs)
+    if session is None:
+        # Load QPC
+        session = QAICInferenceSession(qpc, device_id, enable_debug_logs=enable_debug_logs)
 
     # Skip inputs/outputs
     session.skip_buffers([x for x in session.input_names + session.output_names if x.startswith("past_")])
@@ -176,7 +178,7 @@ def cloud_ai_100_exec_kv_helper(
     num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
     padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
     assert generation_len > 0, "generation length should be greater than zero"
-    generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
+    generated_ids = np.full((batch_size, generation_len), tokenizer.pad_token_id)
     if stream:
         streamer = transformers.TextStreamer(tokenizer)
         streamer.on_finalized_text(prompt[0] + " ")
@@ -226,9 +228,10 @@ def cloud_ai_100_exec_kv_helper(
     end = perf_counter()
     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
-    for i in range(1 if stream else 0, batch_size):
-        print()
-        print(i, prompt[i], generated_texts[i])
+    if stream:
+        for i in range(1, batch_size):
+            print()
+            print(i, prompt[i], generated_texts[i])
 
     prefill_perf = 1 / (loop_start - start)
     decode_perf = (num_token - 1) / (end - loop_start)
@@ -237,7 +240,7 @@ def cloud_ai_100_exec_kv_helper(
     print()
 
     latency_stats = (generated_texts, prefill_perf, decode_perf, total_perf, total_time)
-    return latency_stats
+    return latency_stats, generated_ids
 
 
 def print_latency_stats_kv(
@@ -288,7 +291,7 @@ def cloud_ai_100_exec_kv(
         total_time = []
         generated_texts = []
         for i in range(len(prompt)):
-            latency_stats = cloud_ai_100_exec_kv_helper(
+            latency_stats, _ = cloud_ai_100_exec_kv_helper(
                 tokenizer=tokenizer,
                 prompt=[prompt[i]],
                 qpc=qpc_path,
@@ -311,7 +314,7 @@ def cloud_ai_100_exec_kv(
         total_time = np.average(total_time)
 
     else:
-        latency_stats = cloud_ai_100_exec_kv_helper(
+        latency_stats, _ = cloud_ai_100_exec_kv_helper(
             tokenizer=tokenizer,
             prompt=prompt,
             qpc=qpc_path,

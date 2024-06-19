@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -31,7 +31,7 @@ class ApiRunner:
         :param prompt_len: int
         :param ctx_len: int
         """
-        
+
         self.tokenizer = tokenizer
         self.prompt = prompt
         self.prompt_len = prompt_len
@@ -63,7 +63,6 @@ class ApiRunner:
         print("Prompt:", repr(self.prompt))
         print("Completion:", repr(generated_text))
         return generated_ids
-
 
     def run_kv_model_on_pytorch(self, model, n_layer, padding_shape):
         """
@@ -140,7 +139,7 @@ class ApiRunner:
                 np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t)
                 if len(np_tensor.shape) == 0 and np_tensor.item() == 65504:
                     node.attribute[0].t.raw_data = np.array(-1).tobytes()
-        
+
         onnxruntime_model = model_path[:-5] + "_ort.onnx"
         onnx.save(m, onnxruntime_model)
         session = onnxruntime.InferenceSession(onnxruntime_model)
@@ -162,7 +161,7 @@ class ApiRunner:
         print("Completion:", repr(predicted_string))
         return generated_ids
 
-    def run_kv_model_on_cloud_ai_100(self, session, n_layer, padding_shape):
+    def run_kv_model_on_cloud_ai_100(self, session):
         """
         Function responsible for running ONNX model on Cloud AI 100 and return the output tokens
         :param session: QAICInferenceSession
@@ -170,20 +169,16 @@ class ApiRunner:
         :param padding_shape : List[int]
         :return generated_ids: numpy.ndarray - output tokens
         """
+        from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv_helper
 
-        generated_ids = []
-        inputs = self.input_handler.prepare_cloud_ai_100_inputs(n_layer, padding_shape)
-
-        outputs = session.run(inputs)
-
-        for i in range(1, self.gen_len):
-            generated_ids.append(outputs["logits"].argmax(-1).reshape(-1, 1))
-            inputs = self.input_handler.update_cloud_ai_100_inputs(i, inputs, outputs)
-            session.skip_buffers([x for x in session.input_names + session.output_names if x.startswith("past_")])
-            outputs = session.run(inputs)
-
-        generated_ids.append(outputs["logits"].argmax(-1).reshape(-1, 1))
-        generated_ids = np.concatenate(generated_ids, axis=1)
+        _, generated_ids = cloud_ai_100_exec_kv_helper(
+            tokenizer=self.tokenizer,
+            qpc=None,
+            session=session,
+            generation_len=self.gen_len,
+            prompt=self.prompt,
+            stream=False,
+        )
         predicted_string = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
         print("QEff Transformed Model Outputs (Cloud AI 100): \n")
         print("Prompt:", repr(self.prompt))

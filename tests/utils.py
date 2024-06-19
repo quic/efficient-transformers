@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-24 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -192,11 +192,7 @@ def get_cloud_ai_100_tokens(setup_info):
 
         session = QAICInferenceSession(test_qpcs_path, device_id, enable_debug_logs=False)
         try:
-            cloud_ai_100_tokens = setup_info["api_runner"].run_kv_model_on_cloud_ai_100(
-                session,
-                setup_info["model_config"]["n_layer"],
-                setup_info["model_config"]["padding_shape"],
-            )
+            cloud_ai_100_tokens = setup_info["api_runner"].run_kv_model_on_cloud_ai_100(session)
         except Exception as e:
             print(f"ONNX Model run on Cloud AI 100 failed due to : {e}")
         return cloud_ai_100_tokens

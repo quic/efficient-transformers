@@ -20,7 +20,7 @@ class InputHandler:
         :param prompt_len: int
         :param ctx_len: int
         """
-        #check and fix tokenizer viability
+        # check and fix tokenizer viability
         padding_check_and_fix(tokenizer)
         self.tokenizer = tokenizer
         self.input_str = input_str
@@ -105,17 +105,11 @@ class InputHandler:
         inputs.pop("attention_mask")
         position_ids = np.arange(input_len).reshape(1, -1)
         inputs["input_ids"] = np.concatenate(
-            [
-                input_ids,
-                np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)
-            ],
+            [input_ids, np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)],
             axis=1,
         ).astype(np.int64)
         inputs["position_ids"] = np.concatenate(
-            [
-                position_ids,
-                np.full((batch_size, self.prompt_len - input_len), -1)
-            ],
+            [position_ids, np.full((batch_size, self.prompt_len - input_len), -1)],
             axis=1,
         ).astype(np.int64)
 
@@ -141,59 +135,5 @@ class InputHandler:
         for i in range(n_layer):
             updated_inputs["past_key." + str(i)] = ort_outputs["past_key_values"][i * 2]
             updated_inputs["past_value." + str(i)] = ort_outputs["past_key_values"][i * 2 + 1]
-
-        return updated_inputs
-
-    def prepare_cloud_ai_100_inputs(self, n_layer, padding_shape):
-        """
-        Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on Cloud AI 100.
-        :param n_layer : int
-        :param padding_shape : List[int]
-        :return inputs: Dict - input_ids, position_ids, past_key_values
-        """
-
-        inputs = self.tokenizer(
-            self.input_str,
-            return_tensors="np",
-            padding=True,
-        )
-        input_ids = inputs["input_ids"]
-        batch_size, input_len = inputs["input_ids"].shape
-        inputs.pop("attention_mask")
-        position_ids = np.arange(input_len).reshape(1, -1)
-        inputs["input_ids"] = np.concatenate(
-            [
-                input_ids,
-                np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)
-            ],
-            axis=1,
-        ).astype(np.int64)
-        inputs["position_ids"] = np.concatenate(
-            [
-                position_ids,
-                np.full((batch_size, self.prompt_len - input_len), -1)
-            ],
-            axis=1,
-        ).astype(np.int64)
-
-        for i in range(n_layer):
-            inputs["past_key." + str(i)] = np.zeros((padding_shape), dtype=np.float16)
-            inputs["past_value." + str(i)] = np.zeros((padding_shape), dtype=np.float16)
-
-        return inputs
-
-    def update_cloud_ai_100_inputs(self, iteration, inputs, outputs):
-        """
-        Function responsible for updating Prefill stage inputs to create inputs for
-        decode stage inputs for ONNX model to be run on ONNXRT.
-        :param iteration:int
-        :param inputs: Dict
-        :param outputs: Dict
-        :return inputs: Dict - input_ids, position_ids
-        """
-
-        updated_inputs = {}
-        updated_inputs["input_ids"] = outputs["logits"].argmax(-1)
-        updated_inputs["position_ids"] = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
 
         return updated_inputs
