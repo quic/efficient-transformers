@@ -1,34 +1,48 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
 
-"""PyTorch Codegen model."""
+"""PyTorch GPT-J model."""
 
 from typing import Optional, Tuple, Union
 
 import torch
-import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
 from transformers.cache_utils import DynamicCache
-from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
-from transformers.models.codegen.modeling_codegen import (
-    CodeGenAttention,
-    CodeGenForCausalLM,
-    CodeGenModel,
-    apply_rotary_pos_emb,
-    logger,
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    CausalLMOutputWithPast,
 )
+from transformers.models.gptj.modeling_gptj import (
+    GPTJAttention,
+    GPTJForCausalLM,
+    GPTJModel,
+    get_embed_positions,
+    logger,
+    rotate_every_two,
+)
+from transformers.utils.import_utils import is_torch_fx_proxy
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
-class QEffCodeGenAttention(CodeGenAttention):
+def apply_rotary_pos_emb(tensor: torch.Tensor, sin: torch.Tensor, cos: torch.Tensor) -> torch.Tensor:
+    *sin_shape, sin_last_shape = sin.shape
+    sin = sin.reshape(-1, 1).repeat(1, 2).reshape(*sin_shape, 1, 2 * sin_last_shape)
+    *cos_shape, cos_last_shape = cos.shape
+    cos = cos.reshape(-1, 1).repeat(1, 2).reshape(*cos_shape, 1, 2 * cos_last_shape)
+    return (tensor * cos) + (rotate_every_two(tensor) * sin)
+
+
+class QEffGPTJAttention(GPTJAttention):
+    """Multi-headed attention from 'Attention Is All You Need' paper"""
+
     """
-    Copied from CodeGenAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/codegen/modeling_codegen.py
+    Copied from GPTJAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gptj/modeling_gptj.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
@@ -41,24 +55,21 @@ class QEffCodeGenAttention(CodeGenAttention):
         attention_mask=None,
         head_mask=None,
     ):
+        # compute causal mask from causal mask buffer
+        query_length, key_length = query.size(-2), key.size(-2)
+
         # Keep the attention weights computation in fp32 to avoid overflow issues
         query = query.to(torch.float32)
         key = key.to(torch.float32)
 
         attn_weights = torch.matmul(query, key.transpose(-1, -2))
-
         attn_weights = attn_weights / self.scale_attn
-        # Minimum value for causal mask
-        mask_value = -10000.0
-        # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
-        # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
-        mask_value = torch.tensor(mask_value, dtype=attn_weights.dtype).to(attn_weights.device)
 
         if attention_mask is not None:
             # Apply the attention mask
-            attn_weights = torch.where(attention_mask, mask_value, attn_weights)
+            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
 
-        attn_weights = nn.Softmax(dim=-1)(attn_weights)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
         attn_weights = attn_weights.to(value.dtype)
         attn_weights = self.attn_dropout(attn_weights)
 
@@ -72,7 +83,7 @@ class QEffCodeGenAttention(CodeGenAttention):
 
     def forward(
         self,
-        hidden_states: Optional[torch.FloatTensor],
+        hidden_states: torch.FloatTensor,
         layer_past: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -83,25 +94,24 @@ class QEffCodeGenAttention(CodeGenAttention):
         Tuple[torch.Tensor, Tuple[torch.Tensor]],
         Optional[Tuple[torch.Tensor, Tuple[torch.Tensor], Tuple[torch.Tensor, ...]]],
     ]:
-        qkv = self.qkv_proj(hidden_states)
-        # TODO(enijkamp): factor out number of logical TPU-v4 cores or make forward pass agnostic
-        mp_num = 4
-        qkv_split = qkv.reshape(qkv.shape[:-1] + (mp_num, -1))
+        query = self.q_proj(hidden_states)
+        key = self.k_proj(hidden_states)
+        value = self.v_proj(hidden_states)
 
-        local_dim = self.head_dim * self.num_attention_heads // mp_num
-        query, value, key = torch.split(qkv_split, local_dim, dim=-1)
-        query = self._split_heads(query, self.num_attention_heads, self.head_dim, mp_num=mp_num)
-        key = self._split_heads(key, self.num_attention_heads, self.head_dim, mp_num=mp_num)
+        query = self._split_heads(query, self.num_attention_heads, self.head_dim, True)
+        key = self._split_heads(key, self.num_attention_heads, self.head_dim, True)
+        value = self._split_heads(value, self.num_attention_heads, self.head_dim, False)
 
-        value = self._split_heads(value, self.num_attention_heads, self.head_dim, mp_num=mp_num)
-        value = value.permute(0, 2, 1, 3)
+        if is_torch_fx_proxy(position_ids) or torch.jit.is_tracing():
+            # The logic to conditionally copy to GPU could not be traced, so we do this
+            # every time in the torch.fx case
+            embed_positions = get_embed_positions(self.embed_positions, position_ids)
+        else:
+            embed_positions = self._get_embed_positions(position_ids)
 
-        embed_positions = self.embed_positions
-        if embed_positions.device != position_ids.device:
-            embed_positions = embed_positions.to(position_ids.device)
-            self.embed_positions = embed_positions
-
-        sincos = embed_positions[position_ids]
+        repeated_position_ids = position_ids.unsqueeze(-1).repeat(1, 1, embed_positions.shape[-1])
+        repeated_position_ids = torch.where(repeated_position_ids==-1, 0, repeated_position_ids)
+        sincos = torch.gather(embed_positions, 1, repeated_position_ids)
         sin, cos = torch.split(sincos, sincos.shape[-1] // 2, dim=-1)
 
         if self.rotary_dim is not None:
@@ -124,17 +134,17 @@ class QEffCodeGenAttention(CodeGenAttention):
         query = query.permute(0, 2, 1, 3)
 
         if layer_past is not None:
+            # Added for optimized GPTJ Attention for AI 100 KV Retention
             # Update the cache_kwargs with position_ids for Cloud AI 100
-            past_key_value = layer_past
             cache_kwargs = {"position_ids": position_ids}
             pkv = DynamicCache()
-            pkv.key_cache.append(past_key_value[0])
-            pkv.value_cache.append(past_key_value[1])
+            pkv.key_cache.append(layer_past[0])
+            pkv.value_cache.append(layer_past[1])
             key, value = pkv.update(key, value, 0, cache_kwargs)
 
         if use_cache is True:
-            # Note that this cast is quite ugly, but is not implemented before ROPE as k_rot in the original codebase is always in fp32.
-            # Reference: https://github.com/salesforce/CodeGen/blob/f210c3bb1216c975ad858cd4132c0fdeabf4bfc2/codegen1/jaxformer/hf/codegen/modeling_codegen.py#L38
+            # Note that this cast is quite ugly, but is not implemented before ROPE as the original codebase keeps the key in float32 all along the computation.
+            # Reference: https://github.com/kingoflolz/mesh-transformer-jax/blob/f8315e3003033b23f21d78361b288953064e0e76/mesh_transformer/layers.py#L128
             present = (key.to(hidden_states.dtype), value)
         else:
             present = None
@@ -153,12 +163,12 @@ class QEffCodeGenAttention(CodeGenAttention):
         return outputs  # a, present, (attentions)
 
 
-class QEffCodeGenModel(CodeGenModel):
+class QEffGPTJModel(GPTJModel):
     """
-    Copied from CodeGenModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/codegen/modeling_codegen.py
+    Copied from GPTJModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gptj/modeling_gptj.py
     The only differences are:
-     - add new args position idx for the cache_kwargs for kv retention
-     - update causal attention mask
+    - add new args position idx for the cache_kwargs for kv retention
+    - update causal attention mask
     """
 
     def forward(
@@ -210,29 +220,29 @@ class QEffCodeGenModel(CodeGenModel):
             position_ids = torch.arange(past_length, input_shape[-1] + past_length, dtype=torch.long, device=device)
             position_ids = position_ids.unsqueeze(0)
 
-        # Attention mask.
-        if attention_mask is not None:
-            if batch_size <= 0:
-                raise ValueError("batch_size has to be defined and > 0")
-            attention_mask = attention_mask.view(batch_size, -1)
-            # We create a 3D attention mask from a 2D tensor mask.
-            # Sizes are [batch_size, 1, 1, to_seq_length]
-            # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
-            # this attention mask is more simple than the triangular masking of causal attention
-            # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
-            attention_mask = attention_mask[:, None, None, :]
+        if not self._use_flash_attention_2:
+            # Attention mask.
+            if attention_mask is not None:
+                if batch_size <= 0:
+                    raise ValueError("batch_size has to be defined and > 0")
+                attention_mask = attention_mask.view(batch_size, -1)
+                # We create a 3D attention mask from a 2D tensor mask.
+                # Sizes are [batch_size, 1, 1, to_seq_length]
+                # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
+                # this attention mask is more simple than the triangular masking of causal attention
+                # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
+                attention_mask = attention_mask[:, None, None, :]
 
-            # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
-            # masked positions, this operation will create a tensor which is 0.0 for
-            # positions we want to attend and the dtype's smallest value for masked positions.
-            # Since we are adding it to the raw scores before the softmax, this is
-            # effectively the same as removing these entirely.
-            attention_mask = attention_mask.to(dtype=self.dtype)  # fp16 compatibility
-            attention_mask = (1.0 - attention_mask) * torch.finfo(self.dtype).min
-
-        elif attention_mask is None:
-            # 4d mask is passed through the layers
-            attention_mask = _create_causal_mask(position_ids=position_ids, target_length=past_length)
+                # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+                # masked positions, this operation will create a tensor which is 0.0 for
+                # positions we want to attend and the dtype's smallest value for masked positions.
+                # Since we are adding it to the raw scores before the softmax, this is
+                # effectively the same as removing these entirely.
+                attention_mask = attention_mask.to(dtype=self.dtype)  # fp16 compatibility
+                attention_mask = (1.0 - attention_mask) * torch.finfo(self.dtype).min
+            else:
+                # update attention mask for Cloud AI 100
+                attention_mask = _create_causal_mask(position_ids, past_length, None)
 
         # Prepare head mask if needed
         # 1.0 in head_mask indicate we keep the head
@@ -251,13 +261,12 @@ class QEffCodeGenModel(CodeGenModel):
 
         hidden_states = self.drop(hidden_states)
 
-        output_shape = input_shape + (hidden_states.size(-1),)
+        output_shape = (-1,) + input_shape[1:] + (hidden_states.size(-1),)
 
         if self.gradient_checkpointing and self.training:
             if use_cache:
                 logger.warning_once(
-                    "`use_cache=True` is incompatible with `config.gradient_checkpointing=True`. Setting "
-                    "`use_cache=False`..."
+                    "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
                 )
                 use_cache = False
 
@@ -265,6 +274,17 @@ class QEffCodeGenModel(CodeGenModel):
         all_self_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
         for i, (block, layer_past) in enumerate(zip(self.h, past_key_values)):
+            # Model parallel
+            if self.model_parallel:
+                torch.cuda.set_device(hidden_states.device)
+                # Ensure layer_past is on same device as hidden_states (might not be correct)
+                if layer_past is not None:
+                    layer_past = tuple(past_state.to(hidden_states.device) for past_state in layer_past)
+                # Ensure that attention_mask is always on the same device as hidden_states
+                if attention_mask is not None:
+                    attention_mask = attention_mask.to(hidden_states.device)
+                if isinstance(head_mask, torch.Tensor):
+                    head_mask = head_mask.to(hidden_states.device)
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
@@ -297,6 +317,12 @@ class QEffCodeGenModel(CodeGenModel):
             if output_attentions:
                 all_self_attentions = all_self_attentions + (outputs[2 if use_cache else 1],)
 
+            # Model Parallel: If it's the last layer for that device, put things on the next device
+            if self.model_parallel:
+                for k, v in self.device_map.items():
+                    if i == v[-1] and "cuda:" + str(k) != self.last_device:
+                        hidden_states = hidden_states.to("cuda:" + str(k + 1))
+
         hidden_states = self.ln_f(hidden_states)
 
         hidden_states = hidden_states.view(output_shape)
@@ -315,9 +341,9 @@ class QEffCodeGenModel(CodeGenModel):
         )
 
 
-class QEffCodeGenForCausalLM(CodeGenForCausalLM):
+class QEffGPTJForCausalLM(GPTJForCausalLM):
     """
-    Copied from CodeGenForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/codegen/modeling_codegen.py
+    Copied from GPTJForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gptj/modeling_gptj.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update the hidden_states, and fix for onnx model
@@ -359,15 +385,20 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-
-        # make sure sampling in fp16 works correctly and
-        # compute loss in fp32 to match with mesh-tf version
-        # https://github.com/EleutherAI/gpt-neo/blob/89ce74164da2fb16179106f54e2269b5da8db333/models/gpt2/gpt2.py#L179
-
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = transformer_outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         lm_logits = self.lm_head(hidden_states)
+        lm_logits = lm_logits.float()
+
+        # Set device for model parallelism
+        if self.model_parallel:
+            torch.cuda.set_device(self.transformer.first_device)
+            hidden_states = hidden_states.to(self.lm_head.weight.device)
+
+        # make sure sampling in fp16 works correctly and
+        # compute loss in fp32 to match with mesh-tf version
+        # https://github.com/EleutherAI/gpt-neo/blob/89ce74164da2fb16179106f54e2269b5da8db333/models/gpt2/gpt2.py#L179
 
         loss = None
         if labels is not None:

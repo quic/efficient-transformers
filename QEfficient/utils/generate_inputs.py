@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -44,8 +44,6 @@ class InputHandler:
         batch_size, input_len = input_ids.shape
         inputs.pop("attention_mask")
         position_ids = torch.arange(input_len).view(1, -1)
-        print(batch_size, input_len, position_ids)
-
         inputs["input_ids"] = torch.concat(
             [
                 input_ids,
@@ -54,7 +52,6 @@ class InputHandler:
             ],
             1,
         )
-
         inputs["position_ids"] = torch.concat(
             [
                 position_ids,
@@ -69,7 +66,6 @@ class InputHandler:
             past_value = torch.zeros((padding_shape), dtype=torch.float32)
             pkv = (past_key, past_value)
             past_key_values.append(pkv)
-
         inputs["past_key_values"] = tuple(past_key_values)
 
         return inputs
@@ -89,7 +85,6 @@ class InputHandler:
         updated_inputs["past_key_values"] = tuple(
             [(key.detach(), value.detach()) for key, value in pt_outputs["past_key_values"]]
         )
-
         return updated_inputs
 
     def prepare_ort_inputs(self, n_layer, padding_shape):
@@ -100,43 +95,29 @@ class InputHandler:
         :return inputs: Dict - input_ids, position_ids, past_key_values
         """
 
-        model_inputs = self.tokenizer(
+        inputs = self.tokenizer(
             self.input_str,
             return_tensors="np",
             padding=True,
         )
-        input_ids = model_inputs["input_ids"]
-
-        inputs = {}
-        inputs["input_ids"] = input_ids
-
-        batch_size, input_len = inputs["input_ids"].shape
+        input_ids = inputs["input_ids"]
+        batch_size, input_len = input_ids.shape
+        inputs.pop("attention_mask")
         position_ids = np.arange(input_len).reshape(1, -1)
-        print(batch_size, input_len, position_ids)
-
-        if len(input_ids.shape) == 1:
-            inputs["input_ids"] = input_ids.astype(np.int64)[:, np.newaxis]
-        else:
-            input_ids = np.concatenate(
-                [
-                    input_ids,
-                    np.ones((batch_size, self.prompt_len - input_len)) * (self.tokenizer.pad_token_id),
-                ],
-                axis=1,
-            ).astype(np.int64)
-            inputs["input_ids"] = input_ids.astype(np.int64)
-
-        if len(position_ids.shape) == 1:
-            inputs["position_ids"] = position_ids.astype(np.int64)[:, np.newaxis]
-        else:
-            position_ids = np.concatenate(
-                [
-                    position_ids,
-                    np.ones((batch_size, self.prompt_len - input_len)) * (-1),
-                ],
-                axis=1,
-            ).astype(np.int64)
-            inputs["position_ids"] = position_ids.astype(np.int64)
+        inputs["input_ids"] = np.concatenate(
+            [
+                input_ids,
+                np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)
+            ],
+            axis=1,
+        ).astype(np.int64)
+        inputs["position_ids"] = np.concatenate(
+            [
+                position_ids,
+                np.full((batch_size, self.prompt_len - input_len), -1)
+            ],
+            axis=1,
+        ).astype(np.int64)
 
         for i in range(n_layer):
             inputs["past_key." + str(i)] = np.zeros((padding_shape), dtype=np.float32)
@@ -154,26 +135,14 @@ class InputHandler:
         :return inputs: Dict - input_ids, position_ids, past_key_values
         """
 
-        past_key_values = ort_outputs["past_key_values"]
-
-        input_ids = ort_outputs["logits"].argmax(-1)
-        position_ids = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
-
-        if len(input_ids.shape) == 1:
-            inputs["input_ids"] = input_ids.astype(np.int64)[:, np.newaxis]
-        else:
-            inputs["input_ids"] = input_ids.astype(np.int64)
-
-        if len(position_ids.shape) == 1:
-            inputs["position_ids"] = position_ids.astype(np.int64)[:, np.newaxis]
-        else:
-            inputs["position_ids"] = position_ids.astype(np.int64)
-
+        updated_inputs = {}
+        updated_inputs["input_ids"] = ort_outputs["logits"].argmax(-1)
+        updated_inputs["position_ids"] = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
         for i in range(n_layer):
-            inputs["past_key." + str(i)] = past_key_values[i * 2]
-            inputs["past_value." + str(i)] = past_key_values[i * 2 + 1]
+            updated_inputs["past_key." + str(i)] = ort_outputs["past_key_values"][i * 2]
+            updated_inputs["past_value." + str(i)] = ort_outputs["past_key_values"][i * 2 + 1]
 
-        return inputs
+        return updated_inputs
 
     def prepare_cloud_ai_100_inputs(self, n_layer, padding_shape):
         """
@@ -183,48 +152,34 @@ class InputHandler:
         :return inputs: Dict - input_ids, position_ids, past_key_values
         """
 
-        model_inputs = self.tokenizer(
+        inputs = self.tokenizer(
             self.input_str,
             return_tensors="np",
             padding=True,
         )
-        input_ids = model_inputs["input_ids"]
-
-        inputs = {}
-        inputs["input_ids"] = input_ids
-
+        input_ids = inputs["input_ids"]
         batch_size, input_len = inputs["input_ids"].shape
+        inputs.pop("attention_mask")
         position_ids = np.arange(input_len).reshape(1, -1)
-        print(batch_size, input_len, position_ids)
-
-        if len(input_ids.shape) == 1:
-            inputs["input_ids"] = input_ids.astype(np.int64)[:, np.newaxis]
-        else:
-            input_ids = np.concatenate(
-                [
-                    input_ids,
-                    np.ones((batch_size, self.prompt_len - input_len)) * (self.tokenizer.pad_token_id),
-                ],
-                axis=1,
-            ).astype(np.int64)
-            inputs["input_ids"] = input_ids.astype(np.int64)
-
-        if len(position_ids.shape) == 1:
-            inputs["position_ids"] = position_ids.astype(np.int64)[:, np.newaxis]
-        else:
-            position_ids = np.concatenate(
-                [
-                    position_ids,
-                    np.ones((batch_size, self.prompt_len - input_len)) * (-1),
-                ],
-                axis=1,
-            ).astype(np.int64)
-            inputs["position_ids"] = position_ids.astype(np.int64)
+        inputs["input_ids"] = np.concatenate(
+            [
+                input_ids,
+                np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)
+            ],
+            axis=1,
+        ).astype(np.int64)
+        inputs["position_ids"] = np.concatenate(
+            [
+                position_ids,
+                np.full((batch_size, self.prompt_len - input_len), -1)
+            ],
+            axis=1,
+        ).astype(np.int64)
 
         for i in range(n_layer):
             inputs["past_key." + str(i)] = np.zeros((padding_shape), dtype=np.float16)
             inputs["past_value." + str(i)] = np.zeros((padding_shape), dtype=np.float16)
-        
+
         return inputs
 
     def update_cloud_ai_100_inputs(self, iteration, inputs, outputs):
@@ -238,17 +193,7 @@ class InputHandler:
         """
 
         updated_inputs = {}
-
-        input_ids = outputs["logits"].argmax(-1)
-        position_ids = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
-
-        if len(input_ids.shape) == 1:
-            updated_inputs["input_ids"] = input_ids.astype(np.int64)[:, np.newaxis]
-        else:
-            updated_inputs["input_ids"] = input_ids.astype(np.int64)
-        if len(position_ids.shape) == 1:
-            updated_inputs["position_ids"] = position_ids.astype(np.int64)[:, np.newaxis]
-        else:
-            updated_inputs["position_ids"] = position_ids.astype(np.int64)
+        updated_inputs["input_ids"] = outputs["logits"].argmax(-1)
+        updated_inputs["position_ids"] = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
 
         return updated_inputs

@@ -37,6 +37,10 @@
       "model_class": "MptForCausalLM"
     },
     {
+      "model_name":"hakurei/gpt-j-random-tinier",
+      "model_class":"GPTJForCausalLM"
+    },
+    {
       "model_name":"mistralai/Mixtral-8x7B-Instruct-v0.1",
       "model_class":"MixtralForCausalLM"
     }
