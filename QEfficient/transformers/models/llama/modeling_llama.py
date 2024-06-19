@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+"""PyTorch Llama model."""
+
 import math
 from typing import List, Optional, Tuple, Union
 
@@ -32,7 +34,7 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 class QEffLlamaAttention(LlamaAttention):
     """
-    Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
+    Copied from LlamaAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
@@ -226,7 +228,7 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
 
 class QEffLlamaModel(LlamaModel):
     """
-    Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
+    Copied from LlamaModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask

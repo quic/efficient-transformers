@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+"""PyTorch Mixtral model."""
 
 import math
 from typing import List, Optional, Tuple, Union
@@ -36,7 +37,7 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 class QEffMixtralAttention(MixtralAttention):
     """
-    Copied from MixtralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
+    Copied from MixtralAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
@@ -173,7 +174,7 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
 # Copied from transformers.models.mistral.modeling_mistral.MistralModel with MISTRAL->MIXTRAL,Mistral->Mixtral
 class QEffMixtralModel(MixtralModel):
     """
-    Copied from MixtralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
+    Copied from MixtralModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask

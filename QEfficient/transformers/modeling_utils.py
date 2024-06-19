@@ -20,6 +20,7 @@ from transformers.models.falcon.modeling_falcon import (
     FalconModel,
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
+from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
 from transformers.models.llama.modeling_llama import LlamaAttention, LlamaForCausalLM, LlamaModel, LlamaRMSNorm
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
@@ -56,6 +57,7 @@ from .models.falcon.modeling_falcon import (
     QEffFalconModel,
 )
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
+from .models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJForCausalLM, QEffGPTJModel
 from .models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaForCausalLM,
@@ -85,9 +87,10 @@ from .models.starcoder2.modeling_starcoder2 import (
 # Required for the Automation tool
 ModelArchitectures = namedtuple("ModelArchitectures", ["architectures"])
 # Create an instance of the named tuple
-my_architectures = ModelArchitectures(
+qeff_supported_architectures = ModelArchitectures(
     [
         GPT2LMHeadModel.__name__,
+        GPTJForCausalLM.__name__,
         MptForCausalLM.__name__,
         CodeGenForCausalLM.__name__,
         LlamaForCausalLM.__name__,
@@ -108,6 +111,10 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     GPT2Block: QEffGPT2Block,
     GPT2Attention: QEffGPT2Attention,
     GPT2LMHeadModel: QEffGPT2LMHeadModel,
+    # GPTJ model layers
+    GPTJModel: QEffGPTJModel,
+    GPTJAttention: QEffGPTJAttention,
+    GPTJForCausalLM: QEffGPTJForCausalLM,
     # Llama model layers
     LlamaModel: QEffLlamaModel,
     LlamaAttention: QEffLlamaAttention,
