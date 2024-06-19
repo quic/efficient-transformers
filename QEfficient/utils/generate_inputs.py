@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -107,14 +107,14 @@ class InputHandler:
         inputs["input_ids"] = np.concatenate(
             [
                 input_ids,
-                np.ones((batch_size, self.prompt_len - input_len)) * (self.tokenizer.pad_token_id),
+                np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)
             ],
             axis=1,
         ).astype(np.int64)
         inputs["position_ids"] = np.concatenate(
             [
                 position_ids,
-                np.ones((batch_size, self.prompt_len - input_len)) * (-1),
+                np.full((batch_size, self.prompt_len - input_len), -1)
             ],
             axis=1,
         ).astype(np.int64)
@@ -164,14 +164,14 @@ class InputHandler:
         inputs["input_ids"] = np.concatenate(
             [
                 input_ids,
-                np.ones((batch_size, self.prompt_len - input_len)) * (self.tokenizer.pad_token_id),
+                np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)
             ],
             axis=1,
         ).astype(np.int64)
         inputs["position_ids"] = np.concatenate(
             [
                 position_ids,
-                np.ones((batch_size, self.prompt_len - input_len)) * (-1),
+                np.full((batch_size, self.prompt_len - input_len), -1)
             ],
             axis=1,
         ).astype(np.int64)
