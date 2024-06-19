@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -57,20 +57,12 @@ class QEffGPTJAttention(GPTJAttention):
     ):
         # compute causal mask from causal mask buffer
         query_length, key_length = query.size(-2), key.size(-2)
-        causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
 
         # Keep the attention weights computation in fp32 to avoid overflow issues
         query = query.to(torch.float32)
         key = key.to(torch.float32)
 
         attn_weights = torch.matmul(query, key.transpose(-1, -2))
-
-        mask_value = -10000.0
-        # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
-        # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
-        mask_value = torch.tensor(mask_value, dtype=attn_weights.dtype).to(attn_weights.device)
-        attn_weights = torch.where(causal_mask, attn_weights, mask_value)
-
         attn_weights = attn_weights / self.scale_attn
 
         if attention_mask is not None:
@@ -118,7 +110,7 @@ class QEffGPTJAttention(GPTJAttention):
             embed_positions = self._get_embed_positions(position_ids)
 
         repeated_position_ids = position_ids.unsqueeze(-1).repeat(1, 1, embed_positions.shape[-1])
-        repeated_position_ids = torch.where(repeated_position_ids==-1, torch.tensor(repeated_position_ids.max()), repeated_position_ids)
+        repeated_position_ids = torch.where(repeated_position_ids==-1, 0, repeated_position_ids)
         sincos = torch.gather(embed_positions, 1, repeated_position_ids)
         sin, cos = torch.split(sincos, sincos.shape[-1] // 2, dim=-1)
 
