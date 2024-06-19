@@ -7,6 +7,7 @@
 
 import os
 import shutil
+import warnings
 from typing import Optional, Tuple, Union
 
 import torch
@@ -17,7 +18,7 @@ from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generat
 from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
 from QEfficient.src.base import QEFFBaseModel
 from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
-from QEfficient.utils._utils import load_hf_tokenizer
+from QEfficient.utils import load_hf_tokenizer, padding_check_and_fix
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
 
@@ -28,10 +29,7 @@ def convert_to_cloud_bertstyle(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_len: int,
-    return_path: bool,
-    save_fp32_onnx: bool,
-    save_fp16_onnx: bool,
-):
+) -> str:
     """
     Function to convert the model to Bertstyle approach.
     Bertstyle Approach:
@@ -40,52 +38,30 @@ def convert_to_cloud_bertstyle(
         3. KV is everytime computed for all the tokens until EOS/max_length
 
     Args:
+        model_name (str): The name of the model to be used.
+        qeff_model (QEFFBaseModel): Transformed KV torch model to be used
         tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
-        model_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
+        onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
         seq_len (int, optional): The length of the sequence. Default is 128.
-        return_path (bool): If True, return the base path for models and exported onnx model path
-        save_fp32_onnx (bool); If True, fp32 unclipped version of ONNX will be saved. Default is False.
-        save_fp16_onnx (bool); If false, generation of fp32 clipped version of ONNX will be skipped. Default is True.
-
     """
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
-
-    if not (save_fp32_onnx or save_fp16_onnx):
-        raise AttributeError("save_fp32_onnx and save_fp16_onnx can't be false")
-
-    if tokenizer.padding_side != "left":
-        logger.warning("Please use padding_side='left' while initializing the tokenizer")
-        tokenizer.padding_side = "left"
-
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-
+        
     # Decide path for saving exported ONNX files.
-    fp32_model_name, fp16_model_name = export_bertstyle_model_to_onnx(
-        model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len, save_fp32_onnx, save_fp16_onnx
-    )  # type: ignore
+    model_name = export_bertstyle_model_to_onnx(model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len) # type: ignore
 
     # return the model path for automation.
-    if return_path:
-        if save_fp16_onnx:
-            return onnx_dir_path, os.path.join(onnx_dir_path, f"{fp16_model_name}.onnx")
-        else:
-            return onnx_dir_path, os.path.join(onnx_dir_path, f"{fp32_model_name}.onnx")
+    return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
-def export_bertstyle_model_to_onnx(
-    model_name, model, tokenizer, onnx_dir_path, seq_len, save_fp32_onnx, save_fp16_onnx
-):
+def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, seq_len) -> str:
     model_base_name = model_name.replace("/", "_") + "_bertstyle"
     os.makedirs(onnx_dir_path, exist_ok=True)
 
     input_str = Constants.input_str
     # Preprocess inputs
     if seq_len > 0:
-        if tokenizer.pad_token_id is None:
-            tokenizer.pad_token_id = tokenizer.eos_token_id
         inputs = tokenizer(
             input_str,
             return_tensors="pt",
@@ -120,7 +96,7 @@ def export_bertstyle_model_to_onnx(
 
     # Export the model to Onnx.
     try:
-        fp32_model_name = export_onnx(
+        model_name = export_onnx(
             pt_model=model,
             inputs=inputs,
             output_names=output_names,
@@ -132,7 +108,7 @@ def export_bertstyle_model_to_onnx(
 
     # Run onnxrt inference
     input_names, ort_outputs = run_model_on_ort(
-        onnx_path=os.path.join(onnx_dir_path, f"{fp32_model_name}.onnx"),
+        onnx_path=os.path.join(onnx_dir_path, f"{model_name}.onnx"),
         inputs=inputs,
         output_names=output_names,
         pt_outputs=pt_outputs,
@@ -140,16 +116,14 @@ def export_bertstyle_model_to_onnx(
 
     # Fix onnx for fp16
     # Clip the values to fp16 ranges to avoid over/under flow in AI 100
-    if save_fp16_onnx:
-        fp16_model_name = fix_onnx_fp16(
-            inputs=inputs,
-            output_names=output_names,
-            ort_outputs=ort_outputs,
-            gen_models_path=onnx_dir_path,
-            model_base_name=fp32_model_name,
-            pt_outputs=pt_outputs,
-            save_fp32_onnx=save_fp32_onnx,
-        )
+    model_name = fix_onnx_fp16(
+        inputs=inputs,
+        output_names=output_names,
+        ort_outputs=ort_outputs,
+        gen_models_path=onnx_dir_path,
+        model_base_name=model_name,
+        pt_outputs=pt_outputs,
+    )
 
     # Generate inputFiles
     # todo(ochougul):rename to bert_style_input_list.txt
@@ -160,8 +134,8 @@ def export_bertstyle_model_to_onnx(
         inputs=inputs,
         input_list_file=input_list_file,
     )
-
-    return fp32_model_name, fp16_model_name
+    
+    return model_name
 
 
 def convert_to_cloud_kvstyle(
@@ -170,10 +144,7 @@ def convert_to_cloud_kvstyle(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_len: int,
-    return_path: bool,
-    save_fp32_onnx: bool,
-    save_fp16_onnx: bool,
-):
+) -> str:
     """
     Function Modeling changes for kv retention and export to Onnx.
     KV Style Approach:
@@ -184,62 +155,36 @@ def convert_to_cloud_kvstyle(
 
     Args:
         model_name (str): The name of the model to be used.
-        model_class (type): The class of the model.
-        model_kv (torch.nn.Module): Transformed KV torch model to be used
+        qeff_model (QEFFBaseModel): Transformed KV torch model to be used
         tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
         onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
-        hf_token (str): If hf_token passed, it will be used for authentication for gated. Default is None.
         seq_len (int, optional): The length of the sequence. Default is 128.
-        input_str (str): The input string to be processed.
-        return_path (bool): If True, return the base path for models and exported onnx model path
-        save_fp32_onnx (bool); If True, fp32 unclipped version of ONNX will be saved. Default is False.
-        save_fp16_onnx (bool); If false, generation of fp32 clipped version of ONNX will be skipped. Default is True.
-
     """
+    warnings.warn("\033[93mThis function will be deprecated soon, use QEfficient.export instead\033[0m", DeprecationWarning, stacklevel=2)
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
 
-    if not (save_fp32_onnx or save_fp16_onnx):
-        raise AttributeError("save_fp32_onnx and save_fp16_onnx can't be false")
-
-    if tokenizer.padding_side != "right":
-        logger.warning("Please use padding_side='right' while initializing the tokenizer")
-        tokenizer.padding_side = "right"
-
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-
     assert qeff_model.is_transformed, f"please pass the {qeff_model.__class__.__name__} after transform API"
 
     # Decide path for saving exported ONNX files.
-    fp32_model_name, fp16_model_name = export_kvstyle_transformed_model_to_onnx(
-        model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len, save_fp32_onnx, save_fp16_onnx
-    )  # type: ignore
+    model_name = export_kvstyle_transformed_model_to_onnx(model_name, qeff_model.model,  tokenizer, onnx_dir_path, seq_len) # type: ignore
 
     # return the model path for automation.
-    if return_path:
-        if save_fp16_onnx:
-            return onnx_dir_path, os.path.join(onnx_dir_path, f"{fp16_model_name}.onnx")
-        else:
-            return onnx_dir_path, os.path.join(onnx_dir_path, f"{fp32_model_name}.onnx")
+    return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
-def export_kvstyle_transformed_model_to_onnx(
-    model_name: str,
-    transformed_model: torch.nn.Module,
-    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-    onnx_dir_path: str,
-    seq_len: int,
-    save_fp32_onnx: Optional[bool] = False,
-    save_fp16_onnx: Optional[bool] = True,
-):
-    tokenizer.pad_token_id = tokenizer.eos_token_id if tokenizer.pad_token_id is None else tokenizer.pad_token_id
+def export_kvstyle_transformed_model_to_onnx(model_name: str,
+                                             transformed_model: torch.nn.Module,
+                                             tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+                                             onnx_dir_path: str, seq_len: int) -> str:  
 
     # Disabling requires_grad on all parameters
     for j, p in enumerate(transformed_model.parameters()):
         p.requires_grad_(False)
 
+    # Check and fix tokenizer viability
+    padding_check_and_fix(tokenizer)
     # Preprocess inputs
     # Build inputs for prefill
     assert seq_len > 0, "Need seq_len to be greater than zero"
@@ -332,41 +277,37 @@ def export_kvstyle_transformed_model_to_onnx(
 
     model_base_name = model_name.replace("/", "_") + "_kv"
     os.makedirs(onnx_dir_path, exist_ok=True)
+    
     # Export and simplify ONNX model
-    fp32_model_name = export_onnx(
+    model_name = export_onnx(
         pt_model=transformed_model,
         inputs=inputs,
         output_names=output_names,
         gen_models_path=onnx_dir_path,
         model_base_name=model_base_name,
     )
-
-    # fp32_model_name = simplify_onnx(onnx_dir_path, fp32_model_name, mutable_initializer=True)
+    
     # Replace nested past_key_values inputs with separate KV tensors
     inputs.pop("past_key_values")
     for i, (key, value) in enumerate(pkv):
         inputs[f"past_key.{i}"] = key
         inputs[f"past_value.{i}"] = value
-
+    
     # Run onnxrt inference
     input_names, ort_outputs = run_model_on_ort(
-        onnx_path=os.path.join(onnx_dir_path, f"{fp32_model_name}.onnx"),
+        onnx_path=os.path.join(onnx_dir_path, f"{model_name}.onnx"),
         inputs=inputs,
         output_names=output_names,
         pt_outputs=pt_outputs,
     )
-
-    # Fix onnx for FP16
-    if save_fp16_onnx:
-        fp16_model_name = fix_onnx_fp16(
+    
+    model_name = fix_onnx_fp16(
             inputs=inputs,
             output_names=output_names,
             ort_outputs=ort_outputs,
             gen_models_path=onnx_dir_path,
-            model_base_name=fp32_model_name,
-            pt_outputs=pt_outputs,
-            save_fp32_onnx=save_fp32_onnx,
-        )
+            model_base_name=model_name,
+            pt_outputs=pt_outputs)
 
     # Generate custom-IO files for fp16 and int8 kv
     with open(os.path.join(onnx_dir_path, "custom_io_fp16.yaml"), "w") as fp:
@@ -394,8 +335,8 @@ def export_kvstyle_transformed_model_to_onnx(
         inputs=inputs,
         input_list_file=input_list_file,
     )
-
-    return fp32_model_name, fp16_model_name
+    
+    return model_name
 
 
 def export_for_cloud(
@@ -404,10 +345,7 @@ def export_for_cloud(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_length: int = Constants.seq_length,
-    return_path: bool = True,
-    save_fp32_onnx: bool = False,
-    save_fp16_onnx: bool = True,
-) -> Tuple[str, str]:
+) -> str:
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
         return export_lm_model_for_cloud(
@@ -416,68 +354,37 @@ def export_for_cloud(
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length,
-            return_path=return_path,
-            save_fp16_onnx=save_fp16_onnx,
-            save_fp32_onnx=save_fp32_onnx,
         )
     else:
         raise NotImplementedError(
             f"Only model type {QEFFAutoModelForCausalLM.__class__.__name__} is supported for export, got {type(qeff_model)}"
         )
 
-
-def export_lm_model_for_cloud(
-    model_name: str,
-    qeff_model: QEFFAutoModelForCausalLM,
-    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-    onnx_dir_path: str,
-    seq_length: int,
-    return_path: bool,
-    save_fp32_onnx: bool,
-    save_fp16_onnx: bool,
-):
+def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausalLM,
+                              tokenizer:Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+                              onnx_dir_path: str, seq_length: int) -> str:
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
 
-    if not (save_fp32_onnx or save_fp16_onnx):
-        raise AttributeError("save_fp32_onnx and save_fp16_onnx can't be false")
-
-    if tokenizer.padding_side != "right":
-        logger.warning("Please use padding_side='right' while initializing the tokenizer")
-        tokenizer.padding_side = "right"
-
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-
     if qeff_model.is_transformed:
-        fp32_model_name, fp16_model_name = export_kvstyle_transformed_model_to_onnx(
+        model_name = export_kvstyle_transformed_model_to_onnx(
             model_name=model_name,
             transformed_model=qeff_model.model,
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
-            seq_len=seq_length,
-            save_fp32_onnx=save_fp32_onnx,
-            save_fp16_onnx=save_fp16_onnx,
-        )  # type: ignore
+            seq_len=seq_length) # type: ignore
 
     else:
-        fp32_model_name, fp16_model_name = export_bertstyle_model_to_onnx(
+        model_name = export_bertstyle_model_to_onnx(
             model_name=model_name,
             model=qeff_model.model,
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
-            seq_len=seq_length,
-            save_fp32_onnx=save_fp32_onnx,
-            save_fp16_onnx=save_fp16_onnx,
-        )  # type: ignore
+            seq_len=seq_length) # type: ignore
 
     # return the model path for automation.
-    if return_path:
-        if save_fp16_onnx:
-            return onnx_dir_path, os.path.join(onnx_dir_path, f"{fp16_model_name}.onnx")
-        else:
-            return onnx_dir_path, os.path.join(onnx_dir_path, f"{fp32_model_name}.onnx")
+    return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
 def qualcomm_efficient_converter(
@@ -490,11 +397,9 @@ def qualcomm_efficient_converter(
     hf_token: Optional[str] = None,
     seq_length: int = Constants.seq_length,
     kv: bool = True,
-    return_path: bool = True,
-    form_factor: str = "cloud",
-    save_fp32_onnx: bool = False,
-    save_fp16_onnx: bool = True,
+    form_factor: str="cloud",
 ) -> Tuple[str, str]:
+  
     """
     Function to convert the input string using the specified model and returns the result.
 
@@ -508,14 +413,13 @@ def qualcomm_efficient_converter(
         hf_token (bool): If True, an authentication token will be used. Default is False.
         seq_len (int, optional): The length of the sequence. Default is 128.
         kv (bool): If True, key-value pairs will be used. Default is True.
-        return_path (bool): If True, return the base path for models and exported onnx model path
-        save_fp32_onnx (bool); If True, fp32 unclipped version of ONNX will be saved. Default is False.
-        save_fp16_onnx (bool); If false, fp32 unclipped version of ONNX will be deleted. Default is False.
+        form_factor (str): form_factor of the hardware, currently only accepts "cloud".
 
     Returns:
         None, if automation is False, else path to exported Onnx file
 
     """
+    warnings.warn("\033[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m", DeprecationWarning, stacklevel=2)
     # Get model_kv first
     model_kv = model_kv if model_kv else QEFFCommonLoader.from_pretrained(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), hf_token=hf_token, cache_dir=cache_dir)
 
@@ -533,16 +437,13 @@ def qualcomm_efficient_converter(
     tokenizer = tokenizer if tokenizer else load_hf_tokenizer(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), hf_token=hf_token, cache_dir=cache_dir, local_model_dir=local_model_dir)
     
     if form_factor == "cloud":
-        return export_for_cloud(
+        generated_onnx_model_path = export_for_cloud(
             model_name=model_name,
             qeff_model=model_kv,
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
-            seq_length=seq_length,
-            return_path=return_path,
-            save_fp16_onnx=save_fp16_onnx,
-            save_fp32_onnx=save_fp32_onnx,
-        )
+            seq_length=seq_length)
+        return onnx_dir_path, generated_onnx_model_path
     else:
         # [TODO]: Apply the class transformation to make changes for the KV models in edge use cases
         # model = QEfficient.transform(model_hf, type="Transformers", form_factor="edge")

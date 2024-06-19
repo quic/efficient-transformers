@@ -198,7 +198,6 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 |QEfficient.cloud_ai_100_exec_kv | [click here](#4-run-benchmark)  | <li>batch_size : $\color{green} {Mandatory}$</li> <li>tokenizer : $\color{green} {Mandatory}$</li> <li>qpc_path : $\color{green} {Mandatory}$</li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li><li>input_len : Optional [Default-None]</li> <li>generation_len : Optional [Default-None]</li> <li>device_id : Optional [Default-[0]]</li> <li>enable_debug_logs : Optional [Default-False]</li> <li>stream : Optional [Default-True]</li> <li>write_io_dir : Optional</li><li>automation : Optional [Default-False]</li>| 
 
 **One argument, prompt or prompts_txt_file_path must be passed.<br>
-***Both save_fp32_onnx and save_fp16_onnx can't be false.
 
 ### 1.  Model download and Optimize for Cloud AI 100
 
@@ -248,7 +247,6 @@ base_path, onnx_path = QEfficient.export(
     tokenizer=tokenizer,
     kv=True,
     form_factor="cloud",
-    return_path=True,
 )
 ```
 

@@ -127,6 +127,8 @@ def load_hf_tokenizer(pretrained_model_name_or_path: str, cache_dir: Optional[st
     model_hf_path = pretrained_model_name_or_path if os.path.isdir(pretrained_model_name_or_path) else hf_download(repo_id=pretrained_model_name_or_path, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
     #FIXME(ochougul): should this always return left padded tokenizer?
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
+    padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
+    
     return tokenizer
 
 
@@ -146,3 +148,23 @@ def check_and_assign_cache_dir(local_model_dir, cache_dir):
     elif local_model_dir is None and cache_dir is None:
         cache_dir = Constants.CACHE_DIR
         return cache_dir
+
+def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]) -> None:
+    """
+    Checks and fixes tokenizer paddding side and pad_token_id viability. 
+    --------
+    
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer to check and fix.
+    """
+    if tokenizer.padding_side != "right":
+        logger.warning(f"Setting tokenizer padding_side to 'right', got {tokenizer.padding_side}")
+        tokenizer.padding_side = "right"
+    
+    if tokenizer.pad_token_id is None:
+        assert tokenizer.eos_token_id is not None, "Found tokenizer.eos_token_id to be None, expected int"
+        # If Pad token is out of range of vocab size
+        if tokenizer.eos_token_id < tokenizer.vocab_size:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+        else:
+            tokenizer.pad_token_id = tokenizer.vocab_size - 1
+            

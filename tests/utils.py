@@ -113,7 +113,6 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
         tokenizer=tokenizer,
         onnx_dir_path=onnx_dir_path,
         kv=True,
-        return_path=True,
     )
     return base_path, onnx_model_path
 
