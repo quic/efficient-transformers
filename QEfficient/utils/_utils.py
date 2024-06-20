@@ -120,7 +120,7 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
 
 
 def load_hf_tokenizer(pretrained_model_name_or_path: str, cache_dir: Optional[str] = None, hf_token: Optional[str] = None, padding_side:str = "right", **kwargs) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
-    logger.info(f"Loading Tokenizer")
+    logger.info("Loading Tokenizer")
     if hf_token is not None:
         login(hf_token)
     # Download tokenizer along with model if it doesn't exist
@@ -141,12 +141,14 @@ def get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp
 
     return qpc_base_dir_name
 
+
 def check_and_assign_cache_dir(local_model_dir, cache_dir):
     if local_model_dir is not None:
         if cache_dir is not None:
             logger.warning(f"Both local_model_dir ({local_model_dir}) and cache_dir ({cache_dir}) given. Using local_model_dir.")
         return None
     return cache_dir if cache_dir else Constants.CACHE_DIR
+
 
 def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]) -> None:
     """
@@ -166,4 +168,3 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
             tokenizer.pad_token_id = tokenizer.eos_token_id
         else:
             tokenizer.pad_token_id = tokenizer.vocab_size - 1
-            

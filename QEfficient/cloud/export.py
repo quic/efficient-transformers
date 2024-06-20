@@ -12,8 +12,7 @@ from typing import Optional, Union
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.utils import onnx_exists, check_and_assign_cache_dir
-from QEfficient.utils.constants import Constants
+from QEfficient.utils import check_and_assign_cache_dir, onnx_exists
 from QEfficient.utils.logging_utils import logger
 
 # Specifically for Docker images.
