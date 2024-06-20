@@ -65,5 +65,3 @@ def test_infer(setup, mocker):
     assert os.path.isdir(ms.qpc_dir_path())
     compile_spy.assert_not_called()
     cloud_ai_100_exec_kv_spy.assert_called_once()
-
-    
