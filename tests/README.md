@@ -55,19 +55,8 @@ Then run the tests with coverage:
 ```sh
 pytest --cov=QEfficient/cloud
 ```
-It will find the code coverage of that particular directory, just look like below coverage report in the terminal:
-```sh
----------- coverage: platform linux, python 3.8.10-final-0 -----------
-Name                           Stmts   Miss  Cover
---------------------------------------------------
-QEfficient/cloud/__init__.py       0      0   100%
-QEfficient/cloud/compile.py       17     14    18%
-QEfficient/cloud/execute.py       21     10    52%
-QEfficient/cloud/export.py        27      7    74%
-QEfficient/cloud/infer.py         43     24    44%
---------------------------------------------------
-TOTAL                            108     55    49%
-```
+It will show the code coverage of that particular directory.
+
 
 ## Test Report
 If you want to generate a html report for the tests execution, you can use the `pytest-html` plugin. Install it using:

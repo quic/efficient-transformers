@@ -165,7 +165,7 @@ def clean_up_after_test():
     yield
     if os.path.exists(QEFF_MODELS_DIR):
         shutil.rmtree(QEFF_MODELS_DIR)
-        print(f'\n...............Cleaned up {QEFF_MODELS_DIR}')
+        print(f'\n..............Cleaned up {QEFF_MODELS_DIR}')
 
 def pytest_sessionfinish(session,exitstatus):
     if os.path.exists(Constants.CACHE_DIR):
