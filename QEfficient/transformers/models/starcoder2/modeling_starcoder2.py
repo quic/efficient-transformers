@@ -36,7 +36,7 @@ class QEffStarcoder2Attention(Starcoder2Attention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     """
-    Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/starcoder2/modeling_starcoder2.py
+    Copied from Starcoder2Attention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/starcoder2/modeling_starcoder2.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
@@ -122,7 +122,7 @@ class QEffStarcoder2Attention(Starcoder2Attention):
 
 class QEffStarcoder2Model(Starcoder2Model):
     """
-    Copied from Starcoder2: https://github.com/huggingface/transformers/blob/main/src/transformers/models/starcoder2/modeling_starcoder2.py
+    Copied from Starcoder2Model: https://github.com/huggingface/transformers/blob/main/src/transformers/models/starcoder2/modeling_starcoder2.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask
@@ -281,7 +281,7 @@ class QEffStarcoder2Model(Starcoder2Model):
 
 class QEffStarcoder2ForCausalLM(Starcoder2ForCausalLM):
     """
-    Copied from Starcoder2: https://github.com/huggingface/transformers/blob/main/src/transformers/models/starcoder2/modeling_starcoder2.py
+    Copied from Starcoder2ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/starcoder2/modeling_starcoder2.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update the hidden_states, and fix for onnx model

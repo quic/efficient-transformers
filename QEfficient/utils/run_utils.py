@@ -40,6 +40,7 @@ class ApiRunner:
 
         self.input_handler = InputHandler(self.tokenizer, self.prompt, self.prompt_len, self.ctx_len)
 
+    @torch.no_grad()
     def run_hf_model_on_pytorch(self, model_hf):
         """
         Function responsible for running Huggingface PyTorch model and return the output tokens
@@ -50,12 +51,11 @@ class ApiRunner:
 
         input_ids_len = len(input_ids[0])
 
-        with torch.no_grad():
-            for _ in range(self.gen_len):
-                outputs = model_hf(input_ids)
-                logits = outputs.logits[:, -1, :]
-                predicted_token_id = torch.argmax(logits, dim=-1)
-                input_ids = torch.cat([input_ids, predicted_token_id.unsqueeze(1)], dim=-1)
+        for _ in range(self.gen_len):
+            outputs = model_hf(input_ids)
+            logits = outputs.logits[:, -1, :]
+            predicted_token_id = torch.argmax(logits, dim=-1)
+            input_ids = torch.cat([input_ids, predicted_token_id.unsqueeze(1)], dim=-1)
 
         generated_ids = input_ids[0][input_ids_len:].detach().numpy()
         generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
@@ -165,8 +165,7 @@ class ApiRunner:
     def run_kv_model_on_cloud_ai_100(self, session, n_layer, padding_shape):
         """
         Function responsible for running ONNX model on Cloud AI 100 and return the output tokens
-        :param qpc_path: str
-        :param device_id: List[int]
+        :param session: QAICInferenceSession
         :param n_layer : int
         :param padding_shape : List[int]
         :return generated_ids: numpy.ndarray - output tokens

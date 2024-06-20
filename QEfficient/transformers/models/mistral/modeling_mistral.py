@@ -37,7 +37,7 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 class QEffMistralAttention(MistralAttention):
     """
-    Copied from MistralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
+    Copied from MistralAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
@@ -121,7 +121,7 @@ class QEffMistralAttention(MistralAttention):
 
 class QEffMistralModel(MistralModel):
     """
-    Copied from MistralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
+    Copied from MistralModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask
