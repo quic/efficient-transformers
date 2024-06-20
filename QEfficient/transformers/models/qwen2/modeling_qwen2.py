@@ -37,7 +37,7 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 class QEffQwen2Attention(Qwen2Attention):
     """
-    Copied from Qwen2ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen2/modeling_qwen2.py
+    Copied from Qwen2Attention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen2/modeling_qwen2.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
@@ -117,7 +117,7 @@ class QEffQwen2Attention(Qwen2Attention):
 
 class QEffQwen2Model(Qwen2Model):
     """
-    Copied from Qwen2ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen2/modeling_qwen2.py
+    Copied from Qwen2Model: https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen2/modeling_qwen2.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask

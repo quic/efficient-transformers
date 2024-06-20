@@ -33,7 +33,7 @@ class QEffPhi3Attention(Phi3Attention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     """
-    Copied from Phi3ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/phi3/modeling_phi3.py
+    Copied from Phi3Attention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/phi3/modeling_phi3.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
@@ -123,7 +123,7 @@ class QEffPhi3Attention(Phi3Attention):
 
 class QEffPhi3Model(Phi3Model):
     """
-    Copied from Phi3ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/phi3/modeling_phi3.py
+    Copied from Phi3Model: https://github.com/huggingface/transformers/blob/main/src/transformers/models/phi3/modeling_phi3.py
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask

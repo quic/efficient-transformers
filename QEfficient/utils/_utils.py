@@ -125,7 +125,6 @@ def load_hf_tokenizer(pretrained_model_name_or_path: str, cache_dir: Optional[st
         login(hf_token)
     # Download tokenizer along with model if it doesn't exist
     model_hf_path = pretrained_model_name_or_path if os.path.isdir(pretrained_model_name_or_path) else hf_download(repo_id=pretrained_model_name_or_path, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
-    #FIXME(ochougul): should this always return left padded tokenizer?
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     
