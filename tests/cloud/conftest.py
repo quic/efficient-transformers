@@ -1,9 +1,10 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
 import json
 import os
 import shutil
@@ -15,7 +16,7 @@ from QEfficient.utils import get_qpc_dir_name_infer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
 
 
-class model_setup:
+class ModelSetup:
     """
     model_setup is a set up class for all the High Level testing script, 
     which provides all neccessary objects needed for checking the flow and creation 
@@ -100,7 +101,7 @@ def setup(model_name,num_cores,prompt,prompts_txt_file_path,aic_enable_depth_fir
     Args: same as set up initialization
     Return: model_setup class object
     """
-    yield model_setup(model_name,num_cores,prompt,prompts_txt_file_path,bool(aic_enable_depth_first),mos,cache_dir,hf_token,batch_size,prompt_len,ctx_len,bool(mxfp6),bool(mxint8),device_group)
+    yield ModelSetup(model_name,num_cores,prompt,prompts_txt_file_path,bool(aic_enable_depth_first),mos,cache_dir,hf_token,batch_size,prompt_len,ctx_len,bool(mxfp6),bool(mxint8),device_group)
 
 def pytest_generate_tests(metafunc):  
     """
@@ -110,11 +111,9 @@ def pytest_generate_tests(metafunc):
     -----------
     Ref: https://docs.pytest.org/en/7.3.x/how-to/parametrize.html
     """
-    json_data = None
     json_file  = os.path.join(ROOT_DIR,"tests","cloud","HL_testing_input.json")
     with open(json_file,'r') as file:
         json_data =  json.load(file)
-    print("\n**************JSON data***************\n\n",json_data)
 
     metafunc.parametrize("model_name", json_data['model_name'], ids=lambda x: "model_name=" + str(x))
     metafunc.parametrize("num_cores", json_data['num_cores'],ids=lambda x: "num_cores=" + str(x))
@@ -172,3 +171,6 @@ def pytest_sessionfinish(session,exitstatus):
     if os.path.exists(Constants.CACHE_DIR):
         shutil.rmtree(Constants.CACHE_DIR)
         print(f'\n.............Cleaned up {Constants.CACHE_DIR}')
+    if os.path.exists(QEFF_MODELS_DIR):
+        shutil.rmtree(QEFF_MODELS_DIR)
+        print(f'\n.............Cleaned up {QEFF_MODELS_DIR}')
