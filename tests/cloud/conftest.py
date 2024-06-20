@@ -4,12 +4,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-import json  # noqa: I001
+import json
 import os
 import shutil
-import pytest # type: ignore
+
+import pytest
+
+from QEfficient.generation.text_generation_inference import check_batch_size_and_num_prompts
 from QEfficient.utils import get_qpc_dir_name_infer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
+
 
 class model_setup:
     """
@@ -80,6 +84,12 @@ class model_setup:
             return str(os.path.join(self.onnx_dir_path(), "custom_io_int8.yaml"))
         else:
             return str(os.path.join(self.onnx_dir_path(), "custom_io_fp16.yaml"))
+    def check_batch_size_for_asserion_error(self):
+        try:
+            result = check_batch_size_and_num_prompts(self.prompt, self.prompts_txt_file_path, self.batch_size)
+            return {"result":result,"error":None}
+        except AssertionError as e:
+            return {"result":None,"error":str(e)}
 
 @pytest.fixture
 def setup(model_name,num_cores,prompt,prompts_txt_file_path,aic_enable_depth_first,mos,cache_dir,hf_token,batch_size,prompt_len,ctx_len,mxfp6,mxint8,device_group):
@@ -106,27 +116,20 @@ def pytest_generate_tests(metafunc):
         json_data =  json.load(file)
     print("\n**************JSON data***************\n\n",json_data)
 
-    if ('model_name' in metafunc.fixturenames and 'num_cores' in metafunc.fixturenames and 'prompt' in metafunc.fixturenames
-        and 'prompts_txt_file_path' in metafunc.fixturenames
-        and 'aic_enable_depth_first' in metafunc.fixturenames and 'mos' in metafunc.fixturenames and 'cache_dir' in metafunc.fixturenames 
-        and 'hf_token' in metafunc.fixturenames and 'batch_size' in metafunc.fixturenames and 'prompt_len' in metafunc.fixturenames 
-        and 'ctx_len' in metafunc.fixturenames and 'mxfp6' in metafunc.fixturenames and 'mxint8' in metafunc.fixturenames
-        and 'device_group' in metafunc.fixturenames):
-        
-        metafunc.parametrize("model_name", json_data['model_name'], ids=lambda x: "model_name=" + str(x))
-        metafunc.parametrize("num_cores", json_data['num_cores'])
-        metafunc.parametrize("prompt",json_data['prompt'])
-        metafunc.parametrize("prompts_txt_file_path",json_data['prompts_txt_file_path'])
-        metafunc.parametrize("aic_enable_depth_first",json_data['aic_enable_depth_first'])
-        metafunc.parametrize("mos",json_data['mos'])
-        metafunc.parametrize("cache_dir",[Constants.CACHE_DIR])
-        metafunc.parametrize("hf_token",json_data['hf_token'])
-        metafunc.parametrize("batch_size",json_data['batch_size'])
-        metafunc.parametrize("prompt_len",json_data['prompt_len'])
-        metafunc.parametrize("ctx_len",json_data['ctx_len'])
-        metafunc.parametrize("mxfp6",json_data['mxfp6'])
-        metafunc.parametrize("mxint8",json_data['mxint8'])
-        metafunc.parametrize("device_group",json_data['device_group'])
+    metafunc.parametrize("model_name", json_data['model_name'], ids=lambda x: "model_name=" + str(x))
+    metafunc.parametrize("num_cores", json_data['num_cores'],ids=lambda x: "num_cores=" + str(x))
+    metafunc.parametrize("prompt",json_data['prompt'],ids=lambda x: "prompt=" + str(x))
+    metafunc.parametrize("prompts_txt_file_path",json_data['prompts_txt_file_path'],ids=lambda x: "prompts_txt_file_path=" + str(x))
+    metafunc.parametrize("aic_enable_depth_first",json_data['aic_enable_depth_first'],ids=lambda x: "aic_enable_depth_first=" + str(x))
+    metafunc.parametrize("mos",json_data['mos'],ids=lambda x: "mos=" + str(x))
+    metafunc.parametrize("cache_dir",[Constants.CACHE_DIR],ids=lambda x: "cache_dir=" + str(x))
+    metafunc.parametrize("hf_token",json_data['hf_token'],ids=lambda x: "hf_token=" + str(x))
+    metafunc.parametrize("batch_size",json_data['batch_size'],ids=lambda x: "batch_size=" + str(x))
+    metafunc.parametrize("prompt_len",json_data['prompt_len'],ids=lambda x: "prompt_len=" + str(x))
+    metafunc.parametrize("ctx_len",json_data['ctx_len'],ids=lambda x: "ctx_len=" + str(x))
+    metafunc.parametrize("mxfp6",json_data['mxfp6'],ids=lambda x: "mxfp6=" + str(x))
+    metafunc.parametrize("mxint8",json_data['mxint8'],ids=lambda x: "mxint8=" + str(x))
+    metafunc.parametrize("device_group",json_data['device_group'],ids=lambda x: "device_group=" + str(x))
   
 def pytest_collection_modifyitems(items):
     """
@@ -139,7 +142,6 @@ def pytest_collection_modifyitems(items):
     ----------
     Ref: https://docs.pytest.org/en/4.6.x/reference.html#collection-hooks
     """
-    print("\n*************Initial Test script/functions execution order****************\n\n",items)
     if len(items)>=4:
         run_first = ["test_export","test_compile","test_execute","test_infer"]
         modules = {item: item.module.__name__ for item in items}
@@ -156,10 +158,8 @@ def pytest_collection_modifyitems(items):
             for j in range(len(run_first)):
                 final_items.append(items[i+j*num_cloud_test_cases])
         
-        final_items.insert(0,final_items[3])
         final_items.extend(non_cloud_tests)
         items[:] = final_items
-        print("\n*************Final Test script/functions execution order****************\n\n",items)
 
 @pytest.fixture
 def clean_up_after_test():

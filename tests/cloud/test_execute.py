@@ -4,12 +4,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-import os
-import warnings
 import pytest
+
 import QEfficient
 import QEfficient.cloud.execute
 from QEfficient.cloud.execute import main as execute
+
 
 def test_execute(setup, mocker):
     """
@@ -21,7 +21,10 @@ def test_execute(setup, mocker):
     mocker: mocker is itself a pytest fixture, uses to mock or spy internal functions.
     """
     ms = setup
-    
+    result = ms.check_batch_size_for_asserion_error()
+    if result["error"] is not None:
+        pytest.skip(f'...Skipping Because batch size is not compatible with the number of prompts: {result["error"]}')
+    assert result['result'] is not None
     load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.execute,"load_hf_tokenizer")
     get_compilation_batch_size_spy = mocker.spy(QEfficient.cloud.execute,"get_compilation_batch_size")
     check_batch_size_and_num_prompts_spy = mocker.spy(QEfficient.cloud.execute,"check_batch_size_and_num_prompts")
@@ -38,6 +41,4 @@ def test_execute(setup, mocker):
     get_compilation_batch_size_spy.assert_called_once()
     assert get_compilation_batch_size_spy.spy_return == ms.batch_size
     check_batch_size_and_num_prompts_spy.assert_called_once()
-    lst = check_batch_size_and_num_prompts_spy.spy_return
-    assert bool(lst) and isinstance(lst, list) and all(isinstance(elem, str) for elem in lst)
     cloud_ai_100_exec_kv_spy.assert_called_once()

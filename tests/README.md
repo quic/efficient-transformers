@@ -2,17 +2,16 @@
 This directory contains the tests for the project. Below is the list of test functions and required pytest plugins.
 
 ## Test Functions
-
-### test_infer.py
+### cloud/test_infer.py
 - test_infer function
 
-### test_export.py
+### cloud/test_export.py
 - test_export function
 
-### test_compile.py
+### cloud/test_compile.py
 - test_compile function
 
-### test_execute.py
+### cloud/test_execute.py
 - test_execute function
 
 ## Required Plugins
@@ -33,6 +32,10 @@ To run the tests, navigate to the root directory of the project and use the foll
 ```sh
 pytest -v -s
 ```
+And If you want to see the Skipped reason then you can use the below command for testing:
+```sh
+pytest -v -rs
+```
 If you want to run a specefic test file or test function, you can specify it like this:
 ```sh
 pytest tests/cloud/test_infer.py
@@ -50,7 +53,20 @@ pip install pytest-cov
 ```
 Then run the tests with coverage:
 ```sh
-pytest --cov=tests
+pytest --cov=QEfficient/cloud
+```
+It will find the code coverage of that particular directory, just look like below coverage report in the terminal:
+```sh
+---------- coverage: platform linux, python 3.8.10-final-0 -----------
+Name                           Stmts   Miss  Cover
+--------------------------------------------------
+QEfficient/cloud/__init__.py       0      0   100%
+QEfficient/cloud/compile.py       17     14    18%
+QEfficient/cloud/execute.py       21     10    52%
+QEfficient/cloud/export.py        27      7    74%
+QEfficient/cloud/infer.py         43     24    44%
+--------------------------------------------------
+TOTAL                            108     55    49%
 ```
 
 ## Test Report

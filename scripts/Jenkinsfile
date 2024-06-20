@@ -56,7 +56,7 @@ pipeline
                     export TOKENIZERS_PARALLELISM=false
                     find . | grep -E "(/__pycache__$)" | xargs rm -rf
                     export PYTHONPATH="."
-                    pytest -W ignore -s -v tests
+                    pytest -W ignore -rs -v tests
                     deactivate
                     exit
                     '''     

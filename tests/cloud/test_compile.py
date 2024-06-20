@@ -5,9 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 import os
-import pytest
+
 import QEfficient
 import QEfficient.cloud.compile
+
 
 def test_compile(setup, mocker):
     """
@@ -34,8 +35,5 @@ def test_compile(setup, mocker):
     
     assert os.path.isdir(os.path.join(ms.model_card_dir(), ms.qpc_base_dir_name()))
     assert os.path.isfile(ms.specialization_json_path())
-    if not os.path.isfile(ms.custom_io_file_path()):
-        print(f"file {ms.custom_io_file_path()} needs to exist in the same directory as onnx model files.")
-        assert False
-    else:
-        assert os.path.isdir(ms.qpc_dir_path())
+    assert os.path.isfile(ms.custom_io_file_path())
+    assert os.path.isdir(ms.qpc_dir_path())
