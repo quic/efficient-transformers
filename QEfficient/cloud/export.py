@@ -64,7 +64,7 @@ def main(
     :hf_token: str. HuggingFace login token to access private repos.
     :local_model_dir: str. Path to custom model weights and config files.
     """
-    check_and_assign_cache_dir(local_model_dir,cache_dir)
+    cache_dir = check_and_assign_cache_dir(local_model_dir,cache_dir)
     get_onnx_model_path(model_name=model_name, cache_dir=cache_dir, hf_token=hf_token, local_model_dir=local_model_dir)
 
 
