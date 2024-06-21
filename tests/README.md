@@ -43,6 +43,12 @@ pytest tests/cloud/test_infer.py
 ```sh
 pytest tests/cloud/test_infer.py::test_infer
 ```
+### Note
+To run all the tests, follow the instructions below:
+```sh
+cd tests/cloud  # navigate to the directory where conftest.py present
+pytest -v --all # use --all option
+```
 ## Cleanup
 Some tests will create temporary files or directories, to ensure a clean state after running the tests, use the provided fixtures or cleanup scripts as described in the `conftest.py`.
 

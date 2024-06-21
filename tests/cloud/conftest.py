@@ -16,6 +16,11 @@ from QEfficient.utils import get_qpc_dir_name_infer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--all", action="store_true",default=False, help="Run all test without skipping any test"
+    )
+
 class ModelSetup:
     """
     model_setup is a set up class for all the High Level testing script, 
@@ -111,7 +116,7 @@ def pytest_generate_tests(metafunc):
     -----------
     Ref: https://docs.pytest.org/en/7.3.x/how-to/parametrize.html
     """
-    json_file  = os.path.join(ROOT_DIR,"tests","cloud","HL_testing_input.json")
+    json_file  = os.path.join(ROOT_DIR,"tests","cloud","high_level_testing.json")
     with open(json_file,'r') as file:
         json_data =  json.load(file)
 
@@ -129,8 +134,8 @@ def pytest_generate_tests(metafunc):
     metafunc.parametrize("mxfp6",json_data['mxfp6'],ids=lambda x: "mxfp6=" + str(x))
     metafunc.parametrize("mxint8",json_data['mxint8'],ids=lambda x: "mxint8=" + str(x))
     metafunc.parametrize("device_group",json_data['device_group'],ids=lambda x: "device_group=" + str(x))
-  
-def pytest_collection_modifyitems(items):
+
+def pytest_collection_modifyitems(config,items):
     """
     pytest_collection_modifyitems is pytest a hook,
     which is used to re-order the execution order of the testing script/methods 
@@ -141,31 +146,71 @@ def pytest_collection_modifyitems(items):
     ----------
     Ref: https://docs.pytest.org/en/4.6.x/reference.html#collection-hooks
     """
-    if len(items)>=4:
-        run_first = ["test_export","test_compile","test_execute","test_infer"]
+    run_first = ["test_export","test_compile","test_execute","test_infer"]
+    modules_name = {item.module.__name__ for item in items}
+    cloud_modules = []
+    non_cloud_modules = []
+    for module in modules_name:
+        if module in run_first:
+            cloud_modules.append(module)
+        else:
+            non_cloud_modules.append(module)
+    
+    if len(cloud_modules)>1:
         modules = {item: item.module.__name__ for item in items}
         items[:] = sorted(items, key=lambda x: run_first.index(modules[x]) if modules[x] in run_first else len(items))
+        
         non_cloud_tests = []
+
         for itm in items:
-            if modules[itm] not in run_first:
+            if modules[itm] not in cloud_modules:
                 non_cloud_tests.append(itm)
         
         num_cloud_tests = len(items) - len(non_cloud_tests)
-        num_cloud_test_cases = num_cloud_tests//len(run_first)
+        num_cloud_test_cases = num_cloud_tests//len(cloud_modules)
         final_items = []
+        
         for i in range(num_cloud_test_cases):
-            for j in range(len(run_first)):
+            for j in range(len(cloud_modules)):
                 final_items.append(items[i+j*num_cloud_test_cases])
         
         final_items.extend(non_cloud_tests)
         items[:] = final_items
 
+        if config.getoption("--all"):
+            return
+        
+        first_model = items[0].callspec.params['model_name'] if hasattr(items[0],"callspec") else None
+        
+        for item in items:
+            if item.module.__name__ in ["test_export","test_compile","test_execute"]:
+                if hasattr(item,"callspec"):
+                    params = item.callspec.params
+                    if "model_name" in params and params['model_name'] != first_model:
+                        item.add_marker(pytest.mark.skip(reason="Skipping because not needed now..."))
+                    if "prompt_len" in params and params['prompt_len'] == 2:
+                        item.add_marker(pytest.mark.skip(reason="Skipping because not needed now..."))
+            
+            if item.module.__name__ in ["test_infer"]:
+                if hasattr(item,"callspec"):
+                    params = item.callspec.params
+                    if "prompt_len" in params and params['prompt_len'] == 2 and "model_name" in params and params['model_name'] != first_model:
+                        item.add_marker(pytest.mark.skip(reason="Skipping because not needed now..."))
+    
 @pytest.fixture
 def clean_up_after_test():
     yield
     if os.path.exists(QEFF_MODELS_DIR):
         shutil.rmtree(QEFF_MODELS_DIR)
         print(f'\n..............Cleaned up {QEFF_MODELS_DIR}')
+
+def pytest_sessionstart(session):
+    if os.path.exists(Constants.CACHE_DIR):
+        shutil.rmtree(Constants.CACHE_DIR)
+        print(f'\n.............Cleaned up {Constants.CACHE_DIR}')
+    if os.path.exists(QEFF_MODELS_DIR):
+        shutil.rmtree(QEFF_MODELS_DIR)
+        print(f'\n.............Cleaned up {QEFF_MODELS_DIR}')
 
 def pytest_sessionfinish(session,exitstatus):
     if os.path.exists(Constants.CACHE_DIR):
