@@ -5,8 +5,8 @@ description = """
     QEfficient is the library interface for the Hugging Face Transformer \
     models for efficient inference on Qualcomm Cloud AI 100"""
 readme = "README.md"
-license = "BSD-3-Clause"
-authors = "Qualcomm Cloud AI ML Team"
+license = { file = "LICENSE" }
+authors = [{ name = "Qualcomm Cloud AI ML Team" }]
 keywords = ["transformers", "Cloud AI 100", "Inference"]
 classifiers = [
     "Programming Language :: Python :: 3", 
