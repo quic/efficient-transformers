@@ -48,7 +48,7 @@ def main(
         qpc_path=qpc_path,
         device_id=device_group,
         prompt=prompt,
-        generation_len=ctx_len,
+        ctx_len=ctx_len,
     )
 
 
