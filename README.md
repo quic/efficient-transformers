@@ -275,7 +275,7 @@ from QEfficient.generation.text_generation_inference import get_compilation_dims
 # post compilation, we can print the latency stats for the kv models, We provide API to print token and Latency stats on AI 100
 # We need the compiled prefill and decode qpc to compute the token generated, This is based on Greedy Sampling Approach
 batch_size, ctx_len = get_compilation_dims(generated_qpc_path)
-QEfficient.cloud_ai_100_exec_kv(batch_size=batch_size, tokenizer=tokenizer, qpc_path=generated_qpc_path, device_id=[0], prompt=["My name is"], generation_len=ctx_len)
+QEfficient.cloud_ai_100_exec_kv(batch_size=batch_size, tokenizer=tokenizer, qpc_path=generated_qpc_path, device_id=[0], prompt=["My name is"], ctx_len=ctx_len)
 ```
 End to End demo examples for various models are available in **notebooks** directory. Please check them out.
 
