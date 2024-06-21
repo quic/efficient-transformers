@@ -230,13 +230,13 @@ def cloud_ai_100_exec_kv_helper(
         print()
         print(i, prompt[i], generated_texts[i])
 
-    prefill_perf = 1 / (loop_start - start)
+    prefill_time = loop_start - start
     decode_perf = (num_token - 1) / (end - loop_start)
     total_perf = num_token / (end - start)
     total_time = end - start
     print()
 
-    latency_stats = (generated_texts, prefill_perf, decode_perf, total_perf, total_time)
+    latency_stats = (generated_texts, prefill_time, decode_perf, total_perf, total_time)
     return latency_stats
 
 
@@ -247,7 +247,7 @@ def print_latency_stats_kv(
         print()
         print("input=", prompt)
         print("output=", generated_texts)
-        print("Prefill time a.k.a TTFT is=", round(prefill_time, 2))
+        print("Prefill time a.k.a TTFT is=", round(prefill_time * batch_size, 2))
         print("Decode token/sec is=", round(decode_perf * batch_size, 2))
         print("Total token/sec is=", round(total_perf * batch_size, 2))
         print("Total (E2E) inference time is=", round(total_time, 2))
