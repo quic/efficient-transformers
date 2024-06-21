@@ -12,6 +12,7 @@
 *Latest news* :fire: <br>
 
 - [coming soon] Support for more popular [models](#models-coming-soon) and inference optimization techniques like continuous batching and speculative decoding <br>
+* [06/2024] Added support for [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
 - [06/2024] Added support for [Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)
 - [06/2024] Added support for [StarCoder2-15B](https://huggingface.co/bigcode/starcoder2-15b)
 - [06/2024] Added support for [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
@@ -65,12 +66,12 @@ For other models, there is comprehensive documentation to inspire upon the chang
 * [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
 * [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1)
 * [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) 
+* [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
 
 ## Models Coming Soon
  
 * [Jais-13b](https://huggingface.co/core42/jais-13b)
 * [Jais-30b](https://huggingface.co/core42/jais-30b-chat-v1)
-* [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
 * [Chatglm2-6b](https://huggingface.co/THUDM/chatglm2-6b)
 * [Baichuan2-7B-Base](baichuan-inc/Baichuan2-7B-Base)
 
