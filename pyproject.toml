@@ -1,24 +1,24 @@
 [project]
-name = "Efficient Transformers"
+name = "QEfficient"
 dynamic = ["version"]
 description = """
-	QEfficient is the library interface for the Hugging Face Transformer \
-	models for efficient inference on Qualcomm Cloud AI 100"""
+    QEfficient is the library interface for the Hugging Face Transformer \
+    models for efficient inference on Qualcomm Cloud AI 100"""
 readme = "README.md"
 license = "BSD-3-Clause"
 authors = "Qualcomm Cloud AI ML Team"
 keywords = ["transformers", "Cloud AI 100", "Inference"]
 classifiers = [
-	"Programming Language :: Python :: 3", 
-	"Development Status :: 5 - Development/Unstable",
-	"Intended Audience :: Developers",
-	"Intended Audience :: Education",
-	"Operating System :: Linux",
-	"Programming Language :: Python :: 3.8",
-	"Topic :: Scientific/Engineering :: Artificial Intelligence for Inference Accelerator",
+    "Programming Language :: Python :: 3", 
+    "Development Status :: 5 - Development/Unstable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Operating System :: Linux",
+    "Programming Language :: Python :: 3.8",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence for Inference Accelerator",
 ]
 dependencies = [
-	"transformers==4.41.2",
+    "transformers==4.41.2",
     "torch@https://download.pytorch.org/whl/cpu/torch-2.0.0%2Bcpu-cp38-cp38-linux_x86_64.whl#sha256=354f281351cddb590990089eced60f866726415f7b287db5105514aa3c5f71ca",
     "datasets==2.7.0",
     "fsspec==2023.6.0",
@@ -30,7 +30,7 @@ dependencies = [
     "numpy==1.23.0",
     "protobuf==3.20.2",
     "onnxscript==0.1.0.dev20240327",
-	"sympy",
+    "sympy",
 ]
 
 [project.optional-dependencies]
