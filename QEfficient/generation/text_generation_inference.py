@@ -139,7 +139,7 @@ def cloud_ai_100_exec_kv_helper(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc: str,
     prompt: List[str],
-    input_len: Optional[int] = None,
+    ctx_len: Optional[int] = None,
     generation_len: Optional[int] = None,
     device_id: List[int] = [0],
     enable_debug_logs: bool = False,
@@ -158,12 +158,12 @@ def cloud_ai_100_exec_kv_helper(
     # Skip inputs/outputs
     session.skip_buffers([x for x in session.input_names + session.output_names if x.startswith("past_")])
 
-    # Read prompt and batch_size from session
-    batch_size, _ = session.bindings[session.binding_index_map["input_ids"]].dims
-    prefill_seq_len = max(
-        [x[session.binding_index_map["input_ids"]][1][1] for x in session.allowed_shapes]
-        + [session.bindings[session.binding_index_map["input_ids"]].dims[1]]
-    )
+    # Read batch_size and prefill_seq_len from session
+    if session.allowed_shapes:
+        batch_size = max([x[session.binding_index_map["input_ids"]][1][0] for x in session.allowed_shapes])
+        prefill_seq_len = max([x[session.binding_index_map["input_ids"]][1][1] for x in session.allowed_shapes])
+    else:
+        batch_size, prefill_seq_len = session.bindings[session.binding_index_map["input_ids"]].dims
 
     if len(prompt) < batch_size:
         prompt = prompt * -(batch_size // -len(prompt))  # Repeat prompt to required size
@@ -171,11 +171,14 @@ def cloud_ai_100_exec_kv_helper(
 
     inputs = tokenizer(prompt, return_tensors="np", padding=True)
     position_ids_update = inputs["attention_mask"].sum(1, keepdims=True)
-    if generation_len is None:
-        assert generation_len > 0, "generation length should be greater than zero, please pass valid generation length"
     padded_len = inputs["input_ids"].shape[1]
     num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
     padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+    if generation_len is None:
+        if ctx_len is None:
+            raise ValueError("At least one of ctx_len or generation_len is needed")
+        generation_len = ctx_len - position_ids_update.max()
+    assert generation_len > 0, "generation length should be greater than zero"
 
     generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
     if stream:
@@ -275,7 +278,7 @@ def cloud_ai_100_exec_kv(
     qpc_path: str,
     prompt: Optional[List[str]] = None,
     device_id: List[int] = [0],
-    input_len: Optional[int] = None,
+    ctx_len: Optional[int] = None,
     generation_len: Optional[int] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
@@ -294,7 +297,7 @@ def cloud_ai_100_exec_kv(
                 prompt=[prompt[i]],
                 qpc=qpc_path,
                 device_id=device_id,
-                input_len=input_len,
+                ctx_len=ctx_len,
                 generation_len=generation_len,
                 enable_debug_logs=enable_debug_logs,
                 stream=stream,
@@ -317,7 +320,7 @@ def cloud_ai_100_exec_kv(
             prompt=prompt,
             qpc=qpc_path,
             device_id=device_id,
-            input_len=input_len,
+            ctx_len=ctx_len,
             generation_len=generation_len,
             enable_debug_logs=enable_debug_logs,
             stream=stream,
