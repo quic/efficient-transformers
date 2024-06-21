@@ -8,7 +8,7 @@
 import json
 import os
 from time import perf_counter
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import transformers
@@ -97,7 +97,7 @@ def latency_stats_bertstyle(
     print(round((cur_len - init_len) / (end - start), 2), "tok/s")
 
 
-def get_compilation_batch_size(qpc_path: str):
+def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
     qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
     specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
     logger.info(f"specialization_file_path : {specialization_file_path}")
@@ -179,7 +179,6 @@ def cloud_ai_100_exec_kv_helper(
             raise ValueError("At least one of ctx_len or generation_len is needed")
         generation_len = ctx_len - position_ids_update.max()
     assert generation_len > 0, "generation length should be greater than zero"
-
     generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
     if stream:
         streamer = transformers.TextStreamer(tokenizer)
