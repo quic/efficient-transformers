@@ -247,7 +247,7 @@ def print_latency_stats_kv(
         print()
         print("input=", prompt)
         print("output=", generated_texts)
-        print("Prefill time a.k.a TTFT is=", round(prefill_time * batch_size, 2))
+        print("Prefill time a.k.a TTFT is=", round(prefill_time, 2))
         print("Decode token/sec is=", round(decode_perf * batch_size, 2))
         print("Total token/sec is=", round(total_perf * batch_size, 2))
         print("Total (E2E) inference time is=", round(total_time, 2))
