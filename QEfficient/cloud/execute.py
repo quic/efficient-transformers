@@ -38,7 +38,7 @@ def main(
 
     tokenizer = load_hf_tokenizer(model_name, cache_dir, hf_token)
 
-    batch_size = get_compilation_batch_size(qpc_path)
+    batch_size, ctx_len = get_compilation_batch_size(qpc_path)
     prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
 
     # Execute
@@ -48,6 +48,7 @@ def main(
         qpc_path=qpc_path,
         device_id=device_group,
         prompt=prompt,
+        generation_len=ctx_len,
     )
 
 

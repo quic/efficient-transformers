@@ -104,7 +104,8 @@ def get_compilation_batch_size(qpc_path: str):
     with open(specialization_file_path, "r") as file:
         data = json.load(file)
     compilation_batch_size = int(data["specializations"][0]["batch_size"])
-    return compilation_batch_size
+    compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
+    return compilation_batch_size, compilation_ctx_len
 
 
 def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size) -> List[str]:
@@ -157,8 +158,8 @@ def cloud_ai_100_exec_kv_helper(
     # Skip inputs/outputs
     session.skip_buffers([x for x in session.input_names + session.output_names if x.startswith("past_")])
 
-    # Read prompt and ctx len from session
-    batch_size, _, ctx_len, _ = session.bindings[session.binding_index_map["past_key.0"]].dims
+    # Read prompt and batch_size from session
+    batch_size, _ = session.bindings[session.binding_index_map["input_ids"]].dims
     prefill_seq_len = max(
         [x[session.binding_index_map["input_ids"]][1][1] for x in session.allowed_shapes]
         + [session.bindings[session.binding_index_map["input_ids"]].dims[1]]
@@ -171,11 +172,11 @@ def cloud_ai_100_exec_kv_helper(
     inputs = tokenizer(prompt, return_tensors="np", padding=True)
     position_ids_update = inputs["attention_mask"].sum(1, keepdims=True)
     if generation_len is None:
-        generation_len = ctx_len
+        assert generation_len > 0, "generation length should be greater than zero, please pass valid generation length"
     padded_len = inputs["input_ids"].shape[1]
     num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
     padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
-    assert generation_len > 0, "generation length should be greater than zero"
+
     generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
     if stream:
         streamer = transformers.TextStreamer(tokenizer)
