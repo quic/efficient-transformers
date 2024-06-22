@@ -7,6 +7,7 @@
 
 import json
 import os
+from dataclasses import dataclass
 from time import perf_counter
 from typing import Dict, List, Optional, Union
 
@@ -17,6 +18,17 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.logging_utils import logger
+
+
+@dataclass
+class CloudAI100ExecInfo:
+    generated_texts: List[str] = None
+    generated_ids: np.ndarray = None
+    prefill_perf: float = None
+    decode_perf: float = None
+    total_perf: float = None
+    total_time: float = None
+
 
 io_files = []
 
@@ -138,7 +150,6 @@ def cloud_ai_100_exec_kv_helper(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc: str,
     prompt: List[str],
-    input_len: Optional[int] = None,
     generation_len: Optional[int] = None,
     device_id: List[int] = [0],
     enable_debug_logs: bool = False,
@@ -239,18 +250,24 @@ def cloud_ai_100_exec_kv_helper(
     total_time = end - start
     print()
 
-    latency_stats = (generated_texts, prefill_perf, decode_perf, total_perf, total_time)
-    return latency_stats, generated_ids
+    return CloudAI100ExecInfo(
+        generated_texts=generated_texts,
+        generated_ids=generated_ids,
+        prefill_perf=prefill_perf,
+        decode_perf=decode_perf,
+        total_perf=total_perf,
+        total_time=total_time,
+    )
 
 
 def print_latency_stats_kv(
-    prompt, generated_texts, batch_size, prefill_time, decode_perf, total_perf, total_time, automation: bool = False
+    prompt, generated_texts, batch_size, prefill_perf, decode_perf, total_perf, total_time, automation: bool = False
 ):
     if automation:
         print()
         print("input=", prompt)
         print("output=", generated_texts)
-        print("Prefill time a.k.a TTFT is=", round(prefill_time, 2))
+        print("Prefill time a.k.a TTFT is=", round(prefill_perf, 2))
         print("Decode token/sec is=", round(decode_perf * batch_size, 2))
         print("Total token/sec is=", round(total_perf * batch_size, 2))
         print("Total (E2E) inference time is=", round(total_time, 2))
@@ -259,12 +276,12 @@ def print_latency_stats_kv(
 
     print("===================== Performance Stats =====================")
     if batch_size > 1:
-        print("Prefill time a.k.a TTFT (batch) is :", round(prefill_time, 2), "s")
+        print("Prefill time a.k.a TTFT (batch) is :", round(prefill_perf, 2), "s")
         print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s")
         print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s")
         print("Total (E2E) inference time (batch) is=", round(total_time, 2), "s")
     else:
-        print("Prefill time a.k.a TTFT is=", round(prefill_time, 2), "s")
+        print("Prefill time a.k.a TTFT is=", round(prefill_perf, 2), "s")
         print("Decode:", round(decode_perf, 2), "tok/s")
         print("E2E:", round(total_perf, 2), "tok/s")
         print("Total (E2E) inference time is=", round(total_time, 2), "s")
@@ -277,7 +294,6 @@ def cloud_ai_100_exec_kv(
     qpc_path: str,
     prompt: Optional[List[str]] = None,
     device_id: List[int] = [0],
-    input_len: Optional[int] = None,
     generation_len: Optional[int] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
@@ -285,55 +301,52 @@ def cloud_ai_100_exec_kv(
     automation=False,
 ):
     if batch_size == 1:
-        prefill_time = []
+        prefill_perf = []
         decode_perf = []
         total_perf = []
         total_time = []
         generated_texts = []
         for i in range(len(prompt)):
-            latency_stats, _ = cloud_ai_100_exec_kv_helper(
+            execinfo = cloud_ai_100_exec_kv_helper(
                 tokenizer=tokenizer,
                 prompt=[prompt[i]],
                 qpc=qpc_path,
                 device_id=device_id,
-                input_len=input_len,
                 generation_len=generation_len,
                 enable_debug_logs=enable_debug_logs,
                 stream=stream,
                 write_io_dir=write_io_dir,
             )
-            generated_texts.append(latency_stats[0])
-            prefill_time.append(latency_stats[1])
-            decode_perf.append(latency_stats[2])
-            total_perf.append(latency_stats[3])
-            total_time.append(latency_stats[4])
+            generated_texts.append(execinfo.generated_texts)
+            prefill_perf.append(execinfo.prefill_perf)
+            decode_perf.append(execinfo.decode_perf)
+            total_perf.append(execinfo.total_perf)
+            total_time.append(execinfo.total_time)
 
-        prefill_time = np.average(prefill_time)
+        prefill_perf = np.average(prefill_perf)
         decode_perf = np.average(decode_perf)
         total_perf = np.average(total_perf)
         total_time = np.average(total_time)
 
     else:
-        latency_stats, _ = cloud_ai_100_exec_kv_helper(
+        execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=tokenizer,
             prompt=prompt,
             qpc=qpc_path,
             device_id=device_id,
-            input_len=input_len,
             generation_len=generation_len,
             enable_debug_logs=enable_debug_logs,
             stream=stream,
             write_io_dir=write_io_dir,
         )
-        generated_texts, prefill_time, decode_perf, total_perf, total_time = latency_stats
-
     print_latency_stats_kv(
         prompt,
-        generated_texts,
-        batch_size,
-        prefill_time,
-        decode_perf,
-        total_perf,
-        total_time,
+        generated_texts=execinfo.generated_texts,
+        batch_size=batch_size,
+        prefill_perf=execinfo.prefill_perf,
+        decode_perf=execinfo.decode_perf,
+        total_perf=execinfo.total_perf,
+        total_time=execinfo.total_time,
         automation=automation,
     )
+    return execinfo
