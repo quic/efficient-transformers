@@ -163,18 +163,15 @@ class ApiRunner:
         print("Completion:", repr(predicted_string))
         return generated_ids
 
-    def run_kv_model_on_cloud_ai_100(self, session):
+    def run_kv_model_on_cloud_ai_100(self, qpc_path):
         """
         Function responsible for running ONNX model on Cloud AI 100 and return the output tokens
-        :param session: QAICInferenceSession
-        :param n_layer : int
-        :param padding_shape : List[int]
+        :param qpc_path: path to qpc generated after compilation
         :return generated_ids: numpy.ndarray - output tokens
         """
         execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=self.tokenizer,
-            qpc=None,
-            session=session,
+            qpc=qpc_path,
             generation_len=self.gen_len,
             prompt=self.prompt,
             stream=False,

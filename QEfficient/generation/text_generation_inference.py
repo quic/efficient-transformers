@@ -155,7 +155,6 @@ def cloud_ai_100_exec_kv_helper(
     enable_debug_logs: bool = False,
     stream: bool = True,
     write_io_dir: Optional[str] = None,
-    session=None,
 ):
     if tokenizer.padding_side != "right":
         logger.warning("Please use padding_side='right' while initializing the tokenizer")
@@ -163,9 +162,8 @@ def cloud_ai_100_exec_kv_helper(
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    if session is None:
-        # Load QPC
-        session = QAICInferenceSession(qpc, device_id, enable_debug_logs=enable_debug_logs)
+    # Load QPC
+    session = QAICInferenceSession(qpc, device_id, enable_debug_logs=enable_debug_logs)
 
     # Skip inputs/outputs
     session.skip_buffers([x for x in session.input_names + session.output_names if x.startswith("past_")])
