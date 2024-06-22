@@ -9,9 +9,8 @@ import argparse
 from typing import List, Optional
 
 from QEfficient.generation.text_generation_inference import (
-    check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
-    get_compilation_batch_size,
+    get_input_prompts,
 )
 from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
@@ -38,12 +37,10 @@ def main(
 
     tokenizer = load_hf_tokenizer(model_name, cache_dir, hf_token)
 
-    batch_size = get_compilation_batch_size(qpc_path)
-    prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
+    prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
 
     # Execute
     cloud_ai_100_exec_kv(
-        batch_size=batch_size,
         tokenizer=tokenizer,
         qpc_path=qpc_path,
         device_id=device_group,

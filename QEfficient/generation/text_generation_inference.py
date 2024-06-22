@@ -24,7 +24,7 @@ from QEfficient.utils.logging_utils import logger
 class CloudAI100ExecInfo:
     generated_texts: List[str] = None
     generated_ids: np.ndarray = None
-    prefill_perf: float = None
+    prefill_time: float = None
     decode_perf: float = None
     total_perf: float = None
     total_time: float = None
@@ -119,7 +119,7 @@ def get_compilation_batch_size(qpc_path: str):
     return compilation_batch_size
 
 
-def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size) -> List[str]:
+def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
     assert (
         prompt is not None or prompts_txt_file_path is not None
     ), "Please pass atleast one argument either using --prompt or --prompts_txt_file_path"
@@ -129,13 +129,15 @@ def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size) 
         prompt = read_prompts_txt_file(prompts_txt_file_path)
     if isinstance(prompt, str):
         prompt = [prompt]
+    return prompt
 
+
+def check_batch_size_and_num_prompts(prompt: List[str], batch_size: int):
     num_prompts = len(prompt)
     if batch_size > 1:
         assert (
             batch_size == num_prompts
         ), f"Mismatch between number of prompts {num_prompts} and batch size {batch_size}; please pass correct input argument"
-    return prompt
 
 
 def read_prompts_txt_file(prompts_txt_file_path: str):
@@ -251,7 +253,7 @@ def cloud_ai_100_exec_kv_helper(
     return CloudAI100ExecInfo(
         generated_texts=generated_texts,
         generated_ids=generated_ids,
-        prefill_perf=prefill_perf,
+        prefill_time=prefill_perf,
         decode_perf=decode_perf,
         total_perf=total_perf,
         total_time=total_time,
@@ -259,13 +261,13 @@ def cloud_ai_100_exec_kv_helper(
 
 
 def print_latency_stats_kv(
-    prompt, generated_texts, batch_size, prefill_perf, decode_perf, total_perf, total_time, automation: bool = False
+    prompt, generated_texts, batch_size, prefill_time, decode_perf, total_perf, total_time, automation: bool = False
 ):
     if automation:
         print()
         print("input=", prompt)
         print("output=", generated_texts)
-        print("Prefill time a.k.a TTFT is=", round(prefill_perf, 2))
+        print("Prefill time a.k.a TTFT is=", round(prefill_time, 2))
         print("Decode token/sec is=", round(decode_perf * batch_size, 2))
         print("Total token/sec is=", round(total_perf * batch_size, 2))
         print("Total (E2E) inference time is=", round(total_time, 2))
@@ -274,12 +276,12 @@ def print_latency_stats_kv(
 
     print("===================== Performance Stats =====================")
     if batch_size > 1:
-        print("Prefill time a.k.a TTFT (batch) is :", round(prefill_perf, 2), "s")
+        print("Prefill time a.k.a TTFT (batch) is :", round(prefill_time, 2), "s")
         print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s")
         print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s")
         print("Total (E2E) inference time (batch) is=", round(total_time, 2), "s")
     else:
-        print("Prefill time a.k.a TTFT is=", round(prefill_perf, 2), "s")
+        print("Prefill time a.k.a TTFT is=", round(prefill_time, 2), "s")
         print("Decode:", round(decode_perf, 2), "tok/s")
         print("E2E:", round(total_perf, 2), "tok/s")
         print("Total (E2E) inference time is=", round(total_time, 2), "s")
@@ -287,7 +289,6 @@ def print_latency_stats_kv(
 
 
 def cloud_ai_100_exec_kv(
-    batch_size,
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc_path: str,
     prompt: Optional[List[str]] = None,
@@ -298,8 +299,11 @@ def cloud_ai_100_exec_kv(
     write_io_dir: Optional[str] = None,
     automation=False,
 ):
+    batch_size = get_compilation_batch_size(qpc_path)
+    check_batch_size_and_num_prompts(prompt, batch_size)
+
     if batch_size == 1:
-        prefill_perf = []
+        prefill_time = []
         decode_perf = []
         total_perf = []
         total_time = []
@@ -316,12 +320,12 @@ def cloud_ai_100_exec_kv(
                 write_io_dir=write_io_dir,
             )
             generated_texts.append(execinfo.generated_texts)
-            prefill_perf.append(execinfo.prefill_perf)
+            prefill_time.append(execinfo.prefill_perf)
             decode_perf.append(execinfo.decode_perf)
             total_perf.append(execinfo.total_perf)
             total_time.append(execinfo.total_time)
 
-        prefill_perf = np.average(prefill_perf)
+        prefill_time = np.average(prefill_time)
         decode_perf = np.average(decode_perf)
         total_perf = np.average(total_perf)
         total_time = np.average(total_time)
@@ -341,7 +345,7 @@ def cloud_ai_100_exec_kv(
         prompt,
         generated_texts=execinfo.generated_texts,
         batch_size=batch_size,
-        prefill_perf=execinfo.prefill_perf,
+        prefill_time=execinfo.prefill_time,
         decode_perf=execinfo.decode_perf,
         total_perf=execinfo.total_perf,
         total_time=execinfo.total_time,

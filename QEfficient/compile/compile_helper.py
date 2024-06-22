@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -9,7 +9,7 @@ import json
 import os
 import shutil
 import subprocess
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from QEfficient.utils.logging_utils import logger
 
@@ -109,15 +109,17 @@ def compile(
     ctx_len: int = 128,
     mxfp6: bool = True,
     mxint8: bool = False,
-    **kwargs
+    custom_io_file_path: Optional[str] = None,
+    **kwargs,
 ) -> str:
     # Dynamically create the specializations JSON
     """
     Api() to compile the Onnx Model on Cloud AI 100 Platform with give config.
     ---------
     :param onnx_path: str. Generated Onnx Model Path.
-    :param qpc_path: str. Path for saving compiled qpc binaries.
+    :qpc_path: str. Path for saving compiled qpc binaries.
     :num_cores: int. Number of cores to compile model on.
+    :custom_io_file_path: str. Path to custom IO file.
     :device_group: List[int]. Used for finding number of devices to compile for.
     :aic_enable_depth_first: bool. Enables DFS with default memory size, disabled by default.
     :mos: int. Effort level to reduce the on-chip memory.
@@ -140,11 +142,12 @@ def compile(
     else:
         custom_io_file_name = "custom_io_fp16.yaml"
 
-    custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)
+    if custom_io_file_path is None:
+        custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)
 
     if not os.path.isfile(custom_io_file_path):
         raise FileNotFoundError(
-            f"file {custom_io_file_path} needs to exist in the same directory as onnx model files. Please rerun infer/export Api"
+            f"Custom IO file {custom_io_file_name} is neither present at given path nor exists in the onnx model files directory. Please pass the correct file path or rerun infer/export Api"
         )
 
     _, qpc_path = compile_kv_model_on_cloud_ai_100(

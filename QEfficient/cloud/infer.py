@@ -15,6 +15,7 @@ from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import (
     check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
+    get_input_prompts,
 )
 from QEfficient.utils import get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.constants import Constants
@@ -31,7 +32,7 @@ from QEfficient.utils.logging_utils import logger
 def main(
     model_name: str,
     num_cores: int,
-    prompt: Optional[str] = None, # type: ignore
+    prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
     mos: int = -1,
@@ -46,8 +47,11 @@ def main(
         0,
     ],
 ) -> None:
-    qpc_base_dir_name = get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group)
-    prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
+    qpc_base_dir_name = get_qpc_dir_name_infer(
+        num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
+    )
+    prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
+    check_batch_size_and_num_prompts(prompt, batch_size)
     tokenizer = load_hf_tokenizer(model_name=model_name, cache_dir=cache_dir, hf_token=hf_token)
 
     qpc_path_exists, qpc_dir_path = qpc_exists(model_name, qpc_base_dir_name)
@@ -62,27 +66,28 @@ def main(
         # Compile
         #########
         generated_qpc_path = QEfficient.compile(
-                onnx_path=onnx_model_path,
-                qpc_path=os.path.dirname(qpc_dir_path),   # We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation
-                num_cores=num_cores,
-                batch_size=batch_size,
-                prompt_len=prompt_len,
-                ctx_len=ctx_len,
-                mxfp6=mxfp6,
-                mxint8=mxint8,
-                aic_enable_depth_first=aic_enable_depth_first,
-                mos=mos,
-                device_group=device_group,
-            )
+            onnx_path=onnx_model_path,
+            qpc_path=os.path.dirname(
+                qpc_dir_path
+            ),  # We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation
+            num_cores=num_cores,
+            batch_size=batch_size,
+            prompt_len=prompt_len,
+            ctx_len=ctx_len,
+            mxfp6=mxfp6,
+            mxint8=mxint8,
+            aic_enable_depth_first=aic_enable_depth_first,
+            mos=mos,
+            device_group=device_group,
+        )
         assert (
-                generated_qpc_path == qpc_dir_path
-            ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
-    
+            generated_qpc_path == qpc_dir_path
+        ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
+
     #########
     # Execute
     #########
     cloud_ai_100_exec_kv(
-        batch_size,
         tokenizer=tokenizer,
         qpc_path=qpc_dir_path,
         device_id=device_group,
@@ -151,9 +156,10 @@ if __name__ == "__main__":
         default=-1,
         help="Effort level to reduce the on-chip memory",
     )
-    #FIXME: Add verbose feature
+    # FIXME: Add verbose feature
     parser.add_argument(
-        "--verbose","-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="pass to print info logs",
     )
@@ -161,5 +167,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.verbose:
         logger.setLevel(logging.INFO)
-    del args.verbose # type: ignore
+    del args.verbose  # type: ignore
     main(**args.__dict__)

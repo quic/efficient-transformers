@@ -163,15 +163,17 @@ class ApiRunner:
         print("Completion:", repr(predicted_string))
         return generated_ids
 
-    def run_kv_model_on_cloud_ai_100(self, qpc_path):
+    def run_kv_model_on_cloud_ai_100(self, test_qpcs_path, device_group):
         """
         Function responsible for running ONNX model on Cloud AI 100 and return the output tokens
         :param qpc_path: path to qpc generated after compilation
+        :param device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
         :return generated_ids: numpy.ndarray - output tokens
         """
         execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=self.tokenizer,
-            qpc=qpc_path,
+            qpc=test_qpcs_path,
+            device_id=device_group,
             generation_len=self.gen_len,
             prompt=self.prompt,
             stream=False,
