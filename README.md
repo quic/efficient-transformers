@@ -262,7 +262,7 @@ generated_qpc_path = QEfficient.compile(
     onnx_path=onnx_path,
     num_cores=14,  # You can use `/opt/qti-aic/tools/qaic-util | grep "Nsp Total"` from Apps SDK for this. 
     qpc_path=os.path.dirname(base_path),
-    mxfp6=False,
+    mxfp6=True,
     device_group=[0],
 )
 ```
