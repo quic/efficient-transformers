@@ -14,6 +14,7 @@ import pytest
 from QEfficient.generation.text_generation_inference import check_batch_size_and_num_prompts
 from QEfficient.utils import get_qpc_dir_name_infer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
+from QEfficient.utils.logging_utils import logger
 
 
 def pytest_addoption(parser):
@@ -200,12 +201,12 @@ def pytest_collection_modifyitems(config,items):
 def cache_clean_up():
     if os.path.exists(Constants.CACHE_DIR):
         shutil.rmtree(Constants.CACHE_DIR)
-        print(f'\n.............Cleaned up {Constants.CACHE_DIR}')
+        logger.info(f'\n.............Cleaned up {Constants.CACHE_DIR}')
 
 def qeff_models_clean_up():
     if os.path.exists(QEFF_MODELS_DIR):
         shutil.rmtree(QEFF_MODELS_DIR)
-        print(f'\n.............Cleaned up {QEFF_MODELS_DIR}')
+        logger.info(f'\n.............Cleaned up {QEFF_MODELS_DIR}')
 
 @pytest.fixture
 def clean_up_after_test():
@@ -213,9 +214,11 @@ def clean_up_after_test():
     qeff_models_clean_up()
    
 def pytest_sessionstart(session):
+    logger.info("PYTEST Session Starting ...")
     cache_clean_up()
     qeff_models_clean_up()
 
 def pytest_sessionfinish(session,exitstatus):
     cache_clean_up()
     qeff_models_clean_up()
+    logger.info("...PYTEST Session Ended.")
