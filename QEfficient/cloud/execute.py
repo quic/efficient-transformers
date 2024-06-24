@@ -11,7 +11,7 @@ from typing import List, Optional
 from QEfficient.generation.text_generation_inference import (
     check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
-    get_compilation_batch_size,
+    get_compilation_dims,
 )
 from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
@@ -23,6 +23,7 @@ def main(
     device_group: List[int],
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
+    generation_len: Optional[int] = None,
     cache_dir: Optional[str] = Constants.CACHE_DIR,
     hf_token: Optional[str] = None,
 ):
@@ -38,7 +39,7 @@ def main(
 
     tokenizer = load_hf_tokenizer(model_name, cache_dir, hf_token)
 
-    batch_size = get_compilation_batch_size(qpc_path)
+    batch_size, ctx_len = get_compilation_dims(qpc_path)
     prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
 
     # Execute
@@ -48,6 +49,8 @@ def main(
         qpc_path=qpc_path,
         device_id=device_group,
         prompt=prompt,
+        ctx_len=ctx_len,
+        generation_len=generation_len,
     )
 
 
@@ -75,6 +78,7 @@ if __name__ == "__main__":
         type=str,
         help="File path for taking input prompts from txt file, sample prompts.txt file present in examples folder",
     )
+    parser.add_argument("--generation_len", "--generation-len", type=int, help="Number of tokens to generate")
     parser.add_argument(
         "--cache-dir",
         "--cache_dir",

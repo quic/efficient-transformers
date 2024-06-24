@@ -12,6 +12,7 @@
 *Latest news* :fire: <br>
 
 - [coming soon] Support for more popular [models](#models-coming-soon) and inference optimization techniques like continuous batching and speculative decoding <br>
+* [06/2024] Added support for [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
 - [06/2024] Added support for [Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)
 - [06/2024] Added support for [StarCoder2-15B](https://huggingface.co/bigcode/starcoder2-15b)
 - [06/2024] Added support for [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
@@ -65,12 +66,12 @@ For other models, there is comprehensive documentation to inspire upon the chang
 * [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
 * [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1)
 * [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) 
+* [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
 
 ## Models Coming Soon
  
 * [Jais-13b](https://huggingface.co/core42/jais-13b)
 * [Jais-30b](https://huggingface.co/core42/jais-30b-chat-v1)
-* [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
 * [Chatglm2-6b](https://huggingface.co/THUDM/chatglm2-6b)
 * [Baichuan2-7B-Base](baichuan-inc/Baichuan2-7B-Base)
 
@@ -270,12 +271,12 @@ generated_qpc_path = QEfficient.compile(
 Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/sec
 
 ```Python
-from QEfficient.generation.text_generation_inference import get_compilation_batch_size
+from QEfficient.generation.text_generation_inference import get_compilation_dims
 
 # post compilation, we can print the latency stats for the kv models, We provide API to print token and Latency stats on AI 100
 # We need the compiled prefill and decode qpc to compute the token generated, This is based on Greedy Sampling Approach
-batch_size = get_compilation_batch_size(generated_qpc_path)
-QEfficient.cloud_ai_100_exec_kv(batch_size=batch_size, tokenizer=tokenizer, qpc_path=generated_qpc_path, device_id=[0], prompt=["My name is"])
+batch_size, ctx_len = get_compilation_dims(generated_qpc_path)
+QEfficient.cloud_ai_100_exec_kv(batch_size=batch_size, tokenizer=tokenizer, qpc_path=generated_qpc_path, device_id=[0], prompt=["My name is"], ctx_len=ctx_len)
 ```
 End to End demo examples for various models are available in **notebooks** directory. Please check them out.
 
