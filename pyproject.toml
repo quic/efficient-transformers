@@ -1,4 +1,54 @@
+[project]
+name = "QEfficient"
+dynamic = ["version"]
+description = """
+    QEfficient is the library interface for the Hugging Face Transformer \
+    models for efficient inference on Qualcomm Cloud AI 100"""
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Qualcomm Cloud AI ML Team" }]
+keywords = ["transformers", "Cloud AI 100", "Inference"]
+classifiers = [
+    "Programming Language :: Python :: 3", 
+    "Development Status :: 5 - Development/Unstable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Operating System :: Linux",
+    "Programming Language :: Python :: 3.8",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence for Inference Accelerator",
+]
+requires-python = "==3.8.*"
+dependencies = [
+    "transformers==4.41.2",
+    "torch@https://download.pytorch.org/whl/cpu/torch-2.0.1%2Bcpu-cp38-cp38-linux_x86_64.whl#sha256=8046f49deae5a3d219b9f6059a1f478ae321f232e660249355a8bf6dcaa810c1",
+    "datasets==2.7.0",
+    "fsspec==2023.6.0",
+    "multidict==6.0.4",
+    "urllib3<2",
+    "sentencepiece==0.1.98",
+    "onnx==1.16.0",
+    "onnxruntime==1.16.3",
+    "numpy==1.23.0",
+    "protobuf==3.20.2",
+    "onnxscript==0.1.0.dev20240327",
+    "sympy",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+quality = ["black", "ruff", "hf_doc_builder@git+https://github.com/huggingface/doc-builder.git"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["QEfficient"]
+ 
 [tool.ruff]
 line-length = 120
 # Enable the isort rules.
 lint.extend-select = ["I"]
+
+[tool.pytest.ini_options]
+doctest_optionflags = "NUMBER NORMALIZE_WHITESPACE ELLIPSIS"
