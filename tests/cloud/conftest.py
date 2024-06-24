@@ -196,26 +196,26 @@ def pytest_collection_modifyitems(config,items):
                     params = item.callspec.params
                     if "prompt_len" in params and params['prompt_len'] == 2 and "model_name" in params and params['model_name'] != first_model:
                         item.add_marker(pytest.mark.skip(reason="Skipping because not needed now..."))
-    
+
+def cache_clean_up():
+    if os.path.exists(Constants.CACHE_DIR):
+        shutil.rmtree(Constants.CACHE_DIR)
+        print(f'\n.............Cleaned up {Constants.CACHE_DIR}')
+
+def qeff_models_clean_up():
+    if os.path.exists(QEFF_MODELS_DIR):
+        shutil.rmtree(QEFF_MODELS_DIR)
+        print(f'\n.............Cleaned up {QEFF_MODELS_DIR}')
+
 @pytest.fixture
 def clean_up_after_test():
     yield
-    if os.path.exists(QEFF_MODELS_DIR):
-        shutil.rmtree(QEFF_MODELS_DIR)
-        print(f'\n..............Cleaned up {QEFF_MODELS_DIR}')
-
+    qeff_models_clean_up()
+   
 def pytest_sessionstart(session):
-    if os.path.exists(Constants.CACHE_DIR):
-        shutil.rmtree(Constants.CACHE_DIR)
-        print(f'\n.............Cleaned up {Constants.CACHE_DIR}')
-    if os.path.exists(QEFF_MODELS_DIR):
-        shutil.rmtree(QEFF_MODELS_DIR)
-        print(f'\n.............Cleaned up {QEFF_MODELS_DIR}')
+    cache_clean_up()
+    qeff_models_clean_up()
 
 def pytest_sessionfinish(session,exitstatus):
-    if os.path.exists(Constants.CACHE_DIR):
-        shutil.rmtree(Constants.CACHE_DIR)
-        print(f'\n.............Cleaned up {Constants.CACHE_DIR}')
-    if os.path.exists(QEFF_MODELS_DIR):
-        shutil.rmtree(QEFF_MODELS_DIR)
-        print(f'\n.............Cleaned up {QEFF_MODELS_DIR}')
+    cache_clean_up()
+    qeff_models_clean_up()
