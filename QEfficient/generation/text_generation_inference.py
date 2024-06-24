@@ -154,7 +154,7 @@ def check_batch_size_and_num_prompts(prompt: List[str], batch_size: int):
         if (len(prompt) % batch_size) > 0:
             prompt = prompt[: batch_size * n]
             logger.warning(
-                "Number of prompts are not multiple of batch size, dropping last batch from given input prompts"
+                "Number of prompts are not multiple of batch size, dropping last incomplete batch from given input prompts"
             )
     return prompt, n
 
@@ -281,7 +281,7 @@ def cloud_ai_100_exec_kv_helper(
     return CloudAI100ExecInfo(
         generated_texts=generated_texts,
         generated_ids=generated_ids,
-        prefill_time=prefill_perf,
+        prefill_time=prefill_time,
         decode_perf=decode_perf,
         total_perf=total_perf,
         total_time=total_time,
@@ -325,7 +325,7 @@ def cloud_ai_100_exec_kv(
     write_io_dir: Optional[str] = None,
     automation=False,
 ):
-    batch_size = get_compilation_batch_size(qpc_path)
+    batch_size, ctx_len = get_compilation_dims(qpc_path)
     prompt, n = check_batch_size_and_num_prompts(prompt, batch_size)
 
     prefill_time = []
