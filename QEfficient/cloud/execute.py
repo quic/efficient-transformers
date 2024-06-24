@@ -23,6 +23,7 @@ def main(
     device_group: List[int],
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
+    generation_len: Optional[int] = None,
     cache_dir: Optional[str] = Constants.CACHE_DIR,
     hf_token: Optional[str] = None,
 ):
@@ -49,6 +50,7 @@ def main(
         device_id=device_group,
         prompt=prompt,
         ctx_len=ctx_len,
+        generation_len=generation_len,
     )
 
 
@@ -76,6 +78,7 @@ if __name__ == "__main__":
         type=str,
         help="File path for taking input prompts from txt file, sample prompts.txt file present in examples folder",
     )
+    parser.add_argument("--generation_len", "--generation-len", type=int, help="Number of tokens to generate")
     parser.add_argument(
         "--cache-dir",
         "--cache_dir",

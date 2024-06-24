@@ -40,6 +40,7 @@ def main(
     batch_size: int = 1,
     prompt_len: int = 32,
     ctx_len: int = 128,
+    generation_len: Optional[int] = None,
     mxfp6: bool = False,
     mxint8: bool = False,
     device_group: List[int] = [
@@ -94,6 +95,7 @@ def main(
         device_id=device_group,
         prompt=prompt,
         ctx_len=ctx_len,
+        generation_len=generation_len,
     )
 
 
@@ -147,6 +149,7 @@ if __name__ == "__main__":
         type=str,
         help="File path for taking input prompts from txt file, sample prompts.txt file present in examples folder",
     )
+    parser.add_argument("--generation_len", "--generation-len", type=int, help="Number of tokens to generate")
     parser.add_argument(
         "--aic_enable_depth_first",
         "--aic-enable-depth-first",
