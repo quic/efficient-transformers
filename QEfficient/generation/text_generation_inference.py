@@ -174,10 +174,16 @@ def cloud_ai_100_exec_kv_helper(
     padded_len = inputs["input_ids"].shape[1]
     num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
     padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+    max_gen_len = ctx_len - position_ids_update.max()
     if generation_len is None:
         if ctx_len is None:
             raise ValueError("At least one of ctx_len or generation_len is needed")
-        generation_len = ctx_len - position_ids_update.max()
+        generation_len = max_gen_len
+    elif generation_len > max_gen_len:
+        logger.warning(
+            "Passed generation_len is greater than allowed length. "
+            "Make sure this model supports sliding window, such as Mistral"
+        )
     assert generation_len > 0, "generation length should be greater than zero"
     generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
     if stream:
