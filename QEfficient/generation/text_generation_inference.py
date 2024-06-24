@@ -9,7 +9,7 @@ import json
 import os
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import transformers
@@ -119,14 +119,15 @@ def latency_stats_bertstyle(
     print(round((cur_len - init_len) / (end - start), 2), "tok/s")
 
 
-def get_compilation_batch_size(qpc_path: str):
+def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
     qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
     specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
     logger.info(f"specialization_file_path : {specialization_file_path}")
     with open(specialization_file_path, "r") as file:
         data = json.load(file)
     compilation_batch_size = int(data["specializations"][0]["batch_size"])
-    return compilation_batch_size
+    compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
+    return compilation_batch_size, compilation_ctx_len
 
 
 def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
@@ -170,6 +171,7 @@ def cloud_ai_100_exec_kv_helper(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc: str,
     prompt: List[str],
+    ctx_len: Optional[int] = None,
     generation_len: Optional[int] = None,
     device_id: List[int] = [0],
     enable_debug_logs: bool = False,
@@ -188,20 +190,28 @@ def cloud_ai_100_exec_kv_helper(
     # Skip inputs/outputs
     session.skip_buffers([x for x in session.input_names + session.output_names if x.startswith("past_")])
 
-    # Read prompt and ctx len from session
-    batch_size, _, ctx_len, _ = session.bindings[session.binding_index_map["past_key.0"]].dims
-    prefill_seq_len = max(
-        [x[session.binding_index_map["input_ids"]][1][1] for x in session.allowed_shapes]
-        + [session.bindings[session.binding_index_map["input_ids"]].dims[1]]
-    )
+    # Read batch_size and prefill_seq_len from session
+    if session.allowed_shapes:
+        batch_size = max([x[session.binding_index_map["input_ids"]][1][0] for x in session.allowed_shapes])
+        prefill_seq_len = max([x[session.binding_index_map["input_ids"]][1][1] for x in session.allowed_shapes])
+    else:
+        batch_size, prefill_seq_len = session.bindings[session.binding_index_map["input_ids"]].dims
 
     inputs = tokenizer(prompt, return_tensors="np", padding=True)
     position_ids_update = inputs["attention_mask"].sum(1, keepdims=True)
-    if generation_len is None:
-        generation_len = ctx_len
     padded_len = inputs["input_ids"].shape[1]
     num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
     padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+    max_gen_len = ctx_len - position_ids_update.max()
+    if generation_len is None:
+        if ctx_len is None:
+            raise ValueError("At least one of ctx_len or generation_len is needed")
+        generation_len = max_gen_len
+    elif generation_len > max_gen_len:
+        logger.warning(
+            "Passed generation_len is greater than allowed length. "
+            "Make sure this model supports sliding window, such as Mistral"
+        )
     assert generation_len > 0, "generation length should be greater than zero"
     generated_ids = np.full((batch_size, generation_len), tokenizer.pad_token_id)
     if stream:
@@ -262,7 +272,7 @@ def cloud_ai_100_exec_kv_helper(
         print("Completion :", generated_texts[i])
     print("\n\n=====================================================================\n")
 
-    prefill_perf = 1 / (loop_start - start)
+    prefill_time = loop_start - start
     decode_perf = (num_token - 1) / (end - loop_start)
     total_perf = num_token / (end - start)
     total_time = end - start
@@ -308,6 +318,7 @@ def cloud_ai_100_exec_kv(
     qpc_path: str,
     prompt: Optional[List[str]] = None,
     device_id: List[int] = [0],
+    ctx_len: Optional[int] = None,
     generation_len: Optional[int] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
@@ -329,6 +340,7 @@ def cloud_ai_100_exec_kv(
             prompt=prompt[batch_size * i : batch_size * (i + 1)],
             qpc=qpc_path,
             device_id=device_id,
+            ctx_len=ctx_len,
             generation_len=generation_len,
             enable_debug_logs=enable_debug_logs,
             stream=stream,
