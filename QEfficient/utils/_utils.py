@@ -13,7 +13,7 @@ from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.utils.constants import QEFF_MODELS_DIR
+from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -119,13 +119,12 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
     return onnx_exists_bool, onnx_dir_path, onnx_model_path
 
 
-def load_hf_tokenizer(model_name: str, cache_dir: Optional[str] = None, hf_token: Optional[str] = None, padding_side:str = "right", **kwargs) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
-    logger.info(f"Loading Tokenizer for {model_name}")
+def load_hf_tokenizer(pretrained_model_name_or_path: str, cache_dir: Optional[str] = None, hf_token: Optional[str] = None, padding_side:str = "right", **kwargs) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
+    logger.info("Loading Tokenizer")
     if hf_token is not None:
         login(hf_token)
-
     # Download tokenizer along with model if it doesn't exist
-    model_hf_path = hf_download(repo_id=model_name, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*", "*.txt"])
+    model_hf_path = pretrained_model_name_or_path if os.path.isdir(pretrained_model_name_or_path) else hf_download(repo_id=pretrained_model_name_or_path, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     
@@ -141,6 +140,14 @@ def get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp
     )
 
     return qpc_base_dir_name
+
+
+def check_and_assign_cache_dir(local_model_dir, cache_dir):
+    if local_model_dir is not None:
+        if cache_dir is not None:
+            logger.warning(f"Both local_model_dir ({local_model_dir}) and cache_dir ({cache_dir}) given. Using local_model_dir.")
+        return None
+    return cache_dir if cache_dir else Constants.CACHE_DIR
 
 
 def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]) -> None:
@@ -161,4 +168,3 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
             tokenizer.pad_token_id = tokenizer.eos_token_id
         else:
             tokenizer.pad_token_id = tokenizer.vocab_size - 1
-            
