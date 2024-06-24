@@ -22,12 +22,22 @@ from QEfficient.utils.logging_utils import logger
 
 @dataclass
 class CloudAI100ExecInfo:
-    generated_texts: List[str] = None
-    generated_ids: np.ndarray = None
-    prefill_time: float = None
-    decode_perf: float = None
-    total_perf: float = None
-    total_time: float = None
+    """
+    holds all the information about Cloud AI 100 execution
+    :param generated_texts: List[str]
+    :param generated_ids: np.ndarray
+    :param prefill_time: float
+    :param decode_perf: float
+    :param total_perf: float
+    :param total_time: float
+    """
+
+    generated_texts: List[str]
+    generated_ids: np.ndarray
+    prefill_time: float
+    decode_perf: float
+    total_perf: float
+    total_time: float
 
 
 io_files = []
@@ -133,11 +143,19 @@ def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
 
 
 def check_batch_size_and_num_prompts(prompt: List[str], batch_size: int):
-    num_prompts = len(prompt)
-    if batch_size > 1:
-        assert (
-            batch_size == num_prompts
-        ), f"Mismatch between number of prompts {num_prompts} and batch size {batch_size}; please pass correct input argument"
+    n = len(prompt) // batch_size
+    if len(prompt) < batch_size:
+        logger.warning("Number of prompts are less than batch size, repeating to required batch size")
+        prompt = prompt * -(batch_size // -len(prompt))  # Repeat prompt to required size
+        prompt = prompt[:batch_size]  # Truncate prompts to required size
+        n += 1
+    else:
+        if (len(prompt) % batch_size) > 0:
+            prompt = prompt[: batch_size * n]
+            logger.warning(
+                "Number of prompts are not multiple of batch size, dropping last batch from given input prompts"
+            )
+    return prompt, n
 
 
 def read_prompts_txt_file(prompts_txt_file_path: str):
@@ -177,10 +195,6 @@ def cloud_ai_100_exec_kv_helper(
         + [session.bindings[session.binding_index_map["input_ids"]].dims[1]]
     )
 
-    if len(prompt) < batch_size:
-        prompt = prompt * -(batch_size // -len(prompt))  # Repeat prompt to required size
-    prompt = prompt[:batch_size]  # Truncate prompts to required size
-
     inputs = tokenizer(prompt, return_tensors="np", padding=True)
     position_ids_update = inputs["attention_mask"].sum(1, keepdims=True)
     if generation_len is None:
@@ -192,7 +206,10 @@ def cloud_ai_100_exec_kv_helper(
     generated_ids = np.full((batch_size, generation_len), tokenizer.pad_token_id)
     if stream:
         streamer = transformers.TextStreamer(tokenizer)
-        streamer.on_finalized_text(prompt[0] + " ")
+        print()
+        streamer.on_finalized_text("Prompt : " + prompt[0])
+        print()
+        streamer.on_finalized_text("Completion :")
 
     # Prepare inputs for prefill/first iteration
     start = perf_counter()
@@ -239,10 +256,11 @@ def cloud_ai_100_exec_kv_helper(
     end = perf_counter()
     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
-    if stream:
-        for i in range(1, batch_size):
-            print()
-            print(i, prompt[i], generated_texts[i])
+    for i in range(1 if stream else 0, batch_size):
+        print("\n\n=====================================================================\n")
+        print("Prompt : ", prompt[i])
+        print("Completion :", generated_texts[i])
+    print("\n\n=====================================================================\n")
 
     prefill_perf = 1 / (loop_start - start)
     decode_perf = (num_token - 1) / (end - loop_start)
@@ -260,32 +278,29 @@ def cloud_ai_100_exec_kv_helper(
     )
 
 
-def print_latency_stats_kv(
-    prompt, generated_texts, batch_size, prefill_time, decode_perf, total_perf, total_time, automation: bool = False
-):
+def print_latency_stats_kv(prompt, batch_size, execinfo, automation: bool = False):
     if automation:
         print()
         print("input=", prompt)
-        print("output=", generated_texts)
-        print("Prefill time a.k.a TTFT is=", round(prefill_time, 2))
-        print("Decode token/sec is=", round(decode_perf * batch_size, 2))
-        print("Total token/sec is=", round(total_perf * batch_size, 2))
-        print("Total (E2E) inference time is=", round(total_time, 2))
+        print("output=", execinfo.generated_texts)
+        print("Prefill time a.k.a TTFT is=", round(execinfo.prefill_time, 2))
+        print("Decode token/sec is=", round(execinfo.decode_perf * batch_size, 2))
+        print("Total token/sec is=", round(execinfo.total_perf * batch_size, 2))
+        print("Total (E2E) inference time is=", round(execinfo.total_time, 2))
         return
-    print()
 
-    print("===================== Performance Stats =====================")
+    print("========================= Performance Stats =========================")
     if batch_size > 1:
-        print("Prefill time a.k.a TTFT (batch) is :", round(prefill_time, 2), "s")
-        print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s")
-        print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s")
-        print("Total (E2E) inference time (batch) is=", round(total_time, 2), "s")
+        print("Prefill time a.k.a TTFT (batch) is :", round(execinfo.prefill_time, 2), "s")
+        print("Decode (batch):", round(execinfo.decode_perf * batch_size, 2), "tok/s")
+        print("E2E (batch):", round(execinfo.total_perf * batch_size, 2), "tok/s")
+        print("Total (E2E) inference time (batch) is=", round(execinfo.total_time, 2), "s")
     else:
-        print("Prefill time a.k.a TTFT is=", round(prefill_time, 2), "s")
-        print("Decode:", round(decode_perf, 2), "tok/s")
-        print("E2E:", round(total_perf, 2), "tok/s")
-        print("Total (E2E) inference time is=", round(total_time, 2), "s")
-    print("=============================================================")
+        print("Prefill time a.k.a TTFT is=", round(execinfo.prefill_time, 2), "s")
+        print("Decode:", round(execinfo.decode_perf, 2), "tok/s")
+        print("E2E:", round(execinfo.total_perf, 2), "tok/s")
+        print("Total (E2E) inference time is=", round(execinfo.total_time, 2), "s")
+    print("=====================================================================")
 
 
 def cloud_ai_100_exec_kv(
@@ -300,40 +315,18 @@ def cloud_ai_100_exec_kv(
     automation=False,
 ):
     batch_size = get_compilation_batch_size(qpc_path)
-    check_batch_size_and_num_prompts(prompt, batch_size)
+    prompt, n = check_batch_size_and_num_prompts(prompt, batch_size)
 
-    if batch_size == 1:
-        prefill_time = []
-        decode_perf = []
-        total_perf = []
-        total_time = []
-        generated_texts = []
-        for i in range(len(prompt)):
-            execinfo = cloud_ai_100_exec_kv_helper(
-                tokenizer=tokenizer,
-                prompt=[prompt[i]],
-                qpc=qpc_path,
-                device_id=device_id,
-                generation_len=generation_len,
-                enable_debug_logs=enable_debug_logs,
-                stream=stream,
-                write_io_dir=write_io_dir,
-            )
-            generated_texts.append(execinfo.generated_texts)
-            prefill_time.append(execinfo.prefill_perf)
-            decode_perf.append(execinfo.decode_perf)
-            total_perf.append(execinfo.total_perf)
-            total_time.append(execinfo.total_time)
-
-        prefill_time = np.average(prefill_time)
-        decode_perf = np.average(decode_perf)
-        total_perf = np.average(total_perf)
-        total_time = np.average(total_time)
-
-    else:
+    prefill_time = []
+    decode_perf = []
+    total_perf = []
+    total_time = []
+    generated_texts = []
+    generated_ids = []
+    for i in range(n):
         execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=tokenizer,
-            prompt=prompt,
+            prompt=prompt[batch_size * i : batch_size * (i + 1)],
             qpc=qpc_path,
             device_id=device_id,
             generation_len=generation_len,
@@ -341,14 +334,31 @@ def cloud_ai_100_exec_kv(
             stream=stream,
             write_io_dir=write_io_dir,
         )
+        generated_ids.append(execinfo.generated_ids)
+        generated_texts.append(execinfo.generated_texts)
+        prefill_time.append(execinfo.prefill_time)
+        decode_perf.append(execinfo.decode_perf)
+        total_perf.append(execinfo.total_perf)
+        total_time.append(execinfo.total_time)
+
+    prefill_time = np.average(prefill_time)
+    decode_perf = np.average(decode_perf)
+    total_perf = np.average(total_perf)
+    total_time = np.average(total_time)
+
+    execinfo = CloudAI100ExecInfo(
+        generated_texts=generated_texts,
+        generated_ids=generated_ids,
+        prefill_time=prefill_time,
+        decode_perf=decode_perf,
+        total_perf=total_perf,
+        total_time=total_time,
+    )
+
     print_latency_stats_kv(
         prompt,
-        generated_texts=execinfo.generated_texts,
         batch_size=batch_size,
-        prefill_time=execinfo.prefill_time,
-        decode_perf=execinfo.decode_perf,
-        total_perf=execinfo.total_perf,
-        total_time=execinfo.total_time,
+        execinfo=execinfo,
         automation=automation,
     )
     return execinfo

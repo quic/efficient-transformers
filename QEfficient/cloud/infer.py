@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -13,7 +13,6 @@ from typing import List, Optional
 import QEfficient
 from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import (
-    check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
     get_input_prompts,
 )
@@ -51,7 +50,6 @@ def main(
         num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
     )
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
-    check_batch_size_and_num_prompts(prompt, batch_size)
     tokenizer = load_hf_tokenizer(model_name=model_name, cache_dir=cache_dir, hf_token=hf_token)
 
     qpc_path_exists, qpc_dir_path = qpc_exists(model_name, qpc_base_dir_name)
