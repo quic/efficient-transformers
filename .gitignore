@@ -84,3 +84,7 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# Local Files
+cache_dir
+qeff_models
