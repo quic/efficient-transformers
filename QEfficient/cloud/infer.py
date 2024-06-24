@@ -16,8 +16,7 @@ from QEfficient.generation.text_generation_inference import (
     cloud_ai_100_exec_kv,
     get_input_prompts,
 )
-from QEfficient.utils import get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
-from QEfficient.utils.constants import Constants
+from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 """
@@ -31,11 +30,12 @@ from QEfficient.utils.logging_utils import logger
 def main(
     model_name: str,
     num_cores: int,
-    prompt: Optional[str] = None,  # type: ignore
+    prompt: Optional[str] = None, # type: ignore
+    local_model_dir: Optional[str] = None,
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
     mos: int = -1,
-    cache_dir: str = Constants.CACHE_DIR,
+    cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
     batch_size: int = 1,
     prompt_len: int = 32,
@@ -58,7 +58,7 @@ def main(
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
-        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token)
+        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token, local_model_dir)
 
         #########
         # Compile
@@ -98,10 +98,11 @@ if __name__ == "__main__":
         description="Inference command, the model will be downloaded from HF, optmized, compiled, executed on Cloud AI 100"
     )
     parser.add_argument("--model-name", "--model_name", required=True, help="HF Model card name/id")
+    parser.add_argument("--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files")
     parser.add_argument(
         "--cache-dir",
         "--cache_dir",
-        default=Constants.CACHE_DIR,
+        default=None,
         required=False,
         help="Cache dir to store HF Downloads",
     )
