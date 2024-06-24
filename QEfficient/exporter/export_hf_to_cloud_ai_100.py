@@ -389,8 +389,9 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
 
 def qualcomm_efficient_converter(
     model_name: str,
-    model_kv: QEFFBaseModel = None,  # type: ignore
-    tokenizer: Optional[Union[PreTrainedTokenizer, PreTrainedTokenizerFast]] = None,
+    model_kv: QEFFBaseModel = None, # type: ignore
+    local_model_dir: Optional[str] = None,
+    tokenizer: Optional[Union[PreTrainedTokenizer, PreTrainedTokenizerFast]]=None,
     cache_dir: Optional[str] = None,
     onnx_dir_path: Optional[str] = None,
     hf_token: Optional[str] = None,
@@ -405,6 +406,7 @@ def qualcomm_efficient_converter(
     Args:
         model_name (str): The name of the model to be used.
         model_kv (torch.nn.Module): Transformed KV torch model to be used
+        local_model_dir(str): Path to custom model weights and config files
         tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
         cache_dir (str): Path to cache dir if not specified, default HF cache_dir will be used.
         onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
@@ -419,13 +421,7 @@ def qualcomm_efficient_converter(
     """
     warnings.warn("\033[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m", DeprecationWarning, stacklevel=2)
     # Get model_kv first
-    model_kv = (
-        model_kv
-        if model_kv
-        else QEFFCommonLoader.from_pretrained(
-            pretrained_model_name_or_path=model_name, hf_token=hf_token, cache_dir=cache_dir
-        )
-    )
+    model_kv = model_kv if model_kv else QEFFCommonLoader.from_pretrained(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), hf_token=hf_token, cache_dir=cache_dir)
 
     # Transform if required
     if model_kv.is_transformed and not kv:
@@ -438,10 +434,8 @@ def qualcomm_efficient_converter(
         onnx_dir_path = os.path.join(model_card_dir, "onnx")
 
     # Load tokenizer if not passed
-    tokenizer = (
-        tokenizer if tokenizer else load_hf_tokenizer(model_name=model_name, hf_token=hf_token, cache_dir=cache_dir)
-    )
-
+    tokenizer = tokenizer if tokenizer else load_hf_tokenizer(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), hf_token=hf_token, cache_dir=cache_dir, local_model_dir=local_model_dir)
+    
     if form_factor == "cloud":
         generated_onnx_model_path = export_for_cloud(
             model_name=model_name,
