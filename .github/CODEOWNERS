@@ -15,4 +15,4 @@
 /QEfficient/customop @irajagop
 /QEfficient/generation @quic-mamta
 /QEfficient/utils @quic-mamta
-pyproject.toml @carlstreeter-quic
+setup.py @carlstreeter-quic
