@@ -56,7 +56,7 @@ def main(
     local_model_dir: Optional[str] = None,
 ) -> None:
     """
-    Api() for exporting to Onnx Model.
+    API for exporting to Onnx Model.
     ---------
     :param model_name: str. Hugging Face Model Card name, Example: gpt2
     :cache_dir: str. Cache dir to store the downloaded huggingface files.
