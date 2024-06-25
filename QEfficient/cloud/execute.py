@@ -25,15 +25,18 @@ def main(
     generation_len: Optional[int] = None,
     cache_dir: Optional[str] = Constants.CACHE_DIR,
     hf_token: Optional[str] = None,
-):
+) -> None:
     """
-    APi() to run the Model on Cloud AI 100 Platform.
+    API() to run the Model on Cloud AI 100 Platform.
     ---------
     :param model_name: str. Hugging Face Model Card name, Example: "gpt2"
     :qpc_path: str.  Path to the generated binary after compilation.
     :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
     :prompt: str. Sample prompt for the model text generation
     :prompts_txt_file_path: str. Path to txt file for multiple input prompts
+    :generation_len: int. Number of tokens to be generated.
+    :cache_dir: str. Cache dir where downloaded huggingface files are stored.
+    :hf_token: str. HuggingFace login token to access private repos.
     """
 
     tokenizer = load_hf_tokenizer(model_name, cache_dir, hf_token)

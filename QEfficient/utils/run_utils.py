@@ -18,7 +18,7 @@ from .generate_inputs import InputHandler
 class ApiRunner:
     """
     ApiRunner class is responsible for:
-
+    ---------
     1. Running Huggingface PyTorch model
     2. Running KV Pytorch Model
     3. Running ONNX model on ONNXRT
@@ -28,10 +28,10 @@ class ApiRunner:
     def __init__(self, tokenizer, prompt, prompt_len, ctx_len):
         """
         Initialization
-        :param tokenizer: tokenizer
-        :param input_str: List[str]
-        :param prompt_len: int
-        :param ctx_len: int
+        :param tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
+        :input_str: List[str]. String to used as input prompt for the model.
+        :prompt_len: int. prompt length for the model to compile.
+        :ctx_len: int. Maximum context length to compile the model.
         """
 
         self.tokenizer = tokenizer
@@ -46,8 +46,8 @@ class ApiRunner:
     def run_hf_model_on_pytorch(self, model_hf):
         """
         Function responsible for running Huggingface PyTorch model and return the output tokens
-        :param model_hf: pytorch model
-        :return generated_ids: numpy.ndarray - output tokens
+        :param model_hf: torch.nn.module. Original PyTorch model
+        :return generated_ids: numpy.ndarray. Generated output tokens
         """
         input_ids = self.tokenizer.encode(self.prompt[0], return_tensors="pt")
 
@@ -69,19 +69,19 @@ class ApiRunner:
     def run_kv_model_on_pytorch(self, model, n_layer, padding_shape):
         """
         Function responsible for running KV PyTorch model and return the output tokens
-        :param model_hf: pytorch model
-        :param n_layer : int
-        :param padding_shape : List[int]
-        :return generated_ids: numpy.ndarray - output tokens
+        :param model: torch.nn.module. Transformed PyTorch model
+        :n_layer : int. Number of layers present in the model.
+        :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
+        :return generated_ids: numpy.ndarray. Generated output tokens
         """
 
         generated_ids = []
         inputs = self.input_handler.prepare_pytorch_inputs(n_layer, padding_shape)
 
         pt_outputs = model(**inputs)
-        for i in range(1, self.gen_len):
+        for _ in range(1, self.gen_len):
             generated_ids.append(pt_outputs["logits"].argmax(-1).reshape(-1, 1))
-            inputs = self.input_handler.update_pytorch_inputs(i, inputs, pt_outputs)
+            inputs = self.input_handler.update_pytorch_inputs(inputs, pt_outputs)
             pt_outputs = model(**inputs)
 
         generated_ids.append(pt_outputs["logits"].argmax(-1).reshape(-1, 1))
@@ -95,10 +95,10 @@ class ApiRunner:
     def run_ort_session(self, inputs, session, n_layer):
         """
         Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
-        :param inputs: Dict
-        :param session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'
-        :param n_layer: int
-        :return outputs: Dict
+        :param inputs: Dict. Numpy inputs of Onnx model
+        :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
+        :n_layer : int. Number of layers present in the model.
+        :return outputs: Dict. Numpy outputs of Onnx model
         """
 
         outputs = {}
@@ -126,10 +126,10 @@ class ApiRunner:
     def run_kv_model_on_ort(self, model_path, n_layer, padding_shape):
         """
         Function responsible for running ONNX model on onnxruntime and return the output tokens
-        :param model_path: str
-        :param n_layer : int
-        :param padding_shape : List[int]
-        :return generated_ids: numpy.ndarray - output tokens
+        :param model_path: str. Path to the Onnx model.
+        :n_layer : int. Number of layers present in the model.
+        :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
+        :return generated_ids: numpy.ndarray. Generated output tokens
         """
 
         # todo:vbaddi; find a better version to do this changes
@@ -150,9 +150,9 @@ class ApiRunner:
         inputs = self.input_handler.prepare_ort_inputs(n_layer, padding_shape)
         ort_outputs = self.run_ort_session(inputs, session, n_layer)
 
-        for i in range(1, self.gen_len):
+        for _ in range(1, self.gen_len):
             generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
-            inputs = self.input_handler.update_ort_inputs(i, inputs, ort_outputs, n_layer)
+            inputs = self.input_handler.update_ort_inputs(inputs, ort_outputs, n_layer)
             ort_outputs = self.run_ort_session(inputs, session, n_layer)
 
         generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
@@ -163,17 +163,18 @@ class ApiRunner:
         print("Completion:", repr(predicted_string))
         return generated_ids
 
-    def run_kv_model_on_cloud_ai_100(self, test_qpcs_path, device_group):
+    def run_kv_model_on_cloud_ai_100(self, qpc_path, device_group):
         """
         Function responsible for running ONNX model on Cloud AI 100 and return the output tokens
-        :param qpc_path: path to qpc generated after compilation
-        :param device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
-        :return generated_ids: numpy.ndarray - output tokens
+        :param qpc_path: str. path to qpc generated after compilation
+        :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
+        :return generated_ids: numpy.ndarray. Generated output tokens
         """
         execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=self.tokenizer,
-            qpc=test_qpcs_path,
+            qpc_path=qpc_path,
             device_id=device_group,
+            ctx_len=self.ctx_len,
             generation_len=self.gen_len,
             prompt=self.prompt,
             stream=False,

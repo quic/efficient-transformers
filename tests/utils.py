@@ -78,7 +78,7 @@ def load_pytorch_model(model_config):
     """
     model_path = hf_download(
         repo_id=model_config["model_name"],
-        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
+        ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
     model_hf = model_config["model_class"].from_pretrained(
         model_path, use_cache=True, num_hidden_layers=model_config["n_layer"], attn_implementation="eager"
@@ -194,4 +194,5 @@ def get_cloud_ai_100_tokens(setup_info):
             )
         except Exception as e:
             print(f"ONNX Model run on Cloud AI 100 failed due to : {e}")
+
         return cloud_ai_100_tokens

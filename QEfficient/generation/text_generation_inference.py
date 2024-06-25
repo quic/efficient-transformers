@@ -86,12 +86,12 @@ def write_io_files(
 
 def latency_stats_bertstyle(
     model_name: str,
-    qpc: str,
+    qpc_path: str,
     seq_len: int,
     prompt: str,
     device_id: List[int] = [0],
 ):
-    session = QAICInferenceSession(qpc, device_id)
+    session = QAICInferenceSession(qpc_path, device_id)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
@@ -169,7 +169,7 @@ def read_prompts_txt_file(prompts_txt_file_path: str):
 
 def cloud_ai_100_exec_kv_helper(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-    qpc: str,
+    qpc_path: str,
     prompt: List[str],
     ctx_len: Optional[int] = None,
     generation_len: Optional[int] = None,
@@ -185,7 +185,7 @@ def cloud_ai_100_exec_kv_helper(
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
     # Load QPC
-    session = QAICInferenceSession(qpc, device_id, enable_debug_logs=enable_debug_logs)
+    session = QAICInferenceSession(qpc_path, device_id, enable_debug_logs=enable_debug_logs)
 
     # Skip inputs/outputs
     session.skip_buffers([x for x in session.input_names + session.output_names if x.startswith("past_")])
@@ -318,7 +318,6 @@ def cloud_ai_100_exec_kv(
     qpc_path: str,
     prompt: Optional[List[str]] = None,
     device_id: List[int] = [0],
-    ctx_len: Optional[int] = None,
     generation_len: Optional[int] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
@@ -338,7 +337,7 @@ def cloud_ai_100_exec_kv(
         execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=tokenizer,
             prompt=prompt[batch_size * i : batch_size * (i + 1)],
-            qpc=qpc_path,
+            qpc_path=qpc_path,
             device_id=device_id,
             ctx_len=ctx_len,
             generation_len=generation_len,
@@ -366,7 +365,6 @@ def cloud_ai_100_exec_kv(
         total_perf=total_perf,
         total_time=total_time,
     )
-
     print_latency_stats_kv(
         prompt,
         batch_size=batch_size,

@@ -119,7 +119,6 @@ def compile(
     :param onnx_path: str. Generated Onnx Model Path.
     :qpc_path: str. Path for saving compiled qpc binaries.
     :num_cores: int. Number of cores to compile model on.
-    :custom_io_file_path: str. Path to custom IO file.
     :device_group: List[int]. Used for finding number of devices to compile for.
     :aic_enable_depth_first: bool. Enables DFS with default memory size, disabled by default.
     :mos: int. Effort level to reduce the on-chip memory.
@@ -128,6 +127,7 @@ def compile(
     :ctx_len: int. Maximum context length to compile the model.
     :mxfp6: bool. Enable compilation for MXFP6 precision
     :mxint8: Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
+    :custom_io_file_path: str. Path to custom IO file.
     """
 
     os.makedirs(qpc_path, exist_ok=True)
