@@ -30,16 +30,9 @@ from transformers.models.mistral.modeling_mistral import (
 )
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
-    MixtralBLockSparseTop2MLP,
-    MixtralDecoderLayer,
     MixtralForCausalLM,
     MixtralModel,
     MixtralRMSNorm,
-    MixtralSparseMoeBlock,
-    MixtralBLockSparseTop2MLP,
-    MixtralRotaryEmbedding,
-    MixtralRMSNorm,
-    MixtralRotaryEmbedding,
     MixtralSparseMoeBlock,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel

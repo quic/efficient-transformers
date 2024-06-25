@@ -187,21 +187,13 @@ class ApiRunner:
     def run_kv_model_on_cloud_ai_100(self, session, n_layer, padding_shape):
         """
         Function responsible for running ONNX model on Cloud AI 100 and return the output tokens
-<<<<<<< HEAD
-        :param session: QAICInferenceSession
-        :param n_layer : int
-        :param padding_shape : List[int]
-        :return generated_ids: numpy.ndarray - output tokens
-=======
         ---------
-        :param qpc_path: str
-        :device_id: List[int]
+        :session: QAICInferenceSession.
         :n_layer : int
         :padding_shape : List[int]
 
         Return:
             generated_ids: numpy.ndarray - output tokens
->>>>>>> f765bc1 (Updated documentation)
         """
 
         generated_ids = []

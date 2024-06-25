@@ -197,28 +197,13 @@ class InputHandler:
 
     def update_cloud_ai_100_inputs(self, iteration, inputs, outputs):
         """
-        Function responsible for updating Prefill stage inputs to create inputs for
-        decode stage inputs for ONNX model to be run on ONNXRT.
-<<<<<<< HEAD
-        :param iteration:int
-        :param inputs: Dict
-        :param outputs: Dict
-        :return inputs: Dict - input_ids, position_ids
-=======
+        Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
+        
         ---------
         :param iteration: int. Current iteration number.
         :inputs: Dict. Previous iteration inputs of Cloud AI 100 execution.
         :outputs: Dict. Previous iteration outputs of Cloud AI 100 execution.
-        :inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100)
-<<<<<<< HEAD
->>>>>>> f765bc1 (Updated documentation)
-=======
-        ---------
-        :param iteration: int. Current iteration number.
-        :inputs: Dict. Previous iteration inputs of Cloud AI 100 execution.
-        :outputs: Dict. Previous iteration outputs of Cloud AI 100 execution.
-        :inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100)
->>>>>>> 0206277 (Updated documentation)
+        :inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100).
         """
 
         updated_inputs = {}

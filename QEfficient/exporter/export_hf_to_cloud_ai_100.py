@@ -179,6 +179,8 @@ def convert_to_cloud_kvstyle(
     Returns:
         Path of exported ONNX file.
     """
+    warnings.warn("\033[93mThis function will be deprecated soon, use QEfficient.export instead\033[0m", DeprecationWarning, stacklevel=2)
+    
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
@@ -439,9 +441,11 @@ def qualcomm_efficient_converter(
     Returns:   
        Path of exported ONNX file.
     """
+    warnings.warn("\033[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m", DeprecationWarning, stacklevel=2)
+    
     # Get model_kv first
-    model_kv = model_kv if model_kv else QEFFCommonLoader.from_pretrained(pretrained_model_name_or_path=model_name, hf_token=hf_token, cache_dir=cache_dir)
-
+    model_kv = model_kv if model_kv else QEFFCommonLoader.from_pretrained(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), hf_token=hf_token, cache_dir=cache_dir)
+    
     # Transform if required
     if model_kv.is_transformed and not kv:
         raise AttributeError("Transformed model is passed while requsting to convert non-transformed model")

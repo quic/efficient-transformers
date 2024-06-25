@@ -170,9 +170,10 @@ def cloud_ai_100_exec_kv_helper(
     :Write_io_dir: 
     :automation: bool. If true, it print input, output and performance stats.
     """
-    if tokenizer.padding_side != "left":
-        logger.warning("Please use padding_side='left' while initializing the tokenizer")
-        tokenizer.padding_side = "left"
+    
+    if tokenizer.padding_side != "right":
+        logger.warning("Please use padding_side='right' while initializing the tokenizer")
+        tokenizer.padding_side = "right"
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
@@ -200,30 +201,16 @@ def cloud_ai_100_exec_kv_helper(
     padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
     max_gen_len = ctx_len - position_ids_update.max()
     if generation_len is None:
-        generation_len = ctx_len
-    num_chunks = -(input_len // -prompt_len)  # ceil divide without float
-    input_len = num_chunks * prompt_len  # Convert input_len to a multiple of prompt_len
-    assert input_len <= ctx_len, "input_len should be less than ctx_len"
-
-    # Skip inputs/outputs
-    session.skip_buffers([x for x in session.input_names if x.startswith("past_")])
-    session.skip_buffers([x for x in session.output_names if x.endswith("_RetainedState")])
-
-    # Prepare inputs for first iteration
-    start = perf_counter()
-    inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=input_len)
-    batch_size = inputs["input_ids"].shape[0]
-    inputs["position_ids"] = (np.cumsum(inputs["attention_mask"], 1) - 1) * inputs["attention_mask"]
-    inputs["attention_mask"] = np.concatenate(
-        [
-            inputs["attention_mask"].astype(bool),
-            np.zeros((batch_size, ctx_len - input_len), dtype=bool),
-        ],
-        1,
-    )
-    cache_index = np.array([0])
-    inputs["cache_index"] = cache_index
-    generated_ids = np.full((batch_size, generation_len - input_len + 1), tokenizer.pad_token_id)
+        if ctx_len is None:
+            raise ValueError("At least one of ctx_len or generation_len is needed")
+        generation_len = max_gen_len
+    elif generation_len > max_gen_len:
+        logger.warning(
+            "Passed generation_len is greater than allowed length. "
+            "Make sure this model supports sliding window, such as Mistral"
+        )
+    assert generation_len > 0, "generation length should be greater than zero"
+    generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
 
     if stream:
         streamer = transformers.TextStreamer(tokenizer)
