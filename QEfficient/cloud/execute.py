@@ -36,7 +36,7 @@ def main(
     :cache_dir: str. Cache dir to store the downloaded huggingface files.
     :hf_token: Huggingface token to access gated models.
     :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
-    :prompts_txt_file_path: str. Path to txt file for multiple input prompts
+    :prompts_txt_file_path: str. Path to txt file for single or multiple input prompts.
     """
 
     tokenizer = load_hf_tokenizer(model_name, cache_dir, hf_token)

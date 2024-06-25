@@ -69,11 +69,10 @@ def latency_stats_bertstyle(
     prompt: str,
     device_id: List[int] = [0],
 ):
-    
     """
-    API to execute ONNX model on CPU. 
+    API to execute Bertstyle ONNX model on Cloud AI 100.
     ---------
-    
+
     :model_name: str. Hugging Face Model Card name, Example: gpt2.
     :qpc: str.  Path to the save generated binary file after compilation.
     :seq_len: int. Sequence length.
@@ -118,6 +117,7 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
     compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
     return compilation_batch_size, compilation_ctx_len
 
+
 def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size) -> List[str]:
     assert (
         prompt is not None or prompts_txt_file_path is not None
@@ -156,12 +156,11 @@ def cloud_ai_100_exec_kv_helper(
     stream: bool = True,
     write_io_dir: Optional[str] = None,
 ):
-    
     """
-    API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file. 
+    API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.
     ---------
-    
-    :tokenizer: 
+
+    :tokenizer:
     :qpc: str.  Path to the save generated binary file after compilation.
     :prompt: str. Sample prompt for the model text generation.
     :input_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.
@@ -169,10 +168,10 @@ def cloud_ai_100_exec_kv_helper(
     :device_id: List[int]. Device Ids to be used for compilation. if len(device_id) > 1, it enable multiple card setup.
     :enable_debug_logs: bool. If True, it enables debugging logs.
     :stream: bool. If True enable streamer, which returns tokens one by one as the model generates them.
-    :Write_io_dir: 
+    :Write_io_dir:
     :automation: bool. If true, it print input, output and performance stats.
     """
-    
+
     if tokenizer.padding_side != "right":
         logger.warning("Please use padding_side='right' while initializing the tokenizer")
         tokenizer.padding_side = "right"

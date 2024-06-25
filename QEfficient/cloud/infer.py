@@ -30,7 +30,7 @@ from QEfficient.utils.logging_utils import logger
 def main(
     model_name: str,
     num_cores: int,
-    prompt: Optional[str] = None, # type: ignore
+    prompt: Optional[str] = None,  # type: ignore
     local_model_dir: Optional[str] = None,
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
@@ -47,13 +47,12 @@ def main(
         0,
     ],
 ) -> None:
-    
     """
     Inference command, the model will be downloaded from HF, optimized, compiled, executed on AIC.
     ---------
-    
+
     :model_name: str. Hugging Face Model Card name, Example: gpt2.
-    :num_cores: int. Number of cores to compile model on. Default: 16, available option: [1 to 16].
+    :num_cores: int. Number of cores to compile model on.
     :prompt: str. Sample prompt for the model text generation.
     :aic_enable_depth_first: bool. If passed, this option will be enabled during compilation. Default=False.
     :mos: int. Effort level to reduce the on-chip memory. Default=-1.
@@ -63,17 +62,23 @@ def main(
     :prompt_len: int. prompt len for the model to compile.
     :ctx_len: int. Maximum context length for the model to compile.
     :mxfp6: bool. Enable compilation for MXFP6 precision.
+    mxint8: bool. Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
     :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices > 1, it enable multiple card setup.
 
     """
-    
+
     qpc_base_dir_name = get_qpc_dir_name_infer(
         num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
     )
     prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
-    cache_dir = check_and_assign_cache_dir(local_model_dir,cache_dir)
+    cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
 
-    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), cache_dir=cache_dir, hf_token=hf_token, local_model_dir=local_model_dir)
+    tokenizer = load_hf_tokenizer(
+        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+        cache_dir=cache_dir,
+        hf_token=hf_token,
+        local_model_dir=local_model_dir,
+    )
 
     qpc_path_exists, qpc_dir_path = qpc_exists(model_name, qpc_base_dir_name)
     # Handle qpc generation
@@ -124,7 +129,9 @@ if __name__ == "__main__":
         description="Inference command, the model will be downloaded from HF, optmized, compiled, executed on Cloud AI 100"
     )
     parser.add_argument("--model-name", "--model_name", required=True, help="HF Model card name/id")
-    parser.add_argument("--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files")
+    parser.add_argument(
+        "--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files"
+    )
     parser.add_argument(
         "--cache-dir",
         "--cache_dir",

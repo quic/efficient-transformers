@@ -27,16 +27,13 @@ class ApiRunner:
         """
         Initialization
         ---------
-        ---------
-        :param tokenizer: tokenizer
-        :input_str: List[str]
-        :prompt_len: int
-        :ctx_len: int
-        :input_str: List[str]
-        :prompt_len: int
-        :ctx_len: int
+
+        :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. model tokenizer.
+        :prompt: str. Input prompt.
+        :prompt_len: int.
+        :ctx_len: int.
         """
-        
+
         self.tokenizer = tokenizer
         self.prompt = prompt
         self.prompt_len = prompt_len
@@ -71,7 +68,6 @@ class ApiRunner:
         print("Completion:", repr(generated_text))
         return generated_ids
 
-
     def run_kv_model_on_pytorch(self, model, n_layer, padding_shape):
         """
         Function responsible for running KV PyTorch model and return the output tokens
@@ -101,20 +97,14 @@ class ApiRunner:
         print("Completion:", repr(predicted_string))
         return generated_ids
 
-    def run_ort_session(
-        self,
-        inputs,
-        session,
-        n_layer
-        ) -> dict:
-        
+    def run_ort_session(self, inputs, session, n_layer) -> dict:
         """
         Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
         ---------
         :param inputs: Dict.
         :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
         :n_layer: int.
-        
+
         Return:
             outputs: Dict
         """
@@ -162,7 +152,7 @@ class ApiRunner:
                 np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t)
                 if len(np_tensor.shape) == 0 and np_tensor.item() == 65504:
                     node.attribute[0].t.raw_data = np.array(-1).tobytes()
-        
+
         onnxruntime_model = model_path[:-5] + "_ort.onnx"
         onnx.save(m, onnxruntime_model)
         session = onnxruntime.InferenceSession(onnxruntime_model)

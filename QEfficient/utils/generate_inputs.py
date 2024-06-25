@@ -16,13 +16,13 @@ class InputHandler:
         """
         Initialization
         ---------
-        
-        :model_name: str. Hugging Face Model Card name, Example: [gpt2].
+
+        :tokenizer: str. Hugging Face Model Card name, Example: [gpt2].
         :input_str: List[str]. List of input string.
         :prompt_len: int. prompt len for the model to compile.
         :ctx_len: int. Maximum context length for the model to compile.
         """
-        #check and fix tokenizer viability
+        # check and fix tokenizer viability
         padding_check_and_fix(tokenizer)
         self.tokenizer = tokenizer
         self.input_str = input_str
@@ -36,7 +36,9 @@ class InputHandler:
 
         :n_layer : int
         :padding_shape : List[int]
-        :return inputs: Dict - input_ids, position_ids, past_key_values
+
+        Return:
+            inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
@@ -78,13 +80,13 @@ class InputHandler:
         """
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for PyTorch model.
         ---------
-        
+
         :iteration: int. Current iteration number.
         :inputs: Dict. Previous iteration inputs.
         :pt_outputs: Dict. Previous iteration PyTorch outputs.
 
         Return:
-            inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
+            inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         updated_inputs = {}
@@ -99,12 +101,12 @@ class InputHandler:
         """
         Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.
         ---------
-        
+
         :n_layer : int. Number of layers in the PyTorch model.
         :padding_shape : List[int]. Shape of past key values.
 
         Return:
-            inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
+            inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
@@ -117,17 +119,11 @@ class InputHandler:
         inputs.pop("attention_mask")
         position_ids = np.arange(input_len).reshape(1, -1)
         inputs["input_ids"] = np.concatenate(
-            [
-                input_ids,
-                np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)
-            ],
+            [input_ids, np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)],
             axis=1,
         ).astype(np.int64)
         inputs["position_ids"] = np.concatenate(
-            [
-                position_ids,
-                np.full((batch_size, self.prompt_len - input_len), -1)
-            ],
+            [position_ids, np.full((batch_size, self.prompt_len - input_len), -1)],
             axis=1,
         ).astype(np.int64)
 
@@ -141,14 +137,14 @@ class InputHandler:
         """
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
         ---------
-        
+
         :iteration:int Current iteration number.
         :inputs: Dict. Previous iteration ORT inputs.
         :ort_outputs: Dict. Previous iteration ORT outputs.
         :n_layer : int. Number of layers in the ONNX model.
 
         Return:
-            inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
+            inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         updated_inputs = {}
@@ -164,12 +160,12 @@ class InputHandler:
         """
         Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on Cloud AI 100.
         ---------
-        
+
         :n_layer : int. Number of layers in the PyTorch model.
         :padding_shape : List[int]. Shape of past key values.
 
         Return:
-            inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index
+            inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
@@ -182,17 +178,11 @@ class InputHandler:
         inputs.pop("attention_mask")
         position_ids = np.arange(input_len).reshape(1, -1)
         inputs["input_ids"] = np.concatenate(
-            [
-                input_ids,
-                np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)
-            ],
+            [input_ids, np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)],
             axis=1,
         ).astype(np.int64)
         inputs["position_ids"] = np.concatenate(
-            [
-                position_ids,
-                np.full((batch_size, self.prompt_len - input_len), -1)
-            ],
+            [position_ids, np.full((batch_size, self.prompt_len - input_len), -1)],
             axis=1,
         ).astype(np.int64)
 
@@ -206,11 +196,13 @@ class InputHandler:
         """
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
         ---------
-        
+
         :iteration: int. Current iteration number.
         :inputs: Dict. Previous iteration inputs of Cloud AI 100 execution.
         :outputs: Dict. Previous iteration outputs of Cloud AI 100 execution.
-        :inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100).
+
+        Return:
+            inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100).
         """
 
         updated_inputs = {}

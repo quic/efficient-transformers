@@ -28,7 +28,7 @@ def export_onnx(
     """
     API for export PyTorch model to ONNX.
     ---------
-    
+
     :pt_model: torch.nn.Module. PyTorch model that will be exported to ONNX format.
     :inputs:  Dict[str, torch.Tensor]. Processed torch input for the model.
     :output_names: List[str]. Output of pytorch model inference.
@@ -134,17 +134,12 @@ def export_onnx(
     return model_base_name
 
 
-def save_onnx(
-    model: Union[onnx.ModelProto, str],
-    gen_models_path: str,
-    model_base_name: str
-    ) -> str:
-    
+def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_base_name: str) -> str:
     """
     API to save ONNX model and it's data separately if size of ONNX model is greater than 2GB.
     ---------
-    
-    :model:  Union[onnx.ModelProto, str]. Pass ONNX model or name of the model.
+
+    :model:  Union[onnx.ModelProto, str]. Pass ONNX model or path of the model.
     :gen_models_path: str. Path of generated ONNX model.
     :model_base_name: Base name of the HF model.
 
@@ -176,15 +171,11 @@ def save_onnx(
     return model_base_name
 
 
-def remove_temp_file(
-    file_path_model: str, 
-    file_path_weights: str
-    ):
-    
+def remove_temp_file(file_path_model: str, file_path_weights: str):
     """
     API to remove a temporary file
     ---------
-    
+
     :file_path_model: str. Path to the file to be deleted
     :file_path_weights: str. Path to the weights file
     """
@@ -203,12 +194,12 @@ def fix_onnx_fp16(
     ort_outputs: List[np.ndarray],
     gen_models_path: str,
     model_base_name: str,
-    pt_outputs: Dict[str, torch.Tensor]
+    pt_outputs: Dict[str, torch.Tensor],
 ) -> str:
     """
     API to clip model weights in fp16 range and save updated clipped ONNX model.
     ---------
-    
+
     :inputs: Dict[str, torch.Tensor]. Processed torch input for the model.
     :output_names: List[str]. Output of pytorch model inference.
     :ort_outputs: List[np.ndarray]. Output of onnxruntime.
@@ -266,7 +257,7 @@ def fix_onnx_fp16(
             os.path.join(gen_models_path, f"{model_base_name}.onnx"),
             os.path.join(gen_models_path, f"{model_base_name}.onnxweights.data"),
         )
-        
+
         model_base_name += "_clipped_fp16"
         onnx.save_model(
             model,
@@ -316,7 +307,7 @@ def generate_input_files(
     """
     API to generate input files, required for Cloud AI 100 execution.
     ---------
-    
+
     :input_files_path:  Path of the input file.
     :input_names:
     :inputs:
@@ -347,11 +338,10 @@ def run_model_on_ort(
     pt_outputs: Dict[str, torch.Tensor],
     dtype: bool = True,
 ) -> Tuple[List[str], List[np.ndarray]]:
-    
     """
     API to run ONNX model on ONNX runtime
     ---------
-    
+
     :onnx_path: str. Path of ONNX model.
     :inputs:  Dict[str, torch.Tensor]. Processed torch input for the model.
     :output_names: List[str]. Output of pytorch model inference.
