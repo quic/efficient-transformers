@@ -7,7 +7,6 @@
    :members:
    :undoc-members:
    :show-inheritance:
-   :exclude-members: convert_to_edge
 ```
 
 ## QEfficient.cloud.execute

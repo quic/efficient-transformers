@@ -1,31 +1,25 @@
 # Low level API
 
-## QEfficient.transform
+## QEfficient.transform.from
 ```{eval-rst}
-.. automodule:: QEfficient
+.. automodule:: QEfficient.src._transformers.auto 
    :members:
-   :undoc-members:
-   :show-inheritance: 
+   :show-inheritance:
+   :exclude-members: QEffAutoModel,QEFFTransformersBase
 ``` 
-
 ## QEfficient.exporter.export_hf_to_cloud_ai_100 module
-
-```{eval-rst}
+```{eval-rst} 
 .. automodule:: QEfficient.exporter.export_hf_to_cloud_ai_100
    :members:
-   :undoc-members:
    :show-inheritance:
    :exclude-members: convert_to_edge
 ```
-
-## QEfficient.cloud.compile
-
+## QEfficient.compile
 ```{eval-rst}
-.. automodule:: QEfficient.cloud.compile
+.. automodule:: QEfficient.compile.compile_helper
    :members:
    :show-inheritance:
 ```
-
 ## QEfficient.generation.text_generation_inference module
 
 ```{eval-rst}

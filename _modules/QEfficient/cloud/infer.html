@@ -97,7 +97,6 @@
   <ul class="wy-breadcrumbs">
       <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
-          <li class="breadcrumb-item"><a href="../../QEfficient.html">QEfficient</a></li>
       <li class="breadcrumb-item active">QEfficient.cloud.infer</li>
       <li class="wy-breadcrumbs-aside">
       </li>
@@ -116,21 +115,17 @@
 <span class="c1"># -----------------------------------------------------------------------------</span>
 
 <span class="kn">import</span> <span class="nn">argparse</span>
+<span class="kn">import</span> <span class="nn">logging</span>
 <span class="kn">import</span> <span class="nn">os</span>
-<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span>
-
-<span class="kn">from</span> <span class="nn">huggingface_hub</span> <span class="kn">import</span> <span class="n">login</span>
-<span class="kn">from</span> <span class="nn">transformers</span> <span class="kn">import</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">AutoTokenizer</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
 
 <span class="kn">import</span> <span class="nn">QEfficient</span>
-<span class="kn">from</span> <span class="nn">QEfficient.cloud.compile</span> <span class="kn">import</span> <span class="n">main</span> <span class="k">as</span> <span class="nb">compile</span>
-<span class="kn">from</span> <span class="nn">QEfficient.exporter.export_hf_to_cloud_ai_100</span> <span class="kn">import</span> <span class="n">qualcomm_efficient_converter</span>
+<span class="kn">from</span> <span class="nn">QEfficient.cloud.export</span> <span class="kn">import</span> <span class="n">get_onnx_model_path</span>
 <span class="kn">from</span> <span class="nn">QEfficient.generation.text_generation_inference</span> <span class="kn">import</span> <span class="p">(</span>
     <span class="n">check_batch_size_and_num_prompts</span><span class="p">,</span>
     <span class="n">cloud_ai_100_exec_kv</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">hf_download</span><span class="p">,</span> <span class="n">onnx_exists</span><span class="p">,</span> <span class="n">qpc_exists</span>
-<span class="kn">from</span> <span class="nn">QEfficient.utils.constants</span> <span class="kn">import</span> <span class="n">Constants</span>
+<span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">check_and_assign_cache_dir</span><span class="p">,</span> <span class="n">get_qpc_dir_name_infer</span><span class="p">,</span> <span class="n">load_hf_tokenizer</span><span class="p">,</span> <span class="n">qpc_exists</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.logging_utils</span> <span class="kn">import</span> <span class="n">logger</span>
 
 <span class="sd">&quot;&quot;&quot;</span>
@@ -140,26 +135,33 @@
 <span class="sd">4. Download HF model -&gt; transform -&gt; export -&gt; compile -&gt; execute</span>
 <span class="sd">&quot;&quot;&quot;</span>
 
+
 <div class="viewcode-block" id="main"><a class="viewcode-back" href="../../../source/high_level_api.html#QEfficient.cloud.infer.main">[docs]</a><span class="k">def</span> <span class="nf">main</span><span class="p">(</span>
     <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">num_cores</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">prompts_txt_file_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="c1"># type: ignore</span>
+    <span class="n">local_model_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">prompts_txt_file_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">aic_enable_depth_first</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">mos</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
-    <span class="n">cache_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">CACHE_DIR</span><span class="p">,</span>
-    <span class="n">hf_token</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cache_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">hf_token</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
     <span class="n">prompt_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span>
     <span class="n">ctx_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>
+    <span class="n">generation_len</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">mxfp6</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">mxint8</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
-    <span class="n">device_group</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span>
-<span class="p">):</span>
+    <span class="n">device_group</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="mi">0</span><span class="p">,</span>
+    <span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Inference command, the model will be downloaded from HF, optimized, compiled, executed on AIC.</span>
 <span class="sd">    ---------</span>
-<span class="sd">    :param model_name: str. Hugging Face Model Card name, Example: gpt2.</span>
+<span class="sd">    </span>
+<span class="sd">    :model_name: str. Hugging Face Model Card name, Example: gpt2.</span>
 <span class="sd">    :num_cores: int. Number of cores to compile model on. Default: 16, available option: [1 to 16].</span>
 <span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
 <span class="sd">    :aic_enable_depth_first: bool. If passed, this option will be enabled during compilation. Default=False.</span>
@@ -171,51 +173,33 @@
 <span class="sd">    :ctx_len: int. Maximum context length for the model to compile.</span>
 <span class="sd">    :mxfp6: bool. Enable compilation for MXFP6 precision.</span>
 <span class="sd">    :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enable multiple card setup.</span>
+
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">model_card_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">QEFF_MODELS_DIR</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">model_name</span><span class="p">))</span>
-    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">model_card_dir</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-
-    <span class="n">qpc_base_dir_name</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="sa">f</span><span class="s2">&quot;qpc_</span><span class="si">{</span><span class="n">num_cores</span><span class="si">}</span><span class="s2">cores_</span><span class="si">{</span><span class="n">batch_size</span><span class="si">}</span><span class="s2">BS_</span><span class="si">{</span><span class="n">prompt_len</span><span class="si">}</span><span class="s2">PL_</span><span class="si">{</span><span class="n">ctx_len</span><span class="si">}</span><span class="s2">CL_</span><span class="si">{</span><span class="n">mos</span><span class="si">}</span><span class="s2">MOS_&quot;</span>
-        <span class="o">+</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">device_group</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
-        <span class="o">+</span> <span class="s2">&quot;devices&quot;</span>
-        <span class="o">+</span> <span class="p">(</span><span class="s2">&quot;_mxfp6_mxint8&quot;</span> <span class="k">if</span> <span class="p">(</span><span class="n">mxfp6</span> <span class="ow">and</span> <span class="n">mxint8</span><span class="p">)</span> <span class="k">else</span> <span class="s2">&quot;_mxfp6&quot;</span> <span class="k">if</span> <span class="n">mxfp6</span> <span class="k">else</span> <span class="s2">&quot;_fp16_mxint8&quot;</span> <span class="k">if</span> <span class="n">mxint8</span> <span class="k">else</span> <span class="s2">&quot;_fp16&quot;</span><span class="p">)</span>
+    
+    <span class="n">qpc_base_dir_name</span> <span class="o">=</span> <span class="n">get_qpc_dir_name_infer</span><span class="p">(</span>
+        <span class="n">num_cores</span><span class="p">,</span> <span class="n">mos</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">prompt_len</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">,</span> <span class="n">mxfp6</span><span class="p">,</span> <span class="n">mxint8</span><span class="p">,</span> <span class="n">device_group</span>
     <span class="p">)</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">check_batch_size_and_num_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">)</span>
+    <span class="n">cache_dir</span> <span class="o">=</span> <span class="n">check_and_assign_cache_dir</span><span class="p">(</span><span class="n">local_model_dir</span><span class="p">,</span><span class="n">cache_dir</span><span class="p">)</span>
 
-    <span class="n">prompt</span> <span class="o">=</span> <span class="n">check_batch_size_and_num_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">)</span>
-
-    <span class="c1"># Get tokenizer</span>
-    <span class="k">if</span> <span class="n">hf_token</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">login</span><span class="p">(</span><span class="n">hf_token</span><span class="p">)</span>
-    <span class="n">model_hf_path</span> <span class="o">=</span> <span class="n">hf_download</span><span class="p">(</span>
-        <span class="n">repo_id</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span>
-        <span class="n">cache_dir</span><span class="o">=</span><span class="n">cache_dir</span><span class="p">,</span>
-        <span class="n">ignore_patterns</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;*.txt&quot;</span><span class="p">,</span> <span class="s2">&quot;*.onnx&quot;</span><span class="p">,</span> <span class="s2">&quot;*.ot&quot;</span><span class="p">,</span> <span class="s2">&quot;*.md&quot;</span><span class="p">,</span> <span class="s2">&quot;*.tflite&quot;</span><span class="p">,</span> <span class="s2">&quot;*.pdf&quot;</span><span class="p">,</span> <span class="s2">&quot;*.msgpack&quot;</span><span class="p">,</span> <span class="s2">&quot;*.h5&quot;</span><span class="p">],</span>
-    <span class="p">)</span>
-    <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
-        <span class="n">model_hf_path</span><span class="p">,</span> <span class="n">use_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">padding_side</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">,</span> <span class="n">trust_remote_code</span><span class="o">=</span><span class="kc">True</span>
-    <span class="p">)</span>
+    <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">load_hf_tokenizer</span><span class="p">(</span><span class="n">pretrained_model_name_or_path</span><span class="o">=</span><span class="p">(</span><span class="n">local_model_dir</span> <span class="k">if</span> <span class="n">local_model_dir</span> <span class="k">else</span> <span class="n">model_name</span><span class="p">),</span> <span class="n">cache_dir</span><span class="o">=</span><span class="n">cache_dir</span><span class="p">,</span> <span class="n">hf_token</span><span class="o">=</span><span class="n">hf_token</span><span class="p">,</span> <span class="n">local_model_dir</span><span class="o">=</span><span class="n">local_model_dir</span><span class="p">)</span>
 
     <span class="n">qpc_path_exists</span><span class="p">,</span> <span class="n">qpc_dir_path</span> <span class="o">=</span> <span class="n">qpc_exists</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">qpc_base_dir_name</span><span class="p">)</span>
+    <span class="c1"># Handle qpc generation</span>
     <span class="k">if</span> <span class="n">qpc_path_exists</span><span class="p">:</span>
-        <span class="c1"># execute</span>
-        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Pre-compiled qpc found! Trying to execute with given prompt&quot;</span><span class="p">)</span>
-        <span class="n">cloud_ai_100_exec_kv</span><span class="p">(</span>
-            <span class="n">batch_size</span><span class="p">,</span>
-            <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
-            <span class="n">qpc_path</span><span class="o">=</span><span class="n">qpc_dir_path</span><span class="p">,</span>
-            <span class="n">device_id</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
-            <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span>
-        <span class="p">)</span>
-        <span class="k">return</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Pre-compiled qpc found at </span><span class="si">{</span><span class="n">qpc_dir_path</span><span class="si">}</span><span class="s2">! Executing with given prompt&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Handle onnx model generation</span>
+        <span class="n">onnx_model_path</span> <span class="o">=</span> <span class="n">get_onnx_model_path</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">cache_dir</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">hf_token</span><span class="p">,</span> <span class="n">local_model_dir</span><span class="p">)</span>
 
-    <span class="n">onnx_path_exists</span><span class="p">,</span> <span class="n">onnx_dir_path</span><span class="p">,</span> <span class="n">onnx_model_path</span> <span class="o">=</span> <span class="n">onnx_exists</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">onnx_path_exists</span><span class="p">:</span>
-        <span class="c1"># Compile -&gt; execute</span>
-        <span class="c1"># We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation</span>
-        <span class="n">generated_qpc_path</span> <span class="o">=</span> <span class="nb">compile</span><span class="p">(</span>
+        <span class="c1">#########</span>
+        <span class="c1"># Compile</span>
+        <span class="c1">#########</span>
+        <span class="n">generated_qpc_path</span> <span class="o">=</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
             <span class="n">onnx_path</span><span class="o">=</span><span class="n">onnx_model_path</span><span class="p">,</span>
-            <span class="n">qpc_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">qpc_dir_path</span><span class="p">),</span>
+            <span class="n">qpc_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span>
+                <span class="n">qpc_dir_path</span>
+            <span class="p">),</span>  <span class="c1"># We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation</span>
             <span class="n">num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
             <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
             <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt_len</span><span class="p">,</span>
@@ -229,69 +213,18 @@
         <span class="k">assert</span> <span class="p">(</span>
             <span class="n">generated_qpc_path</span> <span class="o">==</span> <span class="n">qpc_dir_path</span>
         <span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;QPC files were generated at an unusual location, expected </span><span class="si">{</span><span class="n">qpc_dir_path</span><span class="si">}</span><span class="s2">; got </span><span class="si">{</span><span class="n">generated_qpc_path</span><span class="si">}</span><span class="s2">&quot;</span>
-        <span class="n">cloud_ai_100_exec_kv</span><span class="p">(</span>
-            <span class="n">batch_size</span><span class="p">,</span>
-            <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
-            <span class="n">qpc_path</span><span class="o">=</span><span class="n">qpc_dir_path</span><span class="p">,</span>
-            <span class="n">device_id</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
-            <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span>
-        <span class="p">)</span>
-        <span class="k">return</span>
 
-    <span class="c1">#############################################</span>
-    <span class="c1"># hf model -&gt; export -&gt; compile -&gt; execute</span>
-    <span class="c1">#############################################</span>
-    <span class="n">model_hf</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_hf_path</span><span class="p">,</span> <span class="n">use_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="c1"># Easy and minimal api to update the model to QEff.</span>
-    <span class="n">model_transformed</span> <span class="o">=</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="n">model_hf</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;Transformers&quot;</span><span class="p">,</span> <span class="n">form_factor</span><span class="o">=</span><span class="s2">&quot;cloud&quot;</span><span class="p">)</span>
-    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Model after Optimized transformations </span><span class="si">{</span><span class="n">model_transformed</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-
-    <span class="c1"># Export to the Onnx</span>
-    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Exporting to Pytorch </span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2"> to ONNX...&quot;</span><span class="p">)</span>
-    <span class="n">base_path</span><span class="p">,</span> <span class="n">generated_onnx_path</span> <span class="o">=</span> <span class="n">qualcomm_efficient_converter</span><span class="p">(</span>
-        <span class="n">model_kv</span><span class="o">=</span><span class="n">model_transformed</span><span class="p">,</span>
-        <span class="n">onnx_dir_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
-        <span class="n">model_name</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span>
-        <span class="n">kv</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-        <span class="n">form_factor</span><span class="o">=</span><span class="s2">&quot;cloud&quot;</span><span class="p">,</span>
-        <span class="n">return_path</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-        <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
-    <span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span>
-        <span class="sa">f</span><span class="s2">&quot;Generated Onnx_path </span><span class="si">{</span><span class="n">generated_onnx_path</span><span class="si">}</span><span class="s2"> and Onnx_model_path </span><span class="si">{</span><span class="n">onnx_model_path</span><span class="si">}</span><span class="s2"> and Onnx_dir_path is </span><span class="si">{</span><span class="n">onnx_dir_path</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="p">)</span>
-    <span class="k">assert</span> <span class="p">(</span>
-        <span class="n">generated_onnx_path</span> <span class="o">==</span> <span class="n">onnx_model_path</span>
-    <span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;ONNX files were generated at an unusual location, expected </span><span class="si">{</span><span class="n">onnx_model_path</span><span class="si">}</span><span class="s2">, got </span><span class="si">{</span><span class="n">generated_onnx_path</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Base Path is </span><span class="si">{</span><span class="n">base_path</span><span class="si">}</span><span class="s2"> and Onnx Model Path is : </span><span class="si">{</span><span class="n">generated_onnx_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-
-    <span class="c1"># Compile</span>
-    <span class="c1"># We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation</span>
-    <span class="n">generated_qpc_path</span> <span class="o">=</span> <span class="nb">compile</span><span class="p">(</span>
-        <span class="n">onnx_path</span><span class="o">=</span><span class="n">onnx_model_path</span><span class="p">,</span>
-        <span class="n">qpc_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">qpc_dir_path</span><span class="p">),</span>
-        <span class="n">num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
-        <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
-        <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt_len</span><span class="p">,</span>
-        <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
-        <span class="n">mxfp6</span><span class="o">=</span><span class="n">mxfp6</span><span class="p">,</span>
-        <span class="n">mxint8</span><span class="o">=</span><span class="n">mxint8</span><span class="p">,</span>
-        <span class="n">aic_enable_depth_first</span><span class="o">=</span><span class="n">aic_enable_depth_first</span><span class="p">,</span>
-        <span class="n">mos</span><span class="o">=</span><span class="n">mos</span><span class="p">,</span>
-        <span class="n">device_group</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
-    <span class="p">)</span>
-    <span class="k">assert</span> <span class="p">(</span>
-        <span class="n">qpc_dir_path</span> <span class="o">==</span> <span class="n">generated_qpc_path</span>
-    <span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;QPC files were generated at an unusual location, expected </span><span class="si">{</span><span class="n">qpc_dir_path</span><span class="si">}</span><span class="s2">; got </span><span class="si">{</span><span class="n">generated_qpc_path</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Compiled qpc files can be found at : </span><span class="si">{</span><span class="n">generated_qpc_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-
+    <span class="c1">#########</span>
     <span class="c1"># Execute</span>
+    <span class="c1">#########</span>
     <span class="n">cloud_ai_100_exec_kv</span><span class="p">(</span>
         <span class="n">batch_size</span><span class="p">,</span>
         <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
         <span class="n">qpc_path</span><span class="o">=</span><span class="n">qpc_dir_path</span><span class="p">,</span>
         <span class="n">device_id</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
         <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span>
+        <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
+        <span class="n">generation_len</span><span class="o">=</span><span class="n">generation_len</span><span class="p">,</span>
     <span class="p">)</span></div>
 
 
@@ -300,10 +233,11 @@
         <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Inference command, the model will be downloaded from HF, optmized, compiled, executed on Cloud AI 100&quot;</span>
     <span class="p">)</span>
     <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--model-name&quot;</span><span class="p">,</span> <span class="s2">&quot;--model_name&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;HF Model card name/id&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--local-model-dir&quot;</span><span class="p">,</span> <span class="s2">&quot;--local_model_dir&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Path to custom model weights and config files&quot;</span><span class="p">)</span>
     <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
         <span class="s2">&quot;--cache-dir&quot;</span><span class="p">,</span>
         <span class="s2">&quot;--cache_dir&quot;</span><span class="p">,</span>
-        <span class="n">default</span><span class="o">=</span><span class="n">Constants</span><span class="o">.</span><span class="n">CACHE_DIR</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
         <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
         <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Cache dir to store HF Downloads&quot;</span><span class="p">,</span>
     <span class="p">)</span>
@@ -344,6 +278,7 @@
         <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
         <span class="n">help</span><span class="o">=</span><span class="s2">&quot;File path for taking input prompts from txt file, sample prompts.txt file present in examples folder&quot;</span><span class="p">,</span>
     <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--generation_len&quot;</span><span class="p">,</span> <span class="s2">&quot;--generation-len&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Number of tokens to generate&quot;</span><span class="p">)</span>
     <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
         <span class="s2">&quot;--aic_enable_depth_first&quot;</span><span class="p">,</span>
         <span class="s2">&quot;--aic-enable-depth-first&quot;</span><span class="p">,</span>
@@ -356,8 +291,18 @@
         <span class="n">default</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span>
         <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Effort level to reduce the on-chip memory&quot;</span><span class="p">,</span>
     <span class="p">)</span>
+    <span class="c1"># FIXME: Add verbose feature</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--verbose&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;-v&quot;</span><span class="p">,</span>
+        <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;pass to print info logs&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
 
     <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">verbose</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
+    <span class="k">del</span> <span class="n">args</span><span class="o">.</span><span class="n">verbose</span>  <span class="c1"># type: ignore</span>
     <span class="n">main</span><span class="p">(</span><span class="o">**</span><span class="n">args</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">)</span>
 </pre></div>
 

@@ -97,7 +97,6 @@
   <ul class="wy-breadcrumbs">
       <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
-          <li class="breadcrumb-item"><a href="../../QEfficient.html">QEfficient</a></li>
       <li class="breadcrumb-item active">QEfficient.transformers.modeling_utils</li>
       <li class="wy-breadcrumbs-aside">
       </li>
@@ -115,120 +114,120 @@
 <span class="c1">#</span>
 <span class="c1"># -----------------------------------------------------------------------------</span>
 
-<span class="kn">import</span> <span class="nn">hashlib</span>
 <span class="kn">from</span> <span class="nn">collections</span> <span class="kn">import</span> <span class="n">namedtuple</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Type</span>
 
 <span class="kn">import</span> <span class="nn">torch.nn</span> <span class="k">as</span> <span class="nn">nn</span>
-<span class="kn">import</span> <span class="nn">transformers</span>
 <span class="kn">from</span> <span class="nn">transformers.models.codegen.modeling_codegen</span> <span class="kn">import</span> <span class="p">(</span>
     <span class="n">CodeGenAttention</span><span class="p">,</span>
-    <span class="n">CodeGenBlock</span><span class="p">,</span>
     <span class="n">CodeGenForCausalLM</span><span class="p">,</span>
     <span class="n">CodeGenModel</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span> <span class="nn">transformers.models.gpt2.modeling_gpt2</span> <span class="kn">import</span> <span class="n">GPT2Attention</span><span class="p">,</span> <span class="n">GPT2Block</span><span class="p">,</span> <span class="n">GPT2LMHeadModel</span><span class="p">,</span> <span class="n">GPT2Model</span>
-<span class="kn">from</span> <span class="nn">transformers.models.llama.modeling_llama</span> <span class="kn">import</span> <span class="p">(</span>
-    <span class="n">LlamaAttention</span><span class="p">,</span>
-    <span class="n">LlamaDecoderLayer</span><span class="p">,</span>
-    <span class="n">LlamaForCausalLM</span><span class="p">,</span>
-    <span class="n">LlamaModel</span><span class="p">,</span>
-    <span class="n">LlamaRMSNorm</span><span class="p">,</span>
+<span class="kn">from</span> <span class="nn">transformers.models.falcon.modeling_falcon</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">FalconAttention</span><span class="p">,</span>
+    <span class="n">FalconForCausalLM</span><span class="p">,</span>
+    <span class="n">FalconModel</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="kn">from</span> <span class="nn">transformers.models.gpt2.modeling_gpt2</span> <span class="kn">import</span> <span class="n">GPT2Attention</span><span class="p">,</span> <span class="n">GPT2Block</span><span class="p">,</span> <span class="n">GPT2LMHeadModel</span><span class="p">,</span> <span class="n">GPT2Model</span>
+<span class="kn">from</span> <span class="nn">transformers.models.gptj.modeling_gptj</span> <span class="kn">import</span> <span class="n">GPTJAttention</span><span class="p">,</span> <span class="n">GPTJForCausalLM</span><span class="p">,</span> <span class="n">GPTJModel</span>
+<span class="kn">from</span> <span class="nn">transformers.models.llama.modeling_llama</span> <span class="kn">import</span> <span class="n">LlamaAttention</span><span class="p">,</span> <span class="n">LlamaForCausalLM</span><span class="p">,</span> <span class="n">LlamaModel</span><span class="p">,</span> <span class="n">LlamaRMSNorm</span>
 <span class="kn">from</span> <span class="nn">transformers.models.mistral.modeling_mistral</span> <span class="kn">import</span> <span class="p">(</span>
     <span class="n">MistralAttention</span><span class="p">,</span>
-    <span class="n">MistralDecoderLayer</span><span class="p">,</span>
     <span class="n">MistralForCausalLM</span><span class="p">,</span>
     <span class="n">MistralModel</span><span class="p">,</span>
     <span class="n">MistralRMSNorm</span><span class="p">,</span>
-    <span class="n">MistralRotaryEmbedding</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span> <span class="nn">transformers.models.mixtral.modeling_mixtral</span> <span class="kn">import</span> <span class="p">(</span>
     <span class="n">MixtralAttention</span><span class="p">,</span>
     <span class="n">MixtralForCausalLM</span><span class="p">,</span>
     <span class="n">MixtralModel</span><span class="p">,</span>
-    <span class="n">MixtralDecoderLayer</span><span class="p">,</span>
-    <span class="n">MixtralSparseMoeBlock</span><span class="p">,</span>
-    <span class="n">MixtralBLockSparseTop2MLP</span><span class="p">,</span>
-    <span class="n">MixtralRotaryEmbedding</span><span class="p">,</span>
     <span class="n">MixtralRMSNorm</span><span class="p">,</span>
+    <span class="n">MixtralSparseMoeBlock</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span> <span class="nn">transformers.models.mpt.modeling_mpt</span> <span class="kn">import</span> <span class="n">MptAttention</span><span class="p">,</span> <span class="n">MptBlock</span><span class="p">,</span> <span class="n">MptForCausalLM</span><span class="p">,</span> <span class="n">MptModel</span>
+<span class="kn">from</span> <span class="nn">transformers.models.phi3.modeling_phi3</span> <span class="kn">import</span> <span class="n">Phi3Attention</span><span class="p">,</span> <span class="n">Phi3ForCausalLM</span><span class="p">,</span> <span class="n">Phi3Model</span><span class="p">,</span> <span class="n">Phi3RMSNorm</span>
+<span class="kn">from</span> <span class="nn">transformers.models.qwen2.modeling_qwen2</span> <span class="kn">import</span> <span class="n">Qwen2Attention</span><span class="p">,</span> <span class="n">Qwen2ForCausalLM</span><span class="p">,</span> <span class="n">Qwen2Model</span><span class="p">,</span> <span class="n">Qwen2RMSNorm</span>
+<span class="kn">from</span> <span class="nn">transformers.models.starcoder2.modeling_starcoder2</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">Starcoder2Attention</span><span class="p">,</span>
+    <span class="n">Starcoder2ForCausalLM</span><span class="p">,</span>
+    <span class="n">Starcoder2Model</span><span class="p">,</span>
+<span class="p">)</span>
 
 <span class="kn">from</span> <span class="nn">QEfficient.customop</span> <span class="kn">import</span> <span class="n">CustomRMSNormAIC</span>
-<span class="kn">from</span> <span class="nn">QEfficient.utils.logging_utils</span> <span class="kn">import</span> <span class="n">logger</span>
 
-<span class="kn">from</span> <span class="nn">.modeling_attn_mask_utils</span> <span class="kn">import</span> <span class="p">(</span>
-    <span class="n">QEffAttentionMaskConverter</span><span class="p">,</span>
-    <span class="n">_qeff_prepare_4d_attention_mask</span><span class="p">,</span>
-    <span class="n">_qeff_prepare_4d_causal_attention_mask</span><span class="p">,</span>
-<span class="p">)</span>
-<span class="kn">from</span> <span class="nn">.modeling_outputs</span> <span class="kn">import</span> <span class="p">(</span>
-    <span class="n">QEffBaseModelOutputWithPast</span><span class="p">,</span>
-    <span class="n">QEffBaseModelOutputWithPastAndCrossAttentions</span><span class="p">,</span>
-    <span class="n">QEffCausalLMOutputWithCrossAttentions</span><span class="p">,</span>
-    <span class="n">QEffCausalLMOutputWithPast</span><span class="p">,</span>
-    <span class="n">QEffMoeCausalLMOutputWithPast</span><span class="p">,</span>
-    <span class="n">QEffMoeModelOutputWithPast</span><span class="p">,</span>
-<span class="p">)</span>
 <span class="kn">from</span> <span class="nn">.models.codegen.modeling_codegen</span> <span class="kn">import</span> <span class="p">(</span>
     <span class="n">QEffCodeGenAttention</span><span class="p">,</span>
-    <span class="n">QEffCodeGenBlock</span><span class="p">,</span>
     <span class="n">QEffCodeGenForCausalLM</span><span class="p">,</span>
     <span class="n">QEffCodeGenModel</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="kn">from</span> <span class="nn">.models.falcon.modeling_falcon</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">QEffFalconAttention</span><span class="p">,</span>
+    <span class="n">QEffFalconForCausalLM</span><span class="p">,</span>
+    <span class="n">QEffFalconModel</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span> <span class="nn">.models.gpt2.modeling_gpt2</span> <span class="kn">import</span> <span class="n">QEffGPT2Attention</span><span class="p">,</span> <span class="n">QEffGPT2Block</span><span class="p">,</span> <span class="n">QEffGPT2LMHeadModel</span><span class="p">,</span> <span class="n">QEffGPT2Model</span>
+<span class="kn">from</span> <span class="nn">.models.gptj.modeling_gptj</span> <span class="kn">import</span> <span class="n">QEffGPTJAttention</span><span class="p">,</span> <span class="n">QEffGPTJForCausalLM</span><span class="p">,</span> <span class="n">QEffGPTJModel</span>
 <span class="kn">from</span> <span class="nn">.models.llama.modeling_llama</span> <span class="kn">import</span> <span class="p">(</span>
     <span class="n">QEffLlamaAttention</span><span class="p">,</span>
-    <span class="n">QEffLlamaDecoderLayer</span><span class="p">,</span>
     <span class="n">QEffLlamaForCausalLM</span><span class="p">,</span>
     <span class="n">QEffLlamaModel</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span> <span class="nn">.models.mistral.modeling_mistral</span> <span class="kn">import</span> <span class="p">(</span>
     <span class="n">QEffMistralAttention</span><span class="p">,</span>
-    <span class="n">QEffMistralDecoderLayer</span><span class="p">,</span>
     <span class="n">QEffMistralForCausalLM</span><span class="p">,</span>
     <span class="n">QEffMistralModel</span><span class="p">,</span>
-    <span class="n">QEffMistralRotaryEmbedding</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span> <span class="nn">.models.mixtral_moe.modeling_mixtral</span> <span class="kn">import</span> <span class="p">(</span>
-    <span class="n">QEffMixtralModel</span><span class="p">,</span>
-    <span class="n">QEffMixtralRotaryEmbedding</span><span class="p">,</span>
     <span class="n">QEffMixtralAttention</span><span class="p">,</span>
     <span class="n">QEffMixtralForCausalLM</span><span class="p">,</span>
-    <span class="n">QEffMixtralDecoderLayer</span><span class="p">,</span>
+    <span class="n">QEffMixtralModel</span><span class="p">,</span>
     <span class="n">QEffMixtralSparseMoeBlock</span><span class="p">,</span>
-    <span class="n">QEffMixtralBLockSparseTop2MLP</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span> <span class="nn">.models.mpt.modeling_mpt</span> <span class="kn">import</span> <span class="n">QEffMptAttention</span><span class="p">,</span> <span class="n">QEffMptBlock</span><span class="p">,</span> <span class="n">QEffMptForCausalLM</span><span class="p">,</span> <span class="n">QEFfMptModel</span>
+<span class="kn">from</span> <span class="nn">.models.phi3.modeling_phi3</span> <span class="kn">import</span> <span class="n">QEffPhi3Attention</span><span class="p">,</span> <span class="n">QEffPhi3ForCausalLM</span><span class="p">,</span> <span class="n">QEffPhi3Model</span>
+<span class="kn">from</span> <span class="nn">.models.qwen2.modeling_qwen2</span> <span class="kn">import</span> <span class="n">QEffQwen2Attention</span><span class="p">,</span> <span class="n">QEffQwen2ForCausalLM</span><span class="p">,</span> <span class="n">QEffQwen2Model</span>
+<span class="kn">from</span> <span class="nn">.models.starcoder2.modeling_starcoder2</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">QEffStarcoder2Attention</span><span class="p">,</span>
+    <span class="n">QEffStarcoder2ForCausalLM</span><span class="p">,</span>
+    <span class="n">QEffStarcoder2Model</span><span class="p">,</span>
+<span class="p">)</span>
 
 <span class="c1"># Define a named tuple for ModelArchitectures</span>
 <span class="c1"># Required for the Automation tool</span>
 <span class="n">ModelArchitectures</span> <span class="o">=</span> <span class="n">namedtuple</span><span class="p">(</span><span class="s2">&quot;ModelArchitectures&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;architectures&quot;</span><span class="p">])</span>
 <span class="c1"># Create an instance of the named tuple</span>
-<span class="n">my_architectures</span> <span class="o">=</span> <span class="n">ModelArchitectures</span><span class="p">(</span>
+<span class="n">qeff_supported_architectures</span> <span class="o">=</span> <span class="n">ModelArchitectures</span><span class="p">(</span>
     <span class="p">[</span>
         <span class="n">GPT2LMHeadModel</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
+        <span class="n">GPTJForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
         <span class="n">MptForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
         <span class="n">CodeGenForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
         <span class="n">LlamaForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
         <span class="n">MistralForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
         <span class="n">MixtralForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
+        <span class="n">Phi3ForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
+        <span class="n">FalconForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
+        <span class="n">Qwen2ForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
+        <span class="n">Starcoder2ForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
     <span class="p">]</span>
 <span class="p">)</span>
 
 <span class="c1"># Define a transformers layers to QEff layers dictionary</span>
 <span class="c1"># While onboarding new models make sure to add the new layer maps to this dictionary.</span>
-<span class="n">TransformersToQEffModulesDict</span> <span class="o">=</span> <span class="p">{</span>
+<span class="n">TransformersToQEffModulesDict</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Type</span><span class="p">[</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">],</span> <span class="n">Type</span><span class="p">[</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{</span>
     <span class="c1"># GPT model layers</span>
     <span class="n">GPT2Model</span><span class="p">:</span> <span class="n">QEffGPT2Model</span><span class="p">,</span>
     <span class="n">GPT2Block</span><span class="p">:</span> <span class="n">QEffGPT2Block</span><span class="p">,</span>
     <span class="n">GPT2Attention</span><span class="p">:</span> <span class="n">QEffGPT2Attention</span><span class="p">,</span>
     <span class="n">GPT2LMHeadModel</span><span class="p">:</span> <span class="n">QEffGPT2LMHeadModel</span><span class="p">,</span>
+    <span class="c1"># GPTJ model layers</span>
+    <span class="n">GPTJModel</span><span class="p">:</span> <span class="n">QEffGPTJModel</span><span class="p">,</span>
+    <span class="n">GPTJAttention</span><span class="p">:</span> <span class="n">QEffGPTJAttention</span><span class="p">,</span>
+    <span class="n">GPTJForCausalLM</span><span class="p">:</span> <span class="n">QEffGPTJForCausalLM</span><span class="p">,</span>
     <span class="c1"># Llama model layers</span>
     <span class="n">LlamaModel</span><span class="p">:</span> <span class="n">QEffLlamaModel</span><span class="p">,</span>
     <span class="n">LlamaAttention</span><span class="p">:</span> <span class="n">QEffLlamaAttention</span><span class="p">,</span>
     <span class="n">LlamaForCausalLM</span><span class="p">:</span> <span class="n">QEffLlamaForCausalLM</span><span class="p">,</span>
-    <span class="n">LlamaDecoderLayer</span><span class="p">:</span> <span class="n">QEffLlamaDecoderLayer</span><span class="p">,</span>
     <span class="n">LlamaRMSNorm</span><span class="p">:</span> <span class="n">CustomRMSNormAIC</span><span class="p">,</span>
     <span class="c1"># MPT model layers</span>
     <span class="n">MptAttention</span><span class="p">:</span> <span class="n">QEffMptAttention</span><span class="p">,</span>
@@ -237,110 +236,38 @@
     <span class="n">MptForCausalLM</span><span class="p">:</span> <span class="n">QEffMptForCausalLM</span><span class="p">,</span>
     <span class="c1"># CodeGen model layers</span>
     <span class="n">CodeGenAttention</span><span class="p">:</span> <span class="n">QEffCodeGenAttention</span><span class="p">,</span>
-    <span class="n">CodeGenBlock</span><span class="p">:</span> <span class="n">QEffCodeGenBlock</span><span class="p">,</span>
     <span class="n">CodeGenModel</span><span class="p">:</span> <span class="n">QEffCodeGenModel</span><span class="p">,</span>
     <span class="n">CodeGenForCausalLM</span><span class="p">:</span> <span class="n">QEffCodeGenForCausalLM</span><span class="p">,</span>
     <span class="c1"># Mistral model layers</span>
     <span class="n">MistralAttention</span><span class="p">:</span> <span class="n">QEffMistralAttention</span><span class="p">,</span>
     <span class="n">MistralModel</span><span class="p">:</span> <span class="n">QEffMistralModel</span><span class="p">,</span>
-    <span class="n">MistralDecoderLayer</span><span class="p">:</span> <span class="n">QEffMistralDecoderLayer</span><span class="p">,</span>
     <span class="n">MistralForCausalLM</span><span class="p">:</span> <span class="n">QEffMistralForCausalLM</span><span class="p">,</span>
-    <span class="n">MistralRotaryEmbedding</span><span class="p">:</span> <span class="n">QEffMistralRotaryEmbedding</span><span class="p">,</span>
     <span class="n">MistralRMSNorm</span><span class="p">:</span> <span class="n">CustomRMSNormAIC</span><span class="p">,</span>
     <span class="c1"># Mixtral model layers</span>
     <span class="n">MixtralAttention</span><span class="p">:</span> <span class="n">QEffMixtralAttention</span><span class="p">,</span>
     <span class="n">MixtralModel</span><span class="p">:</span> <span class="n">QEffMixtralModel</span><span class="p">,</span>
-    <span class="n">MixtralDecoderLayer</span><span class="p">:</span> <span class="n">QEffMixtralDecoderLayer</span><span class="p">,</span>
     <span class="n">MixtralForCausalLM</span><span class="p">:</span> <span class="n">QEffMixtralForCausalLM</span><span class="p">,</span>
-    <span class="n">MixtralRotaryEmbedding</span><span class="p">:</span> <span class="n">QEffMixtralRotaryEmbedding</span><span class="p">,</span>
     <span class="n">MixtralRMSNorm</span><span class="p">:</span> <span class="n">CustomRMSNormAIC</span><span class="p">,</span>
     <span class="n">MixtralSparseMoeBlock</span><span class="p">:</span> <span class="n">QEffMixtralSparseMoeBlock</span><span class="p">,</span>
-    <span class="n">MixtralBLockSparseTop2MLP</span><span class="p">:</span><span class="n">QEffMixtralBLockSparseTop2MLP</span><span class="p">,</span>
+    <span class="c1"># Phi3 model layers</span>
+    <span class="n">Phi3Attention</span><span class="p">:</span> <span class="n">QEffPhi3Attention</span><span class="p">,</span>
+    <span class="n">Phi3Model</span><span class="p">:</span> <span class="n">QEffPhi3Model</span><span class="p">,</span>
+    <span class="n">Phi3ForCausalLM</span><span class="p">:</span> <span class="n">QEffPhi3ForCausalLM</span><span class="p">,</span>
+    <span class="n">Phi3RMSNorm</span><span class="p">:</span> <span class="n">CustomRMSNormAIC</span><span class="p">,</span>
+    <span class="c1"># Falcon model layers</span>
+    <span class="n">FalconAttention</span><span class="p">:</span> <span class="n">QEffFalconAttention</span><span class="p">,</span>
+    <span class="n">FalconForCausalLM</span><span class="p">:</span> <span class="n">QEffFalconForCausalLM</span><span class="p">,</span>
+    <span class="n">FalconModel</span><span class="p">:</span> <span class="n">QEffFalconModel</span><span class="p">,</span>
+    <span class="c1"># Qwen2 model layers</span>
+    <span class="n">Qwen2Attention</span><span class="p">:</span> <span class="n">QEffQwen2Attention</span><span class="p">,</span>
+    <span class="n">Qwen2ForCausalLM</span><span class="p">:</span> <span class="n">QEffQwen2ForCausalLM</span><span class="p">,</span>
+    <span class="n">Qwen2Model</span><span class="p">:</span> <span class="n">QEffQwen2Model</span><span class="p">,</span>
+    <span class="n">Qwen2RMSNorm</span><span class="p">:</span> <span class="n">CustomRMSNormAIC</span><span class="p">,</span>
+    <span class="c1"># Starcoder2 model layers</span>
+    <span class="n">Starcoder2Attention</span><span class="p">:</span> <span class="n">QEffStarcoder2Attention</span><span class="p">,</span>
+    <span class="n">Starcoder2ForCausalLM</span><span class="p">:</span> <span class="n">QEffStarcoder2ForCausalLM</span><span class="p">,</span>
+    <span class="n">Starcoder2Model</span><span class="p">:</span> <span class="n">QEffStarcoder2Model</span><span class="p">,</span>
 <span class="p">}</span>
-
-
-<div class="viewcode-block" id="get_params_hash"><a class="viewcode-back" href="../../../source/other_api.html#QEfficient.transformers.modeling_utils.get_params_hash">[docs]</a><span class="k">def</span> <span class="nf">get_params_hash</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Creates a Hash of all the parameters values i.e. weights using SHA256 algo.</span>
-<span class="sd">    --------</span>
-<span class="sd">    :param model: torch.nn.Module. Base PyTorch model.</span>
-<span class="sd">    :returns: str. Hash string</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">hasher</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">()</span>
-    <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">params</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">():</span>
-        <span class="n">hasher</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">params</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">tobytes</span><span class="p">())</span>
-
-    <span class="k">return</span> <span class="n">hasher</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span></div>
-
-
-<div class="viewcode-block" id="replace_module_with_qeff_layers"><a class="viewcode-back" href="../../../source/other_api.html#QEfficient.transformers.modeling_utils.replace_module_with_qeff_layers">[docs]</a><span class="k">def</span> <span class="nf">replace_module_with_qeff_layers</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Replaces the transformers nn.Module classes with optmized QEff classes in place.</span>
-<span class="sd">    ----------</span>
-<span class="sd">    :param model: torch.nn.Module. Base PyTorch model.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="c1"># Replace if module class is registed in TransformersToQEffModulesDict</span>
-    <span class="n">target_module</span> <span class="o">=</span> <span class="n">TransformersToQEffModulesDict</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="vm">__class__</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">target_module</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">model</span><span class="o">.</span><span class="vm">__class__</span> <span class="o">=</span> <span class="n">target_module</span>
-
-    <span class="c1"># Iterate over child modules</span>
-    <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">module</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">named_children</span><span class="p">():</span>
-        <span class="n">replace_module_with_qeff_layers</span><span class="p">(</span><span class="n">module</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="transform"><a class="viewcode-back" href="../../../source/other_api.html#QEfficient.transformers.modeling_utils.transform">[docs]</a><span class="k">def</span> <span class="nf">transform</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">form_factor</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cloud&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Replaces some Transformers&#39; methods for equivalent methods optimized for AI 100.</span>
-<span class="sd">    ---------</span>
-<span class="sd">    Args:</span>
-<span class="sd">    param model (torch.nn.Module): PyTorch model.</span>
-<span class="sd">    form_factor(str): form factor configuration for optmizing the model, available options=[&quot;cloud&quot;, &quot;edge&quot;].</span>
-
-<span class="sd">    Returns:</span>
-<span class="sd">    torch.nn.Module: PyTorch Module with replaced QEff layers.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    
-    <span class="c1"># Introducnig qeff_transformed attribue in model to check status of transform</span>
-    <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="s2">&quot;qeff_transformed&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Model is already transformed&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">model</span>
-
-    
-    <span class="k">if</span> <span class="n">form_factor</span> <span class="o">==</span> <span class="s2">&quot;cloud&quot;</span><span class="p">:</span>
-        <span class="c1"># Get Hash of all params for checking later</span>
-        <span class="n">prior_params_hash</span> <span class="o">=</span> <span class="n">get_params_hash</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
-        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;The model </span><span class="si">{</span><span class="n">model</span><span class="o">.</span><span class="vm">__class__</span><span class="si">}</span><span class="s2"> layers has been upadted to QEff layers in-place&quot;</span><span class="p">)</span>
-        <span class="c1"># Replace with QEff layers</span>
-        <span class="n">replace_module_with_qeff_layers</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
-
-        <span class="c1"># Check with new params hash</span>
-        <span class="n">later_params_hash</span> <span class="o">=</span> <span class="n">get_params_hash</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
-        <span class="k">assert</span> <span class="p">(</span>
-            <span class="n">prior_params_hash</span> <span class="o">==</span> <span class="n">later_params_hash</span>
-        <span class="p">),</span> <span class="s2">&quot;Weights were changed in the transform process, please report an issue&quot;</span>
-
-        <span class="c1"># Replace the modeling output classes</span>
-        <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_outputs</span><span class="o">.</span><span class="n">BaseModelOutputWithPastAndCrossAttentions</span> <span class="o">=</span> <span class="p">(</span>
-            <span class="n">QEffBaseModelOutputWithPastAndCrossAttentions</span>
-        <span class="p">)</span>
-        <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_outputs</span><span class="o">.</span><span class="n">CausalLMOutputWithCrossAttentions</span> <span class="o">=</span> <span class="n">QEffCausalLMOutputWithCrossAttentions</span>
-        <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_outputs</span><span class="o">.</span><span class="n">BaseModelOutputWithPast</span> <span class="o">=</span> <span class="n">QEffBaseModelOutputWithPast</span>
-        <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_outputs</span><span class="o">.</span><span class="n">CausalLMOutputWithPast</span> <span class="o">=</span> <span class="n">QEffCausalLMOutputWithPast</span>
-        <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_outputs</span><span class="o">.</span><span class="n">MoeCausalLMOutputWithPast</span> <span class="o">=</span> <span class="n">QEffMoeCausalLMOutputWithPast</span>
-        <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_outputs</span><span class="o">.</span><span class="n">MoeModelOutputWithPast</span> <span class="o">=</span> <span class="n">QEffMoeModelOutputWithPast</span>
-
-        <span class="c1"># Replace the modeling attn util classes and functions</span>
-        <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_attn_mask_utils</span><span class="o">.</span><span class="n">AttentionMaskConverter</span> <span class="o">=</span> <span class="n">QEffAttentionMaskConverter</span>
-        <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_attn_mask_utils</span><span class="o">.</span><span class="n">_prepare_4d_attention_mask</span> <span class="o">=</span> <span class="n">_qeff_prepare_4d_attention_mask</span>
-        <span class="n">transformers</span><span class="o">.</span><span class="n">modeling_attn_mask_utils</span><span class="o">.</span><span class="n">_prepare_4d_causal_attention_mask</span> <span class="o">=</span> <span class="n">_qeff_prepare_4d_causal_attention_mask</span>
-
-        <span class="nb">setattr</span><span class="p">(</span><span class="n">model</span><span class="p">,</span><span class="s1">&#39;qeff_transformed&#39;</span><span class="p">,</span><span class="kc">True</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
-
-    <span class="k">elif</span> <span class="n">form_factor</span> <span class="o">==</span> <span class="s2">&quot;edge&quot;</span><span class="p">:</span>
-        <span class="c1"># Add changes for the edge usecase</span>
-        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;We currently only support cloud form factor!&quot;</span><span class="p">)</span></div>
 </pre></div>
 
            </div>

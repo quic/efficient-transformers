@@ -118,9 +118,6 @@
 <li class="toctree-l4"><a class="reference internal" href="#QEfficient.transformers.modeling_utils.ModelArchitectures.architectures"><code class="docutils literal notranslate"><span class="pre">ModelArchitectures.architectures</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l3"><a class="reference internal" href="#QEfficient.transformers.modeling_utils.get_params_hash"><code class="docutils literal notranslate"><span class="pre">get_params_hash()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="#QEfficient.transformers.modeling_utils.replace_module_with_qeff_layers"><code class="docutils literal notranslate"><span class="pre">replace_module_with_qeff_layers()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="#QEfficient.transformers.modeling_utils.transform"><code class="docutils literal notranslate"><span class="pre">transform()</span></code></a></li>
 </ul>
 </li>
 </ul>
@@ -193,7 +190,7 @@
 <span class="sig-name descname"><span class="pre">prepare_cloud_ai_100_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler.prepare_cloud_ai_100_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.prepare_cloud_ai_100_inputs" title="Permalink to this definition"></a></dt>
 <dd><section id="function-responsible-for-creating-prefill-stage-numpy-inputs-for-onnx-model-to-be-run-on-cloud-ai-100">
 <h3>Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on Cloud AI 100.<a class="headerlink" href="#function-responsible-for-creating-prefill-stage-numpy-inputs-for-onnx-model-to-be-run-on-cloud-ai-100" title="Permalink to this heading"></a></h3>
-<p>:param n_layer : int. Number of layers in the PyTorch model.
+<p>:n_layer : int. Number of layers in the PyTorch model.
 :padding_shape : List[int]. Shape of past key values.</p>
 <dl class="simple">
 <dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</p>
@@ -207,7 +204,7 @@
 <span class="sig-name descname"><span class="pre">prepare_ort_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler.prepare_ort_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs" title="Permalink to this definition"></a></dt>
 <dd><section id="function-responsible-for-creating-prefill-stage-numpy-inputs-for-onnx-model-to-be-run-on-onnxrt">
 <h3>Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.<a class="headerlink" href="#function-responsible-for-creating-prefill-stage-numpy-inputs-for-onnx-model-to-be-run-on-onnxrt" title="Permalink to this heading"></a></h3>
-<p>:param n_layer : int. Number of layers in the PyTorch model.
+<p>:n_layer : int. Number of layers in the PyTorch model.
 :padding_shape : List[int]. Shape of past key values.</p>
 <dl class="simple">
 <dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</p>
@@ -221,38 +218,40 @@
 <span class="sig-name descname"><span class="pre">prepare_pytorch_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">padding_shape</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler.prepare_pytorch_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs" title="Permalink to this definition"></a></dt>
 <dd><section id="function-responsible-for-creating-prefill-stage-tensor-inputs-for-pytorch-model">
 <h3>Function responsible for creating Prefill stage tensor inputs for PyTorch model.<a class="headerlink" href="#function-responsible-for-creating-prefill-stage-tensor-inputs-for-pytorch-model" title="Permalink to this heading"></a></h3>
-<p>:param n_layer : int. Number of layers in the PyTorch model.
-:padding_shape : List[int]. Shape of past key values.</p>
-<dl class="simple">
-<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</p>
-</dd>
-</dl>
+<p>:n_layer : int
+:padding_shape : List[int]
+:return inputs: Dict - input_ids, position_ids, past_key_values</p>
 </section>
 </dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.update_cloud_ai_100_inputs">
 <span class="sig-name descname"><span class="pre">update_cloud_ai_100_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">iteration</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">outputs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler.update_cloud_ai_100_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.update_cloud_ai_100_inputs" title="Permalink to this definition"></a></dt>
-<dd><p>Function responsible for updating Prefill stage inputs to create inputs for
-decode stage inputs for ONNX model to be run on ONNXRT.
-———
-:param iteration: int. Current iteration number.
-:inputs: Dict. Previous iteration inputs of Cloud AI 100 execution.
-:outputs: Dict. Previous iteration outputs of Cloud AI 100 execution.
-:inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100)
-———
-:param iteration: int. Current iteration number.
-:inputs: Dict. Previous iteration inputs of Cloud AI 100 execution.
-:outputs: Dict. Previous iteration outputs of Cloud AI 100 execution.
-:inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100)</p>
+<dd><section id="function-responsible-for-updating-prefill-stage-inputs-to-create-inputs-for-decode-stage-inputs-for-onnx-model-to-be-run-on-onnxrt">
+<h3>Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.<a class="headerlink" href="#function-responsible-for-updating-prefill-stage-inputs-to-create-inputs-for-decode-stage-inputs-for-onnx-model-to-be-run-on-onnxrt" title="Permalink to this heading"></a></h3>
+<dl class="field-list simple">
+<dt class="field-odd">iteration<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. Current iteration number.</p>
+</dd>
+<dt class="field-even">inputs<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dict. Previous iteration inputs of Cloud AI 100 execution.</p>
+</dd>
+<dt class="field-odd">outputs<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict. Previous iteration outputs of Cloud AI 100 execution.</p>
+</dd>
+<dt class="field-even">inputs<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100).</p>
+</dd>
+</dl>
+</section>
 </dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs">
 <span class="sig-name descname"><span class="pre">update_ort_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">iteration</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ort_outputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler.update_ort_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs" title="Permalink to this definition"></a></dt>
-<dd><section id="function-responsible-for-updating-prefill-stage-inputs-to-create-inputs-for-decode-stage-inputs-for-onnx-model-to-be-run-on-onnxrt">
-<h3>Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.<a class="headerlink" href="#function-responsible-for-updating-prefill-stage-inputs-to-create-inputs-for-decode-stage-inputs-for-onnx-model-to-be-run-on-onnxrt" title="Permalink to this heading"></a></h3>
-<p>:param iteration:int Current iteration number.
+<dd><section id="id1">
+<h3>Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.<a class="headerlink" href="#id1" title="Permalink to this heading"></a></h3>
+<p>:iteration:int Current iteration number.
 :inputs: Dict. Previous iteration ORT inputs.
 :ort_outputs: Dict. Previous iteration ORT outputs.
 :n_layer : int. Number of layers in the ONNX model.</p>
@@ -269,7 +268,7 @@ decode stage inputs for ONNX model to be run on ONNXRT.
 <dd><section id="function-responsible-for-updating-prefill-stage-inputs-to-create-inputs-for-decode-stage-inputs-for-pytorch-model">
 <h3>Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for PyTorch model.<a class="headerlink" href="#function-responsible-for-updating-prefill-stage-inputs-to-create-inputs-for-decode-stage-inputs-for-pytorch-model" title="Permalink to this heading"></a></h3>
 <dl class="field-list simple">
-<dt class="field-odd">param iteration<span class="colon">:</span></dt>
+<dt class="field-odd">iteration<span class="colon">:</span></dt>
 <dd class="field-odd"><p>int. Current iteration number.</p>
 </dd>
 <dt class="field-even">inputs<span class="colon">:</span></dt>
@@ -320,11 +319,8 @@ Return:</p>
 <dd><section id="function-responsible-for-running-onnx-model-on-cloud-ai-100-and-return-the-output-tokens">
 <h3>Function responsible for running ONNX model on Cloud AI 100 and return the output tokens<a class="headerlink" href="#function-responsible-for-running-onnx-model-on-cloud-ai-100-and-return-the-output-tokens" title="Permalink to this heading"></a></h3>
 <dl class="field-list simple">
-<dt class="field-odd">param qpc_path<span class="colon">:</span></dt>
-<dd class="field-odd"><p>str</p>
-</dd>
-<dt class="field-even">device_id<span class="colon">:</span></dt>
-<dd class="field-even"><p>List[int]</p>
+<dt class="field-odd">session<span class="colon">:</span></dt>
+<dd class="field-odd"><p>QAICInferenceSession.</p>
 </dd>
 </dl>
 <p>:n_layer : int
@@ -668,48 +664,6 @@ loss for Mixture of Experts models.</p>
 <dd><p>Alias for field number 0</p>
 </dd></dl>
 
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="QEfficient.transformers.modeling_utils.get_params_hash">
-<span class="sig-prename descclassname"><span class="pre">QEfficient.transformers.modeling_utils.</span></span><span class="sig-name descname"><span class="pre">get_params_hash</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Module</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/transformers/modeling_utils.html#get_params_hash"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.modeling_utils.get_params_hash" title="Permalink to this definition"></a></dt>
-<dd><section id="creates-a-hash-of-all-the-parameters-values-i-e-weights-using-sha256-algo">
-<h3>Creates a Hash of all the parameters values i.e. weights using SHA256 algo.<a class="headerlink" href="#creates-a-hash-of-all-the-parameters-values-i-e-weights-using-sha256-algo" title="Permalink to this heading"></a></h3>
-<dl class="field-list simple">
-<dt class="field-odd">param model<span class="colon">:</span></dt>
-<dd class="field-odd"><p>torch.nn.Module. Base PyTorch model.</p>
-</dd>
-<dt class="field-even">returns<span class="colon">:</span></dt>
-<dd class="field-even"><p>str. Hash string</p>
-</dd>
-</dl>
-</section>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="QEfficient.transformers.modeling_utils.replace_module_with_qeff_layers">
-<span class="sig-prename descclassname"><span class="pre">QEfficient.transformers.modeling_utils.</span></span><span class="sig-name descname"><span class="pre">replace_module_with_qeff_layers</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Module</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/QEfficient/transformers/modeling_utils.html#replace_module_with_qeff_layers"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.modeling_utils.replace_module_with_qeff_layers" title="Permalink to this definition"></a></dt>
-<dd><section id="replaces-the-transformers-nn-module-classes-with-optmized-qeff-classes-in-place">
-<h3>Replaces the transformers nn.Module classes with optmized QEff classes in place.<a class="headerlink" href="#replaces-the-transformers-nn-module-classes-with-optmized-qeff-classes-in-place" title="Permalink to this heading"></a></h3>
-<dl class="field-list simple">
-<dt class="field-odd">param model<span class="colon">:</span></dt>
-<dd class="field-odd"><p>torch.nn.Module. Base PyTorch model.</p>
-</dd>
-</dl>
-</section>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="QEfficient.transformers.modeling_utils.transform">
-<span class="sig-prename descclassname"><span class="pre">QEfficient.transformers.modeling_utils.</span></span><span class="sig-name descname"><span class="pre">transform</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Module</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">form_factor</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'cloud'</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Module</span></span></span><a class="reference internal" href="../_modules/QEfficient/transformers/modeling_utils.html#transform"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.modeling_utils.transform" title="Permalink to this definition"></a></dt>
-<dd><section id="replaces-some-transformers-methods-for-equivalent-methods-optimized-for-ai-100">
-<h3>Replaces some Transformers’ methods for equivalent methods optimized for AI 100.<a class="headerlink" href="#replaces-some-transformers-methods-for-equivalent-methods-optimized-for-ai-100" title="Permalink to this heading"></a></h3>
-<p>Args:
-param model (torch.nn.Module): PyTorch model.
-form_factor(str): form factor configuration for optmizing the model, available options=[“cloud”, “edge”].</p>
-<p>Returns:
-torch.nn.Module: PyTorch Module with replaced QEff layers.</p>
-</section>
 </dd></dl>
 
 </section>

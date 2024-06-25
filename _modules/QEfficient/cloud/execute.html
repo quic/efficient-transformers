@@ -97,7 +97,6 @@
   <ul class="wy-breadcrumbs">
       <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
           <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
-          <li class="breadcrumb-item"><a href="../../QEfficient.html">QEfficient</a></li>
       <li class="breadcrumb-item active">QEfficient.cloud.execute</li>
       <li class="wy-breadcrumbs-aside">
       </li>
@@ -116,15 +115,14 @@
 <span class="c1"># -----------------------------------------------------------------------------</span>
 
 <span class="kn">import</span> <span class="nn">argparse</span>
-<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span>
-<span class="kn">from</span> <span class="nn">huggingface_hub</span> <span class="kn">import</span> <span class="n">login</span>
-<span class="kn">from</span> <span class="nn">transformers</span> <span class="kn">import</span> <span class="n">AutoTokenizer</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+
 <span class="kn">from</span> <span class="nn">QEfficient.generation.text_generation_inference</span> <span class="kn">import</span> <span class="p">(</span>
     <span class="n">check_batch_size_and_num_prompts</span><span class="p">,</span>
     <span class="n">cloud_ai_100_exec_kv</span><span class="p">,</span>
-    <span class="n">get_compilation_batch_size</span><span class="p">,</span>
-    <span class="p">)</span>
-<span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">hf_download</span>
+    <span class="n">get_compilation_dims</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">load_hf_tokenizer</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.constants</span> <span class="kn">import</span> <span class="n">Constants</span>
 
 
@@ -132,10 +130,11 @@
     <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">device_group</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
-    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">prompts_txt_file_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">cache_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">CACHE_DIR</span><span class="p">,</span>
-    <span class="n">hf_token</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>  <span class="c1"># type: ignore</span>
+    <span class="n">prompts_txt_file_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">generation_len</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cache_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">CACHE_DIR</span><span class="p">,</span>
+    <span class="n">hf_token</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    API to run the model on Cloud AI 100 platform.</span>
@@ -143,20 +142,16 @@
 <span class="sd">    :param model_name: str. Hugging Face Model Card name, Example: [gpt2].</span>
 <span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
 <span class="sd">    :qpc_path: str.  Path to the save generated binary file after compilation.</span>
-<span class="sd">    :devices: List[int]. Device Ids to be used for compilation. if devices &gt; 1, it enable multiple card setup.</span>
 <span class="sd">    :cache_dir: str. Cache dir to store the downloaded huggingface files.</span>
 <span class="sd">    :hf_token: Huggingface token to access gated models.</span>
+<span class="sd">    :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) &gt; 1. Multiple Card setup is enabled.</span>
+<span class="sd">    :prompts_txt_file_path: str. Path to txt file for multiple input prompts</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
-    <span class="k">if</span> <span class="n">hf_token</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">login</span><span class="p">(</span><span class="n">hf_token</span><span class="p">)</span>
+    <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">load_hf_tokenizer</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">cache_dir</span><span class="p">,</span> <span class="n">hf_token</span><span class="p">)</span>
 
-    <span class="c1"># Download tokenizer along with model if it doesn&#39;t exist</span>
-    <span class="n">model_hf_path</span> <span class="o">=</span> <span class="n">hf_download</span><span class="p">(</span><span class="n">repo_id</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span> <span class="n">cache_dir</span><span class="o">=</span><span class="n">cache_dir</span><span class="p">,</span> <span class="n">allow_patterns</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;*.json&quot;</span><span class="p">,</span> <span class="s2">&quot;*.py&quot;</span><span class="p">,</span> <span class="s2">&quot;*token*&quot;</span><span class="p">])</span>
-    <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_hf_path</span><span class="p">,</span> <span class="n">use_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">padding_side</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">)</span>
-
-    <span class="n">batch_size</span> <span class="o">=</span> <span class="n">get_compilation_batch_size</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">)</span>
-    <span class="n">prompt</span> <span class="o">=</span> <span class="n">check_batch_size_and_num_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">)</span>
+    <span class="n">batch_size</span><span class="p">,</span> <span class="n">ctx_len</span> <span class="o">=</span> <span class="n">get_compilation_dims</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">)</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">check_batch_size_and_num_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">)</span>
 
     <span class="c1"># Execute</span>
     <span class="n">cloud_ai_100_exec_kv</span><span class="p">(</span>
@@ -165,6 +160,8 @@
         <span class="n">qpc_path</span><span class="o">=</span><span class="n">qpc_path</span><span class="p">,</span>
         <span class="n">device_id</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
         <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span>
+        <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
+        <span class="n">generation_len</span><span class="o">=</span><span class="n">generation_len</span><span class="p">,</span>
     <span class="p">)</span></div>
 
 
@@ -192,6 +189,7 @@
         <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
         <span class="n">help</span><span class="o">=</span><span class="s2">&quot;File path for taking input prompts from txt file, sample prompts.txt file present in examples folder&quot;</span><span class="p">,</span>
     <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--generation_len&quot;</span><span class="p">,</span> <span class="s2">&quot;--generation-len&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Number of tokens to generate&quot;</span><span class="p">)</span>
     <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
         <span class="s2">&quot;--cache-dir&quot;</span><span class="p">,</span>
         <span class="s2">&quot;--cache_dir&quot;</span><span class="p">,</span>

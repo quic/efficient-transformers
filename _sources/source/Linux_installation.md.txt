@@ -8,9 +8,7 @@ System Requirements:
 * **Use bash terminal**
 * **If using ZSH terminal then "device_group" should be in single quotes e.g.  "--device_group [0]"**
 
-
-
-# Installation 
+# Linux Installation 
 
 ## Using SDK
 
