@@ -73,7 +73,8 @@ def latency_stats_bertstyle(
     """
     API to execute ONNX model on CPU. 
     ---------
-    :param model_name: str. Hugging Face Model Card name, Example: gpt2.
+    
+    :model_name: str. Hugging Face Model Card name, Example: gpt2.
     :qpc: str.  Path to the save generated binary file after compilation.
     :seq_len: int. Sequence length.
     :prompt: str. Sample prompt for the model text generation.
@@ -159,7 +160,8 @@ def cloud_ai_100_exec_kv_helper(
     """
     API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file. 
     ---------
-    :param tokenizer: 
+    
+    :tokenizer: 
     :qpc: str.  Path to the save generated binary file after compilation.
     :prompt: str. Sample prompt for the model text generation.
     :input_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.

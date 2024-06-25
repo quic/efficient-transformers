@@ -52,7 +52,8 @@ class QAICInferenceSession:
         """
         Initialise for QAIC inference Session
         ---------
-        :param qpc_path: str. Path to the save generated binary file after compilation.
+        
+        :qpc_path: str. Path to the save generated binary file after compilation.
         :device_ids: List[int]. Device Ids to be used for compilation. if devices > 1, it enable multiple card setup.
         :activate: bool. If false, activation will be disabled. Default=True.
         :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
@@ -123,7 +124,8 @@ class QAICInferenceSession:
         """
         Provide buffer mapping for input and output
         ---------
-        :param buffer: Dict[str, np.ndarray]. Parameter for buffer mapping.
+        
+        :buffer: Dict[str, np.ndarray]. Parameter for buffer mapping.
         """
         
         for buffer_name, buffer in buffers.items():
@@ -142,7 +144,8 @@ class QAICInferenceSession:
         """
         skip buffer mapping for given list of buffer names
         ---------
-        :param skipped_buffer_name: List[str]. List of buffer name to be skipped.
+        
+        :skipped_buffer_name: List[str]. List of buffer name to be skipped.
         """
         
         self.set_buffers({k: np.array([]) for k in skipped_buffer_names})
@@ -152,7 +155,8 @@ class QAICInferenceSession:
         """ 
         Execute on cloud AI 100
         ---------
-        :param inputs: Dict[str, np.ndarray]). Processed torch input for the model.
+        
+        :inputs: Dict[str, np.ndarray]). Processed torch input for the model.
         """
         # Set inputs
         self.set_buffers(inputs)

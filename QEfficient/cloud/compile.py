@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+
 import QEfficient
 
 if __name__ == "__main__":
@@ -46,7 +47,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device_group",
         "--device-group",
-        required=True, 
+        required=True,
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         help="Cloud AI 100 device ids (comma-separated) e.g. [0,1] ",
     )
