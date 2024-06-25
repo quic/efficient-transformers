@@ -47,9 +47,32 @@ def main(
         0,
     ],
 ) -> None:
+<<<<<<< HEAD
     qpc_base_dir_name = get_qpc_dir_name_infer(
         num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
     )
+=======
+    
+    """
+    Inference command, the model will be downloaded from HF, optimized, compiled, executed on AIC.
+    ---------
+    :param model_name: str. Hugging Face Model Card name, Example: gpt2.
+    :num_cores: int. Number of cores to compile model on. Default: 16, available option: [1 to 16].
+    :prompt: str. Sample prompt for the model text generation.
+    :aic_enable_depth_first: bool. If passed, this option will be enabled during compilation. Default=False.
+    :mos: int. Effort level to reduce the on-chip memory. Default=-1.
+    :cache_dir: str. Cache dir to store the downloaded huggingface files.
+    :hf_token: Huggingface token to access gated models.
+    :batch_size: int. Batch size for model to compile.
+    :prompt_len: int. prompt len for the model to compile.
+    :ctx_len: int. Maximum context length for the model to compile.
+    :mxfp6: bool. Enable compilation for MXFP6 precision.
+    :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices > 1, it enable multiple card setup.
+    
+    """
+    
+    qpc_base_dir_name = get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group)
+>>>>>>> f765bc1 (Updated documentation)
     prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
     cache_dir = check_and_assign_cache_dir(local_model_dir,cache_dir)
 

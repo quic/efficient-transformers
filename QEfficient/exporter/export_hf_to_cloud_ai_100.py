@@ -31,19 +31,29 @@ def convert_to_cloud_bertstyle(
     seq_len: int,
 ) -> str:
     """
-    Function to convert the model to Bertstyle approach.
+    API to convert model to Bertstyle approach.
     Bertstyle Approach:
-        1. No Prefill/Decode sepeartly compiled
-        2. No KV retaintion logic.
-        3. KV is everytime computed for all the tokens until EOS/max_length
+        1. No Prefill/Decode separably compiled.
+        2. No KV retention logic.
+        3. KV is every time computed for all the tokens until EOS/max_length.
+    ---------
+    
+    :model_name: str. The name of the model to be used.
+    :qeff_model: QEFFBaseModel. Transformed KV torch model to be used.
+    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.
+    :onnx_dir_path: str. The path where the model is stored. If None, the model is loaded from the default location.
+    :seq_len: int. The length of the sequence. Default is 128.
 
-    Args:
-        model_name (str): The name of the model to be used.
-        qeff_model (QEFFBaseModel): Transformed KV torch model to be used
-        tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
-        onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
-        seq_len (int, optional): The length of the sequence. Default is 128.
+    Return:
+        Path of exported ONNX file.
+
     """
+    # todo (amitraj) Optimize the onnx export
+    if onnx_dir_path is None:
+        model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
+        onnx_dir_path = os.path.join(model_card_dir, "onnx_bertstyle")
+    
+    # Check if ONNX already exist
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
@@ -146,19 +156,28 @@ def convert_to_cloud_kvstyle(
     seq_len: int,
 ) -> str:
     """
-    Function Modeling changes for kv retention and export to Onnx.
+    API change model for kv retention and export to ONNX.
     KV Style Approach:
         1. This architecture is particularly suitable for autoregressive tasks
         2. where sequence generation involves processing one token at a time
         3. And contextual information from earlier tokens is crucial for predicting the next token.
         4. The inclusion of a kV cache enhances the efficiency of the decoding process, making it more computationally efficient.
+    ---------
+    :param model_name: str. Hugging Face Model Card name, Example: [gpt2].
+    :model_class: type. The class of the model.
+    :model_kv: torch.nn.Module. Transformed KV torch model to be used
+    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.
+    :onnx_dir_path: str. The path where the model is stored. If None, the model is loaded from the default location.
+    :hf_token: str. Huggingface token to access gated models. Default=None.
+    :seq_len: int. The length of the sequence. Default=128.
+    :input_str: str. The input string to be processed. Default=Constants.input_str.
+    :return_path: bool. If True, return the base path for models and exported onnx model path. Default=Constants.seq_length.
+    :save_fp32_onnx: bool. If True, fp32 unclipped version of ONNX will be saved. Default is False.
+    :save_fp16_onnx: bool. If false, fp16 clipped version of ONNX will be deleted. Default is True.
 
-    Args:
-        model_name (str): The name of the model to be used.
-        qeff_model (QEFFBaseModel): Transformed KV torch model to be used
-        tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
-        onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
-        seq_len (int, optional): The length of the sequence. Default is 128.
+    Returns:
+        Path of exported ONNX file.
+    
     """
     warnings.warn("\033[93mThis function will be deprecated soon, use QEfficient.export instead\033[0m", DeprecationWarning, stacklevel=2)
     if os.path.exists(onnx_dir_path):
@@ -403,20 +422,21 @@ def qualcomm_efficient_converter(
     """
     Function to convert the input string using the specified model and returns the result.
 
-    Args:
-        model_name (str): The name of the model to be used.
-        model_kv (torch.nn.Module): Transformed KV torch model to be used
-        local_model_dir(str): Path to custom model weights and config files
-        tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
-        cache_dir (str): Path to cache dir if not specified, default HF cache_dir will be used.
-        onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
-        hf_token (bool): If True, an authentication token will be used. Default is False.
-        seq_len (int, optional): The length of the sequence. Default is 128.
-        kv (bool): If True, key-value pairs will be used. Default is True.
-        form_factor (str): form_factor of the hardware, currently only accepts "cloud".
+    ---------
+    
+    :model_name: str. The name of the model to be used.
+    :model_kv: torch.nn.Module. Transformed KV torch model to be used.
+    :local_model_dir: str. Path to custom model weights and config files.
+    :tokenizer: HF AutoTokenizer. Tokenzier to prepare inputs.
+    :cache_dir: str. Path to cache dir if not specified, default HF cache_dir will be used.
+    :onnx_dir_path: str. The path where the model is stored. If None, the model is loaded from the default location.
+    :hf_token: bool. If True, an authentication token will be used. Default is False.
+    :seq_len: int. The length of the sequence. Default is 128.
+    :kv: bool. If True, key-value pairs will be used. Default is True.
+    :form_factor: str. form_factor of the hardware, currently only accepts "cloud".
 
     Returns:
-        None, if automation is False, else path to exported Onnx file
+       Path of exported ONNX file.
 
     """
     warnings.warn("\033[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m", DeprecationWarning, stacklevel=2)

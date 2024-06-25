@@ -24,12 +24,20 @@ io_files = []
 def write_io_files(
     inputs: Dict[str, np.ndarray],
     outputs: Dict[str, np.ndarray],
-    write_io_dir: str,
+    write_io_dir: str, 
     write_io_subdir: str,
     write_io_name: str,
     include_dims: bool = False,
     reset: bool = False,
 ):
+    
+    """
+
+    
+    """
+    
+    
+    
     global io_files
     if reset:
         io_files = []
@@ -69,6 +77,18 @@ def latency_stats_bertstyle(
     prompt: str,
     device_id: List[int] = [0],
 ):
+    
+  """
+    API to execute ONNX model on CPU. 
+    ---------
+    :param model_name: str. Hugging Face Model Card name, Example: gpt2.
+    :qpc: str.  Path to the save generated binary file after compilation.
+    :seq_len: int. Sequence length.
+    :prompt: str. Sample prompt for the model text generation.
+    :device_id: List[int]. Device Ids to be used for compilation. if devices > 1, it enable multiple card setup.
+    """
+    
+    
     session = QAICInferenceSession(qpc, device_id)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
@@ -146,6 +166,22 @@ def cloud_ai_100_exec_kv_helper(
     stream: bool = True,
     write_io_dir: Optional[str] = None,
 ):
+    
+    """
+    API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file. 
+    ---------
+    :param tokenizer: 
+    :qpc: str.  Path to the save generated binary file after compilation.
+    :prompt: str. Sample prompt for the model text generation.
+    :input_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.
+    :generation_len: int. Maximum context length for the model to compile.
+    :device_id: List[int]. Device Ids to be used for compilation. if len(device_id) > 1, it enable multiple card setup.
+    :enable_debug_logs: bool. If True, it enables debugging logs.
+    :stream: bool. If True enable streamer, which returns tokens one by one as the model generates them.
+    :Write_io_dir: 
+    :automation: bool. If true, it print input, output and performance stats.
+    """
+    
     if tokenizer.padding_side != "right":
         logger.warning("Please use padding_side='right' while initializing the tokenizer")
         tokenizer.padding_side = "right"
