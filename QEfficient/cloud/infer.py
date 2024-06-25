@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -47,6 +47,28 @@ def main(
         0,
     ],
 ) -> None:
+    """
+    Inference command, the model will be downloaded from HF, optimized, compiled, executed on AIC.
+    ---------
+
+    :model_name: str. Hugging Face Model Card name, Example: gpt2.
+    :num_cores: int. Number of cores to compile model on.
+    :prompt: str. Sample prompt for the model text generation.
+    :local_model_dir: str. Path to custom model weights and config files.
+    :prompts_txt_file_path: str. Path to txt file for taking input prompts
+    :aic_enable_depth_first: bool. If passed, this option will be enabled during compilation. Default=False.
+    :mos: int. Effort level to reduce the on-chip memory. Default=-1.
+    :cache_dir: str. Cache dir to store the downloaded huggingface files.
+    :hf_token: Huggingface token to access gated models.
+    :batch_size: int. Batch size for model to compile.
+    :prompt_len: int. prompt len for the model to compile.
+    :ctx_len: int. Maximum context length for the model to compile.
+    :generation_len: int. Number of tokens to be generated.
+    :mxfp6: bool. Enable compilation for MXFP6 precision.
+    :mxint8: bool. Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
+    :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices > 1, it enables multiple card setup.
+    """
+
     prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
 

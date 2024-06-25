@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -112,10 +112,11 @@ def compile(
     **kwargs,
 ) -> str:
     """
-    Api() to compile the Onnx Model on Cloud AI 100 Platform with give config.
+    API to compile the Onnx Model on Cloud AI 100 platform with given config.
     ---------
-    :param onnx_path: str. Generated Onnx Model Path.
-    :param qpc_path: str. Path for saving compiled qpc binaries.
+
+    :onnx_path: str. Generated Onnx Model Path.
+    :qpc_path: str. Path for saving compiled qpc binaries.
     :num_cores: int. Number of cores to compile model on.
     :device_group: List[int]. Used for finding number of devices to compile for.
     :aic_enable_depth_first: bool. Enables DFS with default memory size, disabled by default.

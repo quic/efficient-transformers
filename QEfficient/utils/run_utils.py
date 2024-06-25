@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -26,10 +26,12 @@ class ApiRunner:
     def __init__(self, tokenizer, prompt, prompt_len, ctx_len):
         """
         Initialization
-        :param tokenizer: tokenizer
-        :param input_str: List[str]
-        :param prompt_len: int
-        :param ctx_len: int
+        ---------
+
+        :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. model tokenizer.
+        :prompt: str. Input prompt.
+        :prompt_len: int.
+        :ctx_len: int.
         """
 
         self.tokenizer = tokenizer
@@ -45,7 +47,9 @@ class ApiRunner:
         """
         Function responsible for running Huggingface PyTorch model and return the output tokens
         :param model_hf: pytorch model
-        :return generated_ids: numpy.ndarray - output tokens
+        ---------
+        Return:
+            generated_ids: numpy.ndarray - output tokens
         """
         input_ids = self.tokenizer.encode(self.prompt[0], return_tensors="pt")
 
@@ -67,10 +71,13 @@ class ApiRunner:
     def run_kv_model_on_pytorch(self, model, n_layer, padding_shape):
         """
         Function responsible for running KV PyTorch model and return the output tokens
+        ---------
         :param model_hf: pytorch model
-        :param n_layer : int
-        :param padding_shape : List[int]
-        :return generated_ids: numpy.ndarray - output tokens
+        :n_layer : int
+        :padding_shape : List[int]
+
+        Return:
+            generated_ids: numpy.ndarray - output tokens
         """
 
         generated_ids = []
@@ -90,13 +97,16 @@ class ApiRunner:
         print("Completion:", repr(predicted_string))
         return generated_ids
 
-    def run_ort_session(self, inputs, session, n_layer):
+    def run_ort_session(self, inputs, session, n_layer) -> dict:
         """
         Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
-        :param inputs: Dict
-        :param session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'
-        :param n_layer: int
-        :return outputs: Dict
+        ---------
+        :param inputs: Dict.
+        :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
+        :n_layer: int.
+
+        Return:
+            outputs: Dict
         """
 
         outputs = {}
@@ -124,10 +134,13 @@ class ApiRunner:
     def run_kv_model_on_ort(self, model_path, n_layer, padding_shape):
         """
         Function responsible for running ONNX model on onnxruntime and return the output tokens
+        ---------
         :param model_path: str
-        :param n_layer : int
-        :param padding_shape : List[int]
-        :return generated_ids: numpy.ndarray - output tokens
+        :n_layer : int
+        :padding_shape : List[int]
+
+        Return:
+            generated_ids: numpy.ndarray - output tokens
         """
 
         # todo:vbaddi; find a better version to do this changes
@@ -164,10 +177,13 @@ class ApiRunner:
     def run_kv_model_on_cloud_ai_100(self, session, n_layer, padding_shape):
         """
         Function responsible for running ONNX model on Cloud AI 100 and return the output tokens
-        :param session: QAICInferenceSession
-        :param n_layer : int
-        :param padding_shape : List[int]
-        :return generated_ids: numpy.ndarray - output tokens
+        ---------
+        :session: QAICInferenceSession.
+        :n_layer : int
+        :padding_shape : List[int]
+
+        Return:
+            generated_ids: numpy.ndarray - output tokens
         """
 
         generated_ids = []

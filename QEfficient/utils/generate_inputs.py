@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -15,10 +15,12 @@ class InputHandler:
     def __init__(self, tokenizer, input_str, prompt_len, ctx_len):
         """
         Initialization
-        :param model_name: str
-        :param input_str: List[str]
-        :param prompt_len: int
-        :param ctx_len: int
+        ---------
+
+        :tokenizer: str. Hugging Face Model Card name, Example: [gpt2].
+        :input_str: List[str]. List of input string.
+        :prompt_len: int. prompt len for the model to compile.
+        :ctx_len: int. Maximum context length for the model to compile.
         """
         # check and fix tokenizer viability
         padding_check_and_fix(tokenizer)
@@ -30,9 +32,13 @@ class InputHandler:
     def prepare_pytorch_inputs(self, n_layer, padding_shape):
         """
         Function responsible for creating Prefill stage tensor inputs for PyTorch model.
-        :param n_layer : int
-        :param padding_shape : List[int]
-        :return inputs: Dict - input_ids, position_ids, past_key_values
+        ---------
+
+        :n_layer : int
+        :padding_shape : List[int]
+
+        Return:
+            inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
@@ -73,10 +79,14 @@ class InputHandler:
     def update_pytorch_inputs(self, iteration, inputs, pt_outputs):
         """
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for PyTorch model.
-        :param iteration:int
-        :param inputs: Dict
-        :param pt_outputs: Dict
-        :return inputs: Dict - input_ids, position_ids, past_key_values
+        ---------
+
+        :iteration: int. Current iteration number.
+        :inputs: Dict. Previous iteration inputs.
+        :pt_outputs: Dict. Previous iteration PyTorch outputs.
+
+        Return:
+            inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         updated_inputs = {}
@@ -90,9 +100,13 @@ class InputHandler:
     def prepare_ort_inputs(self, n_layer, padding_shape):
         """
         Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.
-        :param n_layer : int
-        :param padding_shape : List[int]
-        :return inputs: Dict - input_ids, position_ids, past_key_values
+        ---------
+
+        :n_layer : int. Number of layers in the PyTorch model.
+        :padding_shape : List[int]. Shape of past key values.
+
+        Return:
+            inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
@@ -122,11 +136,15 @@ class InputHandler:
     def update_ort_inputs(self, iteration, inputs, ort_outputs, n_layer):
         """
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
-        :param iteration:int
-        :param inputs: Dict
-        :param ort_outputs: Dict
-        :param n_layer : int
-        :return inputs: Dict - input_ids, position_ids, past_key_values
+        ---------
+
+        :iteration:int Current iteration number.
+        :inputs: Dict. Previous iteration ORT inputs.
+        :ort_outputs: Dict. Previous iteration ORT outputs.
+        :n_layer : int. Number of layers in the ONNX model.
+
+        Return:
+            inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         updated_inputs = {}
@@ -141,9 +159,13 @@ class InputHandler:
     def prepare_cloud_ai_100_inputs(self, n_layer, padding_shape):
         """
         Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on Cloud AI 100.
-        :param n_layer : int
-        :param padding_shape : List[int]
-        :return inputs: Dict - input_ids, position_ids, past_key_values
+        ---------
+
+        :n_layer : int. Number of layers in the PyTorch model.
+        :padding_shape : List[int]. Shape of past key values.
+
+        Return:
+            inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
@@ -172,12 +194,15 @@ class InputHandler:
 
     def update_cloud_ai_100_inputs(self, iteration, inputs, outputs):
         """
-        Function responsible for updating Prefill stage inputs to create inputs for
-        decode stage inputs for ONNX model to be run on ONNXRT.
-        :param iteration:int
-        :param inputs: Dict
-        :param outputs: Dict
-        :return inputs: Dict - input_ids, position_ids
+        Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
+        ---------
+
+        :iteration: int. Current iteration number.
+        :inputs: Dict. Previous iteration inputs of Cloud AI 100 execution.
+        :outputs: Dict. Previous iteration outputs of Cloud AI 100 execution.
+
+        Return:
+            inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100).
         """
 
         updated_inputs = {}

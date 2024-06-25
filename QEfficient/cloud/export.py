@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -64,7 +64,7 @@ def main(
     local_model_dir: Optional[str] = None,
 ) -> None:
     """
-    Api() for exporting to Onnx Model.
+    API for exporting to Onnx Model.
     ---------
     :param model_name: str. Hugging Face Model Card name, Example: gpt2
     :cache_dir: str. Cache dir to store the downloaded huggingface files.
