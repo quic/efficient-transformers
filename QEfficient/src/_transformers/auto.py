@@ -20,6 +20,7 @@ from QEfficient.src._transformers.runtime_args import (
 from QEfficient.src.base import QEFFBaseModel, Runtime
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
 from QEfficient.utils import get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
+from QEfficient.utils.logging_utils import logger
 
 # Dictionary that defines the interface from transformers to be used underneath the QEFF interface
 QEFFAutoModelToTransformersAutoModelMap = {
@@ -50,8 +51,8 @@ class QEFFTransformersBase(QEFFBaseModel):
             self.transform()
 
     def __repr__(self) -> str:
-        return self.model.__repr__()
-
+        return f"{self.__class__.__name__}\n" + self.model.__repr__()
+    
     @property
     def is_transformed(self) -> bool:
         return getattr(self.model, "qeff_transformed", False)
@@ -94,13 +95,7 @@ class QEFFTransformersBase(QEFFBaseModel):
     def get_tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
         tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=self.pretrained_model_name_or_path, **self.kwargs)
         return tokenizer
-
-    def transform_export(self, *args, **kwargs) -> Any:
-        raise NotImplementedError("Reached too far!!")
-
-    def transform_export_compile(self, *args, **kwargs) -> Any:
-        raise NotImplementedError("Reached too far!!")
-
+        
     def transform(self):
         # FIXME: break down transform into optmization passes i.e. HW specific optimization(RMSNorm), KV retention pass etc.
         QEfficient.transform(self)
@@ -124,35 +119,22 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         elif runtime == Runtime.AI_100:
             assert isinstance(runtime_args, QEFFAutoModelForCausalLMAI100RuntimeArgs),  f"Expected runtime_args of type {QEFFAutoModelForCausalLMAI100RuntimeArgs.__class__}, got {type(runtime_args)}"
             self.cloud_ai_100_runtime_args = runtime_args
-        # FIXME: Add logger info
         self.runtime = runtime
-
-    def export_and_compile(self, num_cores: int, device_group: List[int], batch_size: int = 1, prompt_len: int = 32, ctx_len: int = 128,
-                mxfp6: bool = True, mxint8: bool = False, mos: int = -1, aic_enable_depth_first: bool = False, qpc_dir_suffix: Optional[str] = None,
-                full_batch_size: int = 1) -> str:
-        """
-        Exports the Pytorch model to ONNX and saves it locally.
-        -------------
-        hf_model_card: str. Model card name on HuggingFace, used for deciding where to save the onnx, qpc files i.e. qeff_models/HF_model_card/(onnx or qpc).
-        onnx_model_path: str. Path for saving onnx model.
-        """
-        self.export()
-        self.compile(num_cores=num_cores, device_group=device_group, batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len,
-                     mxfp6=mxfp6, mxint8=mxint8, mos=mos, aic_enable_depth_first=aic_enable_depth_first, qpc_dir_suffix=qpc_dir_suffix,
-                     full_batch_size=full_batch_size)
-        return self.cloud_ai_100_runtime_args.qpc_dir_path
-
 
     def export(self, **kwargs) -> str:
         assert self.is_transformed, "Please first run transform on the QEFFAutoModelForCausalLM object"
         model_card_name = self.get_model_card_name()
-        base_path, onnx_path = QEfficient.export(model_name=model_card_name, model_kv=self, tokenizer=self.tokenizer)
+        QEfficient.export(model_name=model_card_name, model_kv=self, tokenizer=self.tokenizer)
         assert self.runtime == Runtime.CPU_ORT, "Something went wrong while exporting model to ONNX"
-        return onnx_path
+        return self.ort_runtime_args.onnx_model_path
 
     def compile(self, num_cores: int, device_group: List[int], batch_size: int = 1, prompt_len: int = 32, ctx_len: int = 128,
-                mxfp6: bool = True, mxint8: bool = False, mos: int = -1, aic_enable_depth_first: bool = False, qpc_dir_suffix: Optional[str] = None,
-                full_batch_size: int = 1) -> str:
+                mxfp6: bool = True, mxint8: bool = False, mos: int = -1, aic_enable_depth_first: bool = False, qpc_dir_suffix: Optional[str] = None) -> str:
+        # Export first if self.ort_runtime_args are not populated
+        if self.ort_runtime_args is None:
+            logger.info(f"Exporting the {self.model.__class__.__name__} model to ONNX for compilation!")
+            self.export()
+        
         # Prepare qpc dir path
         qpc_base_dir_name = get_qpc_dir_name_infer(num_cores=num_cores, mos=mos, batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, mxfp6=mxfp6, mxint8=mxint8, device_group=device_group)
         qpc_base_dir_name = qpc_base_dir_name + "_" + qpc_dir_suffix if qpc_dir_suffix else qpc_base_dir_name
@@ -162,11 +144,12 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         QEfficient.compile(onnx_path=self.ort_runtime_args.onnx_model_path, qpc_path=os.path.dirname(qpc_dir_path),
                            num_cores=num_cores, device_group=device_group, aic_enable_depth_first=aic_enable_depth_first,
                            mos=mos, batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, mxfp6=mxfp6,
-                           mxint8=mxint8, full_batch_size=full_batch_size)
+                           mxint8=mxint8)
+        
+        # Setting runtime here, as we are not passing self object to QEfficient.compile API which is required by QEfficient.cloud.compile
         cloud_ai_100_runtime_args = QEFFAutoModelForCausalLMAI100RuntimeArgs(qpc_dir_path=qpc_dir_path, device_group=device_group)
         self.set_runtime(runtime=Runtime.AI_100, runtime_args=cloud_ai_100_runtime_args)
-
-        return qpc_dir_path
+        return self.cloud_ai_100_runtime_args.qpc_dir_path
 
 
 class QEffAutoModel(QEFFTransformersBase):

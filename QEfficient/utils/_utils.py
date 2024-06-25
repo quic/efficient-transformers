@@ -23,12 +23,12 @@ def login_and_download_hf_lm(model_name, *args, **kwargs):
     cache_dir = kwargs.pop("cache_dir", None)
     if hf_token is not None:
         login(hf_token)
-    model_name = hf_download(
+    model_path = hf_download(
         repo_id=model_name,
         cache_dir=cache_dir,
         ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5"],
     )
-    return model_name
+    return model_path
 
 
 def hf_download(
@@ -134,7 +134,7 @@ def load_hf_tokenizer(
         pretrained_model_name_or_path
         if os.path.isdir(pretrained_model_name_or_path)
         else hf_download(
-            repo_id=pretrained_model_name_or_path, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"]
+            repo_id=pretrained_model_name_or_path, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*", "*txt"]
         )
     )
     tokenizer = AutoTokenizer.from_pretrained(

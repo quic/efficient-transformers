@@ -41,6 +41,8 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any
 
+from QEfficient.utils.logging_utils import logger
+
 
 # Defining placeholder ENUM for execute function
 class Runtime(Enum):
@@ -77,6 +79,7 @@ class QEFFBaseModel(ABC):
             assert self.cloud_ai_100_runtime_args is not None, "Please run compile first"
         else:
             assert value == Runtime.CPU_PT, f"Expected runtime to be of type {Runtime.__class__} got {type(value)}"
+        logger.info(f"Setting runtime for {type(self)} to {value}")
         self.__runtime = value
 
     @classmethod
@@ -88,7 +91,7 @@ class QEFFBaseModel(ABC):
         raise NotImplementedError("Must implement for child classes")
 
     @abstractmethod
-    def export_and_compile(self, *args, **kwargs) -> Any:
+    def set_runtime(self, runtime: Runtime, runtime_args):
         pass
 
     @abstractmethod
