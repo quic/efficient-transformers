@@ -254,14 +254,12 @@ def export_kvstyle_transformed_model_to_onnx(
     # Build inputs for decode
     inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
     inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-    print(tokenizer.batch_decode(inputs["input_ids"]))
     # Run PyTorch inference for decode in loop
     # todo: vbaddi, fix it to verify on Cloud AI 100.
     for i in range(1):
         pt_outputs = transformed_model(**inputs)
         inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
         inputs["position_ids"] += 1
-        print(tokenizer.batch_decode(inputs["input_ids"]))
     # To avoid issues in onnx export
     inputs["position_ids"] = torch.full((batch_size, 1), seq_len - 1)
 
@@ -398,7 +396,7 @@ def export_lm_model_for_cloud(
             seq_len=seq_length,
         )  # type: ignore
 
-    cpu_ort_args = QEFFAutoModelForCausalLMCPUORTRuntimeArgs(onnx_model_path=os.path.join(onnx_dir_path, f"{fp16_model_name}.onnx"))
+    cpu_ort_args = QEFFAutoModelForCausalLMCPUORTRuntimeArgs(onnx_model_path=os.path.join(onnx_dir_path, f"{model_name}.onnx"))
     qeff_model.set_runtime(runtime=Runtime.CPU_ORT, runtime_args=cpu_ort_args)
     # return the model path for automation.
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
@@ -446,8 +444,8 @@ def qualcomm_efficient_converter(
         if model_kv
         else QEFFCommonLoader.from_pretrained(
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-            hf_token=hf_token,
-            cache_dir=cache_dir,
+            token=hf_token,
+            cache_dir=cache_dir
         )
     )
 

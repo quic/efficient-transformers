@@ -23,12 +23,12 @@ def login_and_download_hf_lm(model_name, *args, **kwargs):
     cache_dir = kwargs.pop("cache_dir", None)   
     if hf_token is not None:
         login(hf_token)
-    model_name = hf_download(
+    model_path = hf_download(
         repo_id=model_name,
         cache_dir=cache_dir,
         ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5"],
     )
-    return model_name
+    return model_path
 
 
 def hf_download(
@@ -120,11 +120,12 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
 
 
 def load_hf_tokenizer(pretrained_model_name_or_path: str, cache_dir: Optional[str] = None, hf_token: Optional[str] = None, padding_side:str = "right", **kwargs) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
+    # FIXME: Fix kwargs to take token, cache_dir and pass via kwargs only on line 129
     logger.info("Loading Tokenizer")
     if hf_token is not None:
         login(hf_token)
     # Download tokenizer along with model if it doesn't exist
-    model_hf_path = pretrained_model_name_or_path if os.path.isdir(pretrained_model_name_or_path) else hf_download(repo_id=pretrained_model_name_or_path, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
+    model_hf_path = pretrained_model_name_or_path if os.path.isdir(pretrained_model_name_or_path) else hf_download(repo_id=pretrained_model_name_or_path, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*", "*.txt"])
     tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     
