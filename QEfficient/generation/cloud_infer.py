@@ -95,10 +95,6 @@ class QAICInferenceSession:
 
     @property
     def input_names(self) -> List[str]:
-        
-        
-        
-        
         return [binding.name for binding in self.bindings if binding.dir == aicapi.BUFFER_IO_TYPE_INPUT]
 
     @property

@@ -24,12 +24,12 @@ io_files = []
 def write_io_files(
     inputs: Dict[str, np.ndarray],
     outputs: Dict[str, np.ndarray],
-    write_io_dir: str, 
+    write_io_dir: str,
     write_io_subdir: str,
     write_io_name: str,
     include_dims: bool = False,
     reset: bool = False,
-): 
+):
     global io_files
     if reset:
         io_files = []

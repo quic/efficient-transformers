@@ -16,7 +16,8 @@ class InputHandler:
         """
         Initialization
         ---------
-        :param model_name: str. Hugging Face Model Card name, Example: [gpt2].
+        
+        :model_name: str. Hugging Face Model Card name, Example: [gpt2].
         :input_str: List[str]. List of input string.
         :prompt_len: int. prompt len for the model to compile.
         :ctx_len: int. Maximum context length for the model to compile.
@@ -31,8 +32,10 @@ class InputHandler:
     def prepare_pytorch_inputs(self, n_layer, padding_shape):
         """
         Function responsible for creating Prefill stage tensor inputs for PyTorch model.
-        :param n_layer : int
-        :param padding_shape : List[int]
+        ---------
+
+        :n_layer : int
+        :padding_shape : List[int]
         :return inputs: Dict - input_ids, position_ids, past_key_values
         """
 
@@ -75,7 +78,8 @@ class InputHandler:
         """
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for PyTorch model.
         ---------
-        :param iteration: int. Current iteration number.
+        
+        :iteration: int. Current iteration number.
         :inputs: Dict. Previous iteration inputs.
         :pt_outputs: Dict. Previous iteration PyTorch outputs.
 
@@ -95,7 +99,8 @@ class InputHandler:
         """
         Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.
         ---------
-        :param n_layer : int. Number of layers in the PyTorch model.
+        
+        :n_layer : int. Number of layers in the PyTorch model.
         :padding_shape : List[int]. Shape of past key values.
 
         Return:
@@ -136,7 +141,8 @@ class InputHandler:
         """
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
         ---------
-        :param iteration:int Current iteration number.
+        
+        :iteration:int Current iteration number.
         :inputs: Dict. Previous iteration ORT inputs.
         :ort_outputs: Dict. Previous iteration ORT outputs.
         :n_layer : int. Number of layers in the ONNX model.
@@ -158,7 +164,8 @@ class InputHandler:
         """
         Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on Cloud AI 100.
         ---------
-        :param n_layer : int. Number of layers in the PyTorch model.
+        
+        :n_layer : int. Number of layers in the PyTorch model.
         :padding_shape : List[int]. Shape of past key values.
 
         Return:
@@ -198,9 +205,9 @@ class InputHandler:
     def update_cloud_ai_100_inputs(self, iteration, inputs, outputs):
         """
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
-        
         ---------
-        :param iteration: int. Current iteration number.
+        
+        :iteration: int. Current iteration number.
         :inputs: Dict. Previous iteration inputs of Cloud AI 100 execution.
         :outputs: Dict. Previous iteration outputs of Cloud AI 100 execution.
         :inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100).

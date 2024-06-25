@@ -28,4 +28,3 @@ jobs:
         with:
           config_url: "https://raw.githubusercontent.com/quic/.github/main/repolint.json"
           
-          
