@@ -17,6 +17,7 @@
 - [05/2024] Added support for [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) & [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1).
 - [04/2024] Initial release of [efficient transformers](https://github.com/quic/efficient-transformers) for seamless inference on pre-trained LLMs.
 
+
 # Overview
 
 ## Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain
