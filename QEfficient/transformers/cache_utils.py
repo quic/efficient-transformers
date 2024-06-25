@@ -61,7 +61,7 @@ class QEffDynamicCache(DynamicCache):
             ctx_len = self.key_cache[layer_idx].shape[2]
 
             # Scatter
-            invalid_scatter_index = ctx_len - 1  # remove post the backend compiler fix is in mainline sdk
+            invalid_scatter_index = torch.iinfo(torch.int32).max
             scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
             self.key_cache[layer_idx] = CtxScatterFunc.apply(
                 self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
@@ -76,12 +76,9 @@ class QEffDynamicCache(DynamicCache):
             gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
             invalid_mask = ctx_indices > gather_limit
             if torch.onnx.is_in_onnx_export():
-                # remove post the backend compiler fix is in mainline sdk
-                # invalid_gather_idx = torch.iinfo(torch.int32).max
-                invalid_gather_idx = ctx_len - 1
+                invalid_gather_idx = torch.iinfo(torch.int32).max
             else:
                 invalid_gather_idx = 0
-            # invalid_gather_idx = torch.iinfo(torch.int32).max
             ctx_indices = torch.where(invalid_mask, invalid_gather_idx, ctx_indices)
             k_out = CtxGatherFunc.apply(k_out, batch_index, ctx_indices)
             v_out = CtxGatherFunc.apply(v_out, batch_index, ctx_indices)
