@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -109,13 +109,13 @@ def compile(
     ctx_len: int = 128,
     mxfp6: bool = True,
     mxint8: bool = False,
-    **kwargs
+    **kwargs,
 ) -> str:
     # Dynamically create the specializations JSON
     """
     API to compile the Onnx Model on Cloud AI 100 Platform with give config.
     ---------
-    
+
     :onnx_path: str. Generated Onnx Model Path.
     :qpc_path: str. Path for saving compiled qpc binaries.
     :num_cores: int. Number of cores to compile model on.

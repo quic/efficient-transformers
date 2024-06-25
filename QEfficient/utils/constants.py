@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -23,6 +23,6 @@ class Constants:
     INPUT_STRING = ["My name is"]
 
     CACHE_DIR = os.path.join(ROOT_DIR, "cache_dir")
-    
+
     GB = 2**30
     MAX_QPC_LIMIT = 30
