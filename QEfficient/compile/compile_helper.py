@@ -113,10 +113,11 @@ def compile(
 ) -> str:
     # Dynamically create the specializations JSON
     """
-    Api() to compile the Onnx Model on Cloud AI 100 Platform with give config.
+    API to compile the Onnx Model on Cloud AI 100 Platform with give config.
     ---------
-    :param onnx_path: str. Generated Onnx Model Path.
-    :param qpc_path: str. Path for saving compiled qpc binaries.
+    
+    :onnx_path: str. Generated Onnx Model Path.
+    :qpc_path: str. Path for saving compiled qpc binaries.
     :num_cores: int. Number of cores to compile model on.
     :device_group: List[int]. Used for finding number of devices to compile for.
     :aic_enable_depth_first: bool. Enables DFS with default memory size, disabled by default.

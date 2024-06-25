@@ -45,8 +45,10 @@ class QEFFTransformersBase(QEFFBaseModel):
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         """
         This method accepts All the parameters that are acceptable by transformers.AutoModelForCausalLM.
-        There are few additional parameters that this method can take:
-        :param transform:bool. Whether to optimize model for KV retention; default is True. Pass False to get BertStyle model.
+        ---------
+        
+        :pretrained_model_name_or_path: str. Pass PyTorch model name or path.
+        :transform: bool. Whether to optimize model for KV retention. Default is True. Pass False to get BertStyle model.
         """
         transform: bool = kwargs.get("transform", True)
         kwargs.update({"use_cache": True})  # Always pass use_cache = True, to get KV values as output during ONNX export 
@@ -69,7 +71,9 @@ class QEFFTransformersBase(QEFFBaseModel):
 
 class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
-    QEFF class for manipulating any causal language model from HuggingFace hub.
+    QEFF class which uses  QEfficient.transform to optimizing any kind of model (i.e. LLM, SD, AWQ etc.) for cloud AI 100. It replaces
+    the torch.nn.Module layers with passed QEffModel layers which is optimized implementation of the same.    
+    
     """
     def execute(self, *args, **kwargs): # type: ignore
         raise NotImplementedError("Reached too far!!")
