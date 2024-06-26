@@ -53,7 +53,7 @@ class QAICInferenceSession:
         ---------
 
         :qpc_path: str. Path to the save generated binary file after compilation.
-        :device_ids: List[int]. Device Ids to be used for compilation. if devices > 1, it enable multiple card setup.
+        :device_ids: List[int]. Device Ids to be used for compilation. if devices > 1, it enables multiple card setup.
         :activate: bool. If false, activation will be disabled. Default=True.
         :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
         """

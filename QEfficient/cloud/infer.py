@@ -66,7 +66,7 @@ def main(
     :generation_len: int. Number of tokens to be generated.
     :mxfp6: bool. Enable compilation for MXFP6 precision.
     :mxint8: bool. Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
-    :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices > 1, it enable multiple card setup.
+    :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices > 1, it enables multiple card setup.
     """
 
     qpc_base_dir_name = get_qpc_dir_name_infer(
