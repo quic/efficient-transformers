@@ -80,6 +80,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         """
         kwargs.update({"use_cache": True})  # Always pass use_cache = True, to get KV values as output during ONNX export
         model_card_name = kwargs.pop("model_card_name", None)
+        hf_token = kwargs.pop("hf_token", None)
         model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         kwargs.update({"model_card_name": model_card_name})
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
