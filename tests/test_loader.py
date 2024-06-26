@@ -14,7 +14,11 @@ import QEfficient
 from QEfficient import QEFFAutoModelForCausalLM, QEFFCommonLoader
 
 model_name_to_params_dict: Dict[str, Dict[str, Any]] = {
-    "gpt2": {"qeff_class": QEFFAutoModelForCausalLM, "hf_class": GPT2LMHeadModel, "prompt": "Equator is"},
+    "gpt2": {
+        "qeff_class": QEFFAutoModelForCausalLM,
+        "hf_class": GPT2LMHeadModel,
+        "prompt": "Equator is",
+    },
 }
 model_names = model_name_to_params_dict.keys()
 
