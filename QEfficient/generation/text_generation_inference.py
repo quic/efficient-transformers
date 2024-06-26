@@ -74,7 +74,7 @@ def latency_stats_bertstyle(
     ---------
 
     :model_name: str. Hugging Face Model Card name, Example: gpt2.
-    :qpc: str.  Path to the save generated binary file after compilation.
+    :qpc: str.  Path to save generated binary file after compilation.
     :seq_len: int. Sequence length.
     :prompt: str. Sample prompt for the model text generation.
     :device_id: List[int]. Device Ids to be used for compilation. if devices > 1, it enable multiple card setup.
@@ -160,15 +160,15 @@ def cloud_ai_100_exec_kv_helper(
     API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.
     ---------
 
-    :tokenizer:
+    :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. model tokenizer.
     :qpc: str.  Path to the save generated binary file after compilation.
     :prompt: str. Sample prompt for the model text generation.
-    :input_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.
+    :ctx_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.
     :generation_len: int. Maximum context length for the model to compile.
     :device_id: List[int]. Device Ids to be used for compilation. if len(device_id) > 1, it enable multiple card setup.
     :enable_debug_logs: bool. If True, it enables debugging logs.
     :stream: bool. If True enable streamer, which returns tokens one by one as the model generates them.
-    :Write_io_dir:
+    :Write_io_dir: Path to write the input and output files.
     :automation: bool. If true, it print input, output and performance stats.
     """
 

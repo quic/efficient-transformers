@@ -39,11 +39,11 @@ def convert_to_cloud_bertstyle(
 
     ---------
 
-    :model_name: str. The name of the model to be used.
-    :qeff_model: QEFFBaseModel. Transformed KV torch model to be used
-    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.
+    :model_name: str. Hugging Face Model Card name, Example: "gpt2".
+    :qeff_model: QEFFAutoModelForCausalLM. Transformed KV torch model to be used.
+    :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. model tokenizer.
     :onnx_dir_path: Path to save exported ONNX file.
-    :seq_len: int. The length of the sequence. Default is 128.
+    :seq_len: int. The length of the sequence.
 
     Return:
         Path of exported ONNX file.
@@ -150,7 +150,7 @@ def convert_to_cloud_kvstyle(
     seq_len: int,
 ) -> str:
     """
-    API change model for kv retention and export to ONNX.
+    API to convert model with kv retention and export to ONNX.
     KV Style Approach-
         1. This architecture is particularly suitable for autoregressive tasks
         2. where sequence generation involves processing one token at a time
@@ -159,10 +159,10 @@ def convert_to_cloud_kvstyle(
     ---------
 
     :model_name: str. Hugging Face Model Card name, Example: [gpt2].
-    :qeff_model: QEFFBaseModel. Transformed KV torch model to be used
-    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.
-    :onnx_dir_path: str. The path where the model is stored. If None, the model is loaded from the default location.
-    :seq_len: int. The length of the sequence. Default=128.
+    :qeff_model: QEFFAutoModelForCausalLM. Transformed KV torch model to be used.
+    :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. model tokenizer.
+    :onnx_dir_path: str. Path to save exported ONNX file.
+    :seq_len: int. The length of the sequence.
 
 
     Returns:
@@ -408,7 +408,7 @@ def export_lm_model_for_cloud(
             seq_len=seq_length,
         )  # type: ignore
 
-    # return the model path for automation.
+    # return model path.
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
@@ -431,12 +431,13 @@ def qualcomm_efficient_converter(
     :model_name: str. The name of the model to be used.
     :model_kv: torch.nn.Module. Transformed KV torch model to be used.
     :local_model_dir: str. Path of local model.
-    :tokenizer: HF_AutoTokenizer. Tokenizer to prepare inputs.
+    :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. model tokenizer.
     :cache_dir: str. Path of the cache directory.
-    :onnx_dir_path: str. Path to store ONNx file
+    :onnx_dir_path: str. Path to store ONNX file.
     :hf_token: str. Huggingface token to access gated models. Default=None.
     :seq_len: int. The length of the sequence. Default is 128.
     :kv: bool. If false, It will export to Bert style. Default=true.
+    :form_factor: str. form_factor of the hardware, currently only "cloud" is accepted.
 
     Returns:
        Path of exported ONNX file.

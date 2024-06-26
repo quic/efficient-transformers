@@ -51,7 +51,7 @@ python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path qeff_models/gpt2
 We can also enable MQ, just based on the number of devices. Based on the "--device-group" as input it will create TS config on the fly. If "--device-group [0,1]" it will create TS config for 2 devices and use it for compilation, if "--device-group 0" then TS compilation is skipped and single soc execution is enabled.
 
 ```bash
-python -m QEfficient.cloud.infer --model_name Salesforce/codegen-2B-mono --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0,1] --prompt "def fibonacci(n):" --mos 2 --aic_enable_depth_first  
+python -m QEfficient.cloud.infer --model_name Salesforce/codegen-2B-mono --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0,1] --prompt "def fibonacci(n):" --mos 1 --aic_enable_depth_first  
  
 # Once qpc is saved, you can use the execute API to run for different prompts
 python -m QEfficient.cloud.execute --model_name Salesforce/codegen-2B-mono --qpc-path qeff_models/Salesforce/codegen-2B-mono/qpc_16cores_1BS_32PL_128CL_2devices_mxfp6/qpcs --prompt "def binary_search(array: np.array, k: int):" --device-group [0,1] 

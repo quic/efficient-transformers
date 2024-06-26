@@ -113,7 +113,7 @@ def compile(
 ) -> str:
     # Dynamically create the specializations JSON
     """
-    API to compile the Onnx Model on Cloud AI 100 Platform with give config.
+    API to compile the Onnx Model on Cloud AI 100 platform with given config.
     ---------
 
     :onnx_path: str. Generated Onnx Model Path.

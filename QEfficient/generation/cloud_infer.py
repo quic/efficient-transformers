@@ -146,7 +146,7 @@ class QAICInferenceSession:
         Execute on cloud AI 100
         ---------
 
-        :inputs: Dict[str, np.ndarray]). Processed torch input for the model.
+        :inputs: Dict[str, np.ndarray]). Processed numpy inputs for the model.
         """
         # Set inputs
         self.set_buffers(inputs)

@@ -171,21 +171,21 @@ def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_ba
     return model_base_name
 
 
-def remove_temp_file(file_path_model: str, file_path_weights: str):
+def remove_temp_file(model_file_path: str, weights_file_path: str):
     """
     API to remove a temporary file
     ---------
 
-    :file_path_model: str. Path to the file to be deleted
-    :file_path_weights: str. Path to the weights file
+    :model_file_path: str. Path to the file to be deleted
+    :weights_file_path: str. Path to the weights file
     """
     try:
-        os.remove(file_path_model)
-        os.remove(file_path_weights)
+        os.remove(model_file_path)
+        os.remove(weights_file_path)
     except FileNotFoundError:
-        print(f"File '{file_path_model}' does not exist.")
+        print(f"File '{model_file_path}' does not exist.")
     except Exception as e:
-        print(f"Error deleting file '{file_path_model}': {e}")
+        print(f"Error deleting file '{model_file_path}': {e}")
 
 
 def fix_onnx_fp16(
@@ -201,7 +201,7 @@ def fix_onnx_fp16(
     ---------
 
     :inputs: Dict[str, torch.Tensor]. Processed torch input for the model.
-    :output_names: List[str]. Output of pytorch model inference.
+    :output_names: List[str]. Output names of pytorch model inference.
     :ort_outputs: List[np.ndarray]. Output of onnxruntime.
     :gen_models_path: str. Path of generated ONNX model.
     :model_base_name: str. Base name for the exported ONNX model.
@@ -308,10 +308,10 @@ def generate_input_files(
     API to generate input files, required for Cloud AI 100 execution.
     ---------
 
-    :input_files_path:  Path of the input file.
-    :input_names:
-    :inputs:
-    :input_list_file:
+    :input_files_path: str. Path to save input files.
+    :input_names: List[str]. names of inputs to be saved.
+    :inputs: dict[str, torch.tensor] input tensors to be saved in raw format.
+    :input_list_file: File name to save the names of inputs in order. Example - "input_list.txt"
     """
     # inputFiles
     os.makedirs(input_files_path, exist_ok=True)
@@ -344,7 +344,7 @@ def run_model_on_ort(
 
     :onnx_path: str. Path of ONNX model.
     :inputs:  Dict[str, torch.Tensor]. Processed torch input for the model.
-    :output_names: List[str]. Output of pytorch model inference.
+    :output_names: List[str]. Output from pytorch inference.
     :pt_outputs: Dict[str, torch.Tensor]. Output of PyTorch model inference.
     :dtype: bool. If False it will consider you are passing clipped version of ONNX model.
 
