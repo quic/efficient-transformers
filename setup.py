@@ -7,16 +7,14 @@
 
 import re
 
-from setuptools import find_namespace_packages, setup
+from setuptools import setup
 
-# Ensure we match the version set in QEfficient//version.py
-try:
-    filepath = "QEfficient/version.py"
-    with open(filepath) as version_file:
-        (__version__,) = re.findall('__version__ = "(.*)"', version_file.read())
-except Exception as error:
-    assert False, "Error: Could not open '%s' due %s\n" % (filepath, error)
+# Ensure we match the version set in QEfficient/__init__.py
+filepath = "QEfficient/__init__.py"
+with open(filepath) as version_file:
+    (version,) = re.findall('__version__ = "(.*)"', version_file.read())
 
+<<<<<<< HEAD
 INSTALL_REQUIRES = [
     "transformers==4.41.2",
     "torch@https://download.pytorch.org/whl/cpu/torch-2.0.0%2Bcpu-cp38-cp38-linux_x86_64.whl#sha256=354f281351cddb590990089eced60f866726415f7b287db5105514aa3c5f71ca",
@@ -80,3 +78,6 @@ setup(
         "https://download.pytorch.org/whl/cpu",
     ],
 )
+=======
+setup(version=version)
+>>>>>>> 30ce13b8426fae66ad8148e17a5776a221183049

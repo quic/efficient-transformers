@@ -13,3 +13,4 @@ from QEfficient.transformers.transform import transform  # noqa: F401
 
 # Users can use QEfficient.export for exporting models to ONNX
 export = qualcomm_efficient_converter
+__version__ = "0.0.1.dev0"

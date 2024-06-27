@@ -35,9 +35,7 @@ pipeline
             {
                 sh '''
                     . preflight_qeff/bin/activate
-                    python3 -m pip install multidict==6.0.4
                     pip install --upgrade pip setuptools
-                    pip install torch==2.0.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu --no-deps
                     pip install /opt/qti-aic/dev/lib/x86_64/qaic-0.0.1-py3-none-any.whl
                     pip install -e .[test]
                 '''
@@ -54,9 +52,13 @@ pipeline
                     sh '''
                     . preflight_qeff/bin/activate
                     export TOKENIZERS_PARALLELISM=false
+<<<<<<< HEAD
                     find . | grep -E "(/__pycache__$)" | xargs rm -rf
                     export PYTHONPATH="."
                     pytest -W ignore -rs -v tests
+=======
+                    pytest -W ignore -s -v tests
+>>>>>>> 30ce13b8426fae66ad8148e17a5776a221183049
                     deactivate
                     exit
                     '''     
