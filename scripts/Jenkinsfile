@@ -52,13 +52,7 @@ pipeline
                     sh '''
                     . preflight_qeff/bin/activate
                     export TOKENIZERS_PARALLELISM=false
-<<<<<<< HEAD
-                    find . | grep -E "(/__pycache__$)" | xargs rm -rf
-                    export PYTHONPATH="."
-                    pytest -W ignore -rs -v tests
-=======
                     pytest -W ignore -s -v tests
->>>>>>> 30ce13b8426fae66ad8148e17a5776a221183049
                     deactivate
                     exit
                     '''     
