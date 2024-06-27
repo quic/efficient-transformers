@@ -1,15 +1,19 @@
 name: Lint & Format
-on: [ push, pull_request ]
+on: [pull_request]
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: chartboost/ruff-action@v1
+      - run: pip3 install ruff
+      - run: ruff check
+    env:
+      RUFF_OUTPUT_FORMAT: github
   format:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: chartboost/ruff-action@v1
-        with:
-          args: 'format --check'
+      - run: pip3 install ruff
+      - run: ruff format --check
+    env:
+      RUFF_OUTPUT_FORMAT: github
