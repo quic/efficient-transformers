@@ -21,9 +21,16 @@ from transformers.models.falcon.modeling_falcon import (
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
-from transformers.models.llama.modeling_llama import LlamaAttention, LlamaForCausalLM, LlamaModel, LlamaRMSNorm
+from transformers.models.llama.modeling_llama import (
+    LlamaAttention,
+    LlamaDecoderLayer,
+    LlamaForCausalLM,
+    LlamaModel,
+    LlamaRMSNorm
+)
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
+    MistralDecoderLayer,
     MistralForCausalLM,
     MistralModel,
     MistralRMSNorm,
@@ -60,11 +67,13 @@ from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT
 from .models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJForCausalLM, QEffGPTJModel
 from .models.llama.modeling_llama import (
     QEffLlamaAttention,
+    QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
 )
 from .models.mistral.modeling_mistral import (
     QEffMistralAttention,
+    QEffMistralDecoderLayer,
     QEffMistralForCausalLM,
     QEffMistralModel,
 )
@@ -86,6 +95,12 @@ from .models.starcoder2.modeling_starcoder2 import (
 # Define a named tuple for ModelArchitectures
 # Required for the Automation tool
 ModelArchitectures = namedtuple("ModelArchitectures", ["architectures"])
+
+get_lists_of_cb_qeff_models = ModelArchitectures(
+    [
+        LlamaForCausalLM.__name__,
+        MistralForCausalLM.__name__,
+        ])
 # Create an instance of the named tuple
 qeff_supported_architectures = ModelArchitectures(
     [
@@ -119,6 +134,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     LlamaModel: QEffLlamaModel,
     LlamaAttention: QEffLlamaAttention,
     LlamaForCausalLM: QEffLlamaForCausalLM,
+    LlamaDecoderLayer:QEffLlamaDecoderLayer,
     LlamaRMSNorm: CustomRMSNormAIC,
     # MPT model layers
     MptAttention: QEffMptAttention,
@@ -131,6 +147,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     CodeGenForCausalLM: QEffCodeGenForCausalLM,
     # Mistral model layers
     MistralAttention: QEffMistralAttention,
+    MistralDecoderLayer:QEffMistralDecoderLayer,
     MistralModel: QEffMistralModel,
     MistralForCausalLM: QEffMistralForCausalLM,
     MistralRMSNorm: CustomRMSNormAIC,

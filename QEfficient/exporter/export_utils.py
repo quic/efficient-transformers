@@ -53,6 +53,7 @@ def export_onnx(
         "encoder_outputs",
     }
     decoder_seq_inputs = {"decoder_input_ids", "decoder_attention_mask"}
+    dynamic_axis_past_key = "full_batch_size" if 'batch_index' in input_names else "batch_size"
 
     dynamic_axes = {}
     for iname in input_names:
@@ -62,10 +63,14 @@ def export_onnx(
             dynamic_axes[iname] = {0: "batch_size", 1: "decoder_seq_len"}
         elif iname.startswith("past_"):
             # KV-cache (batch_size, num_heads, past_len, embed_dim)
-            dynamic_axes[iname] = {0: "batch_size", 2: "ctx_len"}
+            dynamic_axes[iname] = {0: dynamic_axis_past_key, 2: "ctx_len"}
+        elif iname == "batch_index": 
+            dynamic_axes[iname] = {0: "batch_size"}
+    
     if "past_key.0" in input_names and "attention_mask" in input_names:
         dynamic_axes["attention_mask"] = {0: "batch_size", 1: "ctx_len"}
 
+    custom_opsets = {"com.qti.aisw.onnx": 1} if dynamic_axis_past_key == "full_batch_size" else None
     # return input_names, output_names, model_base_name
     os.makedirs(f"{gen_models_path}_tmp", exist_ok=True)
     try:
@@ -78,11 +83,12 @@ def export_onnx(
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             opset_version=13,
-            custom_opsets={"com.qti.aisw.onnx": 1},
+            custom_opsets=custom_opsets,
         )
     except Exception as e:
         raise RuntimeError("Exporting to ONNX failed. {}".format(e))
 
+ 
     onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     shutil.rmtree(f"{gen_models_path}_tmp")
