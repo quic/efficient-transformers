@@ -75,7 +75,7 @@ def hf_download(
     return model_path
 
 
-def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Tuple[bool, str]:
+def qpc_exists(qpc_dir_path: str) -> bool:
     """
     Checks if qpc dir exists.
     Returns
@@ -86,15 +86,11 @@ def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Tuple[bool, str]:
     :param dir_path: str. Path of qpc directory.
     :return: Union[Tuple[bool, str]]: qpc_exists and path to qpc directory
     """
-    model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
-    os.makedirs(model_card_dir, exist_ok=True)
-
-    qpc_dir_path = os.path.join(model_card_dir, qpc_base_dir_name, "qpcs")
 
     # Compute the boolean indicating if the QPC exists
     qpc_exists_bool = os.path.isdir(qpc_dir_path) and os.path.isfile(os.path.join(qpc_dir_path, "programqpc.bin"))
 
-    return qpc_exists_bool, qpc_dir_path
+    return qpc_exists_bool
 
 
 def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
@@ -145,15 +141,18 @@ def load_hf_tokenizer(
     return tokenizer
 
 
-def get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group):
+def get_qpc_dir_path(model_card_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group) -> str:
     qpc_base_dir_name = (
         f"qpc_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
         + f"{len(device_group)}"
         + "devices"
         + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
     )
+    model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_card_name))
+    os.makedirs(model_card_dir, exist_ok=True)
 
-    return qpc_base_dir_name
+    qpc_dir_path = os.path.join(model_card_dir, qpc_base_dir_name, "qpcs")
+    return qpc_dir_path
 
 
 def check_and_assign_cache_dir(local_model_dir, cache_dir):

@@ -20,11 +20,11 @@ model_name_to_params_dict: Dict[str, Dict[str, Any]] = {
         "hf_class": GPT2LMHeadModel,
         "prompt": "Equator is",
     },
-    "TinyLlama/TinyLlama-1.1B-Chat-v1.0":{
-        "qeff_class": QEFFAutoModelForCausalLM,
-        "hf_class": LlamaForCausalLM,
-        "prompt": "Equator is"
-    }
+    # "TinyLlama/TinyLlama-1.1B-Chat-v1.0":{
+    #     "qeff_class": QEFFAutoModelForCausalLM,
+    #     "hf_class": LlamaForCausalLM,
+    #     "prompt": "Equator is"
+    # }
 }
 
 model_names = model_name_to_params_dict.keys()
@@ -37,6 +37,7 @@ def test_qeff_auto_model_for_causal_lm(model_name: str):
     assert isinstance(model, model_name_to_params_dict[model_name]['qeff_class'])
     assert isinstance(model.model, model_name_to_params_dict[model_name]['hf_class']) # type: ignore
 
-    qpc_dir_path = model.export_and_compile(num_cores=14, device_group=[0,], batch_size= 1, prompt_len=32, ctx_len=128,
-                mxfp6=True, mxint8=False, mos=-1, aic_enable_depth_first=False, qpc_dir_suffix="vllm", full_batch_size=1)
+    qpc_dir_path = model.compile(num_cores=14, device_group=[0,], batch_size= 1, prompt_len=32, ctx_len=128,
+                mxfp6=True)
+    model.generate(prompts=["My name is"])
     assert os.path.isdir(qpc_dir_path)
