@@ -400,13 +400,8 @@ def cloud_ai_100_exec_kv(
         enable_debug_logs=enable_debug_logs,
         stream=stream,
         write_io_dir=write_io_dir,
-        full_batch_size=full_batch_size,
-    )
-    print(prompt)
-    if batch_size > 1 or full_batch_size is not None:
-        latency_stats = generate_text.cloud_ai_100_exec_kv_helper(prompt=prompt, generation_len=generation_len)
-        generated_texts, prefill_time, decode_perf, total_perf, total_time = latency_stats
-    elif batch_size == 1:
+        full_batch_size=full_batch_size)
+    if batch_size == 1:
         prefill_time = []
         decode_perf = []
         total_perf = []
@@ -473,72 +468,6 @@ def cloud_ai_100_exec_kv(
         automation=automation,
     )
     return execinfo
-
-# def cloud_ai_100_exec_kv(
-#     batch_size,
-#     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-#     qpc_path: str,
-#     prompt: Optional[List[str]] = None,
-#     device_id: List[int] = [0],
-#     ctx_len: Optional[int] = None,
-#     generation_len: Optional[int] = None,
-#     enable_debug_logs: bool = False,
-#     stream: bool = True,
-#     write_io_dir: Optional[str] = None,
-#     automation=False,
-#     full_batch_size: Optional[int] = None,
-# ):
-#     generate_text = TextGeneration(
-#         tokenizer=tokenizer,
-#         prompt=prompt,
-#         qpc_path=qpc_path,
-#         device_id=device_id,
-#         ctx_len=ctx_len,
-#         generation_len=generation_len,
-#         enable_debug_logs=enable_debug_logs,
-#         stream=stream,
-#         write_io_dir=write_io_dir,
-#         full_batch_size=full_batch_size,
-#     )
-#     if batch_size > 1 or full_batch_size is not None:
-#         latency_stats = generate_text.cloud_ai_100_exec_kv_helper(prompt=prompt, generation_len=generation_len)
-#         generated_texts, prefill_time, decode_perf, total_perf, total_time = latency_stats
-#     elif batch_size == 1:
-#         prefill_time = []
-#         decode_perf = []
-#         total_perf = []
-#         total_time = []
-#         generated_texts = []
-#         for i in range(len(prompt)):
-#             latency_stats = generate_text.cloud_ai_100_exec_kv_helper(prompt=[prompt[i]], generation_len=generation_len)
-#             generated_texts.append(latency_stats[0])
-#             prefill_time.append(latency_stats[1])
-#             decode_perf.append(latency_stats[2])
-#             total_perf.append(latency_stats[3])
-#             total_time.append(latency_stats[4])
-
-#         prefill_time = np.average(prefill_time)
-#         decode_perf = np.average(decode_perf)
-#         total_perf = np.average(total_perf)
-#         total_time = np.average(total_time)
-
-#     else:
-#         latency_stats = generate_text.cloud_ai_100_exec_kv_helper(
-#             prompt=prompt,
-#             generation_len=generation_len,
-#         )
-#         generated_texts, prefill_time, decode_perf, total_perf, total_time = latency_stats
-
-#     print_latency_stats_kv(
-#         prompt,
-#         generated_texts,
-#         batch_size,
-#         prefill_time,
-#         decode_perf,
-#         total_perf,
-#         total_time,
-#         automation=automation,
-#     )
 
 class TextGeneration:
     def __init__(
@@ -608,8 +537,7 @@ class TextGeneration:
 
         return prefill_time, decode_perf, total_perf, total_time
 
-    def latency_stats_bertstyle(
-        self,
+    def latency_stats_bertstyle(self, 
         model_name: str,
         qpc: str,
         seq_len: int,
@@ -637,17 +565,17 @@ class TextGeneration:
                 ],
                 1,
             )
-            inputs["attention_mask"] = np.concatenate(
-                [inputs["attention_mask"][:, 1:], np.ones((1, 1), dtype=np.int64)], 1
-            )
+            inputs["attention_mask"] = np.concatenate([inputs["attention_mask"][:, 1:], np.ones((1, 1), dtype=np.int64)], 1)
             print(tokenizer.decode(next_token_id), end=" ", flush=True)
             cur_len += 1
         end = perf_counter()
         print()
         print(round((cur_len - init_len) / (end - start), 2), "tok/s")
+    
+    
 
-        # def get_compilation_batch_size(self, qpc_path: str):
-        qpc_base_path = os.path.dirname(os.path.normpath(qpc))
+    def get_compilation_batch_size(self, qpc_path: str):
+        qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
         specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
         logger.info(f"specialization_file_path : {specialization_file_path}")
         with open(specialization_file_path, "r") as file:
@@ -736,13 +664,11 @@ class TextGeneration:
         This function creates the decode inputs.
 
         Returns:
-            dict: The decode inputs. The dictionary contains 'input_ids', 'position_ids', and 'batch_index' (if not None) from the instance.
+            dict: The decode inputs.
         """
-        decode_inputs = {} 
+        decode_inputs = {}
         decode_inputs["input_ids"] = self.decode_input_ids
         decode_inputs["position_ids"] = self.decode_pos_ids
-        
-       
         if self.batch_index is not None:
             decode_inputs["batch_index"] = self.batch_index
 

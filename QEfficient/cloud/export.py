@@ -112,7 +112,11 @@ if __name__ == "__main__":
         "--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models"
     )
     parser.add_argument(
-        "--full_batch_size", "--full-batch-size", type=int, default=None, help="Batch size for text generation"
+        "--full_batch_size",
+        "--full-batch-size",
+        type=int,
+        default=None,
+        help="Batch size for text generation"
     )
     args = parser.parse_args()
     main(**args.__dict__)
