@@ -16,6 +16,15 @@ from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.logging_utils import logger
 
+"""
+1. Check if compiled qpc for given config already exists, if it does jump to execute, else
+2. Check if exported ONNX file already exists, if true, jump to compilation -> execution, else
+3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
+4. Download HF model -> transform -> export -> compile -> execute
+"""
+
+# TODO update the heck_batch_size_and_num_prompts method for FBS
+
 
 def main(
     model_name: str,
@@ -76,7 +85,7 @@ def main(
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
-        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token, local_model_dir)
+        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size)
 
         #########
         # Compile
@@ -95,6 +104,7 @@ def main(
             aic_enable_depth_first=aic_enable_depth_first,
             mos=mos,
             device_group=device_group,
+            full_batch_size = full_batch_size,
         )
 
     #########
@@ -180,6 +190,13 @@ if __name__ == "__main__":
         "-v",
         action="store_true",
         help="pass to print info logs",
+    )
+    parser.add_argument(
+        "--full_batch_size",
+        "--full_batch_size",
+        type=int,
+        default=None,
+        help="Batch size for text generation"
     )
 
     args = parser.parse_args()

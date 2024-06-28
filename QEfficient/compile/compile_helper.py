@@ -14,8 +14,8 @@ from typing import List, Optional, Tuple
 from QEfficient.utils.logging_utils import logger
 
 
-def create_and_dump_specializations(batch_size: int, prompt_len: int, ctx_len: int, path: str):
-    # Create
+def create_and_dump_specializations(batch_size: int, prompt_len: int, ctx_len: int, path: str, full_batch_size:Optional[int] = None):
+    # Create specialization file. 
     specializations = {
         "specializations": [
             {
@@ -23,9 +23,18 @@ def create_and_dump_specializations(batch_size: int, prompt_len: int, ctx_len: i
                 "seq_len": str(prompt_len),
                 "ctx_len": str(ctx_len),
             },
-            {"batch_size": str(batch_size), "seq_len": "1", "ctx_len": str(ctx_len)},
+            {
+                "batch_size": str(batch_size),
+                "seq_len": "1",
+                "ctx_len": str(ctx_len)},
         ]
     }
+    # If continuous batching is enabled by proving full_batch_size we need to add FBS to the specialization file and update the batch size of decoder part to FBS
+    if full_batch_size is not None:
+        specializations["specializations"][0]["full_batch_size"] = str(full_batch_size)
+        specializations["specializations"][1]["full_batch_size"] = str(full_batch_size)
+        specializations["specializations"][1]["batch_size"] = str(full_batch_size)
+
     # Dump
     with open(path, "w") as file:
         json.dump(specializations, file, indent=4)
@@ -110,7 +119,8 @@ def compile(
     mxfp6: bool = True,
     mxint8: bool = False,
     custom_io_file_path: Optional[str] = None,
-    **kwargs,
+    full_batch_size: Optional[int] = None,
+    **kwargs
 ) -> str:
     """
     Compiles the given ``ONNX`` model using Cloud AI 100 platform SDK compiler and saves the compiled ``qpc`` package at ``qpc_path``.
@@ -140,7 +150,7 @@ def compile(
     specialization_json_path = os.path.join(qpc_path, "specializations.json")
     # Dynamically create the specializations JSON
     create_and_dump_specializations(
-        batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, path=specialization_json_path
+        batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, path=specialization_json_path, full_batch_size=full_batch_size
     )
 
     # Select the customIO config based on the mx flag.

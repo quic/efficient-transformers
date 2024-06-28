@@ -187,13 +187,11 @@ def convert_to_cloud_kvstyle(
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
-def export_kvstyle_transformed_model_to_onnx(
-    model_name: str,
-    transformed_model: torch.nn.Module,
-    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-    onnx_dir_path: str,
-    seq_len: int,
-) -> str:
+def export_kvstyle_transformed_model_to_onnx(model_name: str,
+                                             transformed_model: torch.nn.Module,
+                                             tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+                                             onnx_dir_path: str, seq_len: int, full_batch_size:Optional[int] = None) -> str:  
+
     # Disabling requires_grad on all parameters
     for _, p in enumerate(transformed_model.parameters()):
         p.requires_grad_(False)
@@ -212,6 +210,57 @@ def export_kvstyle_transformed_model_to_onnx(
         ctx_len=seq_len,
     )
     inputs = input_handler.prepare_pytorch_inputs()
+    assert seq_len > 0, "Need seq_len to be greater than zero"
+    # inputs = tokenizer(Constants.input_str, return_tensors="pt",padding=True)
+    batch_size, prompt_len = inputs["input_ids"].shape
+    inputs.pop("attention_mask")
+    inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
+    if full_batch_size:
+        inputs["position_ids"] = torch.arange(prompt_len).view(1, prompt_len) # FIXME remove is this is not required
+        batch_index = torch.arange(1).view(-1, 1)
+        inputs["batch_index"] = batch_index
+
+    config = transformed_model.config
+    if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
+        n_heads = config.n_head
+        d_head = config.n_embd // config.n_head
+        n_layer = config.n_layer
+    elif hasattr(config, "num_key_value_heads") and hasattr(
+        config, "num_attention_heads"
+    ):  # Check for num_key_value_heads (Llama/Mistral)
+        n_heads = config.num_key_value_heads
+        d_head = config.hidden_size // config.num_attention_heads
+        n_layer = config.num_hidden_layers
+    elif hasattr(config, "n_heads"):  # Check for n_heads and d_model in the config (MPT Model)
+        n_heads = config.n_heads
+        d_head = config.d_model // config.n_heads
+        n_layer = config.n_layers
+    elif hasattr(config, "multi_query"):  # Check for Falcon
+        multi_query_value = getattr(config, "multi_query")
+        if multi_query_value:
+            n_heads = 1  # MQA
+        else:
+            n_heads = config.num_attention_heads
+        d_head = config.hidden_size // config.num_attention_heads
+        n_layer = config.num_hidden_layers
+    else:
+        raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
+    inputs["past_key_values"] = [
+        tuple(
+            [
+                torch.zeros(
+                    full_batch_size if full_batch_size else batch_size, # Updated to use FBS if CB is enabled
+                    # batch_size,
+                    n_heads,
+                    seq_len,  # seq_len for running decode loop
+                    d_head,
+                    dtype=torch.float32,
+                )
+                for _ in range(2)
+            ]
+        )
+        for _ in range(n_layer)
+    ]
 
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
@@ -222,11 +271,34 @@ def export_kvstyle_transformed_model_to_onnx(
 
     # Build inputs for next iteration from outputs
     # Build inputs for decode
-    inputs = input_handler.update_pytorch_inputs(inputs, pt_outputs)
+    
 
+   
+    if full_batch_size:
+        input_ids = pt_outputs.logits.detach().argmax(2)
+        inputs["input_ids"] = torch.full((full_batch_size, 1), tokenizer.pad_token_id)
+        inputs["input_ids"][batch_index.view(-1)] = input_ids 
+        
+        position_ids = inputs["position_ids"].max(1, keepdim=True).values + 1
+        inputs["position_ids"] = torch.full((full_batch_size, 1), 0)
+        inputs["position_ids"][batch_index.view(-1)] = position_ids
+        
+        inputs["batch_index"] = torch.arange(full_batch_size).view(-1, 1)
+    else:
+        inputs = input_handler.update_pytorch_inputs(inputs, pt_outputs)
+        # To avoid issues in onnx export
+        inputs["position_ids"] = torch.full((1, 1), seq_len - 1)
+
+
+    # Run PyTorch inference for decode in loop
+    # todo: vbaddi, fix it to verify on Cloud AI 100.
+    for i in range(1):
+        pt_outputs = transformed_model(**inputs)
+        inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
+        inputs["position_ids"] += 1
     # To avoid issues in onnx export
-    inputs["position_ids"] = torch.full((1, 1), seq_len - 1)
-
+    inputs["position_ids"] = torch.full((full_batch_size if full_batch_size else batch_size, 1), seq_len - 1)
+    
     # Run PyTorch inference with past
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
@@ -315,6 +387,7 @@ def export_for_cloud(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_length: int = Constants.SEQ_LEN,
+    full_batch_size:Optional[int] = None,
 ) -> str:
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
@@ -324,20 +397,16 @@ def export_for_cloud(
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length,
+            full_batch_size=full_batch_size,
         )
     else:
         raise NotImplementedError(
             f"Only model type {QEFFAutoModelForCausalLM.__class__.__name__} is supported for export, got {type(qeff_model)}"
         )
 
-
-def export_lm_model_for_cloud(
-    model_name: str,
-    qeff_model: QEFFAutoModelForCausalLM,
-    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-    onnx_dir_path: str,
-    seq_length: int,
-) -> str:
+def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausalLM,
+                              tokenizer:Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+                              onnx_dir_path: str, seq_length: int, full_batch_size:Optional[int] = None) -> str:
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
@@ -349,7 +418,7 @@ def export_lm_model_for_cloud(
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
             seq_len=seq_length,
-        )  # type: ignore
+            full_batch_size=full_batch_size) # type: ignore
 
     else:
         model_name = export_bertstyle_model_to_onnx(
@@ -372,7 +441,8 @@ def qualcomm_efficient_converter(
     hf_token: Optional[str] = None,
     seq_length: int = Constants.SEQ_LEN,
     kv: bool = True,
-    form_factor: str = "cloud",
+    form_factor: str="cloud",
+    full_batch_size:Optional[int] = None,
 ) -> Tuple[str, str]:
     """
     This method is an alias for ``QEfficient.export``.
@@ -425,8 +495,7 @@ def qualcomm_efficient_converter(
 
     # Transform if required
     if model_kv.is_transformed and not kv:
-        raise AttributeError("Transformed model is passed while requsting to convert non-transformed model")
-
+        raise AttributeError("Transformed model is passed while requesting to convert non-transformed model")
     model_kv = model_kv if model_kv.is_transformed else QEfficient.transform(model_kv) if kv else model_kv
 
     if onnx_dir_path is None:
@@ -451,8 +520,8 @@ def qualcomm_efficient_converter(
             qeff_model=model_kv,
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
-            seq_length=seq_length,
-        )
+            seq_length=seq_length, 
+            full_batch_size=full_batch_size)
         return onnx_dir_path, generated_onnx_model_path
     else:
         # [TODO]: Apply the class transformation to make changes for the KV models in edge use cases
