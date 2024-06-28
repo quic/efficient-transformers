@@ -14,11 +14,10 @@ import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 import QEfficient
+from QEfficient.base.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
+from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
-from QEfficient.src._transformers import QEFFAutoModelForCausalLMCPUORTRuntimeArgs
-from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
-from QEfficient.src.base import QEFFBaseModel, Runtime
-from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
+from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import load_hf_tokenizer, padding_check_and_fix
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
@@ -393,12 +392,7 @@ def export_lm_model_for_cloud(
             model=qeff_model.model,
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
-            seq_len=seq_length,
-        )  # type: ignore
-
-    cpu_ort_args = QEFFAutoModelForCausalLMCPUORTRuntimeArgs(onnx_model_path=os.path.join(onnx_dir_path, f"{model_name}.onnx"))
-    qeff_model.set_runtime(runtime=Runtime.CPU_ORT, runtime_args=cpu_ort_args)
-    # return the model path for automation.
+            seq_len=seq_length) # type: ignore
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
@@ -461,6 +455,7 @@ def qualcomm_efficient_converter(
         os.makedirs(onnx_dir_path, exist_ok=True)
 
     # Load tokenizer if not passed
+<<<<<<< HEAD
     tokenizer = (
         tokenizer
         if tokenizer
@@ -471,6 +466,10 @@ def qualcomm_efficient_converter(
             local_model_dir=local_model_dir,
         )
     )
+=======
+    tokenizer = tokenizer if tokenizer else load_hf_tokenizer(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+                                                              hf_token=hf_token, cache_dir=cache_dir, local_model_dir=local_model_dir)
+>>>>>>> 8c30c4a (removed src, simplified automodelclass)
 
     if form_factor == "cloud":
         generated_onnx_model_path = export_for_cloud(
