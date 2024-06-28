@@ -26,6 +26,8 @@ from QEfficient.utils.logging_utils import logger
 4. Download HF model -> transform -> export -> compile -> execute
 """
 
+# TODO update the heck_batch_size_and_num_prompts method for FBS
+
 
 def main(
     model_name: str,
@@ -43,13 +45,14 @@ def main(
     generation_len: Optional[int] = None,
     mxfp6: bool = False,
     mxint8: bool = False,
+    full_batch_size: Optional[int] = None,
     device_group: List[int] = [
         0,
     ],
 ) -> None:
     qpc_base_dir_name = get_qpc_dir_name_infer(
-        num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
-    )
+        num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size,)
+    
     prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
     cache_dir = check_and_assign_cache_dir(local_model_dir,cache_dir)
 
@@ -61,7 +64,7 @@ def main(
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
-        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token, local_model_dir)
+        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size)
 
         #########
         # Compile
@@ -80,6 +83,7 @@ def main(
             aic_enable_depth_first=aic_enable_depth_first,
             mos=mos,
             device_group=device_group,
+            full_batch_size = full_batch_size,
         )
         assert (
             generated_qpc_path == qpc_dir_path
@@ -168,6 +172,13 @@ if __name__ == "__main__":
         "-v",
         action="store_true",
         help="pass to print info logs",
+    )
+    parser.add_argument(
+        "--full_batch_size",
+        "--full_batch_size",
+        type=int,
+        default=None,
+        help="Batch size for text generation"
     )
 
     args = parser.parse_args()
