@@ -146,7 +146,8 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 
 # Either pass input prompts in single string but seperate with pipe (|) symbol". Example below
 
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth 
+theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first
 
 # Or pass path of txt file with input prompts, Example below, sample txt file(prompts.txt) is present in examples folder.
 
@@ -177,7 +178,7 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 
 | High Level APIs | Single SoC | Tensor Slicing         |
 |-----------------|------------|-------------------|
-| QEfficient.cloud.infer           | python -m QEfficient.cloud.infer --model_name $\color{green} {model}$  --batch_size 1 --prompt_len 128 --ctx_len 1024 --num_cores 16 --device-group [0] --prompt "My name is" --mxfp6 --hf_token  $\color{green}{xyz}$  --mos 1 --aic_enable_depth_first |  python -m QEfficient.cloud.infer --model_name $\color{green}{model}$  --batch_size 1 --prompt_len 128 --ctx_len 1024--num_cores 16 --device-group [0,1,2,3] --prompt "My name is" --mxfp6 --hf_token  $\color{green}{xyz}$  --mos 4 --aic_enable_depth_first |
+| QEfficient.cloud.infer           | python -m QEfficient.cloud.infer --model_name $\color{green} {model}$  --batch_size 1 --prompt_len 128 --ctx_len 1024 --num_cores 16 --device-group [0] --prompt "My name is" --mxfp6 --hf_token  $\color{green}{xyz}$  --mos 1 --aic_enable_depth_first |  python -m QEfficient.cloud.infer --model_name $\color{green}{model}$  --batch_size 1 --prompt_len 128 --ctx_len 1024--num_cores 16 --device-group [0,1,2,3] --prompt "My name is" --mxfp6 --hf_token  $\color{green}{xyz}$  --mos 1 --aic_enable_depth_first |
 | QEfficient.cloud.execute  |   python -m QEfficient.cloud.execute --model_name $\color{green}{model}$  --device_group [0] --qpc_path  $\color{green}{path}$  --prompt "My name is"  --hf_token  $\color{green}{xyz}$   |  python -m QEfficient.cloud.execute --model_name $\color{green}{model}$  --device_group [0,1,2,3] --qpc_path  $\color{green}{path}$  --prompt "My name is"  --hf_token  $\color{green}{xyz}$   |
 
 :memo: Replace $\color{green}{model}$ ,  $\color{green}{path}$  and  $\color{green}{xyz}$  with preffered model card name, qpc path and hf token respectively.

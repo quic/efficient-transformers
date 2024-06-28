@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -25,11 +25,11 @@ class CloudAI100ExecInfo:
     """
     holds all the information about Cloud AI 100 execution
     :param generated_texts: List[str]
-    :param generated_ids: np.ndarray
-    :param prefill_time: float
-    :param decode_perf: float
-    :param total_perf: float
-    :param total_time: float
+    :generated_ids: np.ndarray
+    :prefill_time: float
+    :decode_perf: float
+    :total_perf: float
+    :total_time: float
     """
 
     generated_texts: List[str]

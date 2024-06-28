@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -25,7 +25,7 @@ def get_onnx_model_path(
     tokenizer: Optional[Union[PreTrainedTokenizerFast, PreTrainedTokenizer]] = None,
     hf_token: Optional[str] = None,
     local_model_dir: Optional[str] = None,
-) -> None:
+):
     """
     exports the model to onnx if pre-exported file is not found and returns onnx_model_path
     ---------

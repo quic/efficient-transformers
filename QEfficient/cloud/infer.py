@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -22,9 +22,9 @@ from QEfficient.utils.logging_utils import logger
 
 def main(
     model_name: str,
+    num_cores: int,
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
-    num_cores: int = 14,
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     batch_size: int = 1,
@@ -47,9 +47,9 @@ def main(
     4. Download HF model -> transform -> export -> compile -> execute
     ---------
     :param model_name: str. Hugging Face Model Card name, Example: "gpt2"
+    :num_cores: int. :num_cores: int. Number of cores to compile model on.
     :prompt: str. Sample prompt for the model text generation
     :prompts_txt_file_path: str. Path to txt file for multiple input prompts
-    :num_cores: int. :num_cores: int. Number of cores to compile model on.
     :aic_enable_depth_first: bool. Enables DFS with default memory size, disabled by default.
     :mos: int. Effort level to reduce the on-chip memory.
     :batch_size: int. Batch size to compile the model for.

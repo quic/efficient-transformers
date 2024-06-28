@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -29,8 +29,8 @@ class ApiRunner:
         """
         Initialization
         :param tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
-        :input_str: List[str]. String to used as input prompt for the model.
-        :prompt_len: int. prompt length for the model to compile.
+        :input_str: List[str]. input prompt for running the model.
+        :prompt_len: int. prompt length to compile the model.
         :ctx_len: int. Maximum context length to compile the model.
         """
 
