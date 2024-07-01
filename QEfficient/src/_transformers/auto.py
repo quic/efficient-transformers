@@ -8,7 +8,6 @@
 import os
 from typing import Any, List, Optional, Union
 
-from numpy import full
 import torch.nn as nn
 from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
@@ -21,6 +20,7 @@ from QEfficient.src._transformers.runtime_args import (
 from QEfficient.src.base import QEFFBaseModel, Runtime
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
 from QEfficient.utils import get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
+from QEfficient.utils.logging_utils import logger
 
 # Dictionary that defines the interface from transformers to be used underneath the QEFF interface
 QEFFAutoModelToTransformersAutoModelMap = {
@@ -41,6 +41,10 @@ class QEFFTransformersBase(QEFFBaseModel):
         self.model_card_name = kwargs.pop("model_card_name", None)
         self.pretrained_model_name_or_path = pretrained_model_name_or_path
         self.model: nn.Module = model
+        try:
+            self.model.config.use_cache=True
+        except Exception:
+            logger.info("Could not set config.use_cache=True, might result into errors while executing the model")
         self.kwargs = kwargs
         self._tokenizer = None
         if kwargs.get("transform", True):
@@ -115,7 +119,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
     def export_and_compile(self, num_cores: int, device_group: List[int], batch_size: int = 1, prompt_len: int = 32, ctx_len: int = 128,
                 mxfp6: bool = True, mxint8: bool = False, mos: int = -1, aic_enable_depth_first: bool = False, qpc_dir_suffix: Optional[str] = None,
-                full_batch_size: int = 1) -> str:
+                full_batch_size: Optional[int] = None) -> str:
         """
         Exports the Pytorch model to ONNX and saves it locally.
         -------------
@@ -123,7 +127,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         hf_model_card: str. Model card name on HuggingFace, used for deciding where to save the onnx, qpc files i.e. qeff_models/HF_model_card/(onnx or qpc).
         onnx_model_path: str. Path for saving onnx model.
         """
-        self.export()
+        self.export(full_batch_size=full_batch_size)
         self.compile(num_cores=num_cores, device_group=device_group, batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len,
                      mxfp6=mxfp6, mxint8=mxint8, mos=mos, aic_enable_depth_first=aic_enable_depth_first, qpc_dir_suffix=qpc_dir_suffix,
                      full_batch_size=full_batch_size)
@@ -131,15 +135,16 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
     
     def export(self, **kwargs) -> str:
+        full_batch_size = kwargs.get("full_batch_size", None)
         assert self.is_transformed, "Please first run transform on the QEFFAutoModelForCausalLM object"
         model_card_name = self.get_model_card_name()
-        base_path, onnx_path = QEfficient.export(model_name=model_card_name, model_kv=self, tokenizer=self.tokenizer)
+        _, onnx_path = QEfficient.export(model_name=model_card_name, model_kv=self, tokenizer=self.tokenizer, full_batch_size=full_batch_size)
         assert self.runtime == Runtime.CPU_ORT, "Something went wrong while exporting model to ONNX"
         return onnx_path
 
     def compile(self, num_cores: int, device_group: List[int], batch_size: int = 1, prompt_len: int = 32, ctx_len: int = 128,
                 mxfp6: bool = True, mxint8: bool = False, mos: int = -1, aic_enable_depth_first: bool = False, qpc_dir_suffix: Optional[str] = None,
-                full_batch_size: int = 1) -> str:
+                full_batch_size: Optional[int] = None) -> str:
         # Prepare qpc dir path
         qpc_base_dir_name = get_qpc_dir_name_infer(num_cores=num_cores, mos=mos, batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, mxfp6=mxfp6, mxint8=mxint8, device_group=device_group, full_batch_size=full_batch_size)
         qpc_base_dir_name = qpc_base_dir_name + "_" + qpc_dir_suffix if qpc_dir_suffix else qpc_base_dir_name
