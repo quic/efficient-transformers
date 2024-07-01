@@ -10,7 +10,6 @@ from typing import List, Optional
 
 from QEfficient.generation.text_generation_inference import (
     cloud_ai_100_exec_kv,
-    get_input_prompts,
 )
 from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
@@ -29,7 +28,7 @@ def main(
     """
     API() to run the Model on Cloud AI 100 Platform.
     ---------
-    
+
     :model_name: str. Hugging Face Model Card name, Example: "gpt2"
     :qpc_path: str.  Path to the generated binary after compilation.
     :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
@@ -38,11 +37,10 @@ def main(
     :generation_len: int. Number of tokens to be generated.
     :cache_dir: str. Cache dir where downloaded huggingface files are stored.
     :hf_token: str. HuggingFace login token to access private repos.
-    
+
     """
 
     tokenizer = load_hf_tokenizer(model_name, cache_dir, hf_token)
-    prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
 
     # Execute
     cloud_ai_100_exec_kv(
@@ -50,6 +48,7 @@ def main(
         qpc_path=qpc_path,
         device_id=device_group,
         prompt=prompt,
+        prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
     )
 

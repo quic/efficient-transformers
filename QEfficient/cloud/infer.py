@@ -14,7 +14,6 @@ import QEfficient
 from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import (
     cloud_ai_100_exec_kv,
-    get_input_prompts,
 )
 from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.logging_utils import logger
@@ -40,14 +39,14 @@ def main(
 ) -> None:
     """
     API() to export, compile and execute the model on Cloud AI 100 Platform.
-    
+
     ---------
     1. Check if compiled qpc for given config already exists, if it does jump to execute, else
     2. Check if exported ONNX file already exists, if true, jump to compilation -> execution, else
     3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
     4. Download HF model -> transform -> export -> compile -> execute
     ---------
-    
+
     :param model_name: str. Hugging Face Model Card name, Example: "gpt2"
     :num_cores: int. :num_cores: int. Number of cores to compile model on.
     :prompt: str. Sample prompt for the model text generation
@@ -68,7 +67,6 @@ def main(
     qpc_base_dir_name = get_qpc_dir_name_infer(
         num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
     )
-    prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
     tokenizer = load_hf_tokenizer(
         pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
@@ -115,6 +113,7 @@ def main(
         qpc_path=qpc_dir_path,
         device_id=device_group,
         prompt=prompt,
+        prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
     )
 

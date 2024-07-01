@@ -316,7 +316,8 @@ def print_latency_stats_kv(prompt, batch_size, execinfo, automation: bool = Fals
 def cloud_ai_100_exec_kv(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc_path: str,
-    prompt: Optional[List[str]] = None,
+    prompt: Optional[str] = None,
+    prompts_txt_file_path: Optional[str] = None,
     device_id: List[int] = [0],
     generation_len: Optional[int] = None,
     enable_debug_logs: bool = False,
@@ -325,6 +326,7 @@ def cloud_ai_100_exec_kv(
     automation=False,
 ):
     batch_size, ctx_len = get_compilation_dims(qpc_path)
+    prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
     prompt, n = check_batch_size_and_num_prompts(prompt, batch_size)
 
     prefill_time = []
