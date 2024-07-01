@@ -31,7 +31,7 @@ class ApiRunner:
         :param prompt_len: int
         :param ctx_len: int
         """
-        
+
         self.tokenizer = tokenizer
         self.prompt = prompt
         self.prompt_len = prompt_len
@@ -63,7 +63,6 @@ class ApiRunner:
         print("Prompt:", repr(self.prompt))
         print("Completion:", repr(generated_text))
         return generated_ids
-
 
     def run_kv_model_on_pytorch(self, model, n_layer, padding_shape):
         """
@@ -140,7 +139,7 @@ class ApiRunner:
                 np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t)
                 if len(np_tensor.shape) == 0 and np_tensor.item() == 65504:
                     node.attribute[0].t.raw_data = np.array(-1).tobytes()
-        
+
         onnxruntime_model = model_path[:-5] + "_ort.onnx"
         onnx.save(m, onnxruntime_model)
         session = onnxruntime.InferenceSession(onnxruntime_model)

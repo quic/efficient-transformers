@@ -53,7 +53,7 @@ def export_onnx(
         "encoder_outputs",
     }
     decoder_seq_inputs = {"decoder_input_ids", "decoder_attention_mask"}
-    dynamic_axis_past_key = "full_batch_size" if 'batch_index' in input_names else "batch_size"
+    dynamic_axis_past_key = "full_batch_size" if "batch_index" in input_names else "batch_size"
 
     dynamic_axes = {}
     for iname in input_names:
@@ -64,9 +64,9 @@ def export_onnx(
         elif iname.startswith("past_"):
             # KV-cache (batch_size, num_heads, past_len, embed_dim)
             dynamic_axes[iname] = {0: dynamic_axis_past_key, 2: "ctx_len"}
-        elif iname == "batch_index": 
+        elif iname == "batch_index":
             dynamic_axes[iname] = {0: "batch_size"}
-    
+
     if "past_key.0" in input_names and "attention_mask" in input_names:
         dynamic_axes["attention_mask"] = {0: "batch_size", 1: "ctx_len"}
 
@@ -88,7 +88,6 @@ def export_onnx(
     except Exception as e:
         raise RuntimeError("Exporting to ONNX failed. {}".format(e))
 
- 
     onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     shutil.rmtree(f"{gen_models_path}_tmp")
@@ -175,7 +174,7 @@ def fix_onnx_fp16(
     ort_outputs: List[np.ndarray],
     gen_models_path: str,
     model_base_name: str,
-    pt_outputs: Dict[str, torch.Tensor]
+    pt_outputs: Dict[str, torch.Tensor],
 ) -> str:
     finfo = np.finfo(np.float16)
     fp16_max = finfo.max
@@ -224,7 +223,7 @@ def fix_onnx_fp16(
             os.path.join(gen_models_path, f"{model_base_name}.onnx"),
             os.path.join(gen_models_path, f"{model_base_name}.onnxweights.data"),
         )
-        
+
         model_base_name += "_clipped_fp16"
         onnx.save_model(
             model,

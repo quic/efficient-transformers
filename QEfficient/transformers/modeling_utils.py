@@ -26,7 +26,7 @@ from transformers.models.llama.modeling_llama import (
     LlamaDecoderLayer,
     LlamaForCausalLM,
     LlamaModel,
-    LlamaRMSNorm
+    LlamaRMSNorm,
 )
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
@@ -37,8 +37,8 @@ from transformers.models.mistral.modeling_mistral import (
 )
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
-    MixtralForCausalLM,
     MixtralDecoderLayer,
+    MixtralForCausalLM,
     MixtralModel,
     MixtralRMSNorm,
     MixtralSparseMoeBlock,
@@ -102,7 +102,8 @@ get_lists_of_cb_qeff_models = ModelArchitectures(
     [
         LlamaForCausalLM.__name__,
         MistralForCausalLM.__name__,
-        ])
+    ]
+)
 # Create an instance of the named tuple
 qeff_supported_architectures = ModelArchitectures(
     [
@@ -136,7 +137,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     LlamaModel: QEffLlamaModel,
     LlamaAttention: QEffLlamaAttention,
     LlamaForCausalLM: QEffLlamaForCausalLM,
-    LlamaDecoderLayer:QEffLlamaDecoderLayer,
+    LlamaDecoderLayer: QEffLlamaDecoderLayer,
     LlamaRMSNorm: CustomRMSNormAIC,
     # MPT model layers
     MptAttention: QEffMptAttention,
@@ -149,13 +150,13 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     CodeGenForCausalLM: QEffCodeGenForCausalLM,
     # Mistral model layers
     MistralAttention: QEffMistralAttention,
-    MistralDecoderLayer:QEffMistralDecoderLayer,
+    MistralDecoderLayer: QEffMistralDecoderLayer,
     MistralModel: QEffMistralModel,
     MistralForCausalLM: QEffMistralForCausalLM,
     MistralRMSNorm: CustomRMSNormAIC,
     # Mixtral model layers
     MixtralAttention: QEffMixtralAttention,
-    MixtralDecoderLayer:QeffMixtralDecoderLayer,
+    MixtralDecoderLayer: QeffMixtralDecoderLayer,
     MixtralModel: QEffMixtralModel,
     MixtralForCausalLM: QEffMixtralForCausalLM,
     MixtralRMSNorm: CustomRMSNormAIC,

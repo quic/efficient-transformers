@@ -6,11 +6,12 @@
 # -----------------------------------------------------------------------------
 
 """
-MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP dictionary defines the mapping between names of the varities of Transformer model defined in 
+MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP dictionary defines the mapping between names of the varities of Transformer model defined in
 QEFF_MODEL_TYPE and the classes that implement the methods i.e.(compile, export etc.) for those types.
 
 QEFFAutoModel provides a common interface for loading the HuggingFace models using either the HF card name of local path of downloaded model.
 """
+
 import os
 from enum import Enum
 from typing import Any, Dict, Type
@@ -27,6 +28,7 @@ class QEFF_MODEL_TYPE(Enum):
     """
     Defines Names of the different varities of transformer models.
     """
+
     CAUSALLM = "LLM"
     DIFFUSION = "STABLE_DIFFUSION"
     AWQ = "AWQ"
@@ -36,17 +38,22 @@ MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP: Dict[QEFF_MODEL_TYPE, Type[QEFFBaseModel]] = 
     QEFF_MODEL_TYPE.CAUSALLM: QEFFAutoModelForCausalLM
 }
 
-AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP: Dict[Type[QEFFBaseModel], QEFF_MODEL_TYPE] = {v:k for k,v in MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP.items()}
+AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP: Dict[Type[QEFFBaseModel], QEFF_MODEL_TYPE] = {
+    v: k for k, v in MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP.items()
+}
+
 
 def get_hf_model_type(hf_model_path: str) -> QEFF_MODEL_TYPE:
     """
     Loads model config file and returns the type of the model (i.e. LLMs, SD, quantized etc.) as supported by the library.
     """
-    assert os.path.isdir(hf_model_path), "Pleae pass local dir path where the model is downloaded; use `QEfficient.utils.login_and_download_hf_lm` for downloading hf model"
+    assert os.path.isdir(
+        hf_model_path
+    ), "Pleae pass local dir path where the model is downloaded; use `QEfficient.utils.login_and_download_hf_lm` for downloading hf model"
     config, kwargs = AutoConfig.from_pretrained(
-                hf_model_path,
-                return_unused_kwargs=True,
-            )
+        hf_model_path,
+        return_unused_kwargs=True,
+    )
 
     if config.__class__ in MODEL_FOR_CAUSAL_LM_MAPPING:
         # FIXME: Add logic to handle if quantization config is stored in separate quant_config.json outside of config, also create a separate function for this and below lines
@@ -67,20 +74,29 @@ class QEFFCommonLoader:
     Provides HuggingFace model loading interface same as transformers APIs.
     Supports loading any model on HuggingFace.
     """
+
     def __init__(self, *args: Any, **kwds: Any) -> None:
         raise EnvironmentError(
             f"{self.__class__.__name__} is designed to be instantiated "
-            f"using the `{self.__class__.__name__}.from_pretrained(pretrained_model_name_or_path)`")
-    
+            f"using the `{self.__class__.__name__}.from_pretrained(pretrained_model_name_or_path)`"
+        )
+
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs) -> QEFFBaseModel:
         """
         Downloads HuggingFace model if already doesn't exist locally, returns QEffAutoModel object based on type of model.
         """
-        pretrained_model_name_or_path = pretrained_model_name_or_path if os.path.isdir(pretrained_model_name_or_path) \
+        pretrained_model_name_or_path = (
+            pretrained_model_name_or_path
+            if os.path.isdir(pretrained_model_name_or_path)
             else login_and_download_hf_lm(pretrained_model_name_or_path, *args, **kwargs)
+        )
         model_type = get_hf_model_type(hf_model_path=pretrained_model_name_or_path)
         qeff_auto_model_class = MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP[model_type]
-        assert issubclass(qeff_auto_model_class, QEFFBaseModel), f"Expected class that inherits {QEFFBaseModel}, got {type(qeff_auto_model_class)}"
+        assert issubclass(
+            qeff_auto_model_class, QEFFBaseModel
+        ), f"Expected class that inherits {QEFFBaseModel}, got {type(qeff_auto_model_class)}"
 
-        return qeff_auto_model_class.from_pretrained(pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
+        return qeff_auto_model_class.from_pretrained(
+            pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs
+        )

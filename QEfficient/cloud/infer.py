@@ -32,7 +32,7 @@ from QEfficient.utils.logging_utils import logger
 def main(
     model_name: str,
     num_cores: int,
-    prompt: Optional[str] = None, # type: ignore
+    prompt: Optional[str] = None,  # type: ignore
     local_model_dir: Optional[str] = None,
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
@@ -51,12 +51,26 @@ def main(
     ],
 ) -> None:
     base_dir_name = get_qpc_dir_name_infer(
-        num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size,)
-    
-    prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
-    cache_dir = check_and_assign_cache_dir(local_model_dir,cache_dir)
+        num_cores,
+        mos,
+        batch_size,
+        prompt_len,
+        ctx_len,
+        mxfp6,
+        mxint8,
+        device_group,
+        full_batch_size,
+    )
 
-    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), cache_dir=cache_dir, hf_token=hf_token, local_model_dir=local_model_dir)
+    prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size, full_batch_size)
+    cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
+
+    tokenizer = load_hf_tokenizer(
+        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+        cache_dir=cache_dir,
+        hf_token=hf_token,
+        local_model_dir=local_model_dir,
+    )
 
     qpc_path_exists, qpc_dir_path = qpc_exists(model_name, base_dir_name)
     # Handle qpc generation
@@ -64,7 +78,9 @@ def main(
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
-        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size, base_dir_name)
+        onnx_model_path = get_onnx_model_path(
+            model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size, base_dir_name
+        )
 
         #########
         # Compile
@@ -83,7 +99,7 @@ def main(
             aic_enable_depth_first=aic_enable_depth_first,
             mos=mos,
             device_group=device_group,
-            full_batch_size = full_batch_size,
+            full_batch_size=full_batch_size,
         )
         assert (
             generated_qpc_path == qpc_dir_path
@@ -109,7 +125,9 @@ if __name__ == "__main__":
         description="Inference command, the model will be downloaded from HF, optmized, compiled, executed on Cloud AI 100"
     )
     parser.add_argument("--model-name", "--model_name", required=True, help="HF Model card name/id")
-    parser.add_argument("--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files")
+    parser.add_argument(
+        "--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files"
+    )
     parser.add_argument(
         "--cache-dir",
         "--cache_dir",
@@ -175,11 +193,7 @@ if __name__ == "__main__":
         help="pass to print info logs",
     )
     parser.add_argument(
-        "--full_batch_size",
-        "--full_batch_size",
-        type=int,
-        default=None,
-        help="Batch size for text generation"
+        "--full_batch_size", "--full_batch_size", type=int, default=None, help="Batch size for text generation"
     )
 
     args = parser.parse_args()

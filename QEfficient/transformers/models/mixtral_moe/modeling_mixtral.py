@@ -76,7 +76,12 @@ class QEffMixtralAttention(MixtralAttention):
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}  # Specific to RoPE models
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+            }  # Specific to RoPE models
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         # repeat k/v heads if n_kv_heads < n_heads
@@ -402,7 +407,7 @@ class QeffMixtralDecoderLayer(MixtralDecoderLayer):
 
         hidden_states = self.input_layernorm(hidden_states)
 
-        # Self Attention        
+        # Self Attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -432,6 +437,7 @@ class QeffMixtralDecoderLayer(MixtralDecoderLayer):
             outputs += (router_logits,)
 
         return outputs
+
 
 class QEffMixtralForCausalLM(MixtralForCausalLM):
     """

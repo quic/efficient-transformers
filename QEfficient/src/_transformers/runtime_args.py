@@ -14,7 +14,7 @@ class QEFFAutoModelForCausalLMAI100RuntimeArgs:
         assert os.path.isdir(self.qpc_dir_path), f"Please provide valid qpc_dir_path, got {self.qpc_dir_path}"
 
 
-#FIXME: figure out if all these are really required -> update while adding execute feature
+# FIXME: figure out if all these are really required -> update while adding execute feature
 @dataclass
 class QEFFAutoModelForCausalLMCPUORTRuntimeArgs:
     onnx_model_path: str
@@ -23,4 +23,6 @@ class QEFFAutoModelForCausalLMCPUORTRuntimeArgs:
 
     def __post_init__(self):
         assert os.path.isfile(self.onnx_model_path), f"Please provide valid onnx_model_path, got {self.onnx_model_path}"
-        assert self.ctx_len >= self.prompt_len, f"prompt_len can not be lesser than ctx_len; got ctx_len={self.ctx_len}, prompt_len={self.prompt_len}"
+        assert (
+            self.ctx_len >= self.prompt_len
+        ), f"prompt_len can not be lesser than ctx_len; got ctx_len={self.ctx_len}, prompt_len={self.prompt_len}"

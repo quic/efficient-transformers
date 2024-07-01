@@ -123,6 +123,7 @@ class CtxGatherFunc(torch.autograd.Function):
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxGather, data, ctx_indices).setTypeAs(data)
 
+
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxScatterCB(
     data: onnxscript.FLOAT, batch_index: onnxscript.INT32, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT
@@ -165,8 +166,11 @@ class CtxScatterFuncCB(torch.autograd.Function):
     ) -> torch.Value:
         return g.onnxscript_op(CtxScatterCB, data, batch_index, position_ids, updates).setTypeAs(data)
 
+
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
-def CtxGatherCB(data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
+def CtxGatherCB(
+    data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32
+) -> onnxscript.FLOAT:
     batch_size = ops.Gather(ops.Shape(batch_index), [0])
     num_heads = ops.Gather(ops.Shape(data), [1])
     ctx_len = ops.Gather(ops.Shape(data), [2])
