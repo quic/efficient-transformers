@@ -193,7 +193,7 @@ if __name__ == "__main__":
         help="pass to print info logs",
     )
     parser.add_argument(
-        "--full_batch_size", "--full_batch_size", type=int, default=None, help="Batch size for text generation"
+        "--full_batch_size", "--full-batch-size", type=int, default=None, help="Batch size for text generation"
     )
 
     args = parser.parse_args()

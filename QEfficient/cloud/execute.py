@@ -89,7 +89,7 @@ if __name__ == "__main__":
         help="Cache dir to store HF Downloads",
     )
     parser.add_argument(
-        "--full_batch_size", "--full_batch_size", type=int, default=None, help="Batch size for text generation"
+        "--full_batch_size", "--full-batch-size", type=int, default=None, help="Batch size for text generation"
     )
     parser.add_argument(
         "--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models"
