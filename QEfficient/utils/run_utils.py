@@ -19,6 +19,7 @@ class ApiRunner:
     """
     ApiRunner class is responsible for:
     ---------
+    
     1. Running Huggingface PyTorch model
     2. Running KV Pytorch Model
     3. Running ONNX model on ONNXRT
@@ -28,7 +29,8 @@ class ApiRunner:
     def __init__(self, tokenizer, prompt, prompt_len, ctx_len):
         """
         Initialization
-        :param tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
+        
+        :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
         :input_str: List[str]. input prompt for running the model.
         :prompt_len: int. prompt length to compile the model.
         :ctx_len: int. Maximum context length to compile the model.
@@ -46,7 +48,8 @@ class ApiRunner:
     def run_hf_model_on_pytorch(self, model_hf):
         """
         Function responsible for running Huggingface PyTorch model and return the output tokens
-        :param model_hf: torch.nn.module. Original PyTorch model
+        
+        :model_hf: torch.nn.module. Original PyTorch model
         :return generated_ids: numpy.ndarray. Generated output tokens
         """
         input_ids = self.tokenizer.encode(self.prompt[0], return_tensors="pt")
@@ -69,7 +72,8 @@ class ApiRunner:
     def run_kv_model_on_pytorch(self, model, n_layer, padding_shape):
         """
         Function responsible for running KV PyTorch model and return the output tokens
-        :param model: torch.nn.module. Transformed PyTorch model
+        
+        :model: torch.nn.module. Transformed PyTorch model
         :n_layer : int. Number of layers present in the model.
         :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
         :return generated_ids: numpy.ndarray. Generated output tokens
@@ -95,7 +99,8 @@ class ApiRunner:
     def run_ort_session(self, inputs, session, n_layer):
         """
         Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
-        :param inputs: Dict. Numpy inputs of Onnx model
+        
+        :inputs: Dict. Numpy inputs of Onnx model
         :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
         :n_layer : int. Number of layers present in the model.
         :return outputs: Dict. Numpy outputs of Onnx model
@@ -126,7 +131,8 @@ class ApiRunner:
     def run_kv_model_on_ort(self, model_path, n_layer, padding_shape):
         """
         Function responsible for running ONNX model on onnxruntime and return the output tokens
-        :param model_path: str. Path to the Onnx model.
+        
+        :model_path: str. Path to the Onnx model.
         :n_layer : int. Number of layers present in the model.
         :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
         :return generated_ids: numpy.ndarray. Generated output tokens
@@ -166,7 +172,8 @@ class ApiRunner:
     def run_kv_model_on_cloud_ai_100(self, qpc_path, device_group):
         """
         Function responsible for running ONNX model on Cloud AI 100 and return the output tokens
-        :param qpc_path: str. path to qpc generated after compilation
+        
+        :qpc_path: str. path to qpc generated after compilation
         :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
         :return generated_ids: numpy.ndarray. Generated output tokens
         """

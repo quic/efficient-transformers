@@ -40,12 +40,14 @@ def main(
 ) -> None:
     """
     API() to export, compile and execute the model on Cloud AI 100 Platform.
+    
     ---------
     1. Check if compiled qpc for given config already exists, if it does jump to execute, else
     2. Check if exported ONNX file already exists, if true, jump to compilation -> execution, else
     3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
     4. Download HF model -> transform -> export -> compile -> execute
     ---------
+    
     :param model_name: str. Hugging Face Model Card name, Example: "gpt2"
     :num_cores: int. :num_cores: int. Number of cores to compile model on.
     :prompt: str. Sample prompt for the model text generation
