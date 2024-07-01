@@ -447,7 +447,7 @@ def qualcomm_efficient_converter(
     warnings.warn("\033[93model_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m", DeprecationWarning, stacklevel=2)
     # Get model_kv first
     
-    model_kv = model_kv if model_kv else QEFFCommonLoader.from_pretrained(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), hf_token=hf_token, cache_dir=cache_dir)
+    model_kv = model_kv if model_kv else QEFFCommonLoader.from_pretrained(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), token=hf_token, cache_dir=cache_dir)
 
     # Transform if required
     if model_kv.is_transformed and not kv:
