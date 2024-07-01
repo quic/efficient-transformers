@@ -122,6 +122,7 @@ def load_hf_tokenizer(
     padding_side: str = "right",
     **kwargs,
 ) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
+    # FIXME: Fix kwargs to take token, cache_dir and pass via kwargs only on line 129
     logger.info("Loading Tokenizer")
     if hf_token is not None:
         login(hf_token)
@@ -130,7 +131,9 @@ def load_hf_tokenizer(
         pretrained_model_name_or_path
         if os.path.isdir(pretrained_model_name_or_path)
         else hf_download(
-            repo_id=pretrained_model_name_or_path, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*", "*txt"]
+            repo_id=pretrained_model_name_or_path,
+            cache_dir=cache_dir,
+            allow_patterns=["*.json", "*.py", "*token*", "*.txt"],
         )
     )
     tokenizer = AutoTokenizer.from_pretrained(
@@ -141,7 +144,9 @@ def load_hf_tokenizer(
     return tokenizer
 
 
-def get_qpc_dir_path(model_card_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group) -> str:
+def get_qpc_dir_path(
+    model_card_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
+) -> str:
     qpc_base_dir_name = (
         f"qpc_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
         + f"{len(device_group)}"

@@ -16,7 +16,7 @@ from QEfficient.generation.text_generation_inference import (
     check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
 )
-from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer, qpc_exists, get_qpc_dir_path
+from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 """
@@ -57,7 +57,9 @@ def main(
         local_model_dir=local_model_dir,
     )
 
-    qpc_dir_path = get_qpc_dir_path(model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group)
+    qpc_dir_path = get_qpc_dir_path(
+        model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
+    )
 
     # Handle qpc generation
     if qpc_exists(qpc_dir_path):
