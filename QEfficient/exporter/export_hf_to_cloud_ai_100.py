@@ -173,7 +173,6 @@ def convert_to_cloud_kvstyle(
         DeprecationWarning,
         stacklevel=2,
     )
-
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
@@ -229,12 +228,10 @@ def export_kvstyle_transformed_model_to_onnx(
         multi_query_value = getattr(config, "multi_query")
         if multi_query_value:
             n_heads = 1  # MQA
-            d_head = config.hidden_size // config.num_attention_heads
-            n_layer = 1  # Due to multi query
         else:
             n_heads = config.num_attention_heads
-            d_head = config.hidden_size // config.num_attention_heads
-            n_layer = config.num_hidden_layers
+        d_head = config.hidden_size // config.num_attention_heads
+        n_layer = config.num_hidden_layers
     else:
         raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
     inputs["past_key_values"] = [
@@ -447,7 +444,6 @@ def qualcomm_efficient_converter(
         DeprecationWarning,
         stacklevel=2,
     )
-
     # Get model_kv first
     model_kv = (
         model_kv

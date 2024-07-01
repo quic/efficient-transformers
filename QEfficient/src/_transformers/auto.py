@@ -55,13 +55,11 @@ class QEFFTransformersBase(QEFFBaseModel):
         :transform: bool. Whether to optimize model for KV retention. Default is True. Pass False to get BertStyle model.
         """
         transform: bool = kwargs.get("transform", True)
-        kwargs.update(
-            {"use_cache": True}
-        )  # Always pass use_cache = True, to get KV values as output during ONNX export
+        kwargs.update({"use_cache": True})  # Always pass use_cache = True, to get KV values as output during ONNX export 
+        kwargs.update({"attn_implementation" : "eager"}) # Always use eager mode for attention implementation
+        
+        model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
-        model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
-            pretrained_model_name_or_path, *args, **kwargs
-        )
         return cls(model, transform=transform)
 
     def transform_export(self, *args, **kwargs) -> Any:
