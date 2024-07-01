@@ -85,7 +85,9 @@ def main(
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
-        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size)
+        onnx_model_path = get_onnx_model_path(
+            model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size, base_dir_name
+        )
 
         #########
         # Compile
@@ -193,11 +195,7 @@ if __name__ == "__main__":
         help="pass to print info logs",
     )
     parser.add_argument(
-        "--full_batch_size",
-        "--full_batch_size",
-        type=int,
-        default=None,
-        help="Batch size for text generation"
+        "--full_batch_size", "--full_batch_size", type=int, default=None, help="Batch size for text generation"
     )
 
     args = parser.parse_args()

@@ -400,8 +400,13 @@ def cloud_ai_100_exec_kv(
         enable_debug_logs=enable_debug_logs,
         stream=stream,
         write_io_dir=write_io_dir,
-        full_batch_size=full_batch_size)
-    if batch_size == 1:
+        full_batch_size=full_batch_size,
+    )
+    print(prompt)
+    if batch_size > 1 or full_batch_size is not None:
+        latency_stats = generate_text.cloud_ai_100_exec_kv_helper(prompt=prompt, generation_len=generation_len)
+        generated_texts, prefill_time, decode_perf, total_perf, total_time = latency_stats
+    elif batch_size == 1:
         prefill_time = []
         decode_perf = []
         total_perf = []
@@ -468,6 +473,7 @@ def cloud_ai_100_exec_kv(
         automation=automation,
     )
     return execinfo
+
 
 class TextGeneration:
     def __init__(
@@ -537,7 +543,8 @@ class TextGeneration:
 
         return prefill_time, decode_perf, total_perf, total_time
 
-    def latency_stats_bertstyle(self, 
+    def latency_stats_bertstyle(
+        self,
         model_name: str,
         qpc: str,
         seq_len: int,
@@ -565,14 +572,14 @@ class TextGeneration:
                 ],
                 1,
             )
-            inputs["attention_mask"] = np.concatenate([inputs["attention_mask"][:, 1:], np.ones((1, 1), dtype=np.int64)], 1)
+            inputs["attention_mask"] = np.concatenate(
+                [inputs["attention_mask"][:, 1:], np.ones((1, 1), dtype=np.int64)], 1
+            )
             print(tokenizer.decode(next_token_id), end=" ", flush=True)
             cur_len += 1
         end = perf_counter()
         print()
         print(round((cur_len - init_len) / (end - start), 2), "tok/s")
-    
-    
 
     def get_compilation_batch_size(self, qpc_path: str):
         qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
@@ -789,7 +796,6 @@ class TextGeneration:
             outputs = self.session.run(chunk_inputs)
             if self.write_io_dir:
                 write_io_files(inputs, outputs, self.write_io_dir, "prefill", "aic_batch_io", True, False)
-
         return outputs, position_ids, generation_len
 
     def run_continuous_batching_decode(self, prompt_queue, generation_len):
@@ -825,7 +831,7 @@ class TextGeneration:
         while prompt_queue or current_decode_ongoing.any():
             decode_count += 1
             outputs = self.session.run(decode_inputs)
-            
+
             # Prepare inputs for next iteration
             logits = outputs["logits"]
             if len(logits.shape) == 2:

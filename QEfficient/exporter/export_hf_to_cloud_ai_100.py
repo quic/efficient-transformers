@@ -302,7 +302,7 @@ def export_kvstyle_transformed_model_to_onnx(
         pt_outputs = transformed_model(**inputs)
         inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
         inputs["position_ids"] += 1
-        print(tokenizer.batch_decode(inputs["input_ids"]))
+
     # To avoid issues in onnx export
     inputs["position_ids"] = torch.full((full_batch_size if full_batch_size else batch_size, 1), seq_len - 1)
     # Run PyTorch inference with past

@@ -103,7 +103,6 @@ def export_onnx(
     except Exception as e:
         raise RuntimeError("Exporting to ONNX failed. {}".format(e))
 
- 
     onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     shutil.rmtree(f"{gen_models_path}_tmp")
