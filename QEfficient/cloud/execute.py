@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -9,9 +9,7 @@ import argparse
 from typing import List, Optional
 
 from QEfficient.generation.text_generation_inference import (
-    check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
-    get_compilation_dims,
 )
 from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
@@ -26,30 +24,31 @@ def main(
     generation_len: Optional[int] = None,
     cache_dir: Optional[str] = Constants.CACHE_DIR,
     hf_token: Optional[str] = None,
-):
+) -> None:
     """
-    APi() to run the Model on Cloud AI 100 Platform.
+    API() to run the Model on Cloud AI 100 Platform.
     ---------
-    :param model_name: str. Hugging Face Model Card name, Example: "gpt2"
+
+    :model_name: str. Hugging Face Model Card name, Example: "gpt2"
     :qpc_path: str.  Path to the generated binary after compilation.
     :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
     :prompt: str. Sample prompt for the model text generation
     :prompts_txt_file_path: str. Path to txt file for multiple input prompts
+    :generation_len: int. Number of tokens to be generated.
+    :cache_dir: str. Cache dir where downloaded huggingface files are stored.
+    :hf_token: str. HuggingFace login token to access private repos.
+
     """
 
     tokenizer = load_hf_tokenizer(model_name, cache_dir, hf_token)
 
-    batch_size, ctx_len = get_compilation_dims(qpc_path)
-    prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
-
     # Execute
     cloud_ai_100_exec_kv(
-        batch_size=batch_size,
         tokenizer=tokenizer,
         qpc_path=qpc_path,
         device_id=device_group,
         prompt=prompt,
-        ctx_len=ctx_len,
+        prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
     )
 

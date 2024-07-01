@@ -253,14 +253,14 @@ def export_kvstyle_transformed_model_to_onnx(
     # Build inputs for decode
     inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
     inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-    print(tokenizer.batch_decode(inputs["input_ids"]))
+
     # Run PyTorch inference for decode in loop
     # todo: vbaddi, fix it to verify on Cloud AI 100.
     for i in range(1):
         pt_outputs = transformed_model(**inputs)
         inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
         inputs["position_ids"] += 1
-        print(tokenizer.batch_decode(inputs["input_ids"]))
+
     # To avoid issues in onnx export
     inputs["position_ids"] = torch.full((batch_size, 1), seq_len - 1)
 

@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-24 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -78,7 +78,7 @@ def load_pytorch_model(model_config):
     """
     model_path = hf_download(
         repo_id=model_config["model_name"],
-        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
+        ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
     model_hf = model_config["model_class"].from_pretrained(
         model_path, use_cache=True, num_hidden_layers=model_config["n_layer"], attn_implementation="eager"
@@ -188,15 +188,11 @@ def get_cloud_ai_100_tokens(setup_info):
             aic_enable_depth_first=False,
             device_group=setup_info["device_group"],
         )
-        from QEfficient.generation.cloud_infer import QAICInferenceSession
-
-        session = QAICInferenceSession(test_qpcs_path, device_id, enable_debug_logs=False)
         try:
             cloud_ai_100_tokens = setup_info["api_runner"].run_kv_model_on_cloud_ai_100(
-                session,
-                setup_info["model_config"]["n_layer"],
-                setup_info["model_config"]["padding_shape"],
+                test_qpcs_path, setup_info["device_group"]
             )
         except Exception as e:
             print(f"ONNX Model run on Cloud AI 100 failed due to : {e}")
+
         return cloud_ai_100_tokens

@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -43,6 +43,12 @@ if __name__ == "__main__":
         required=True,
         type=int,
         help="num cores to compile the model on",
+    )
+    parser.add_argument(
+        "--custom_io_file_path",
+        "--custom-io-file-path",
+        type=str,
+        help="Path to custom IO file",
     )
     parser.add_argument(
         "--device_group",
