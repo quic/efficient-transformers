@@ -21,19 +21,20 @@ def test_compile(setup, mocker):
     mocker: mocker is itself a pytest fixture, uses to mock or spy internal functions.
     """
     ms = setup
-    QEfficient.compile(onnx_path=ms.onnx_model_path(),
-            qpc_path=os.path.dirname(ms.qpc_dir_path()),
-            num_cores=ms.num_cores,
-            device_group=ms.device_group,
-            aic_enable_depth_first=ms.aic_enable_depth_first,
-            mos=ms.mos,
-            batch_size=ms.batch_size,
-            prompt_len=ms.prompt_len,
-            ctx_len=ms.ctx_len,
-            mxfp6=ms.mxfp6,
-            mxint8=ms.mxint8,
-            )
-    
+    QEfficient.compile(
+        onnx_path=ms.onnx_model_path(),
+        qpc_path=os.path.dirname(ms.qpc_dir_path()),
+        num_cores=ms.num_cores,
+        device_group=ms.device_group,
+        aic_enable_depth_first=ms.aic_enable_depth_first,
+        mos=ms.mos,
+        batch_size=ms.batch_size,
+        prompt_len=ms.prompt_len,
+        ctx_len=ms.ctx_len,
+        mxfp6=ms.mxfp6,
+        mxint8=ms.mxint8,
+    )
+
     assert os.path.isdir(os.path.join(ms.model_card_dir(), ms.qpc_base_dir_name()))
     assert os.path.isfile(ms.specialization_json_path())
     assert os.path.isfile(ms.custom_io_file_path())

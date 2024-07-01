@@ -18,17 +18,17 @@ Representation of class inheritence followed keeping in line with transformers/d
 
                                                                                             QEFFBaseModel
                                                  ________________________________________________|________________________________________________________________
-                                                |                                                                                                                 |  
+                                                |                                                                                                                 |
                                             QEFFTransformersBase                                                                                           QEFFDiffusersBase
                                                 |                                                                                                                 |
                                     ____________|________________________________________________________ ________________                       _________________|______________
-                   _____           |                              |                                      |                |                     |                                |         
+                   _____           |                              |                                      |                |                     |                                |
                   |          QEFFAutoModel             QEFFAutoModelForCausalLM              QEFFAWQModelForCausalLM     ...                   ...                              ...
-QEFFCommonLoader -|       [Provides way to          [Provides way to do 1-5 on                 [Supports 1-5 for 
+QEFFCommonLoader -|       [Provides way to          [Provides way to do 1-5 on                 [Supports 1-5 for
 [Provides         |        do steps 1-5 on           transformers.AutoModelForCausalLM]         AWQ Models]
 interface to      |_____   transformers.AutoModel]
-Load any of 
-These models       
+Load any of
+These models
 by automatically
 detecting the type
 of the model]
@@ -42,7 +42,7 @@ from enum import Enum
 from typing import Any
 
 
-#Defining placeholder ENUM for execute function
+# Defining placeholder ENUM for execute function
 class Runtime(Enum):
     CPU_ORT = "CPU ONNX Runtime"
     CPU_PT = "CPU PyTorch Runtime"
@@ -56,6 +56,7 @@ class QEFFBaseModel(ABC):
 
     All the child classes must provide way to load, transform(optimize), exoprt to ONNX etc. capabilities.
     """
+
     def __init__(self) -> None:
         super().__init__()
         # Users can call generate or execute

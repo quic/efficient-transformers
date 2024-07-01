@@ -109,7 +109,7 @@ def compile(
     ctx_len: int = 128,
     mxfp6: bool = True,
     mxint8: bool = False,
-    **kwargs
+    **kwargs,
 ) -> str:
     # Dynamically create the specializations JSON
     """
