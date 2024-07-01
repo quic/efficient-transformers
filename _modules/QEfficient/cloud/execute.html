@@ -50,7 +50,7 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#linux-installation">Linux Installation</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -109,7 +109,7 @@
   <h1>Source code for QEfficient.cloud.execute</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -----------------------------------------------------------------------------</span>
 <span class="c1">#</span>
-<span class="c1"># Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
+<span class="c1"># Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
 <span class="c1"># SPDX-License-Identifier: BSD-3-Clause</span>
 <span class="c1">#</span>
 <span class="c1"># -----------------------------------------------------------------------------</span>
@@ -139,13 +139,15 @@
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    API to run the model on Cloud AI 100 platform.</span>
 <span class="sd">    ---------</span>
-<span class="sd">    :param model_name: str. Hugging Face Model Card name, Example: [gpt2].</span>
-<span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
+
+<span class="sd">    :model_name: str. Hugging Face Model Card name, Example: [gpt2].</span>
 <span class="sd">    :qpc_path: str.  Path to the save generated binary file after compilation.</span>
+<span class="sd">    :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) &gt; 1. Multiple Card setup is enabled.</span>
+<span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
+<span class="sd">    :prompts_txt_file_path: str. Path to txt file for single or multiple input prompts.</span>
+<span class="sd">    :generation_len: int. Number of tokens to be generated.</span>
 <span class="sd">    :cache_dir: str. Cache dir to store the downloaded huggingface files.</span>
 <span class="sd">    :hf_token: Huggingface token to access gated models.</span>
-<span class="sd">    :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) &gt; 1. Multiple Card setup is enabled.</span>
-<span class="sd">    :prompts_txt_file_path: str. Path to txt file for multiple input prompts</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">load_hf_tokenizer</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">cache_dir</span><span class="p">,</span> <span class="n">hf_token</span><span class="p">)</span>

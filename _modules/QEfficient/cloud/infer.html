@@ -50,7 +50,7 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#linux-installation">Linux Installation</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -109,7 +109,7 @@
   <h1>Source code for QEfficient.cloud.infer</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -----------------------------------------------------------------------------</span>
 <span class="c1">#</span>
-<span class="c1"># Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
+<span class="c1"># Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
 <span class="c1"># SPDX-License-Identifier: BSD-3-Clause</span>
 <span class="c1">#</span>
 <span class="c1"># -----------------------------------------------------------------------------</span>
@@ -139,7 +139,7 @@
 <div class="viewcode-block" id="main"><a class="viewcode-back" href="../../../source/high_level_api.html#QEfficient.cloud.infer.main">[docs]</a><span class="k">def</span> <span class="nf">main</span><span class="p">(</span>
     <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">num_cores</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-    <span class="n">prompt</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="c1"># type: ignore</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>  <span class="c1"># type: ignore</span>
     <span class="n">local_model_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">prompts_txt_file_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">aic_enable_depth_first</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
@@ -156,14 +156,15 @@
         <span class="mi">0</span><span class="p">,</span>
     <span class="p">],</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Inference command, the model will be downloaded from HF, optimized, compiled, executed on AIC.</span>
 <span class="sd">    ---------</span>
-<span class="sd">    </span>
+
 <span class="sd">    :model_name: str. Hugging Face Model Card name, Example: gpt2.</span>
-<span class="sd">    :num_cores: int. Number of cores to compile model on. Default: 16, available option: [1 to 16].</span>
+<span class="sd">    :num_cores: int. Number of cores to compile model on.</span>
 <span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
+<span class="sd">    :local_model_dir: str. Path to custom model weights and config files.</span>
+<span class="sd">    :prompts_txt_file_path: str. Path to txt file for taking input prompts</span>
 <span class="sd">    :aic_enable_depth_first: bool. If passed, this option will be enabled during compilation. Default=False.</span>
 <span class="sd">    :mos: int. Effort level to reduce the on-chip memory. Default=-1.</span>
 <span class="sd">    :cache_dir: str. Cache dir to store the downloaded huggingface files.</span>
@@ -171,18 +172,24 @@
 <span class="sd">    :batch_size: int. Batch size for model to compile.</span>
 <span class="sd">    :prompt_len: int. prompt len for the model to compile.</span>
 <span class="sd">    :ctx_len: int. Maximum context length for the model to compile.</span>
+<span class="sd">    :generation_len: int. Number of tokens to be generated.</span>
 <span class="sd">    :mxfp6: bool. Enable compilation for MXFP6 precision.</span>
-<span class="sd">    :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enable multiple card setup.</span>
-
+<span class="sd">    :mxint8: bool. Compress Present/Past KV to MXINT8 using CustomIO config, default is False.</span>
+<span class="sd">    :device_group: List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enables multiple card setup.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    
+
     <span class="n">qpc_base_dir_name</span> <span class="o">=</span> <span class="n">get_qpc_dir_name_infer</span><span class="p">(</span>
         <span class="n">num_cores</span><span class="p">,</span> <span class="n">mos</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">prompt_len</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">,</span> <span class="n">mxfp6</span><span class="p">,</span> <span class="n">mxint8</span><span class="p">,</span> <span class="n">device_group</span>
     <span class="p">)</span>
     <span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">check_batch_size_and_num_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">)</span>
-    <span class="n">cache_dir</span> <span class="o">=</span> <span class="n">check_and_assign_cache_dir</span><span class="p">(</span><span class="n">local_model_dir</span><span class="p">,</span><span class="n">cache_dir</span><span class="p">)</span>
+    <span class="n">cache_dir</span> <span class="o">=</span> <span class="n">check_and_assign_cache_dir</span><span class="p">(</span><span class="n">local_model_dir</span><span class="p">,</span> <span class="n">cache_dir</span><span class="p">)</span>
 
-    <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">load_hf_tokenizer</span><span class="p">(</span><span class="n">pretrained_model_name_or_path</span><span class="o">=</span><span class="p">(</span><span class="n">local_model_dir</span> <span class="k">if</span> <span class="n">local_model_dir</span> <span class="k">else</span> <span class="n">model_name</span><span class="p">),</span> <span class="n">cache_dir</span><span class="o">=</span><span class="n">cache_dir</span><span class="p">,</span> <span class="n">hf_token</span><span class="o">=</span><span class="n">hf_token</span><span class="p">,</span> <span class="n">local_model_dir</span><span class="o">=</span><span class="n">local_model_dir</span><span class="p">)</span>
+    <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">load_hf_tokenizer</span><span class="p">(</span>
+        <span class="n">pretrained_model_name_or_path</span><span class="o">=</span><span class="p">(</span><span class="n">local_model_dir</span> <span class="k">if</span> <span class="n">local_model_dir</span> <span class="k">else</span> <span class="n">model_name</span><span class="p">),</span>
+        <span class="n">cache_dir</span><span class="o">=</span><span class="n">cache_dir</span><span class="p">,</span>
+        <span class="n">hf_token</span><span class="o">=</span><span class="n">hf_token</span><span class="p">,</span>
+        <span class="n">local_model_dir</span><span class="o">=</span><span class="n">local_model_dir</span><span class="p">,</span>
+    <span class="p">)</span>
 
     <span class="n">qpc_path_exists</span><span class="p">,</span> <span class="n">qpc_dir_path</span> <span class="o">=</span> <span class="n">qpc_exists</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">qpc_base_dir_name</span><span class="p">)</span>
     <span class="c1"># Handle qpc generation</span>
@@ -233,7 +240,9 @@
         <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Inference command, the model will be downloaded from HF, optmized, compiled, executed on Cloud AI 100&quot;</span>
     <span class="p">)</span>
     <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--model-name&quot;</span><span class="p">,</span> <span class="s2">&quot;--model_name&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;HF Model card name/id&quot;</span><span class="p">)</span>
-    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--local-model-dir&quot;</span><span class="p">,</span> <span class="s2">&quot;--local_model_dir&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Path to custom model weights and config files&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--local-model-dir&quot;</span><span class="p">,</span> <span class="s2">&quot;--local_model_dir&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Path to custom model weights and config files&quot;</span>
+    <span class="p">)</span>
     <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
         <span class="s2">&quot;--cache-dir&quot;</span><span class="p">,</span>
         <span class="s2">&quot;--cache_dir&quot;</span><span class="p">,</span>

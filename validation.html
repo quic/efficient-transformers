@@ -4,7 +4,7 @@
   <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Docs &mdash; Efficient-Transformers 1.16 documentation</title>
+  <title>Validation of Model before and After KV Cache Optimization &mdash; Efficient-Transformers 1.16 documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
 
@@ -51,7 +51,7 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/Linux_installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/Linux_installation.html#linux-installation">Linux Installation</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -97,9 +97,9 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Docs</li>
+      <li class="breadcrumb-item active">Validation of Model before and After KV Cache Optimization</li>
       <li class="wy-breadcrumbs-aside">
-            <a href="_sources/README.md.txt" rel="nofollow"> View page source</a>
+            <a href="_sources/validation.md.txt" rel="nofollow"> View page source</a>
       </li>
   </ul>
   <hr/>
@@ -107,30 +107,53 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="docs">
-<h1>Docs<a class="headerlink" href="#docs" title="Permalink to this heading"></a></h1>
-<p>This directory contains the stuff for building static html documentations based on <a class="reference external" href="https://www.sphinx-doc.org/en/master/">sphinx</a>.</p>
-<section id="build-the-docs">
-<h2>Build the docs<a class="headerlink" href="#build-the-docs" title="Permalink to this heading"></a></h2>
-<p>Firstly, install the packages:</p>
-<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>./requirements.txt
-</pre></div>
-</div>
-<p>And then, make the docs:</p>
-<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>make<span class="w"> </span>html
-</pre></div>
-</div>
+  <section id="validation-of-model-before-and-after-kv-cache-optimization">
+<h1>Validation of Model before and After KV Cache Optimization<a class="headerlink" href="#validation-of-model-before-and-after-kv-cache-optimization" title="Permalink to this heading"></a></h1>
 </section>
-<section id="preview-the-docs-locally">
-<h2>Preview the docs locally<a class="headerlink" href="#preview-the-docs-locally" title="Permalink to this heading"></a></h2>
-<p>The basic way to preview the docs is using the <code class="docutils literal notranslate"><span class="pre">http.server</span></code>:</p>
-<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>build/html
-
-python3<span class="w"> </span>-m<span class="w"> </span>http.server<span class="w"> </span><span class="m">8080</span>
+<section id="run-apis">
+<h1>Run APIs<a class="headerlink" href="#run-apis" title="Permalink to this heading"></a></h1>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>API</p></th>
+<th class="head text-center"><p><left>params</left></p></th>
+<th class="head text-center"><p>Usage</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>run_hf_model_on_pytorch</p></td>
+<td class="text-center"><p><ol><li>model_hf</li></ol></p></td>
+<td class="text-center"><p><li>Runs HuggingFace model on Pytorch and returns output tokens</li></p></td>
+</tr>
+<tr class="row-odd"><td><p>run_kv_model_on_pytorch</p></td>
+<td class="text-center"><p><ol><li>model_kv</li><li>n_layer</li><li>padding_shape</li></ol></p></td>
+<td class="text-center"><p><li>Runs KV cache model on PyTorch and returns output tokens</li></p></td>
+</tr>
+<tr class="row-even"><td><p>run_kv_model_on_ort</p></td>
+<td class="text-center"><p><ol><li>model_path</li><li>n_layer</li><li>padding_shape</li></ol></p></td>
+<td class="text-center"><p><li>Runs KV cache model on onnxruntime and returns output tokens</li></p></td>
+</tr>
+<tr class="row-odd"><td><p>run_kv_model_on_cloud_ai_100</p></td>
+<td class="text-center"><p><ol><li>qpc_path</li><li>device_id</li><li>n_layer</li><li>padding_shape</li></ol></p></td>
+<td class="text-center"><p><li>To be run only when device is available </li> runs compiled qpc on Cloud AI 100 and returns output tokens</li></p></td>
+</tr>
+</tbody>
+</table>
+<p>Class InputHandler is called inside these APIs which generates inputs for prefill and decode stage.</p>
+<p>These APIs, input_generation, checking available device id and Constants scripts are present inside tests/utils folder.</p>
+</section>
+<section id="sample-usage">
+<h1>Sample Usage :<a class="headerlink" href="#sample-usage" title="Permalink to this heading"></a></h1>
+<p>These APIs are part of ApiRunner class :</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  n_layer : number of layers in the model
+  padding_shape : shape of past key values to initialize the first iteration key value inputs with zeros.&lt;/li&gt;
 </pre></div>
 </div>
-<p>And you can visit the page with your web browser with url <code class="docutils literal notranslate"><span class="pre">http://localhost:8080</span></code>.</p>
-</section>
+<li>run_api = ApiRunner(tokenizer, Constants.INPUT_STRING, Constants.PROMPT_LEN, Constants.CTX_LEN) </li>
+<li>pytorch_hf_tokens = run_api.run_hf_model_on_pytorch(model_hf) </li>
+<li>pytorch_kv_tokens = run_api.run_kv_model_on_pytorch(model_kv, n_layer, padding_shape) </li>
+<li>ort_tokens = run_api.run_kv_model_on_ort(onnx_model_path, n_layer, padding_shape) </li>
+<li>cloud_ai_100_tokens = run_api.run_kv_model_on_cloud_ai_100(session, n_layer, padding_shape) </li>
+<p>Output tokens are compared to validate the model on the required framework level (PyTorch/ONNX/cloud_ai_100).</li></p>
 </section>
 
 

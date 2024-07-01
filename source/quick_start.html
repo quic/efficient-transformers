@@ -53,7 +53,7 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html#linux-installation">Linux Installation</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul class="current">
@@ -141,7 +141,7 @@
 <p>This is the single e2e python api in the library, which takes model_card name as input along with other compile args if necessary and does everything in one go.</p>
 <ul class="simple">
 <li><p>Torch Download → Optimize for Cloud AI 100 → Export to ONNX → Verify (CPU) → Compile on Cloud AI 100 → <a class="reference internal" href="#2-use-of-qefficientcloudexecute"><span class="xref myst">Execute</span></a></p></li>
-<li><p>Its skips the ONNX export/compile stage if ONNX file or qpc found on path</p></li>
+<li><p>It skips the ONNX export/compile stage if ONNX file or qpc is found on given path.</p></li>
 </ul>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Check out the options using the help menu</span>
 python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--help
@@ -166,8 +166,8 @@ python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<s
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.execute<span class="w"> </span>--model_name<span class="w"> </span>gpt2<span class="w"> </span>--qpc_path<span class="w"> </span>qeff_models/gpt2/qpc_16cores_1BS_32PL_128CL_1devices_mxfp6/qpcs<span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;Once upon a time in&quot;</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w">  </span>
 </pre></div>
 </div>
-<p>We can also enable MQ, just based on the number of devices. Based on the “–device-group” as input it will create TS config on the fly. If “–device-group [0,1]” it will create TS config for 2 devices and use it for compilation, if “–device-group 0” then TS compilation is skipped and single soc execution is enabled.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>Salesforce/codegen-2B-mono<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--mxfp6<span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device-group<span class="w"> </span><span class="o">[</span><span class="m">0</span>,1<span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;def fibonacci(n):&quot;</span><span class="w"> </span>--mos<span class="w"> </span><span class="m">2</span><span class="w"> </span>--aic_enable_depth_first<span class="w">  </span>
+<p>We can also enable MQ, just based on the number of devices. Based on the “–device_group” as input it will create TS config on the fly. If “–device_group [0,1]” it will create TS config for 2 devices and use it for compilation, if “–device_group [0]” then TS compilation is skipped and single soc execution is enabled.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>Salesforce/codegen-2B-mono<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--mxfp6<span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device-group<span class="w"> </span><span class="o">[</span><span class="m">0</span>,1<span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;def fibonacci(n):&quot;</span><span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first<span class="w">  </span>
 <span class="w"> </span>
 <span class="c1"># Once qpc is saved, you can use the execute API to run for different prompts</span>
 python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.execute<span class="w"> </span>--model_name<span class="w"> </span>Salesforce/codegen-2B-mono<span class="w"> </span>--qpc-path<span class="w"> </span>qeff_models/Salesforce/codegen-2B-mono/qpc_16cores_1BS_32PL_128CL_2devices_mxfp6/qpcs<span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;def binary_search(array: np.array, k: int):&quot;</span><span class="w"> </span>--device-group<span class="w"> </span><span class="o">[</span><span class="m">0</span>,1<span class="o">]</span><span class="w"> </span>

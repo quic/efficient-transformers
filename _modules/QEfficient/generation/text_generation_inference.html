@@ -50,7 +50,7 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#linux-installation">Linux Installation</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -109,7 +109,7 @@
   <h1>Source code for QEfficient.generation.text_generation_inference</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -----------------------------------------------------------------------------</span>
 <span class="c1">#</span>
-<span class="c1"># Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
+<span class="c1"># Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
 <span class="c1"># SPDX-License-Identifier: BSD-3-Clause</span>
 <span class="c1">#</span>
 <span class="c1"># -----------------------------------------------------------------------------</span>
@@ -178,16 +178,15 @@
     <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">device_id</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span>
 <span class="p">):</span>
-<span class="w">    </span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    API to execute ONNX model on CPU. </span>
+<span class="sd">    API to execute Bertstyle ONNX model on Cloud AI 100.</span>
 <span class="sd">    ---------</span>
-<span class="sd">    </span>
+
 <span class="sd">    :model_name: str. Hugging Face Model Card name, Example: gpt2.</span>
-<span class="sd">    :qpc: str.  Path to the save generated binary file after compilation.</span>
+<span class="sd">    :qpc: str.  Path to save generated binary file after compilation.</span>
 <span class="sd">    :seq_len: int. Sequence length.</span>
 <span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
-<span class="sd">    :device_id: List[int]. Device Ids to be used for compilation. if devices &gt; 1, it enable multiple card setup.</span>
+<span class="sd">    :device_id: List[int]. Device Ids to be used for compilation. if devices &gt; 1, it enables multiple card setup.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">session</span> <span class="o">=</span> <span class="n">QAICInferenceSession</span><span class="p">(</span><span class="n">qpc</span><span class="p">,</span> <span class="n">device_id</span><span class="p">)</span>
     <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">transformers</span><span class="o">.</span><span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">padding_side</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">)</span>
@@ -227,6 +226,7 @@
     <span class="n">compilation_ctx_len</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;ctx_len&quot;</span><span class="p">])</span>
     <span class="k">return</span> <span class="n">compilation_batch_size</span><span class="p">,</span> <span class="n">compilation_ctx_len</span>
 
+
 <span class="k">def</span> <span class="nf">check_batch_size_and_num_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
     <span class="k">assert</span> <span class="p">(</span>
         <span class="n">prompt</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">prompts_txt_file_path</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
@@ -254,7 +254,7 @@
     <span class="k">return</span> <span class="n">prompt</span>
 
 
-<div class="viewcode-block" id="cloud_ai_100_exec_kv_helper"><a class="viewcode-back" href="../../../source/low_level_api.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv_helper">[docs]</a><span class="k">def</span> <span class="nf">cloud_ai_100_exec_kv_helper</span><span class="p">(</span>
+<span class="k">def</span> <span class="nf">cloud_ai_100_exec_kv_helper</span><span class="p">(</span>
     <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">],</span>
     <span class="n">qpc</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
@@ -265,23 +265,22 @@
     <span class="n">stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="n">write_io_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">):</span>
-<span class="w">    </span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file. </span>
+<span class="sd">    API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.</span>
 <span class="sd">    ---------</span>
-<span class="sd">    </span>
-<span class="sd">    :tokenizer: </span>
+
+<span class="sd">    :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. model tokenizer.</span>
 <span class="sd">    :qpc: str.  Path to the save generated binary file after compilation.</span>
 <span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
-<span class="sd">    :input_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.</span>
+<span class="sd">    :ctx_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.</span>
 <span class="sd">    :generation_len: int. Maximum context length for the model to compile.</span>
 <span class="sd">    :device_id: List[int]. Device Ids to be used for compilation. if len(device_id) &gt; 1, it enable multiple card setup.</span>
 <span class="sd">    :enable_debug_logs: bool. If True, it enables debugging logs.</span>
 <span class="sd">    :stream: bool. If True enable streamer, which returns tokens one by one as the model generates them.</span>
-<span class="sd">    :Write_io_dir: </span>
+<span class="sd">    :Write_io_dir: Path to write the input and output files.</span>
 <span class="sd">    :automation: bool. If true, it print input, output and performance stats.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    
+
     <span class="k">if</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">padding_side</span> <span class="o">!=</span> <span class="s2">&quot;right&quot;</span><span class="p">:</span>
         <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Please use padding_side=&#39;right&#39; while initializing the tokenizer&quot;</span><span class="p">)</span>
         <span class="n">tokenizer</span><span class="o">.</span><span class="n">padding_side</span> <span class="o">=</span> <span class="s2">&quot;right&quot;</span>
@@ -383,7 +382,7 @@
     <span class="nb">print</span><span class="p">()</span>
 
     <span class="n">latency_stats</span> <span class="o">=</span> <span class="p">(</span><span class="n">generated_texts</span><span class="p">,</span> <span class="n">prefill_time</span><span class="p">,</span> <span class="n">decode_perf</span><span class="p">,</span> <span class="n">total_perf</span><span class="p">,</span> <span class="n">total_time</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">latency_stats</span></div>
+    <span class="k">return</span> <span class="n">latency_stats</span>
 
 
 <span class="k">def</span> <span class="nf">print_latency_stats_kv</span><span class="p">(</span>
@@ -414,8 +413,8 @@
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=============================================================&quot;</span><span class="p">)</span>
 
 
-<span class="k">def</span> <span class="nf">cloud_ai_100_exec_kv</span><span class="p">(</span>
-    <span class="n">batch_size</span><span class="p">,</span>
+<div class="viewcode-block" id="cloud_ai_100_exec_kv"><a class="viewcode-back" href="../../../source/low_level_api.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv">[docs]</a><span class="k">def</span> <span class="nf">cloud_ai_100_exec_kv</span><span class="p">(</span>
+    <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
     <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">],</span>
     <span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">prompt</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -427,6 +426,22 @@
     <span class="n">write_io_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">automation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.</span>
+<span class="sd">    ---------</span>
+
+<span class="sd">    :batch_size: int. Batch size of which qpc is compiled.</span>
+<span class="sd">    :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. model tokenizer.</span>
+<span class="sd">    :qpc_path: str.  Path to the save generated binary file after compilation.</span>
+<span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
+<span class="sd">    :ctx_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.</span>
+<span class="sd">    :generation_len: int. Maximum context length for the model to compile.</span>
+<span class="sd">    :device_id: List[int]. Device Ids to be used for compilation. if len(device_id) &gt; 1, it enable multiple card setup.</span>
+<span class="sd">    :enable_debug_logs: bool. If True, it enables debugging logs.</span>
+<span class="sd">    :stream: bool. If True enable streamer, which returns tokens one by one as the model generates them.</span>
+<span class="sd">    :Write_io_dir: Path to write the input and output files.</span>
+<span class="sd">    :automation: bool. If true, it print input, output and performance stats.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="n">batch_size</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
         <span class="n">prefill_time</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="n">decode_perf</span> <span class="o">=</span> <span class="p">[]</span>
@@ -479,7 +494,7 @@
         <span class="n">total_perf</span><span class="p">,</span>
         <span class="n">total_time</span><span class="p">,</span>
         <span class="n">automation</span><span class="o">=</span><span class="n">automation</span><span class="p">,</span>
-    <span class="p">)</span>
+    <span class="p">)</span></div>
 </pre></div>
 
            </div>

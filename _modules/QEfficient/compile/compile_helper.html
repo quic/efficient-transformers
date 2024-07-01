@@ -50,7 +50,7 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#linux-installation">Linux Installation</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -109,7 +109,7 @@
   <h1>Source code for QEfficient.compile.compile_helper</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -----------------------------------------------------------------------------</span>
 <span class="c1">#</span>
-<span class="c1"># Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
+<span class="c1"># Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
 <span class="c1"># SPDX-License-Identifier: BSD-3-Clause</span>
 <span class="c1">#</span>
 <span class="c1"># -----------------------------------------------------------------------------</span>
@@ -218,13 +218,13 @@
     <span class="n">ctx_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>
     <span class="n">mxfp6</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="n">mxint8</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
-    <span class="o">**</span><span class="n">kwargs</span>
+    <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="c1"># Dynamically create the specializations JSON</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    API to compile the Onnx Model on Cloud AI 100 Platform with give config.</span>
+<span class="sd">    API to compile the Onnx Model on Cloud AI 100 platform with given config.</span>
 <span class="sd">    ---------</span>
-<span class="sd">    </span>
+
 <span class="sd">    :onnx_path: str. Generated Onnx Model Path.</span>
 <span class="sd">    :qpc_path: str. Path for saving compiled qpc binaries.</span>
 <span class="sd">    :num_cores: int. Number of cores to compile model on.</span>

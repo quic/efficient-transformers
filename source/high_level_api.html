@@ -53,7 +53,7 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html#linux-installation">Linux Installation</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -133,10 +133,16 @@
 <dd class="field-odd"><p>str. Hugging Face Model Card name, Example: gpt2.</p>
 </dd>
 <dt class="field-even">num_cores<span class="colon">:</span></dt>
-<dd class="field-even"><p>int. Number of cores to compile model on. Default: 16, available option: [1 to 16].</p>
+<dd class="field-even"><p>int. Number of cores to compile model on.</p>
 </dd>
 <dt class="field-odd">prompt<span class="colon">:</span></dt>
 <dd class="field-odd"><p>str. Sample prompt for the model text generation.</p>
+</dd>
+<dt class="field-even">local_model_dir<span class="colon">:</span></dt>
+<dd class="field-even"><p>str. Path to custom model weights and config files.</p>
+</dd>
+<dt class="field-odd">prompts_txt_file_path<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Path to txt file for taking input prompts</p>
 </dd>
 <dt class="field-even">aic_enable_depth_first<span class="colon">:</span></dt>
 <dd class="field-even"><p>bool. If passed, this option will be enabled during compilation. Default=False.</p>
@@ -159,11 +165,17 @@
 <dt class="field-even">ctx_len<span class="colon">:</span></dt>
 <dd class="field-even"><p>int. Maximum context length for the model to compile.</p>
 </dd>
-<dt class="field-odd">mxfp6<span class="colon">:</span></dt>
-<dd class="field-odd"><p>bool. Enable compilation for MXFP6 precision.</p>
+<dt class="field-odd">generation_len<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int. Number of tokens to be generated.</p>
+</dd>
+<dt class="field-even">mxfp6<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool. Enable compilation for MXFP6 precision.</p>
+</dd>
+<dt class="field-odd">mxint8<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool. Compress Present/Past KV to MXINT8 using CustomIO config, default is False.</p>
 </dd>
 <dt class="field-even">device_group<span class="colon">:</span></dt>
-<dd class="field-even"><p>List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enable multiple card setup.</p>
+<dd class="field-even"><p>List[int]. Cloud AI 100 device ids (comma-separated) e.g. [0,1]. if devices &gt; 1, it enables multiple card setup.</p>
 </dd>
 </dl>
 </section>
@@ -178,26 +190,29 @@
 <dd><section id="api-to-run-the-model-on-cloud-ai-100-platform">
 <h3>API to run the model on Cloud AI 100 platform.<a class="headerlink" href="#api-to-run-the-model-on-cloud-ai-100-platform" title="Permalink to this heading"></a></h3>
 <dl class="field-list simple">
-<dt class="field-odd">param model_name<span class="colon">:</span></dt>
+<dt class="field-odd">model_name<span class="colon">:</span></dt>
 <dd class="field-odd"><p>str. Hugging Face Model Card name, Example: [gpt2].</p>
+</dd>
+<dt class="field-even">qpc_path<span class="colon">:</span></dt>
+<dd class="field-even"><p>str.  Path to the save generated binary file after compilation.</p>
+</dd>
+<dt class="field-odd">device_group<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[int]. Device Ids to be used for compilation. if len(device_group) &gt; 1. Multiple Card setup is enabled.</p>
 </dd>
 <dt class="field-even">prompt<span class="colon">:</span></dt>
 <dd class="field-even"><p>str. Sample prompt for the model text generation.</p>
 </dd>
-<dt class="field-odd">qpc_path<span class="colon">:</span></dt>
-<dd class="field-odd"><p>str.  Path to the save generated binary file after compilation.</p>
-</dd>
-<dt class="field-even">cache_dir<span class="colon">:</span></dt>
-<dd class="field-even"><p>str. Cache dir to store the downloaded huggingface files.</p>
-</dd>
-<dt class="field-odd">hf_token<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Huggingface token to access gated models.</p>
-</dd>
-<dt class="field-even">device_group<span class="colon">:</span></dt>
-<dd class="field-even"><p>List[int]. Device Ids to be used for compilation. if len(device_group) &gt; 1. Multiple Card setup is enabled.</p>
-</dd>
 <dt class="field-odd">prompts_txt_file_path<span class="colon">:</span></dt>
-<dd class="field-odd"><p>str. Path to txt file for multiple input prompts</p>
+<dd class="field-odd"><p>str. Path to txt file for single or multiple input prompts.</p>
+</dd>
+<dt class="field-even">generation_len<span class="colon">:</span></dt>
+<dd class="field-even"><p>int. Number of tokens to be generated.</p>
+</dd>
+<dt class="field-odd">cache_dir<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str. Cache dir to store the downloaded huggingface files.</p>
+</dd>
+<dt class="field-even">hf_token<span class="colon">:</span></dt>
+<dd class="field-even"><p>Huggingface token to access gated models.</p>
 </dd>
 </dl>
 </section>

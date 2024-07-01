@@ -1,6 +1,6 @@
 # Low level API
 
-## QEfficient.transform.from
+## QEfficient.src._transformers.auto.QEFFAutoModelForCausalLM
 ```{eval-rst}
 .. automodule:: QEfficient.src._transformers.auto 
    :members:
@@ -25,7 +25,8 @@
 ```{eval-rst}
 .. automodule:: QEfficient.generation.text_generation_inference
    :members:
-   :show-inheritance:
+   :show-inheritance: 
+   :exclude-members: cloud_ai_100_exec_kv_helper
 ```
  
 

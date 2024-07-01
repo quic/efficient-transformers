@@ -53,7 +53,7 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html#linux-installation">Linux Installation</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -193,7 +193,7 @@
 <p>:n_layer : int. Number of layers in the PyTorch model.
 :padding_shape : List[int]. Shape of past key values.</p>
 <dl class="simple">
-<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</p>
+<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids, past_key_values</p>
 </dd>
 </dl>
 </section>
@@ -207,7 +207,7 @@
 <p>:n_layer : int. Number of layers in the PyTorch model.
 :padding_shape : List[int]. Shape of past key values.</p>
 <dl class="simple">
-<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</p>
+<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids, past_key_values</p>
 </dd>
 </dl>
 </section>
@@ -219,8 +219,11 @@
 <dd><section id="function-responsible-for-creating-prefill-stage-tensor-inputs-for-pytorch-model">
 <h3>Function responsible for creating Prefill stage tensor inputs for PyTorch model.<a class="headerlink" href="#function-responsible-for-creating-prefill-stage-tensor-inputs-for-pytorch-model" title="Permalink to this heading"></a></h3>
 <p>:n_layer : int
-:padding_shape : List[int]
-:return inputs: Dict - input_ids, position_ids, past_key_values</p>
+:padding_shape : List[int]</p>
+<dl class="simple">
+<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids, past_key_values</p>
+</dd>
+</dl>
 </section>
 </dd></dl>
 
@@ -239,8 +242,9 @@
 <dt class="field-odd">outputs<span class="colon">:</span></dt>
 <dd class="field-odd"><p>Dict. Previous iteration outputs of Cloud AI 100 execution.</p>
 </dd>
-<dt class="field-even">inputs<span class="colon">:</span></dt>
-<dd class="field-even"><p>Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100).</p>
+</dl>
+<dl class="simple">
+<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100).</p>
 </dd>
 </dl>
 </section>
@@ -256,7 +260,7 @@
 :ort_outputs: Dict. Previous iteration ORT outputs.
 :n_layer : int. Number of layers in the ONNX model.</p>
 <dl class="simple">
-<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</p>
+<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids, past_key_values</p>
 </dd>
 </dl>
 </section>
@@ -279,7 +283,7 @@
 </dd>
 </dl>
 <dl class="simple">
-<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</p>
+<dt>Return:</dt><dd><p>inputs: Dict - input_ids, position_ids, past_key_values</p>
 </dd>
 </dl>
 </section>

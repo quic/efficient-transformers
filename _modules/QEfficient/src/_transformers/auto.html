@@ -50,7 +50,7 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../source/Linux_installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/Linux_installation.html#linux-installation">Linux Installation</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -131,76 +131,82 @@
 <span class="p">}</span>
 
 
-<div class="viewcode-block" id="QEFFTransformersBase"><a class="viewcode-back" href="../../../../source/low_level_api.html#QEfficient.src._transformers.auto.QEFFTransformersBase">[docs]</a><span class="k">class</span> <span class="nc">QEFFTransformersBase</span><span class="p">(</span><span class="n">QEFFBaseModel</span><span class="p">):</span>
+<span class="k">class</span> <span class="nc">QEFFTransformersBase</span><span class="p">(</span><span class="n">QEFFBaseModel</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Parent class for models QEFF provides from transformers i.e. (AutoModel, AutoModelForCausalLM, AutoModelForAudioClassification etc.) from src/transformers/models/auto/modeling_auto.py file.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">transform</span><span class="p">:</span><span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="k">assert</span> <span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="vm">__class__</span> <span class="ow">in</span> <span class="n">MODEL_FOR_CAUSAL_LM_MAPPING</span><span class="o">.</span><span class="n">values</span><span class="p">()</span> <span class="ow">or</span>
-                <span class="c1"># FIXME: Use model architectures here instead of complete dictionary TransformersToQEffModulesDict</span>
-                <span class="n">model</span><span class="o">.</span><span class="vm">__class__</span> <span class="ow">in</span> <span class="n">TransformersToQEffModulesDict</span><span class="o">.</span><span class="n">values</span><span class="p">()),</span> <span class="sa">f</span><span class="s2">&quot;Given model</span><span class="si">{</span><span class="n">model</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> could not be found in transformers library i.e. </span><span class="si">{</span><span class="n">MODEL_FOR_CAUSAL_LM_MAPPING</span><span class="o">.</span><span class="n">values</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span> <span class="c1"># type: ignore</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">transform</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="p">(</span>
+            <span class="n">model</span><span class="o">.</span><span class="vm">__class__</span> <span class="ow">in</span> <span class="n">MODEL_FOR_CAUSAL_LM_MAPPING</span><span class="o">.</span><span class="n">values</span><span class="p">()</span>
+            <span class="ow">or</span>
+            <span class="c1"># FIXME: Use model architectures here instead of complete dictionary TransformersToQEffModulesDict</span>
+            <span class="n">model</span><span class="o">.</span><span class="vm">__class__</span> <span class="ow">in</span> <span class="n">TransformersToQEffModulesDict</span><span class="o">.</span><span class="n">values</span><span class="p">()</span>
+        <span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;Given model</span><span class="si">{</span><span class="n">model</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> could not be found in transformers library i.e. </span><span class="si">{</span><span class="n">MODEL_FOR_CAUSAL_LM_MAPPING</span><span class="o">.</span><span class="n">values</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>  <span class="c1"># type: ignore</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span> <span class="o">=</span> <span class="n">model</span>
         <span class="k">if</span> <span class="n">transform</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">transform</span><span class="p">()</span>
 
     <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="fm">__repr__</span><span class="p">()</span>
-    
+
     <span class="nd">@property</span>
     <span class="k">def</span> <span class="nf">is_transformed</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
         <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">,</span> <span class="s2">&quot;qeff_transformed&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
 
-<div class="viewcode-block" id="QEFFTransformersBase.from_pretrained"><a class="viewcode-back" href="../../../../source/low_level_api.html#QEfficient.src._transformers.auto.QEFFTransformersBase.from_pretrained">[docs]</a>    <span class="nd">@classmethod</span>
+    <span class="nd">@classmethod</span>
     <span class="k">def</span> <span class="nf">from_pretrained</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">pretrained_model_name_or_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        This method accepts All the parameters that are acceptable by transformers.AutoModelForCausalLM.</span>
 <span class="sd">        ---------</span>
-<span class="sd">        </span>
+
 <span class="sd">        :pretrained_model_name_or_path: str. Pass PyTorch model name or path.</span>
 <span class="sd">        :transform: bool. Whether to optimize model for KV retention. Default is True. Pass False to get BertStyle model.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">transform</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;transform&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
         <span class="n">kwargs</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;use_cache&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">})</span>  <span class="c1"># Always pass use_cache = True, to get KV values as output during ONNX export </span>
+        <span class="n">kwargs</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;attn_implementation&quot;</span> <span class="p">:</span> <span class="s2">&quot;eager&quot;</span><span class="p">})</span> <span class="c1"># Always use eager mode for attention implementation</span>
         
         <span class="n">model</span> <span class="o">=</span> <span class="n">QEFFAutoModelToTransformersAutoModelMap</span><span class="p">[</span><span class="bp">cls</span><span class="o">.</span><span class="vm">__name__</span><span class="p">]</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">pretrained_model_name_or_path</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">transform</span><span class="o">=</span><span class="n">transform</span><span class="p">)</span></div>
-        
+
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">transform</span><span class="o">=</span><span class="n">transform</span><span class="p">)</span>
 
     <span class="k">def</span> <span class="nf">transform_export</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Reached too far!!&quot;</span><span class="p">)</span>
-    
+
     <span class="k">def</span> <span class="nf">transform_export_compile</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Reached too far!!&quot;</span><span class="p">)</span>
-        
+
     <span class="k">def</span> <span class="nf">transform</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="c1"># FIXME: break down transform into optmization passes i.e. HW specific optimization(RMSNorm), KV retention pass etc.</span>
         <span class="n">QEfficient</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-        <span class="k">return</span> <span class="bp">self</span></div>
+        <span class="k">return</span> <span class="bp">self</span>
 
 
 <div class="viewcode-block" id="QEFFAutoModelForCausalLM"><a class="viewcode-back" href="../../../../source/low_level_api.html#QEfficient.src._transformers.auto.QEFFAutoModelForCausalLM">[docs]</a><span class="k">class</span> <span class="nc">QEFFAutoModelForCausalLM</span><span class="p">(</span><span class="n">QEFFTransformersBase</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    QEFF class which uses  QEfficient.transform to optimizing any kind of model (i.e. LLM, SD, AWQ etc.) for cloud AI 100. It replaces</span>
-<span class="sd">    the torch.nn.Module layers with passed QEffModel layers which is optimized implementation of the same.    </span>
-<span class="sd">    </span>
+<span class="sd">    the torch.nn.Module layers with passed QEffModel layers which is optimized implementation of the same.</span>
+
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">def</span> <span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span> <span class="c1"># type: ignore</span>
+
+    <span class="k">def</span> <span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>  <span class="c1"># type: ignore</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Reached too far!!&quot;</span><span class="p">)</span>
-    
+
     <span class="k">def</span> <span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Reached too far!!&quot;</span><span class="p">)</span>
-    
+
     <span class="k">def</span> <span class="nf">compile</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Reached too far!!&quot;</span><span class="p">)</span></div>
 
 
 <span class="k">class</span> <span class="nc">QEffAutoModel</span><span class="p">(</span><span class="n">QEFFTransformersBase</span><span class="p">):</span>
-    <span class="k">def</span> <span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span> <span class="c1"># type: ignore</span>
+    <span class="k">def</span> <span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>  <span class="c1"># type: ignore</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Reached too far!!&quot;</span><span class="p">)</span>
-    
+
     <span class="k">def</span> <span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Reached too far!!&quot;</span><span class="p">)</span>
-    
+
     <span class="k">def</span> <span class="nf">compile</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Reached too far!!&quot;</span><span class="p">)</span>
 </pre></div>

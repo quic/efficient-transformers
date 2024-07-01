@@ -50,7 +50,7 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#linux-installation">Linux Installation</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -109,7 +109,7 @@
   <h1>Source code for QEfficient.utils.generate_inputs</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -----------------------------------------------------------------------------</span>
 <span class="c1">#</span>
-<span class="c1"># Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
+<span class="c1"># Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
 <span class="c1"># SPDX-License-Identifier: BSD-3-Clause</span>
 <span class="c1">#</span>
 <span class="c1"># -----------------------------------------------------------------------------</span>
@@ -125,13 +125,13 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Initialization</span>
 <span class="sd">        ---------</span>
-<span class="sd">        </span>
-<span class="sd">        :model_name: str. Hugging Face Model Card name, Example: [gpt2].</span>
+
+<span class="sd">        :tokenizer: str. Hugging Face Model Card name, Example: [gpt2].</span>
 <span class="sd">        :input_str: List[str]. List of input string.</span>
 <span class="sd">        :prompt_len: int. prompt len for the model to compile.</span>
 <span class="sd">        :ctx_len: int. Maximum context length for the model to compile.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="c1">#check and fix tokenizer viability</span>
+        <span class="c1"># check and fix tokenizer viability</span>
         <span class="n">padding_check_and_fix</span><span class="p">(</span><span class="n">tokenizer</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span> <span class="o">=</span> <span class="n">tokenizer</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">input_str</span> <span class="o">=</span> <span class="n">input_str</span>
@@ -145,7 +145,9 @@
 
 <span class="sd">        :n_layer : int</span>
 <span class="sd">        :padding_shape : List[int]</span>
-<span class="sd">        :return inputs: Dict - input_ids, position_ids, past_key_values</span>
+
+<span class="sd">        Return:</span>
+<span class="sd">            inputs: Dict - input_ids, position_ids, past_key_values</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">(</span>
@@ -187,13 +189,13 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for PyTorch model.</span>
 <span class="sd">        ---------</span>
-<span class="sd">        </span>
+
 <span class="sd">        :iteration: int. Current iteration number.</span>
 <span class="sd">        :inputs: Dict. Previous iteration inputs.</span>
 <span class="sd">        :pt_outputs: Dict. Previous iteration PyTorch outputs.</span>
 
 <span class="sd">        Return:</span>
-<span class="sd">            inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</span>
+<span class="sd">            inputs: Dict - input_ids, position_ids, past_key_values</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="n">updated_inputs</span> <span class="o">=</span> <span class="p">{}</span>
@@ -208,12 +210,12 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.</span>
 <span class="sd">        ---------</span>
-<span class="sd">        </span>
+
 <span class="sd">        :n_layer : int. Number of layers in the PyTorch model.</span>
 <span class="sd">        :padding_shape : List[int]. Shape of past key values.</span>
 
 <span class="sd">        Return:</span>
-<span class="sd">            inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</span>
+<span class="sd">            inputs: Dict - input_ids, position_ids, past_key_values</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">(</span>
@@ -226,17 +228,11 @@
         <span class="n">inputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">)</span>
         <span class="n">position_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">input_len</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
         <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span>
-            <span class="p">[</span>
-                <span class="n">input_ids</span><span class="p">,</span>
-                <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">prompt_len</span> <span class="o">-</span> <span class="n">input_len</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span><span class="p">)</span>
-            <span class="p">],</span>
+            <span class="p">[</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">prompt_len</span> <span class="o">-</span> <span class="n">input_len</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span><span class="p">)],</span>
             <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
         <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
         <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span>
-            <span class="p">[</span>
-                <span class="n">position_ids</span><span class="p">,</span>
-                <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">prompt_len</span> <span class="o">-</span> <span class="n">input_len</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
-            <span class="p">],</span>
+            <span class="p">[</span><span class="n">position_ids</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">prompt_len</span> <span class="o">-</span> <span class="n">input_len</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">)],</span>
             <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
         <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
 
@@ -250,14 +246,14 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.</span>
 <span class="sd">        ---------</span>
-<span class="sd">        </span>
+
 <span class="sd">        :iteration:int Current iteration number.</span>
 <span class="sd">        :inputs: Dict. Previous iteration ORT inputs.</span>
 <span class="sd">        :ort_outputs: Dict. Previous iteration ORT outputs.</span>
 <span class="sd">        :n_layer : int. Number of layers in the ONNX model.</span>
 
 <span class="sd">        Return:</span>
-<span class="sd">            inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</span>
+<span class="sd">            inputs: Dict - input_ids, position_ids, past_key_values</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="n">updated_inputs</span> <span class="o">=</span> <span class="p">{}</span>
@@ -273,12 +269,12 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on Cloud AI 100.</span>
 <span class="sd">        ---------</span>
-<span class="sd">        </span>
+
 <span class="sd">        :n_layer : int. Number of layers in the PyTorch model.</span>
 <span class="sd">        :padding_shape : List[int]. Shape of past key values.</span>
 
 <span class="sd">        Return:</span>
-<span class="sd">            inputs: Dict - input_ids, position_ids,attention_mask, past_key_values, cache_index</span>
+<span class="sd">            inputs: Dict - input_ids, position_ids, past_key_values</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">(</span>
@@ -291,17 +287,11 @@
         <span class="n">inputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">)</span>
         <span class="n">position_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">input_len</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
         <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span>
-            <span class="p">[</span>
-                <span class="n">input_ids</span><span class="p">,</span>
-                <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">prompt_len</span> <span class="o">-</span> <span class="n">input_len</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span><span class="p">)</span>
-            <span class="p">],</span>
+            <span class="p">[</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">prompt_len</span> <span class="o">-</span> <span class="n">input_len</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span><span class="p">)],</span>
             <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
         <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
         <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span>
-            <span class="p">[</span>
-                <span class="n">position_ids</span><span class="p">,</span>
-                <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">prompt_len</span> <span class="o">-</span> <span class="n">input_len</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
-            <span class="p">],</span>
+            <span class="p">[</span><span class="n">position_ids</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">prompt_len</span> <span class="o">-</span> <span class="n">input_len</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">)],</span>
             <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
         <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
 
@@ -315,11 +305,13 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.</span>
 <span class="sd">        ---------</span>
-<span class="sd">        </span>
+
 <span class="sd">        :iteration: int. Current iteration number.</span>
 <span class="sd">        :inputs: Dict. Previous iteration inputs of Cloud AI 100 execution.</span>
 <span class="sd">        :outputs: Dict. Previous iteration outputs of Cloud AI 100 execution.</span>
-<span class="sd">        :inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100).</span>
+
+<span class="sd">        Return:</span>
+<span class="sd">            inputs: Dict - input_ids, position_ids, cache_index (since attention_mask and past_key_values inputs are skipped in decode stage at Cloud AI 100).</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="n">updated_inputs</span> <span class="o">=</span> <span class="p">{}</span>
