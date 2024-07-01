@@ -232,7 +232,7 @@ use the qualcomm_efficient_converter API to export the KV transformed Model to O
 # This will generate single Onnx Model for both Prefill and Decode Variations which are optimized for
 # Cloud AI 100 Platform.
 
-# While generaing the onnx model, this will clip the overflow constants to fp16
+# While generating the ONNX model, this will clip the overflow constants to fp16
 # Verify the model on Onnxruntime vs Pytorch
 
 # Then generate inputs and customio yaml file required for compilation.
