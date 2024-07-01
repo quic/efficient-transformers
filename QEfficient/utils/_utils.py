@@ -97,7 +97,7 @@ def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Tuple[bool, str]:
     return qpc_exists_bool, qpc_dir_path
 
 
-def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
+def onnx_exists(model_name: str, base_dir_name:str) -> Tuple[bool, str, str]:
     """
     Checks if qpc files already exists, removes the directory if files have been manipulated.
     ---------
@@ -107,13 +107,12 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
     os.makedirs(model_card_dir, exist_ok=True)
 
-    onnx_dir_path = os.path.join(model_card_dir, "onnx")
+    onnx_dir_path = os.path.join(model_card_dir, os.path.join(base_dir_name,"onnx"))
     onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
 
     # Compute the boolean indicating if the ONNX model exists
     onnx_exists_bool = os.path.isfile(onnx_model_path) and os.path.isfile(
-        os.path.join(os.path.dirname(onnx_model_path), "custom_io_fp16.yaml")
-    )
+        os.path.join(os.path.dirname(onnx_model_path), "custom_io_fp16.yaml"))
 
     # Return the boolean, onnx_dir_path, and onnx_model_path
     return onnx_exists_bool, onnx_dir_path, onnx_model_path

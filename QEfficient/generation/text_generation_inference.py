@@ -707,10 +707,10 @@ class TextGeneration:
                         # run prefill for next prompt input. 
                         outputs, position_ids, generation_len =  self.run_prefill(prompt_queue.popleft(), generation_len)
 
-                        next_token_id = self._update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
+                        new_token_id = self._update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
                         
                         batch_id_map[decode_batch_id] = max(batch_id_map.values())+1
-                        self.generated_ids[batch_id_map[decode_batch_id], 0] = next_token_id.squeeze(1)
+                        self.generated_ids[batch_id_map[decode_batch_id], 0] = new_token_id.squeeze(1)
                         generated_id_current_index[decode_batch_id] = 1
                         
                         self.session.set_buffers({"logits":logits_out_placeholder})
@@ -790,8 +790,7 @@ class TextGeneration:
         execution_batch_size = self.full_batch_size if self.full_batch_size is not None else self.batch_size
         
         # Truncate prompts to required size
-        # TODO check this can be done prior as a input processing module. 
-        
+        # TODO check this can be done prior as a input processing module.   
         prompt = self.prepare_prompt(prompt, execution_batch_size)
         prompt_queue= deque(prompt)
 
@@ -827,7 +826,7 @@ class TextGeneration:
         end = perf_counter()
         generated_texts = self.tokenizer.batch_decode(self.generated_ids, skip_special_tokens=True)
 
-        for i in range(1 if not self.stream else 0, self.batch_size):
+        for i in range(1 if not self.stream else 0, len(prompt)):
             print()
             print(i, prompt[i], generated_texts[i])
 

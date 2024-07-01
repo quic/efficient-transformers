@@ -19,11 +19,11 @@ from QEfficient.utils.logging_utils import logger
 ROOT_DIR = os.path.dirname(os.path.abspath(""))
 
 
-def get_onnx_model_path(model_name: str, cache_dir: Optional[str] = None, tokenizer: Optional[Union[PreTrainedTokenizerFast, PreTrainedTokenizer]]=None, hf_token: Optional[str] = None, local_model_dir: Optional[str] = None, full_batch_size:Optional[int] = None):
+def get_onnx_model_path(model_name: str, cache_dir: Optional[str] = None, tokenizer: Optional[Union[PreTrainedTokenizerFast, PreTrainedTokenizer]]=None, hf_token: Optional[str] = None, local_model_dir: Optional[str] = None, full_batch_size:Optional[int] = None, base_dir_name:Optional[str]=""):
     """
     exports the model to onnx if pre-exported file is not found and returns onnx_model_path
     """
-    onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(model_name)
+    onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(model_name,base_dir_name)
     if onnx_path_exists:
         logger.info(f"Pre-exported ONNX files found at {onnx_dir_path}! Jumping to Compilation")
     else:

@@ -50,7 +50,7 @@ def main(
         0,
     ],
 ) -> None:
-    qpc_base_dir_name = get_qpc_dir_name_infer(
+    base_dir_name = get_qpc_dir_name_infer(
         num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size,)
     
     prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
@@ -58,13 +58,13 @@ def main(
 
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name), cache_dir=cache_dir, hf_token=hf_token, local_model_dir=local_model_dir)
 
-    qpc_path_exists, qpc_dir_path = qpc_exists(model_name, qpc_base_dir_name)
+    qpc_path_exists, qpc_dir_path = qpc_exists(model_name, base_dir_name)
     # Handle qpc generation
     if qpc_path_exists:
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
-        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size)
+        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size, base_dir_name)
 
         #########
         # Compile

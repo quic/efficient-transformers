@@ -451,6 +451,7 @@ def qualcomm_efficient_converter(
         raise AttributeError("Transformed model is passed while requesting to convert non-transformed model")
     model_kv = model_kv if model_kv.is_transformed else QEfficient.transform(model_kv) if kv else model_kv
 
+    
     if onnx_dir_path is None:
         model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
         onnx_dir_path = os.path.join(model_card_dir, "onnx")
