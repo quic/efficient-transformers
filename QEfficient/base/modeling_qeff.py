@@ -39,7 +39,7 @@ of the model]
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -94,13 +94,15 @@ class QEFFBaseModel(ABC):
     def run_ort(self, inputs: Dict[str, np.ndarray], /, cache_session: bool = False):
         raise NotImplementedError("Reached too far!!")
 
-    def run_cloud_ai_100(self,):
+    def run_cloud_ai_100(
+        self,
+    ):
         raise NotImplementedError("Reached too far!!")
 
     @abstractmethod
     def transform(self, *args, **kwargs) -> Any:
         pass
-    
+
     @abstractmethod
     def export(self, *args, **kwargs) -> Any:
         pass

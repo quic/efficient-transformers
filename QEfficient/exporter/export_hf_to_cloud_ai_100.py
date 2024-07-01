@@ -392,7 +392,8 @@ def export_lm_model_for_cloud(
             model=qeff_model.model,
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
-            seq_len=seq_length) # type: ignore
+            seq_len=seq_length,
+        )  # type: ignore
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
@@ -439,7 +440,7 @@ def qualcomm_efficient_converter(
         else QEFFCommonLoader.from_pretrained(
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
             token=hf_token,
-            cache_dir=cache_dir
+            cache_dir=cache_dir,
         )
     )
 
@@ -455,7 +456,6 @@ def qualcomm_efficient_converter(
         os.makedirs(onnx_dir_path, exist_ok=True)
 
     # Load tokenizer if not passed
-<<<<<<< HEAD
     tokenizer = (
         tokenizer
         if tokenizer
@@ -466,10 +466,6 @@ def qualcomm_efficient_converter(
             local_model_dir=local_model_dir,
         )
     )
-=======
-    tokenizer = tokenizer if tokenizer else load_hf_tokenizer(pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-                                                              hf_token=hf_token, cache_dir=cache_dir, local_model_dir=local_model_dir)
->>>>>>> 8c30c4a (removed src, simplified automodelclass)
 
     if form_factor == "cloud":
         generated_onnx_model_path = export_for_cloud(

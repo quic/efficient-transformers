@@ -169,7 +169,7 @@ def fix_onnx_fp16(
     ort_outputs: List[np.ndarray],
     gen_models_path: str,
     model_base_name: str,
-    pt_outputs: Dict[str, torch.Tensor]
+    pt_outputs: Dict[str, torch.Tensor],
 ) -> str:
     finfo = np.finfo(np.float16)
     fp16_max = finfo.max
@@ -218,7 +218,7 @@ def fix_onnx_fp16(
             os.path.join(gen_models_path, f"{model_base_name}.onnx"),
             os.path.join(gen_models_path, f"{model_base_name}.onnxweights.data"),
         )
-        
+
         model_base_name += "_clipped_fp16"
         onnx.save_model(
             model,

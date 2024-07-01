@@ -5,5 +5,5 @@
 #
 # -----------------------------------------------------------------------------
 
-from QEfficient.transformers.models.modeling_auto import QEffAutoModel, QEFFAutoModelForCausalLM  # noqa: F401
 from QEfficient.base.common import QEFFCommonLoader  # noqa: F401
+from QEfficient.transformers.models.modeling_auto import QEffAutoModel, QEFFAutoModelForCausalLM  # noqa: F401
