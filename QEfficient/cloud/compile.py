@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -49,7 +49,7 @@ if __name__ == "__main__":
         "--device-group",
         required=True,
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
-        help="Cloud AI 100 device ids (comma-separated) e.g. [0] ",
+        help="Cloud AI 100 device ids (comma-separated) e.g. [0,1] ",
     )
     parser.add_argument(
         "--aic_enable_depth_first",
