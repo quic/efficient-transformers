@@ -18,17 +18,17 @@ Representation of class inheritence followed keeping in line with transformers/d
 
                                                                                             QEFFBaseModel
                                                  ________________________________________________|________________________________________________________________
-                                                |                                                                                                                 |  
+                                                |                                                                                                                 |
                                             QEFFTransformersBase                                                                                           QEFFDiffusersBase
                                                 |                                                                                                                 |
                                     ____________|________________________________________________________ ________________                       _________________|______________
-                   _____           |                              |                                      |                |                     |                                |         
+                   _____           |                              |                                      |                |                     |                                |
                   |          QEFFAutoModel             QEFFAutoModelForCausalLM              QEFFAWQModelForCausalLM     ...                   ...                              ...
-QEFFCommonLoader -|       [Provides way to          [Provides way to do 1-5 on                 [Supports 1-5 for 
+QEFFCommonLoader -|       [Provides way to          [Provides way to do 1-5 on                 [Supports 1-5 for
 [Provides         |        do steps 1-5 on           transformers.AutoModelForCausalLM]         AWQ Models]
 interface to      |_____   transformers.AutoModel]
-Load any of 
-These models       
+Load any of
+These models
 by automatically
 detecting the type
 of the model]
@@ -42,7 +42,7 @@ from enum import Enum
 from typing import Any
 
 
-#Defining placeholder ENUM for execute function
+# Defining placeholder ENUM for execute function
 class Runtime(Enum):
     CPU_ORT = "CPU ONNX Runtime"
     CPU_PT = "CPU PyTorch Runtime"
@@ -56,15 +56,28 @@ class QEFFBaseModel(ABC):
 
     All the child classes must provide way to load, transform(optimize), exoprt to ONNX etc. capabilities.
     """
+
     def __init__(self) -> None:
         super().__init__()
         # Users can call generate or execute
         self.generate = self.execute
-        self._runtime = Runtime.CPU_PT
+        self.__runtime = Runtime.CPU_PT
+        self.ort_runtime_args = None
+        self.cloud_ai_100_runtime_args = None
 
     @property
     def runtime(self) -> Runtime:
-        return self._runtime
+        return self.__runtime
+
+    @runtime.setter
+    def runtime(self, value: Runtime) -> None:
+        if value == Runtime.CPU_ORT:
+            assert self.ort_runtime_args is not None, "Please run export first"
+        elif value == Runtime.AI_100:
+            assert self.cloud_ai_100_runtime_args is not None, "Please run compile first"
+        else:
+            assert value == Runtime.CPU_PT, f"Expected runtime to be of type {Runtime.__class__} got {type(value)}"
+        self.__runtime = value
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
@@ -75,11 +88,7 @@ class QEFFBaseModel(ABC):
         raise NotImplementedError("Must implement for child classes")
 
     @abstractmethod
-    def transform_export(self, *args, **kwargs) -> Any:
-        pass
-
-    @abstractmethod
-    def transform_export_compile(self, *args, **kwargs) -> Any:
+    def export_and_compile(self, *args, **kwargs) -> Any:
         pass
 
     @abstractmethod
