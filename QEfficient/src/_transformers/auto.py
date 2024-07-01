@@ -91,6 +91,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update(
             {"use_cache": True}
         )  # Always pass use_cache = True, to get KV values as output during ONNX export
+        kwargs.update({"attn_implementation" : "eager"}) # Always use eager mode for attention implementation
         model_card_name = kwargs.pop("model_card_name", None)
         model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
