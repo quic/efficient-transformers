@@ -100,6 +100,7 @@ def main(
         prompt=prompt,
         ctx_len=ctx_len,
         generation_len=generation_len,
+        full_batch_size=full_batch_size,
     )
 
 
