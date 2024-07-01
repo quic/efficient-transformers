@@ -15,9 +15,11 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 import QEfficient
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
+from QEfficient.src._transformers import QEFFAutoModelForCausalLMCPUORTRuntimeArgs
 from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
-from QEfficient.src.base import QEFFBaseModel
+from QEfficient.src.base import QEFFBaseModel, Runtime
 from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
+from QEfficient.transformers.modeling_utils import get_lists_of_cb_qeff_models
 from QEfficient.utils import load_hf_tokenizer, padding_check_and_fix
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
@@ -186,6 +188,7 @@ def export_kvstyle_transformed_model_to_onnx(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_len: int,
+    full_batch_size: Optional[int] = None,
 ) -> str:
     # Disabling requires_grad on all parameters
     for j, p in enumerate(transformed_model.parameters()):
@@ -196,10 +199,14 @@ def export_kvstyle_transformed_model_to_onnx(
     # Preprocess inputs
     # Build inputs for prefill
     assert seq_len > 0, "Need seq_len to be greater than zero"
-    inputs = tokenizer(Constants.input_str, return_tensors="pt")
+    inputs = tokenizer(Constants.input_str, return_tensors="pt", padding=True)
     batch_size, prompt_len = inputs["input_ids"].shape
     inputs.pop("attention_mask")
     inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
+    if full_batch_size:
+        inputs["position_ids"] = torch.arange(prompt_len).view(1, prompt_len)  # FIXME remove is this is not required
+        batch_index = torch.arange(1).view(-1, 1)
+        inputs["batch_index"] = batch_index
 
     config = transformed_model.config
     if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
@@ -230,7 +237,8 @@ def export_kvstyle_transformed_model_to_onnx(
         tuple(
             [
                 torch.zeros(
-                    batch_size,
+                    full_batch_size if full_batch_size else batch_size,  # Updated to use FBS if CB is enabled
+                    # batch_size,
                     n_heads,
                     seq_len,  # seq_len for running decode loop
                     d_head,
@@ -242,6 +250,10 @@ def export_kvstyle_transformed_model_to_onnx(
         for _ in range(n_layer)
     ]
 
+    model_architecture = config.architectures[0]
+    if full_batch_size and model_architecture not in get_lists_of_cb_qeff_models.architectures:
+        raise Exception(f"Continuous batching support for {model_architecture} is not enabled currently")
+
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
 
@@ -251,18 +263,30 @@ def export_kvstyle_transformed_model_to_onnx(
 
     # Build inputs for next iteration from outputs
     # Build inputs for decode
-    inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
-    inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-    print(tokenizer.batch_decode(inputs["input_ids"]))
+
+    if full_batch_size:
+        input_ids = pt_outputs.logits.detach().argmax(2)
+        inputs["input_ids"] = torch.full((full_batch_size, 1), tokenizer.pad_token_id)
+        inputs["input_ids"][batch_index.view(-1)] = input_ids
+
+        position_ids = inputs["position_ids"].max(1, keepdim=True).values + 1
+        inputs["position_ids"] = torch.full((full_batch_size, 1), 0)
+        inputs["position_ids"][batch_index.view(-1)] = position_ids
+
+        inputs["batch_index"] = torch.arange(full_batch_size).view(-1, 1)
+    else:
+        inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
+        inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
+
     # Run PyTorch inference for decode in loop
     # todo: vbaddi, fix it to verify on Cloud AI 100.
     for i in range(1):
         pt_outputs = transformed_model(**inputs)
         inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
         inputs["position_ids"] += 1
-        print(tokenizer.batch_decode(inputs["input_ids"]))
+
     # To avoid issues in onnx export
-    inputs["position_ids"] = torch.full((batch_size, 1), seq_len - 1)
+    inputs["position_ids"] = torch.full((full_batch_size if full_batch_size else batch_size, 1), seq_len - 1)
 
     # Run PyTorch inference with past
     pt_outputs = transformed_model(**inputs)
@@ -352,6 +376,7 @@ def export_for_cloud(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_length: int = Constants.seq_length,
+    full_batch_size: Optional[int] = None,
 ) -> str:
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
@@ -361,6 +386,7 @@ def export_for_cloud(
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length,
+            full_batch_size=full_batch_size,
         )
     else:
         raise NotImplementedError(
@@ -374,6 +400,7 @@ def export_lm_model_for_cloud(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_length: int,
+    full_batch_size: Optional[int] = None,
 ) -> str:
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
@@ -386,6 +413,7 @@ def export_lm_model_for_cloud(
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
             seq_len=seq_length,
+            full_batch_size=full_batch_size,
         )  # type: ignore
 
     else:
@@ -397,6 +425,10 @@ def export_lm_model_for_cloud(
             seq_len=seq_length,
         )  # type: ignore
 
+    cpu_ort_args = QEFFAutoModelForCausalLMCPUORTRuntimeArgs(
+        onnx_model_path=os.path.join(onnx_dir_path, f"{model_name}.onnx")
+    )
+    qeff_model.set_runtime(runtime=Runtime.CPU_ORT, runtime_args=cpu_ort_args)
     # return the model path for automation.
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
@@ -412,6 +444,7 @@ def qualcomm_efficient_converter(
     seq_length: int = Constants.seq_length,
     kv: bool = True,
     form_factor: str = "cloud",
+    full_batch_size: Optional[int] = None,
 ) -> Tuple[str, str]:
     """
     Function to convert the input string using the specified model and returns the result.
@@ -433,7 +466,7 @@ def qualcomm_efficient_converter(
 
     """
     warnings.warn(
-        "\033[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m",
+        "\033[93model_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m",
         DeprecationWarning,
         stacklevel=2,
     )
@@ -443,20 +476,20 @@ def qualcomm_efficient_converter(
         if model_kv
         else QEFFCommonLoader.from_pretrained(
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-            hf_token=hf_token,
+            token=hf_token,
             cache_dir=cache_dir,
         )
     )
 
     # Transform if required
     if model_kv.is_transformed and not kv:
-        raise AttributeError("Transformed model is passed while requsting to convert non-transformed model")
-
+        raise AttributeError("Transformed model is passed while requesting to convert non-transformed model")
     model_kv = model_kv if model_kv.is_transformed else QEfficient.transform(model_kv) if kv else model_kv
 
     if onnx_dir_path is None:
         model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
         onnx_dir_path = os.path.join(model_card_dir, "onnx")
+        os.makedirs(onnx_dir_path, exist_ok=True)
 
     # Load tokenizer if not passed
     tokenizer = (
@@ -477,6 +510,7 @@ def qualcomm_efficient_converter(
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length,
+            full_batch_size=full_batch_size,
         )
         return onnx_dir_path, generated_onnx_model_path
     else:

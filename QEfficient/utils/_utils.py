@@ -20,7 +20,7 @@ from QEfficient.utils.logging_utils import logger
 def login_and_download_hf_lm(model_name, *args, **kwargs):
     logger.info(f"loading HuggingFace model for {model_name}")
     hf_token = kwargs.pop("hf_token", None)
-    cache_dir = kwargs.pop("cache_dir", None)   
+    cache_dir = kwargs.pop("cache_dir", None)
     if hf_token is not None:
         login(hf_token)
     model_name = hf_download(
@@ -97,7 +97,7 @@ def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Tuple[bool, str]:
     return qpc_exists_bool, qpc_dir_path
 
 
-def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
+def onnx_exists(model_name: str, base_dir_name: str) -> Tuple[bool, str, str]:
     """
     Checks if qpc files already exists, removes the directory if files have been manipulated.
     ---------
@@ -106,8 +106,7 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
     """
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
     os.makedirs(model_card_dir, exist_ok=True)
-
-    onnx_dir_path = os.path.join(model_card_dir, "onnx")
+    onnx_dir_path = os.path.join(model_card_dir, os.path.join(base_dir_name, "onnx"))
     onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
 
     # Compute the boolean indicating if the ONNX model exists
@@ -119,21 +118,38 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
     return onnx_exists_bool, onnx_dir_path, onnx_model_path
 
 
-def load_hf_tokenizer(pretrained_model_name_or_path: str, cache_dir: Optional[str] = None, hf_token: Optional[str] = None, padding_side:str = "right", **kwargs) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
+def load_hf_tokenizer(
+    pretrained_model_name_or_path: str,
+    cache_dir: Optional[str] = None,
+    hf_token: Optional[str] = None,
+    padding_side: str = "right",
+    **kwargs,
+) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
     logger.info("Loading Tokenizer")
     if hf_token is not None:
         login(hf_token)
     # Download tokenizer along with model if it doesn't exist
-    model_hf_path = pretrained_model_name_or_path if os.path.isdir(pretrained_model_name_or_path) else hf_download(repo_id=pretrained_model_name_or_path, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
+    model_hf_path = (
+        pretrained_model_name_or_path
+        if os.path.isdir(pretrained_model_name_or_path)
+        else hf_download(
+            repo_id=pretrained_model_name_or_path, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"]
+        )
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs
+    )
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
-    
+
     return tokenizer
 
 
-def get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group):
+def get_qpc_dir_name_infer(
+    num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
+):
     qpc_base_dir_name = (
-        f"qpc_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
+        f"model_files_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
+        + f"{f'{full_batch_size}FBS_' if full_batch_size else ''}"
         + f"{len(device_group)}"
         + "devices"
         + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
@@ -145,22 +161,24 @@ def get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp
 def check_and_assign_cache_dir(local_model_dir, cache_dir):
     if local_model_dir is not None:
         if cache_dir is not None:
-            logger.warning(f"Both local_model_dir ({local_model_dir}) and cache_dir ({cache_dir}) given. Using local_model_dir.")
+            logger.warning(
+                f"Both local_model_dir ({local_model_dir}) and cache_dir ({cache_dir}) given. Using local_model_dir."
+            )
         return None
     return cache_dir if cache_dir else Constants.CACHE_DIR
 
 
 def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]) -> None:
     """
-    Checks and fixes tokenizer paddding side and pad_token_id viability. 
+    Checks and fixes tokenizer paddding side and pad_token_id viability.
     --------
-    
+
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer to check and fix.
     """
     if tokenizer.padding_side != "right":
         logger.warning(f"Setting tokenizer padding_side to 'right', got {tokenizer.padding_side}")
         tokenizer.padding_side = "right"
-    
+
     if tokenizer.pad_token_id is None:
         assert tokenizer.eos_token_id is not None, "Found tokenizer.eos_token_id to be None, expected int"
         # If Pad token is out of range of vocab size

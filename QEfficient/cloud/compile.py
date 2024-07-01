@@ -63,6 +63,9 @@ if __name__ == "__main__":
         default=-1,
         help=" Effort level to reduce the on-chip memory",
     )
+    parser.add_argument(
+        "--full_batch_size", "--full-batch-size", type=int, default=None, help="Batch size for text generation"
+    )
 
     # FIXME(ochougul): Allow extra compilation arguments
     args = parser.parse_args()

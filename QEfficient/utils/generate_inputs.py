@@ -20,7 +20,7 @@ class InputHandler:
         :param prompt_len: int
         :param ctx_len: int
         """
-        #check and fix tokenizer viability
+        # check and fix tokenizer viability
         padding_check_and_fix(tokenizer)
         self.tokenizer = tokenizer
         self.input_str = input_str
@@ -105,17 +105,11 @@ class InputHandler:
         inputs.pop("attention_mask")
         position_ids = np.arange(input_len).reshape(1, -1)
         inputs["input_ids"] = np.concatenate(
-            [
-                input_ids,
-                np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)
-            ],
+            [input_ids, np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)],
             axis=1,
         ).astype(np.int64)
         inputs["position_ids"] = np.concatenate(
-            [
-                position_ids,
-                np.full((batch_size, self.prompt_len - input_len), -1)
-            ],
+            [position_ids, np.full((batch_size, self.prompt_len - input_len), -1)],
             axis=1,
         ).astype(np.int64)
 
@@ -162,17 +156,11 @@ class InputHandler:
         inputs.pop("attention_mask")
         position_ids = np.arange(input_len).reshape(1, -1)
         inputs["input_ids"] = np.concatenate(
-            [
-                input_ids,
-                np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)
-            ],
+            [input_ids, np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)],
             axis=1,
         ).astype(np.int64)
         inputs["position_ids"] = np.concatenate(
-            [
-                position_ids,
-                np.full((batch_size, self.prompt_len - input_len), -1)
-            ],
+            [position_ids, np.full((batch_size, self.prompt_len - input_len), -1)],
             axis=1,
         ).astype(np.int64)
 
