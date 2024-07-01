@@ -223,60 +223,38 @@ qeff_model = AutoModelForCausalLM.from_pretrained(model_name)
 print(f"{model_name} optmized for AI 100 \n", qeff_model)
 ```
 
-### 2. ONNX export of transformed model
+### 2. Export and Compile with one API
 
 use the qualcomm_efficient_converter API to export the KV transformed Model to ONNX and Verify on Torch.
 
 ```Python
-import QEfficient
-from QEfficient.utils import load_hf_tokenizer
 # We can now export the modified models to Onnx framework
 # This will generate single Onnx Model for both Prefill and Decode Variations which are optimized for
 # Cloud AI 100 Platform.
 
-# This will generate Onnx model, clip the overflow constants to fp16
+# While generating the ONNX model, this will clip the overflow constants to fp16
 # Verify the model on Onnxruntime vs Pytorch
+
 # Then generate inputs and customio yaml file required for compilation.
-
-# We can generate the KV Style models with the flag "kv"
-# Bertstyle models do not have any optimization w.r.t KV cache changes and are unoptimized version.
-# It is recommended to use kv=True for better performance.
-tokenizer = load_hf_tokenizer(model_name, use_cache=True)
-base_path, onnx_path = QEfficient.export(
-    model_name=model_name,
-    model_kv=qeff_model,
-    tokenizer=tokenizer,
-    kv=True,
-    form_factor="cloud",
-)
-```
-
-### 3. Compile on Cloud AI 100
-
-Once, the model is exported, Compile the model on Cloud AI 100 and generate QPC.
-
-```Python
+# Compile the model for provided compilation arguments
 # Please use platform SDk to Check num_cores for your card.
 
-generated_qpc_path = QEfficient.compile(
-    onnx_path=onnx_path,
-    num_cores=14,  # You can use `/opt/qti-aic/tools/qaic-util | grep "Nsp Total"` from Apps SDK for this. 
-    qpc_path=os.path.dirname(base_path),
-    mxfp6=False,
+generated_qpc_path = qeff_model.compile(
+    num_cores=14,
+    mxfp6=True,
     device_group=[0],
 )
 ```
-### 4. Run Benchmark 
+
+### 3. Run Benchmark 
 
 Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/sec
 
 ```Python
-from QEfficient.generation.text_generation_inference import get_compilation_dims
-
 # post compilation, we can print the latency stats for the kv models, We provide API to print token and Latency stats on AI 100
 # We need the compiled prefill and decode qpc to compute the token generated, This is based on Greedy Sampling Approach
-batch_size, ctx_len = get_compilation_dims(generated_qpc_path)
-QEfficient.cloud_ai_100_exec_kv(batch_size=batch_size, tokenizer=tokenizer, qpc_path=generated_qpc_path, device_id=[0], prompt=["My name is"], ctx_len=ctx_len)
+
+qeff_model.generate(prompts=["My name is"])
 ```
 End to End demo examples for various models are available in **notebooks** directory. Please check them out.
 

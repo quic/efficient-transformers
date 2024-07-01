@@ -20,15 +20,15 @@ from QEfficient.utils.logging_utils import logger
 def login_and_download_hf_lm(model_name, *args, **kwargs):
     logger.info(f"loading HuggingFace model for {model_name}")
     hf_token = kwargs.pop("hf_token", None)
-    cache_dir = kwargs.pop("cache_dir", None)   
+    cache_dir = kwargs.pop("cache_dir", None)
     if hf_token is not None:
         login(hf_token)
-    model_name = hf_download(
+    model_path = hf_download(
         repo_id=model_name,
         cache_dir=cache_dir,
         ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5"],
     )
-    return model_name
+    return model_path
 
 
 def hf_download(
@@ -75,7 +75,7 @@ def hf_download(
     return model_path
 
 
-def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Tuple[bool, str]:
+def qpc_exists(qpc_dir_path: str) -> bool:
     """
     Checks if qpc dir exists.
     Returns
@@ -86,15 +86,11 @@ def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Tuple[bool, str]:
     :param dir_path: str. Path of qpc directory.
     :return: Union[Tuple[bool, str]]: qpc_exists and path to qpc directory
     """
-    model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
-    os.makedirs(model_card_dir, exist_ok=True)
-
-    qpc_dir_path = os.path.join(model_card_dir, qpc_base_dir_name, "qpcs")
 
     # Compute the boolean indicating if the QPC exists
     qpc_exists_bool = os.path.isdir(qpc_dir_path) and os.path.isfile(os.path.join(qpc_dir_path, "programqpc.bin"))
 
-    return qpc_exists_bool, qpc_dir_path
+    return qpc_exists_bool
 
 
 def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
@@ -119,48 +115,72 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
     return onnx_exists_bool, onnx_dir_path, onnx_model_path
 
 
-def load_hf_tokenizer(pretrained_model_name_or_path: str, cache_dir: Optional[str] = None, hf_token: Optional[str] = None, padding_side:str = "right", **kwargs) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
+def load_hf_tokenizer(
+    pretrained_model_name_or_path: str,
+    cache_dir: Optional[str] = None,
+    hf_token: Optional[str] = None,
+    padding_side: str = "right",
+    **kwargs,
+) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
+    # FIXME: Fix kwargs to take token, cache_dir and pass via kwargs only on line 129
     logger.info("Loading Tokenizer")
     if hf_token is not None:
         login(hf_token)
     # Download tokenizer along with model if it doesn't exist
-    model_hf_path = pretrained_model_name_or_path if os.path.isdir(pretrained_model_name_or_path) else hf_download(repo_id=pretrained_model_name_or_path, cache_dir=cache_dir, allow_patterns=["*.json", "*.py", "*token*"])
-    tokenizer = AutoTokenizer.from_pretrained(model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs)
+    model_hf_path = (
+        pretrained_model_name_or_path
+        if os.path.isdir(pretrained_model_name_or_path)
+        else hf_download(
+            repo_id=pretrained_model_name_or_path,
+            cache_dir=cache_dir,
+            allow_patterns=["*.json", "*.py", "*token*", "*.txt"],
+        )
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_hf_path, padding_side=padding_side, trust_remote_code=True, **kwargs
+    )
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
-    
+
     return tokenizer
 
 
-def get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group):
+def get_qpc_dir_path(
+    model_card_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
+) -> str:
     qpc_base_dir_name = (
         f"qpc_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
         + f"{len(device_group)}"
         + "devices"
         + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
     )
+    model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_card_name))
+    os.makedirs(model_card_dir, exist_ok=True)
 
-    return qpc_base_dir_name
+    qpc_dir_path = os.path.join(model_card_dir, qpc_base_dir_name, "qpcs")
+    return qpc_dir_path
 
 
 def check_and_assign_cache_dir(local_model_dir, cache_dir):
     if local_model_dir is not None:
         if cache_dir is not None:
-            logger.warning(f"Both local_model_dir ({local_model_dir}) and cache_dir ({cache_dir}) given. Using local_model_dir.")
+            logger.warning(
+                f"Both local_model_dir ({local_model_dir}) and cache_dir ({cache_dir}) given. Using local_model_dir."
+            )
         return None
     return cache_dir if cache_dir else Constants.CACHE_DIR
 
 
 def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]) -> None:
     """
-    Checks and fixes tokenizer paddding side and pad_token_id viability. 
+    Checks and fixes tokenizer paddding side and pad_token_id viability.
     --------
-    
+
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer to check and fix.
     """
     if tokenizer.padding_side != "right":
         logger.warning(f"Setting tokenizer padding_side to 'right', got {tokenizer.padding_side}")
         tokenizer.padding_side = "right"
-    
+
     if tokenizer.pad_token_id is None:
         assert tokenizer.eos_token_id is not None, "Found tokenizer.eos_token_id to be None, expected int"
         # If Pad token is out of range of vocab size
