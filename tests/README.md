@@ -22,7 +22,7 @@ You can install them using pip:
 ```sh
 pip install pytest pytest-mock
 ```
-Alternatively, if you have specefied these dependencies in your `setup.py` or `setup.cfg` , you can install them using the extras_require feature:
+Alternatively, if you have specefied these dependencies in your `pyproject.toml` , you can install them using the test feature:
 ```sh
 pip install .[test]
 ```
