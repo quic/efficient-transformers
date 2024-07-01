@@ -25,19 +25,21 @@ def test_execute(setup, mocker):
     result = ms.check_batch_size_for_asserion_error()
     if result["error"] is not None:
         pytest.skip(f'...Skipping Because batch size is not compatible with the number of prompts: {result["error"]}')
-    assert result['result'] is not None
-    load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.execute,"load_hf_tokenizer")
-    get_compilation_dims_spy = mocker.spy(QEfficient.cloud.execute,"get_compilation_dims")
-    check_batch_size_and_num_prompts_spy = mocker.spy(QEfficient.cloud.execute,"check_batch_size_and_num_prompts")
-    cloud_ai_100_exec_kv_spy = mocker.spy(QEfficient.cloud.execute,"cloud_ai_100_exec_kv")
-  
-    execute(model_name=ms.model_name,
-            qpc_path=ms.qpc_dir_path(),
-            device_group=ms.device_group,
-            prompt=ms.prompt,
-            prompts_txt_file_path=ms.prompts_txt_file_path,
-            hf_token=ms.hf_token,)
-   
+    assert result["result"] is not None
+    load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.execute, "load_hf_tokenizer")
+    get_compilation_dims_spy = mocker.spy(QEfficient.cloud.execute, "get_compilation_dims")
+    check_batch_size_and_num_prompts_spy = mocker.spy(QEfficient.cloud.execute, "check_batch_size_and_num_prompts")
+    cloud_ai_100_exec_kv_spy = mocker.spy(QEfficient.cloud.execute, "cloud_ai_100_exec_kv")
+
+    execute(
+        model_name=ms.model_name,
+        qpc_path=ms.qpc_dir_path(),
+        device_group=ms.device_group,
+        prompt=ms.prompt,
+        prompts_txt_file_path=ms.prompts_txt_file_path,
+        hf_token=ms.hf_token,
+    )
+
     load_hf_tokenizer_spy.assert_called_once()
     get_compilation_dims_spy.assert_called_once()
     assert get_compilation_dims_spy.spy_return == (ms.batch_size, ms.ctx_len)
