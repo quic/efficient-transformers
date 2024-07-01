@@ -1,6 +1,6 @@
 # Low level API
 
-## QEfficient.transform
+## QEfficient.src._transformers.auto.QEFFAutoModelForCausalLM
 ```{eval-rst}
 .. automodule:: QEfficient.src._transformers.auto 
    :members:
