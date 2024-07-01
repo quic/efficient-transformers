@@ -125,7 +125,7 @@ def check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size, 
         assert (
             batch_size == num_prompts
         ), f"Mismatch between number of prompts {num_prompts} and batch size {batch_size}; please pass correct input argument"
-        assert (batch_size > 1) ^ (full_batch_size is None), "Only either batch_size or full_batch_size should be greater than one"
+        assert full_batch_size is None,  "Only either batch_size or full_batch_size should be greater than one"
     if full_batch_size:
         assert (
             full_batch_size <= num_prompts
