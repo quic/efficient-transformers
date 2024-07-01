@@ -80,14 +80,6 @@ class QEFFBaseModel(ABC):
     def is_transformed(self) -> bool:
         raise NotImplementedError("Must implement for child classes")
 
-    # def run(self, runtime: str = "AI_100", **kwargs) -> Any:
-    #     if Runtime(runtime) == Runtime.CPU_PT:
-    #         self.run_pytorch(*args, **kwargs)
-    #     elif Runtime(runtime) == Runtime.CPU_ORT:
-    #         self.run_ort(*args, **kwargs)
-    #     else:
-    #         self.run_cloud_ai_100(*args, **kwargs)
-
     def run_pytorch(self, inputs):
         raise NotImplementedError("Reached too far!!")
 
