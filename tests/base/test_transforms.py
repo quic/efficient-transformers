@@ -23,19 +23,16 @@ def test_pytorch_transform():
         def __init__(self):
             super().__init__()
 
-            self.a = nn.Linear(32, 32)
-            self.b = nn.ReLU()
-            self.c = nn.Linear(32, 32)
+            self.a = nn.Linear(32, 64)
+            self.b = nn.Linear(64, 32)
 
         def forward(self, x):
             x = self.a(x)
             x = self.b(x)
-            x = self.c(x)
             return x
 
     model = TestModel()
     x = torch.rand(1, 32)
-    x = torch.where(x < 0, 0, x)
     y1 = model(x)
     assert torch.any(y1 != x)
 
