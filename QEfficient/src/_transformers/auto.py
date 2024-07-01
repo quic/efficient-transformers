@@ -141,7 +141,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 mxfp6: bool = True, mxint8: bool = False, mos: int = -1, aic_enable_depth_first: bool = False, qpc_dir_suffix: Optional[str] = None,
                 full_batch_size: int = 1) -> str:
         # Prepare qpc dir path
-        qpc_base_dir_name = get_qpc_dir_name_infer(num_cores=num_cores, mos=mos, batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, mxfp6=mxfp6, mxint8=mxint8, device_group=device_group)
+        qpc_base_dir_name = get_qpc_dir_name_infer(num_cores=num_cores, mos=mos, batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, mxfp6=mxfp6, mxint8=mxint8, device_group=device_group, full_batch_size=full_batch_size)
         qpc_base_dir_name = qpc_base_dir_name + "_" + qpc_dir_suffix if qpc_dir_suffix else qpc_base_dir_name
         _, qpc_dir_path = qpc_exists(model_name = self.get_model_card_name(), qpc_base_dir_name=qpc_base_dir_name)
 

@@ -10,6 +10,8 @@ from typing import Any, Dict
 import pytest
 from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 from transformers.models.llama import LlamaForCausalLM
+from QEfficient import QEFFAutoModelForCausalLM
+
 
 model_name_to_params_dict : Dict[str, Dict[str, Any]] = {
     # "gpt2": {

@@ -405,7 +405,7 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
             onnx_dir_path=onnx_dir_path,
             seq_len=seq_length) # type: ignore
 
-    cpu_ort_args = QEFFAutoModelForCausalLMCPUORTRuntimeArgs(onnx_model_path=os.path.join(onnx_dir_path, f"{fp16_model_name}.onnx"))
+    cpu_ort_args = QEFFAutoModelForCausalLMCPUORTRuntimeArgs(onnx_model_path=os.path.join(onnx_dir_path, f"{model_name}.onnx"))
     qeff_model.set_runtime(runtime=Runtime.CPU_ORT, runtime_args=cpu_ort_args)
     # return the model path for automation.
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
