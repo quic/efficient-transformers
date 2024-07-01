@@ -187,11 +187,14 @@ def convert_to_cloud_kvstyle(
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
-def export_kvstyle_transformed_model_to_onnx(model_name: str,
-                                             transformed_model: torch.nn.Module,
-                                             tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-                                             onnx_dir_path: str, seq_len: int, full_batch_size:Optional[int] = None) -> str:  
-
+def export_kvstyle_transformed_model_to_onnx(
+    model_name: str,
+    transformed_model: torch.nn.Module,
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+    onnx_dir_path: str,
+    seq_len: int,
+    full_batch_size: Optional[int] = None,
+) -> str:
     # Disabling requires_grad on all parameters
     for _, p in enumerate(transformed_model.parameters()):
         p.requires_grad_(False)
@@ -216,7 +219,7 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str,
     inputs.pop("attention_mask")
     inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
     if full_batch_size:
-        inputs["position_ids"] = torch.arange(prompt_len).view(1, prompt_len) # FIXME remove is this is not required
+        inputs["position_ids"] = torch.arange(prompt_len).view(1, prompt_len)  # FIXME remove is this is not required
         batch_index = torch.arange(1).view(-1, 1)
         inputs["batch_index"] = batch_index
 
@@ -249,7 +252,7 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str,
         tuple(
             [
                 torch.zeros(
-                    full_batch_size if full_batch_size else batch_size, # Updated to use FBS if CB is enabled
+                    full_batch_size if full_batch_size else batch_size,  # Updated to use FBS if CB is enabled
                     # batch_size,
                     n_heads,
                     seq_len,  # seq_len for running decode loop
@@ -261,6 +264,10 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str,
         )
         for _ in range(n_layer)
     ]
+
+    model_architecture = config.architectures[0]
+    if full_batch_size and model_architecture not in get_lists_of_cb_qeff_models.architectures:
+        raise Exception(f"Continuous batching support for {model_architecture} is not enabled currently")
 
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
@@ -277,18 +284,17 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str,
     if full_batch_size:
         input_ids = pt_outputs.logits.detach().argmax(2)
         inputs["input_ids"] = torch.full((full_batch_size, 1), tokenizer.pad_token_id)
-        inputs["input_ids"][batch_index.view(-1)] = input_ids 
-        
+        inputs["input_ids"][batch_index.view(-1)] = input_ids
+
         position_ids = inputs["position_ids"].max(1, keepdim=True).values + 1
         inputs["position_ids"] = torch.full((full_batch_size, 1), 0)
         inputs["position_ids"][batch_index.view(-1)] = position_ids
-        
+
         inputs["batch_index"] = torch.arange(full_batch_size).view(-1, 1)
     else:
         inputs = input_handler.update_pytorch_inputs(inputs, pt_outputs)
         # To avoid issues in onnx export
         inputs["position_ids"] = torch.full((1, 1), seq_len - 1)
-
 
     # Run PyTorch inference for decode in loop
     # todo: vbaddi, fix it to verify on Cloud AI 100.
@@ -296,9 +302,10 @@ def export_kvstyle_transformed_model_to_onnx(model_name: str,
         pt_outputs = transformed_model(**inputs)
         inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
         inputs["position_ids"] += 1
+    
     # To avoid issues in onnx export
     inputs["position_ids"] = torch.full((full_batch_size if full_batch_size else batch_size, 1), seq_len - 1)
-    
+
     # Run PyTorch inference with past
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
@@ -404,9 +411,15 @@ def export_for_cloud(
             f"Only model type {QEFFAutoModelForCausalLM.__class__.__name__} is supported for export, got {type(qeff_model)}"
         )
 
-def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausalLM,
-                              tokenizer:Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-                              onnx_dir_path: str, seq_length: int, full_batch_size:Optional[int] = None) -> str:
+
+def export_lm_model_for_cloud(
+    model_name: str,
+    qeff_model: QEFFAutoModelForCausalLM,
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+    onnx_dir_path: str,
+    seq_length: int,
+    full_batch_size: Optional[int] = None,
+) -> str:
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
@@ -418,7 +431,8 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
             seq_len=seq_length,
-            full_batch_size=full_batch_size) # type: ignore
+            full_batch_size=full_batch_size,
+        )  # type: ignore
 
     else:
         model_name = export_bertstyle_model_to_onnx(
@@ -428,6 +442,8 @@ def export_lm_model_for_cloud(model_name:str, qeff_model: QEFFAutoModelForCausal
             onnx_dir_path=onnx_dir_path,
             seq_len=seq_length,
         )  # type: ignore
+
+    # return the model path for automation.
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
@@ -441,8 +457,8 @@ def qualcomm_efficient_converter(
     hf_token: Optional[str] = None,
     seq_length: int = Constants.SEQ_LEN,
     kv: bool = True,
-    form_factor: str="cloud",
-    full_batch_size:Optional[int] = None,
+    form_factor: str = "cloud",
+    full_batch_size: Optional[int] = None,
 ) -> Tuple[str, str]:
     """
     This method is an alias for ``QEfficient.export``.
@@ -477,7 +493,7 @@ def qualcomm_efficient_converter(
 
     """
     warnings.warn(
-        "\033[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m",
+        "\033[93model_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m",
         DeprecationWarning,
         stacklevel=2,
     )
@@ -520,8 +536,9 @@ def qualcomm_efficient_converter(
             qeff_model=model_kv,
             tokenizer=tokenizer,
             onnx_dir_path=onnx_dir_path,
-            seq_length=seq_length, 
-            full_batch_size=full_batch_size)
+            seq_length=seq_length,
+            full_batch_size=full_batch_size,
+        )
         return onnx_dir_path, generated_onnx_model_path
     else:
         # [TODO]: Apply the class transformation to make changes for the KV models in edge use cases

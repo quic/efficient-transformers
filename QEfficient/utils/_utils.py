@@ -91,7 +91,7 @@ def qpc_exists(qpc_dir_path: str) -> bool:
     return qpc_exists_bool
 
 
-def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
+def onnx_exists(model_name: str, base_dir_name: str) -> Tuple[bool, str, str]:
     """
     Checks if qpc files already exists, removes the directory if files have been manipulated.
     ---------
@@ -152,9 +152,12 @@ def load_hf_tokenizer(
     return tokenizer
 
 
-def get_qpc_dir_name_infer(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size):
+def get_qpc_dir_name_infer(
+    num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
+):
     qpc_base_dir_name = (
-        f"qpc_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_{full_batch_size}FBS_"
+        f"model_files_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
+        + f"{f'{full_batch_size}FBS_' if full_batch_size else ''}"
         + f"{len(device_group) if device_group is not None else 1}"
         + "devices"
         + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
