@@ -17,6 +17,10 @@
       "model_class": "Phi3ForCausalLM"
     },
     {
+      "model_name": "microsoft/phi-2",
+      "model_class": "PhiForCausalLM"
+    },
+    {
       "model_name": "tiiuae/falcon-7b",
       "model_class": "FalconForCausalLM"
     },

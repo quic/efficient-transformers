@@ -36,6 +36,7 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralSparseMoeBlock,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
+from transformers.models.phi.modeling_phi import PhiAttention, PhiForCausalLM, PhiModel
 from transformers.models.phi3.modeling_phi3 import Phi3Attention, Phi3ForCausalLM, Phi3Model, Phi3RMSNorm
 from transformers.models.qwen2.modeling_qwen2 import Qwen2Attention, Qwen2ForCausalLM, Qwen2Model, Qwen2RMSNorm
 from transformers.models.starcoder2.modeling_starcoder2 import (
@@ -75,6 +76,7 @@ from .models.mixtral_moe.modeling_mixtral import (
     QEffMixtralSparseMoeBlock,
 )
 from .models.mpt.modeling_mpt import QEffMptAttention, QEffMptBlock, QEffMptForCausalLM, QEFfMptModel
+from .models.phi.modeling_phi import QEffPhiAttention, QEffPhiForCausalLM, QEffPhiModel
 from .models.phi3.modeling_phi3 import QEffPhi3Attention, QEffPhi3ForCausalLM, QEffPhi3Model
 from .models.qwen2.modeling_qwen2 import QEffQwen2Attention, QEffQwen2ForCausalLM, QEffQwen2Model
 from .models.starcoder2.modeling_starcoder2 import (
@@ -97,6 +99,7 @@ qeff_supported_architectures = ModelArchitectures(
         MistralForCausalLM.__name__,
         MixtralForCausalLM.__name__,
         Phi3ForCausalLM.__name__,
+        PhiForCausalLM.__name__,
         FalconForCausalLM.__name__,
         Qwen2ForCausalLM.__name__,
         Starcoder2ForCausalLM.__name__,
@@ -145,6 +148,10 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     Phi3Model: QEffPhi3Model,
     Phi3ForCausalLM: QEffPhi3ForCausalLM,
     Phi3RMSNorm: CustomRMSNormAIC,
+    # Phi model layers
+    PhiAttention: QEffPhiAttention,
+    PhiModel: QEffPhiModel,
+    PhiForCausalLM: QEffPhiForCausalLM,
     # Falcon model layers
     FalconAttention: QEffFalconAttention,
     FalconForCausalLM: QEffFalconForCausalLM,
