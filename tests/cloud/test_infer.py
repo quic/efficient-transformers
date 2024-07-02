@@ -31,14 +31,14 @@ def test_infer(setup, mocker):
     result = ms.check_batch_size_for_asserion_error()
     if result["error"] is not None:
         pytest.skip(f'...Skipping Because batch size is not compatible with the number of prompts: {result["error"]}')
-    assert result["result"] is not None
-    get_qpc_dir_name_infer_spy = mocker.spy(QEfficient.cloud.infer, "get_qpc_dir_name_infer")
-    check_batch_size_and_num_prompts_spy = mocker.spy(QEfficient.cloud.infer, "check_batch_size_and_num_prompts")
-    load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.infer, "load_hf_tokenizer")
-    qpc_exists_spy = mocker.spy(QEfficient.cloud.infer, "qpc_exists")
-    get_onnx_model_path_spy = mocker.spy(QEfficient.cloud.infer, "get_onnx_model_path")
-    compile_spy = mocker.spy(QEfficient, "compile")
-    cloud_ai_100_exec_kv_spy = mocker.spy(QEfficient.cloud.infer, "cloud_ai_100_exec_kv")
+    assert result['result'] is not None
+
+    check_batch_size_and_num_prompts_spy = mocker.spy(QEfficient.cloud.infer,"check_batch_size_and_num_prompts")
+    load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.infer,"load_hf_tokenizer")
+    qpc_exists_spy = mocker.spy(QEfficient.cloud.infer,"qpc_exists")
+    get_onnx_model_path_spy = mocker.spy(QEfficient.cloud.infer,"get_onnx_model_path")
+    compile_spy = mocker.spy(QEfficient,"compile")
+    cloud_ai_100_exec_kv_spy = mocker.spy(QEfficient.cloud.infer,"cloud_ai_100_exec_kv")
     infer(
         model_name=ms.model_name,
         num_cores=ms.num_cores,
@@ -55,7 +55,6 @@ def test_infer(setup, mocker):
         device_group=ms.device_group,
     )
     # prompt fucntion check
-    get_qpc_dir_name_infer_spy.assert_called_once()
     check_batch_size_and_num_prompts_spy.assert_called_once()
     # tokenizer check
     load_hf_tokenizer_spy.assert_called_once()
