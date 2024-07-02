@@ -52,7 +52,7 @@ pipeline
                     sh '''
                     . preflight_qeff/bin/activate
                     export TOKENIZERS_PARALLELISM=false
-                    pytest -W ignore -s -v tests
+                    pytest -W ignore -s -v tests --junitxml=tests/tests_log.xml
                     deactivate
                     exit
                     '''     
@@ -64,6 +64,7 @@ pipeline
     {
          always 
          {
+             junit 'tests/tests_log.xml'
              echo 'Cleaning Workspace'
              deleteDir() 
          }
