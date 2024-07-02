@@ -52,7 +52,7 @@ pipeline
                     sh '''
                     . preflight_qeff/bin/activate
                     export TOKENIZERS_PARALLELISM=false
-                    pytest -W ignore -s -v tests --junitxml=tests/tests_log.xml
+                    pytest -W ignore -s -v tests -o junit_logging=all --junitxml=tests/tests_log.xml
                     deactivate
                     exit
                     '''     
