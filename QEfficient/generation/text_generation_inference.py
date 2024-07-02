@@ -266,11 +266,12 @@ def cloud_ai_100_exec_kv_helper(
     end = perf_counter()
     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
-    for i in range(1 if stream else 0, batch_size):
+    if stream:
+        for i in range(1, batch_size):
+            print("\n\n=====================================================================\n")
+            print("Prompt : ", prompt[i])
+            print("Completion :", generated_texts[i])
         print("\n\n=====================================================================\n")
-        print("Prompt : ", prompt[i])
-        print("Completion :", generated_texts[i])
-    print("\n\n=====================================================================\n")
 
     prefill_time = loop_start - start
     decode_perf = (num_token - 1) / (end - loop_start)
