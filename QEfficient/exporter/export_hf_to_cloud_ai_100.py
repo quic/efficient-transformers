@@ -18,8 +18,9 @@ from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generat
 from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
 from QEfficient.src.base import QEFFBaseModel
 from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
-from QEfficient.utils import load_hf_tokenizer, padding_check_and_fix
+from QEfficient.utils import get_config, load_hf_tokenizer, padding_check_and_fix
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils.generate_inputs import InputHandler
 from QEfficient.utils.logging_utils import logger
 
 
@@ -193,54 +194,13 @@ def export_kvstyle_transformed_model_to_onnx(
 
     # Check and fix tokenizer viability
     padding_check_and_fix(tokenizer)
-    # Preprocess inputs
-    # Build inputs for prefill
-    assert seq_len > 0, "Need seq_len to be greater than zero"
-    inputs = tokenizer(Constants.input_str, return_tensors="pt")
-    batch_size, prompt_len = inputs["input_ids"].shape
-    inputs.pop("attention_mask")
-    inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
 
     config = transformed_model.config
-    if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
-        n_heads = config.n_head
-        d_head = config.n_embd // config.n_head
-        n_layer = config.n_layer
-    elif hasattr(config, "num_key_value_heads") and hasattr(
-        config, "num_attention_heads"
-    ):  # Check for num_key_value_heads (Llama/Mistral)
-        n_heads = config.num_key_value_heads
-        d_head = config.hidden_size // config.num_attention_heads
-        n_layer = config.num_hidden_layers
-    elif hasattr(config, "n_heads"):  # Check for n_heads and d_model in the config (MPT Model)
-        n_heads = config.n_heads
-        d_head = config.d_model // config.n_heads
-        n_layer = config.n_layers
-    elif hasattr(config, "multi_query"):  # Check for Falcon
-        multi_query_value = getattr(config, "multi_query")
-        if multi_query_value:
-            n_heads = 1  # MQA
-        else:
-            n_heads = config.num_attention_heads
-        d_head = config.hidden_size // config.num_attention_heads
-        n_layer = config.num_hidden_layers
-    else:
-        raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
-    inputs["past_key_values"] = [
-        tuple(
-            [
-                torch.zeros(
-                    batch_size,
-                    n_heads,
-                    seq_len,  # seq_len for running decode loop
-                    d_head,
-                    dtype=torch.float32,
-                )
-                for _ in range(2)
-            ]
-        )
-        for _ in range(n_layer)
-    ]
+    n_heads, d_head, n_layer = get_config(config)
+    padding_shape = (1, n_heads, seq_len, d_head)
+
+    input_handler = InputHandler(tokenizer, Constants.input_str, Constants.PROMPT_LEN, seq_len)
+    inputs = input_handler.prepare_pytorch_inputs(n_layer, padding_shape)
 
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
@@ -249,20 +209,16 @@ def export_kvstyle_transformed_model_to_onnx(
     assert "logits" in output_names, "logits not found in output"
     assert "past_key_values" in output_names, "past_key_values not found in output"
 
-    # Build inputs for next iteration from outputs
-    # Build inputs for decode
-    inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
-    inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
+    inputs = input_handler.update_pytorch_inputs(1, inputs, pt_outputs)
 
     # Run PyTorch inference for decode in loop
     # todo: vbaddi, fix it to verify on Cloud AI 100.
     for i in range(1):
         pt_outputs = transformed_model(**inputs)
-        inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
-        inputs["position_ids"] += 1
+        inputs = input_handler.update_pytorch_inputs(i, inputs, pt_outputs)
 
     # To avoid issues in onnx export
-    inputs["position_ids"] = torch.full((batch_size, 1), seq_len - 1)
+    inputs["position_ids"] = torch.full((1, 1), seq_len - 1)
 
     # Run PyTorch inference with past
     pt_outputs = transformed_model(**inputs)
