@@ -195,10 +195,14 @@ def export_kvstyle_transformed_model_to_onnx(
     # Check and fix tokenizer viability
     padding_check_and_fix(tokenizer)
 
+    assert seq_len > 0, "Need seq_len to be greater than zero"
+
     config = transformed_model.config
     n_heads, d_head, n_layer = get_config(config)
     padding_shape = (1, n_heads, seq_len, d_head)
 
+    # Preprocess inputs
+    # Build inputs for prefill
     input_handler = InputHandler(tokenizer, Constants.input_str, Constants.PROMPT_LEN, seq_len)
     inputs = input_handler.prepare_pytorch_inputs(n_layer, padding_shape)
 
@@ -209,13 +213,15 @@ def export_kvstyle_transformed_model_to_onnx(
     assert "logits" in output_names, "logits not found in output"
     assert "past_key_values" in output_names, "past_key_values not found in output"
 
-    inputs = input_handler.update_pytorch_inputs(1, inputs, pt_outputs)
+    # Build inputs for next iteration from outputs
+    # Build inputs for decode
+    inputs = input_handler.update_pytorch_inputs(inputs, pt_outputs)
 
     # Run PyTorch inference for decode in loop
     # todo: vbaddi, fix it to verify on Cloud AI 100.
     for i in range(1):
         pt_outputs = transformed_model(**inputs)
-        inputs = input_handler.update_pytorch_inputs(i, inputs, pt_outputs)
+        inputs = input_handler.update_pytorch_inputs(inputs, pt_outputs)
 
     # To avoid issues in onnx export
     inputs["position_ids"] = torch.full((1, 1), seq_len - 1)

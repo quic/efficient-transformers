@@ -190,7 +190,8 @@ def get_cloud_ai_100_tokens(setup_info):
         )
         try:
             cloud_ai_100_tokens = setup_info["api_runner"].run_kv_model_on_cloud_ai_100(
-                test_qpcs_path, setup_info["device_group"]
+                test_qpcs_path,
+                [1],  # setup_info["device_group"]
             )
         except Exception as e:
             print(f"ONNX Model run on Cloud AI 100 failed due to : {e}")
