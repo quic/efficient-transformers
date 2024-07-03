@@ -140,7 +140,7 @@ def cloud_ai_100_exec_kv_helper(
     qpc: str,
     prompt: List[str],
     ctx_len: int,
-    generation_len: int = None,
+    generation_len: Optional[int] = None,
     device_id: List[int] = [0],
     enable_debug_logs: bool = False,
     stream: bool = True,
