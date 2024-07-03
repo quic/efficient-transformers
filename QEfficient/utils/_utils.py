@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import hashlib
 import os
 from typing import List, Optional, Tuple, Union
 
@@ -100,10 +99,13 @@ def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Tuple[bool, str]:
 
 def get_onnx_dir_name(model_name, has_fbs):
     # Create a unique directory name for the ONNX model
-    # Include whether full_batch_size is used, but not its specific value
-    params = f"{model_name}_{has_fbs}"
-    params_hash = hashlib.md5(params.encode()).hexdigest()[:10]
-    return f"onnx_{params_hash}"
+    # Clearly indicate whether it's with or without FBS
+    # Replace all hyphens with underscores
+    model_name_safe = model_name.replace("/", "_").replace("-", "_")
+    if has_fbs:
+        return f"onnx_{model_name_safe}_with_fbs"
+    else:
+        return f"onnx_{model_name_safe}_without_fbs"
 
 
 def onnx_exists(model_name: str, full_batch_size: int) -> Tuple[bool, str, str]:
@@ -166,23 +168,13 @@ def get_qpc_dir_name_infer(
     num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
 ):
     # Create a unique directory name for the QPC model based on all parameters
-    import hashlib
-
-    params = f"{num_cores}_{mos}_{batch_size}_{prompt_len}_{ctx_len}_{mxfp6}_{mxint8}_{device_group}_{full_batch_size}"
-    # Use a hash to create a shorter, unique identifier
-    params_hash = hashlib.md5(params.encode()).hexdigest()[:10]
-    return f"qpc_{params_hash}"
-
-
-def get_qpc_dir_name(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size):
     qpc_base_dir_name = (
-        f"model_files_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
-        + f"{f'{full_batch_size}FBS_' if full_batch_size else ''}"
+        f"qpc_{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos"
+        + f"{f'_{full_batch_size}fbs_' if full_batch_size is not None else '_'}"
         + f"{len(device_group)}"
         + "devices"
         + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
     )
-
     return qpc_base_dir_name
 
 
