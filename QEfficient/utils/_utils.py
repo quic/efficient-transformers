@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import hashlib
 import os
 from typing import List, Optional, Tuple, Union
 
@@ -97,16 +98,33 @@ def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Tuple[bool, str]:
     return qpc_exists_bool, qpc_dir_path
 
 
-def onnx_exists(model_name: str, base_dir_name: str) -> Tuple[bool, str, str]:
+def get_onnx_dir_name(model_name, has_fbs):
+    # Create a unique directory name for the ONNX model
+    # Include whether full_batch_size is used, but not its specific value
+    params = f"{model_name}_{has_fbs}"
+    params_hash = hashlib.md5(params.encode()).hexdigest()[:10]
+    return f"onnx_{params_hash}"
+
+
+def onnx_exists(model_name: str, full_batch_size: int) -> Tuple[bool, str, str]:
     """
     Checks if qpc files already exists, removes the directory if files have been manipulated.
     ---------
     :param model_name: str. HF Model card name.
+    :param full_batch_size: int: Full Batch Size for CB models
     :return: Union[Tuple[bool, str, str]]: onnx_exists and path to onnx file and directory
     """
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
     os.makedirs(model_card_dir, exist_ok=True)
-    onnx_dir_path = os.path.join(model_card_dir, os.path.join(base_dir_name, "onnx"))
+
+    # Determine if we're using full_batch_size
+    has_fbs = full_batch_size is not None
+
+    # ONNX handling
+    onnx_dir_name = get_onnx_dir_name(model_name, has_fbs)
+    onnx_dir_path = os.path.join(model_card_dir, onnx_dir_name)
+    os.makedirs(onnx_dir_path, exist_ok=True)
+
     onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
 
     # Compute the boolean indicating if the ONNX model exists
@@ -147,6 +165,16 @@ def load_hf_tokenizer(
 def get_qpc_dir_name_infer(
     num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
 ):
+    # Create a unique directory name for the QPC model based on all parameters
+    import hashlib
+
+    params = f"{num_cores}_{mos}_{batch_size}_{prompt_len}_{ctx_len}_{mxfp6}_{mxint8}_{device_group}_{full_batch_size}"
+    # Use a hash to create a shorter, unique identifier
+    params_hash = hashlib.md5(params.encode()).hexdigest()[:10]
+    return f"qpc_{params_hash}"
+
+
+def get_qpc_dir_name(num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size):
     qpc_base_dir_name = (
         f"model_files_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
         + f"{f'{full_batch_size}FBS_' if full_batch_size else ''}"
