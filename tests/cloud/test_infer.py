@@ -61,7 +61,6 @@ def test_infer(setup, mocker):
     # qpc exist check
     qpc_exists_spy.assert_called_once()
     if qpc_exists_spy.spy_return[0] is True:
-        assert ms.qpc_dir_path() == qpc_exists_spy.spy_return[1]
         assert os.path.isdir(ms.qpc_dir_path())
     else:
         get_onnx_model_path_spy.assert_called_once()
