@@ -27,7 +27,7 @@ model_names = model_name_to_params_dict.keys()
 # FIXME: Add test cases for passing cache_dir, pretrained_model_path instead of card name, etc., Passing other kwargs
 @pytest.mark.parametrize("model_name", model_names)
 def test_qeff_auto_model_for_causal_lm(model_name: str):
-    model: QEFFAutoModelForCausalLM = QEFFAutoModelForCausalLM.from_pretrained(model_name)  # type: ignore
+    model = QEFFCommonLoader.from_pretrained(model_name)
     assert isinstance(model, model_name_to_params_dict[model_name]["qeff_class"])
     assert isinstance(model.model, model_name_to_params_dict[model_name]["hf_class"])  # type: ignore
 
