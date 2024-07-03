@@ -15,7 +15,7 @@ class InputHandler:
     def __init__(self, tokenizer, input_str, prompt_len, ctx_len):
         """
         Initialization
-        
+
         :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
         :input_str: List[str]. String to used as input prompt for the model.
         :prompt_len: int. prompt length for the model to compile.
@@ -31,7 +31,7 @@ class InputHandler:
     def prepare_pytorch_inputs(self, n_layer, padding_shape):
         """
         Function responsible for creating Prefill stage tensor inputs for PyTorch model.
-        
+
         :n_layer : int. Number of layers present in the model.
         :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
         :return inputs: Dict. input_ids, position_ids, past_key_values
@@ -75,7 +75,7 @@ class InputHandler:
     def update_pytorch_inputs(self, inputs, pt_outputs):
         """
         Function responsible for updating Prefill stage inputs to create decode stage inputs for PyTorch model.
-        
+
         :inputs: Dict. Pytorch inputs from previous iteration
         :pt_outputs: Dict. Pytorch outputs from previous iteration
         :return updated_inputs: Dict. Updated input_ids, position_ids and past_key_values
@@ -91,7 +91,7 @@ class InputHandler:
     def prepare_ort_inputs(self, n_layer, padding_shape):
         """
         Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.
-        
+
         :n_layer : int. Number of layers present in the model.
         :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
         :return inputs: Dict. input_ids, position_ids, past_key_values
@@ -124,7 +124,7 @@ class InputHandler:
     def update_ort_inputs(self, inputs, ort_outputs, n_layer):
         """
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
-        
+
         :inputs: Dict. NumPy inputs of Onnx model from previous iteration
         :ort_outputs: Dict. Numpy outputs of Onnx model from previous iteration
         :n_layer : int. Number of layers present in the model.
