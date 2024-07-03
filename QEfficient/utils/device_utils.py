@@ -5,10 +5,12 @@
 #
 # -----------------------------------------------------------------------------
 
-import subprocess
 import math
-from QEfficient.utils.logging_utils import logger
+import subprocess
+
 from QEfficient.utils.constants import Constants
+from QEfficient.utils.logging_utils import logger
+
 
 def get_available_device_id():
     device_id = 0
@@ -29,7 +31,8 @@ def get_available_device_id():
             elif "Failed to find requested device ID" in result.stdout:
                 print("Failed to find requested device ID")
                 return None
-            
+
+
 def is_qpc_size_gt_32gb(params: int, mxfp6: bool) -> bool:
     if mxfp6:
         qpc_size = math.ceil((params * 1) / Constants.GB)
@@ -38,7 +41,7 @@ def is_qpc_size_gt_32gb(params: int, mxfp6: bool) -> bool:
 
     logger.warning(f"Approximate QPC size is: {qpc_size} GB")
     num_devices = math.ceil(qpc_size / Constants.MAX_QPC_LIMIT)
-    logger.warning(f"Number of Devices required: {num_devices}" )
+    logger.warning(f"Number of Devices required: {num_devices}")
     return qpc_size > Constants.MAX_QPC_LIMIT
 
 

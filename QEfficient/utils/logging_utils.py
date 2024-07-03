@@ -18,8 +18,8 @@ class QEffFormatter(logging.Formatter):
     red: str = "\x1b[31;20m"
     bold_red: str = "\x1b[31;1m"
     reset: str = "\x1b[0m"
-    common_format: str = "%(levelname)s - %(name)s - %(message)s" # type: ignore
-    format_with_line_info = "%(levelname)s - %(name)s - %(message)s  (%(filename)s:%(lineno)d)" # type: ignore
+    common_format: str = "%(levelname)s - %(name)s - %(message)s"  # type: ignore
+    format_with_line_info = "%(levelname)s - %(name)s - %(message)s  (%(filename)s:%(lineno)d)"  # type: ignore
 
     FORMATS = {
         logging.DEBUG: cyan + format_with_line_info + reset,

@@ -55,9 +55,6 @@ class QEffGPTJAttention(GPTJAttention):
         attention_mask=None,
         head_mask=None,
     ):
-        # compute causal mask from causal mask buffer
-        query_length, key_length = query.size(-2), key.size(-2)
-
         # Keep the attention weights computation in fp32 to avoid overflow issues
         query = query.to(torch.float32)
         key = key.to(torch.float32)
@@ -110,7 +107,7 @@ class QEffGPTJAttention(GPTJAttention):
             embed_positions = self._get_embed_positions(position_ids)
 
         repeated_position_ids = position_ids.unsqueeze(-1).repeat(1, 1, embed_positions.shape[-1])
-        repeated_position_ids = torch.where(repeated_position_ids==-1, 0, repeated_position_ids)
+        repeated_position_ids = torch.where(repeated_position_ids == -1, 0, repeated_position_ids)
         sincos = torch.gather(embed_positions, 1, repeated_position_ids)
         sin, cos = torch.split(sincos, sincos.shape[-1] // 2, dim=-1)
 

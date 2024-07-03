@@ -49,7 +49,6 @@ def test_infer(setup, mocker):
         mxint8=ms.mxint8,
         device_group=ms.device_group,
     )
-
     get_qpc_dir_name_infer_spy.assert_called_once()
     # tokenizer check
     load_hf_tokenizer_spy.assert_called_once()
