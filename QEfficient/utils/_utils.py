@@ -91,7 +91,18 @@ def qpc_exists(qpc_dir_path: str) -> bool:
     return qpc_exists_bool
 
 
-def onnx_exists(model_name: str, base_dir_name: str) -> Tuple[bool, str, str]:
+def get_onnx_dir_name(model_name, has_fbs):
+    # Create a unique directory name for the ONNX model
+    # Clearly indicate whether it's with or without FBS
+    # Replace all hyphens with underscores
+    model_name_safe = model_name.replace("/", "_").replace("-", "_")
+    if has_fbs:
+        return f"onnx_{model_name_safe}_with_fbs"
+    else:
+        return f"onnx_{model_name_safe}_without_fbs"
+
+
+def onnx_exists(model_name: str, full_batch_size: int) -> Tuple[bool, str, str]:
     """
     Checks if qpc files already exists, removes the directory if files have been manipulated.
     ---------
@@ -155,9 +166,10 @@ def load_hf_tokenizer(
 def get_qpc_dir_name_infer(
     num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
 ):
+    # Create a unique directory name for the QPC model based on all parameters
     qpc_base_dir_name = (
-        f"model_files_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
-        + f"{f'{full_batch_size}FBS_' if full_batch_size else ''}"
+        f"qpc_{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos"
+        + f"{f'_{full_batch_size}fbs_' if full_batch_size is not None else '_'}"
         + f"{len(device_group) if device_group is not None else 1}"
         + "devices"
         + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
