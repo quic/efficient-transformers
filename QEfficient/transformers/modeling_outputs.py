@@ -179,7 +179,7 @@ class QEffCausalLMOutputWithPast(ModelOutput):
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
     attention_mask_RetainedState: Optional[torch.BoolTensor] = None
-    
+
 
 @dataclass
 class QEffMoeModelOutputWithPast(ModelOutput):
@@ -222,7 +222,8 @@ class QEffMoeModelOutputWithPast(ModelOutput):
     attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
     router_logits: Optional[Tuple[torch.FloatTensor]] = None
     attention_mask_RetainedState: Optional[torch.BoolTensor] = None
-    
+
+
 @dataclass
 class QEffMoeCausalLMOutputWithPast(ModelOutput):
     """
