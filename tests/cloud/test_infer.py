@@ -60,7 +60,7 @@ def test_infer(setup, mocker):
     load_hf_tokenizer_spy.assert_called_once()
     # qpc exist check
     qpc_exists_spy.assert_called_once()
-    if qpc_exists_spy.spy_return[0] is True:
+    if qpc_exists_spy.spy_return is True:
         assert os.path.isdir(ms.qpc_dir_path())
     else:
         get_onnx_model_path_spy.assert_called_once()
