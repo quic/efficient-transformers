@@ -81,11 +81,7 @@ def load_pytorch_model(model_config):
         ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
     model_hf = model_config["model_class"].from_pretrained(
-        model_path,
-        use_cache=True,
-        num_hidden_layers=model_config["n_layer"],
-        attn_implementation="eager",
-        trust_remote_code=True,
+        model_path, use_cache=True, num_hidden_layers=model_config["n_layer"], attn_implementation="eager"
     )  # Run models for single layers only
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
