@@ -90,7 +90,6 @@ class QEFFTransformersBase(QEFFBaseModel):
         There are few additional parameters that this method can take:
         :param transform:bool. Whether to optimize model for KV retention; default is True. Pass False to get BertStyle model.
         """
-<<<<<<< HEAD
         transform: bool = kwargs.get("transform", True)
         kwargs.update({"use_cache": True})  # Always pass use_cache = True, to get KV values as output during ONNX export 
         kwargs.update({"attn_implementation" : "eager"}) # Always use eager mode for attention implementation
@@ -105,22 +104,6 @@ class QEFFTransformersBase(QEFFBaseModel):
     def transform_export_compile(self, *args, **kwargs) -> Any:
         raise NotImplementedError("Reached too far!!")
         
-=======
-        kwargs.update(
-            {"use_cache": True}
-        )  # Always pass use_cache = True, to get KV values as output during ONNX export
-        model_card_name = kwargs.pop("model_card_name", None)
-        model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
-            pretrained_model_name_or_path, *args, **kwargs
-        )
-        kwargs.update({"model_card_name": model_card_name})
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
-
-    def get_tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
-        tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=self.pretrained_model_name_or_path, **self.kwargs)
-        return tokenizer
-
->>>>>>> 09cb3eb (Updated the assert condition for bs > 1 and full batch size >1)
     def transform(self):
         # FIXME: break down transform into optmization passes i.e. HW specific optimization(RMSNorm), KV retention pass etc.
         QEfficient.transform(self)
