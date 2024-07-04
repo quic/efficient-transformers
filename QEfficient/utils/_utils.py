@@ -96,17 +96,36 @@ def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Tuple[bool, str]:
 
     return qpc_exists_bool, qpc_dir_path
 
-
-def onnx_exists(model_name: str, base_dir_name: str) -> Tuple[bool, str, str]:
+def get_onnx_dir_name(model_name, has_fbs):
+    """
+    Create a unique directory name for the ONNX model
+    # Clearly indicate whether it's with or without FBS
+    # Replace all hyphens with underscores
+    """
+    model_name_safe = model_name.replace("/", "_").replace("-", "_")
+    if has_fbs:
+        return f"onnx_{model_name_safe}_with_fbs"
+    else:
+        return f"onnx_{model_name_safe}_without_fbs"
+    
+def onnx_exists(model_name: str, full_batch_size: str) -> Tuple[bool, str, str]:
     """
     Checks if qpc files already exists, removes the directory if files have been manipulated.
     ---------
     :param model_name: str. HF Model card name.
+    :param full_batch_size: int: Full Batch Size for CB models
     :return: Union[Tuple[bool, str, str]]: onnx_exists and path to onnx file and directory
     """
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
     os.makedirs(model_card_dir, exist_ok=True)
-    onnx_dir_path = os.path.join(model_card_dir, os.path.join(base_dir_name, "onnx"))
+    # Determine if we're using full_batch_size
+    has_fbs = full_batch_size is not None
+
+    # ONNX handling
+    onnx_dir_name = get_onnx_dir_name(model_name, has_fbs)
+    onnx_dir_path = os.path.join(model_card_dir, onnx_dir_name)
+    os.makedirs(onnx_dir_path, exist_ok=True)
+
     onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
 
     # Compute the boolean indicating if the ONNX model exists
@@ -148,8 +167,8 @@ def get_qpc_dir_name_infer(
     num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
 ):
     qpc_base_dir_name = (
-        f"model_files_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
-        + f"{f'{full_batch_size}FBS_' if full_batch_size else ''}"
+        f"qpc_{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos"
+        + f"{f'_{full_batch_size}fbs_' if full_batch_size is not None else '_'}"
         + f"{len(device_group)}"
         + "devices"
         + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")

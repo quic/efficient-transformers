@@ -218,7 +218,6 @@ class TextGeneration:
         self.generation_len = generation_len
         self.enable_debug_logs = enable_debug_logs
         self.stream = stream
-
         self.write_io_dir = write_io_dir
 
         # Load QPC
@@ -299,7 +298,6 @@ class TextGeneration:
         print()
         print(round((cur_len - init_len) / (end - start), 2), "tok/s")
 
-        # def get_compilation_batch_size(self, qpc_path: str):
         qpc_base_path = os.path.dirname(os.path.normpath(qpc))
         specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
         logger.info(f"specialization_file_path : {specialization_file_path}")
