@@ -217,12 +217,6 @@ def export_kvstyle_transformed_model_to_onnx(
     # Build inputs for decode
     inputs = input_handler.update_pytorch_inputs(inputs, pt_outputs)
 
-    # Run PyTorch inference for decode in loop
-    # todo: vbaddi, fix it to verify on Cloud AI 100.
-    for i in range(1):
-        pt_outputs = transformed_model(**inputs)
-        inputs = input_handler.update_pytorch_inputs(inputs, pt_outputs)
-
     # To avoid issues in onnx export
     inputs["position_ids"] = torch.full((1, 1), seq_len - 1)
 
