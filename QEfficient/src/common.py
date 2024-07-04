@@ -55,6 +55,10 @@ def get_hf_model_type(hf_model_path: str) -> QEFF_MODEL_TYPE:
         return_unused_kwargs=True,
     )
 
+    architectures = getattr(config, "architectures", [])
+    if "Phi3ForCausalLM" in architectures:
+        raise NotImplementedError("Phi3ForCausalLM architecture is not implemented")
+
     if config.__class__ in MODEL_FOR_CAUSAL_LM_MAPPING:
         # FIXME: Add logic to handle if quantization config is stored in separate quant_config.json outside of config, also create a separate function for this and below lines
         quant_config = getattr(config, "quantization_config", getattr(config, "quant_config", None))
