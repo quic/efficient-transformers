@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -15,12 +15,10 @@ QEFF_MODELS_DIR = os.path.join(ROOT_DIR, "qeff_models")
 
 class Constants:
     # Export Constants.
-    seq_length = 32
-    input_str = "My Name is"
-
+    SEQ_LEN = 32
     CTX_LEN = 32
     PROMPT_LEN = 8
-    INPUT_STRING = ["My name is"]
+    INPUT_STR = "My Name is"
 
     CACHE_DIR = os.path.join(ROOT_DIR, "cache_dir")
 

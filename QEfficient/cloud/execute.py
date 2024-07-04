@@ -67,7 +67,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--prompt",
         type=lambda prompt: prompt.split("|"),
-        help="Input prompt, if executing for batch size>1, pass input promprs in single string but seperate with pipe (|) symbol",
+        help="Input prompt, if executing for batch size>1, pass input prompts in single string but seperate with pipe (|) symbol",
     )
     parser.add_argument(
         "--prompts_txt_file_path",

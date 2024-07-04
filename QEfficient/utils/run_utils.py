@@ -11,24 +11,24 @@ import onnxruntime
 import torch
 
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv_helper
-
-from .generate_inputs import InputHandler
+from QEfficient.utils.generate_inputs import InputHandler
 
 
 class ApiRunner:
     """
-    ApiRunner class is responsible for:
+    ApiRunner class is responsible for running:
     ---------
 
-    1. Running Huggingface PyTorch model
-    2. Running KV Pytorch Model
-    3. Running ONNX model on ONNXRT
-    4. Running ONNX Model on Cloud AI 100
+    1. Huggingface PyTorch model
+    2. Transformed KV Pytorch Model
+    3. ONNX model on ONNXRT
+    4. ONNX model on Cloud AI 100
     """
 
     def __init__(self, tokenizer, prompt, prompt_len, ctx_len):
         """
         Initialization
+        --------
 
         :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
         :input_str: List[str]. input prompt for running the model.
@@ -48,11 +48,13 @@ class ApiRunner:
     def run_hf_model_on_pytorch(self, model_hf):
         """
         Function responsible for running Huggingface PyTorch model and return the output tokens
+        --------
 
         :model_hf: torch.nn.module. Original PyTorch model
+
         :return generated_ids: numpy.ndarray. Generated output tokens
         """
-        input_ids = self.tokenizer.encode(self.prompt[0], return_tensors="pt")
+        input_ids = self.tokenizer.encode(self.prompt, return_tensors="pt")
 
         input_ids_len = len(input_ids[0])
 
@@ -72,10 +74,12 @@ class ApiRunner:
     def run_kv_model_on_pytorch(self, model, n_layer, padding_shape):
         """
         Function responsible for running KV PyTorch model and return the output tokens
+        --------
 
         :model: torch.nn.module. Transformed PyTorch model
         :n_layer : int. Number of layers present in the model.
         :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
+
         :return generated_ids: numpy.ndarray. Generated output tokens
         """
 
@@ -98,11 +102,14 @@ class ApiRunner:
 
     def run_ort_session(self, inputs, session, n_layer):
         """
-        Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
+        Function responsible for running onnxrt session with given inputs and
+        passing retained state outputs to be used for next iteration inputs
+        --------
 
         :inputs: Dict. Numpy inputs of Onnx model
         :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
         :n_layer : int. Number of layers present in the model.
+
         :return outputs: Dict. Numpy outputs of Onnx model
         """
 
@@ -131,10 +138,12 @@ class ApiRunner:
     def run_kv_model_on_ort(self, model_path, n_layer, padding_shape):
         """
         Function responsible for running ONNX model on onnxruntime and return the output tokens
+        --------
 
         :model_path: str. Path to the Onnx model.
         :n_layer : int. Number of layers present in the model.
         :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
+
         :return generated_ids: numpy.ndarray. Generated output tokens
         """
 
@@ -172,9 +181,11 @@ class ApiRunner:
     def run_kv_model_on_cloud_ai_100(self, qpc_path, device_group):
         """
         Function responsible for running ONNX model on Cloud AI 100 and return the output tokens
+        --------
 
         :qpc_path: str. path to qpc generated after compilation
         :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
+
         :return generated_ids: numpy.ndarray. Generated output tokens
         """
         execinfo = cloud_ai_100_exec_kv_helper(

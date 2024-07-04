@@ -45,7 +45,7 @@ def main(
     4. Download HF model -> transform -> export -> compile -> execute
     ---------
 
-    :param model_name: str. Hugging Face Model Card name, Example: "gpt2"
+    :model_name: str. Hugging Face Model Card name, Example: "gpt2"
     :num_cores: int. :num_cores: int. Number of cores to compile model on.
     :prompt: str. Sample prompt for the model text generation
     :prompts_txt_file_path: str. Path to txt file for multiple input prompts

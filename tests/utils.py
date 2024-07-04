@@ -60,16 +60,6 @@ def remove_temp_dir(work_dir):
         shutil.rmtree(temp_dir)
 
 
-def get_tokenizer(model_name):
-    """
-    Function to get tokenizer info from transformers.AutoTokenizer
-    :param model_name: str
-    :return tokenizer
-    """
-    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
-    return tokenizer
-
-
 def load_pytorch_model(model_config):
     """
     Function to load model from huggingface and transform to KV model
@@ -86,17 +76,6 @@ def load_pytorch_model(model_config):
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
     return model_hf, params
-
-
-def transform_pt_model_with_qeff(model_hf):
-    """
-    Function to take huggingface model and transform to KV model
-    :param model_hf: pytorch model
-    :return model_kv
-    """
-    model_kv = transform_lm(model_hf)
-    model_kv.eval()
-    return model_kv
 
 
 def export_onnx(model_kv, tokenizer, model_name, model_class):
@@ -122,10 +101,10 @@ def set_up(model_config, device_group=[0]):
     Set up function to set up the test environment for TestQEfficientModel class
     :param None
     """
-    tokenizer = get_tokenizer(model_config["model_name"])
+    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_config["model_name"])
     api_runner = ApiRunner(
         tokenizer,
-        Constants.INPUT_STRING,
+        Constants.INPUT_STR,
         Constants.PROMPT_LEN,
         Constants.CTX_LEN,
     )
@@ -137,7 +116,8 @@ def set_up(model_config, device_group=[0]):
     except Exception as e:
         print(f"Pytorch HuggingFace Pytorch Model run failed due to : {e}")
 
-    model_kv = transform_pt_model_with_qeff(model_hf)
+    model_kv = transform_lm(model_hf)
+    model_kv.eval()
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(
         model_kv,
         model_config["n_layer"],
@@ -190,8 +170,7 @@ def get_cloud_ai_100_tokens(setup_info):
         )
         try:
             cloud_ai_100_tokens = setup_info["api_runner"].run_kv_model_on_cloud_ai_100(
-                test_qpcs_path,
-                [1],  # setup_info["device_group"]
+                test_qpcs_path, setup_info["device_group"]
             )
         except Exception as e:
             print(f"ONNX Model run on Cloud AI 100 failed due to : {e}")

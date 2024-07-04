@@ -60,7 +60,7 @@ def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, 
     model_base_name = model_name.replace("/", "_") + "_bertstyle"
     os.makedirs(onnx_dir_path, exist_ok=True)
 
-    input_str = Constants.input_str
+    input_str = Constants.INPUT_STR
     # Preprocess inputs
     if seq_len > 0:
         inputs = tokenizer(
@@ -203,7 +203,7 @@ def export_kvstyle_transformed_model_to_onnx(
 
     # Preprocess inputs
     # Build inputs for prefill
-    input_handler = InputHandler(tokenizer, Constants.input_str, Constants.PROMPT_LEN, seq_len)
+    input_handler = InputHandler(tokenizer, Constants.INPUT_STR, Constants.PROMPT_LEN, seq_len)
     inputs = input_handler.prepare_pytorch_inputs(n_layer, padding_shape)
 
     pt_outputs = transformed_model(**inputs)
@@ -313,7 +313,7 @@ def export_for_cloud(
     qeff_model: QEFFBaseModel,
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
-    seq_length: int = Constants.seq_length,
+    seq_length: int = Constants.SEQ_LEN,
 ) -> str:
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
@@ -371,7 +371,7 @@ def qualcomm_efficient_converter(
     cache_dir: Optional[str] = None,
     onnx_dir_path: Optional[str] = None,
     hf_token: Optional[str] = None,
-    seq_length: int = Constants.seq_length,
+    seq_length: int = Constants.SEQ_LEN,
     kv: bool = True,
     form_factor: str = "cloud",
 ) -> Tuple[str, str]:

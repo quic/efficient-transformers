@@ -20,7 +20,7 @@ from tests.utils import get_cloud_ai_100_tokens, set_up
 
 def update_model_config(model_config):
     """
-    Function to get config info from model_config
+    Function to get number of layers, model class and padding shape from model_config
     :param model_config: Dict containing model configuration
     :return model_config - Dict
     """
