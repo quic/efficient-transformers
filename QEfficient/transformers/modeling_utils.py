@@ -102,6 +102,7 @@ get_lists_of_cb_qeff_models = ModelArchitectures(
     [
         LlamaForCausalLM.__name__,
         MistralForCausalLM.__name__,
+        MixtralForCausalLM.__name__,
     ]
 )
 # Create an instance of the named tuple
