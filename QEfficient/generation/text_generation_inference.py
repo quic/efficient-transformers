@@ -62,41 +62,6 @@ def write_io_files(
         json.dump({"IO-files": io_files}, fp, indent=True)
 
 
-# def latency_stats_bertstyle(
-#     model_name: str,
-#     qpc: str,
-#     seq_len: int,
-#     prompt: str,
-#     device_id: List[int] = [0],
-# ):
-#     session = QAICInferenceSession(qpc, device_id)
-#     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
-#     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
-#     inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
-#     next_token_id = inputs["input_ids"][0, -1]
-#     cur_len = inputs["attention_mask"].sum().item()
-#     print(prompt, end=" ", flush=True)
-#     init_len = cur_len
-#     start = perf_counter()
-#     while next_token_id != tokenizer.eos_token_id and cur_len <= seq_len:
-#         outputs = session.run(inputs)
-#         logits = outputs["logits"]
-#         next_token_id = logits[0, -1].argmax().item()
-#         inputs["input_ids"] = np.concatenate(
-#             [
-#                 inputs["input_ids"][:, 1:],
-#                 np.ones((1, 1), dtype=np.int64) * next_token_id,
-#             ],
-#             1,
-#         )
-#         inputs["attention_mask"] = np.concatenate([inputs["attention_mask"][:, 1:], np.ones((1, 1), dtype=np.int64)], 1)
-#         print(tokenizer.decode(next_token_id), end=" ", flush=True)
-#         cur_len += 1
-#     end = perf_counter()
-#     print()
-#     print(round((cur_len - init_len) / (end - start), 2), "tok/s")
-
-
 def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
     qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
     specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
@@ -139,120 +104,6 @@ def read_prompts_txt_file(prompts_txt_file_path: str):
         for line in file:
             prompt.append(line.strip())
     return prompt
-
-
-# def cloud_ai_100_exec_kv_helper(
-#     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-#     qpc: str,
-#     prompt: List[str],
-#     ctx_len: Optional[int] = None,
-#     generation_len: Optional[int] = None,
-#     device_id: List[int] = [0],
-#     enable_debug_logs: bool = False,
-#     stream: bool = True,
-#     write_io_dir: Optional[str] = None,
-# ):
-#     if tokenizer.padding_side != "right":
-#         logger.warning("Please use padding_side='right' while initializing the tokenizer")
-#         tokenizer.padding_side = "right"
-#     if tokenizer.pad_token_id is None:
-#         tokenizer.pad_token_id = tokenizer.eos_token_id
-
-#     # Load QPC
-#     session = QAICInferenceSession(qpc, device_id, enable_debug_logs=enable_debug_logs)
-
-#     # Skip inputs/outputs
-#     session.skip_buffers([x for x in session.input_names + session.output_names if x.startswith("past_")])
-
-#     # Read batch_size and prefill_seq_len from session
-#     if session.allowed_shapes:
-#         batch_size = max([x[session.binding_index_map["input_ids"]][1][0] for x in session.allowed_shapes])
-#         prefill_seq_len = max([x[session.binding_index_map["input_ids"]][1][1] for x in session.allowed_shapes])
-#     else:
-#         batch_size, prefill_seq_len = session.bindings[session.binding_index_map["input_ids"]].dims
-
-#     if len(prompt) < batch_size:
-#         prompt = prompt * -(batch_size // -len(prompt))  # Repeat prompt to required size
-#     prompt = prompt[:batch_size]  # Truncate prompts to required size
-
-#     inputs = tokenizer(prompt, return_tensors="np", padding=True)
-#     position_ids_update = inputs["attention_mask"].sum(1, keepdims=True)
-#     padded_len = inputs["input_ids"].shape[1]
-#     num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
-#     padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
-#     max_gen_len = ctx_len - position_ids_update.max()
-#     if generation_len is None:
-#         if ctx_len is None:
-#             raise ValueError("At least one of ctx_len or generation_len is needed")
-#         generation_len = max_gen_len
-#     elif generation_len > max_gen_len:
-#         logger.warning(
-#             "Passed generation_len is greater than allowed length. "
-#             "Make sure this model supports sliding window, such as Mistral"
-#         )
-#     assert generation_len > 0, "generation length should be greater than zero"
-#     generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
-#     if stream:
-#         streamer = transformers.TextStreamer(tokenizer)
-#         streamer.on_finalized_text(prompt[0] + " ")
-
-#     # Prepare inputs for prefill/first iteration
-#     start = perf_counter()
-#     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
-#     inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
-#     # Need to use -1 as position_ids for invalid tokens
-
-#     # Run prefill
-#     for i in range(num_chunks):
-#         chunk_inputs = inputs.copy()
-#         chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
-#         chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
-#         outputs = session.run(chunk_inputs)
-#         if write_io_dir:
-#             write_io_files(inputs, outputs, write_io_dir, "prefill", "aic_batch_io", True, False)
-
-#     # Get first token
-#     inputs["input_ids"] = outputs["logits"].argmax(2)
-#     inputs["position_ids"] = position_ids_update
-#     generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
-#     finished_sequences = inputs["input_ids"] == tokenizer.eos_token_id
-#     if stream:
-#         streamer.put(inputs["input_ids"][0])
-
-#     # Decode loop
-#     loop_start = perf_counter()
-#     for num_token in range(1, generation_len):
-#         outputs = session.run(inputs)
-#         if write_io_dir:
-#             write_io_files(inputs, outputs, write_io_dir, "decode", "aic_batch_io", True, False)
-#             write_io_dir = None
-
-#         # Prepare inputs for next iteration
-#         inputs["input_ids"] = outputs["logits"].argmax(2)
-#         inputs["position_ids"] += 1
-#         generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
-#         finished_sequences |= inputs["input_ids"] == tokenizer.eos_token_id
-#         if stream:
-#             streamer.put(inputs["input_ids"][0])
-
-#         if finished_sequences.all():
-#             break
-
-#     end = perf_counter()
-#     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-
-#     for i in range(1 if stream else 0, batch_size):
-#         print()
-#         print(i, prompt[i], generated_texts[i])
-
-#     prefill_time = loop_start - start
-#     decode_perf = (num_token - 1) / (end - loop_start)
-#     total_perf = num_token / (end - start)
-#     total_time = end - start
-#     print()
-
-#     latency_stats = (generated_texts, prefill_time, decode_perf, total_perf, total_time)
-#     return latency_stats
 
 
 def print_latency_stats_kv(
@@ -368,7 +219,7 @@ class TextGeneration:
         self.enable_debug_logs = enable_debug_logs
         self.stream = stream
 
-        self.write_io_dir = (write_io_dir,)
+        self.write_io_dir = write_io_dir
         self.full_batch_size = full_batch_size
 
         # Load QPC
