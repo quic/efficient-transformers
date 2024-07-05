@@ -16,11 +16,11 @@ QEFF_MODELS_DIR = os.environ.get("QEFF_MODELS_DIR", os.path.join(ROOT_DIR, "qeff
 class Constants:
     # Export Constants.
     seq_length = 32
-    input_str = "Once upon a time in"
+    input_str = "My Name is"
 
     CTX_LEN = 32
     PROMPT_LEN = 8
-    INPUT_STRING = ["Once upon a time in"]
+    INPUT_STRING = ["My Name is"]
 
     CACHE_DIR = os.path.join(ROOT_DIR, "cache_dir")
 

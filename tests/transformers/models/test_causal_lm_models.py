@@ -28,27 +28,27 @@ def get_config(model_config):
     if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
         n_heads = config.n_head
         d_head = config.n_embd // config.n_head
-        n_layer = 2  # config.n_layer
+        n_layer = config.n_layer
     elif hasattr(config, "num_key_value_heads") and hasattr(
         config, "num_attention_heads"
     ):  # Check for num_key_value_heads (Llama/Mistral)
         n_heads = config.num_key_value_heads
         d_head = config.hidden_size // config.num_attention_heads
-        n_layer = 2  # config.num_hidden_layers
+        n_layer = config.num_hidden_layers
     elif hasattr(config, "n_heads"):  # Check for n_heads and d_model in the config (MPT Model)
         n_heads = config.n_heads
         d_head = config.d_model // config.n_heads
-        n_layer = 2  # config.n_layers
+        n_layer = config.n_layers
     elif hasattr(config, "multi_query"):  # Check for Falcon
         multi_query_value = getattr(config, "multi_query")
         if multi_query_value:
             n_heads = 1  # MQA
             d_head = config.hidden_size // config.num_attention_heads
-            n_layer = 2  # Due to multi query
+            n_layer = 1  # Due to multi query
         else:
             n_heads = config.num_attention_heads
             d_head = config.hidden_size // config.num_attention_heads
-            n_layer = 2
+            n_layer = config.num_hidden_layers
     else:
         raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
 
