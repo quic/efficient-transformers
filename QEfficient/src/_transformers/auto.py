@@ -19,7 +19,7 @@ from QEfficient.src._transformers.runtime_args import (
 )
 from QEfficient.src.base import QEFFBaseModel, Runtime
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
-from QEfficient.utils import get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
+from QEfficient.utils import get_qpc_dir_name_infer, load_hf_tokenizer, onnx_exists, qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 # Dictionary that defines the interface from transformers to be used underneath the QEFF interface
@@ -91,7 +91,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update(
             {"use_cache": True}
         )  # Always pass use_cache = True, to get KV values as output during ONNX export
-        kwargs.update({"attn_implementation" : "eager"}) # Always use eager mode for attention implementation
+        kwargs.update({"attn_implementation": "eager"})  # Always use eager mode for attention implementation
         model_card_name = kwargs.pop("model_card_name", None)
         model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
@@ -149,6 +149,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mos: int = -1,
         aic_enable_depth_first: bool = False,
         qpc_dir_suffix: Optional[str] = None,
+        onnx_dir_suffix: Optional[str] = None,
         full_batch_size: Optional[int] = None,
     ) -> str:
         """
@@ -159,7 +160,10 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         onnx_model_path: str. Path for saving onnx model.
         """
         self.export(full_batch_size=full_batch_size)
+        self.export(full_batch_size=full_batch_size, onnx_dir_suffix=onnx_dir_suffix)
+        qpc_dir_suffix = qpc_dir_suffix + "_" + onnx_dir_suffix if onnx_dir_suffix else qpc_dir_suffix
         self.compile(
+            onnx_model_path=self.ort_runtime_args.onnx_model_path,
             num_cores=num_cores,
             device_group=device_group,
             batch_size=batch_size,
@@ -176,16 +180,31 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
     def export(self, **kwargs) -> str:
         full_batch_size = kwargs.get("full_batch_size", None)
+        onnx_dir_suffix = kwargs.get("onnx_dir_suffix", None)
         assert self.is_transformed, "Please first run transform on the QEFFAutoModelForCausalLM object"
         model_card_name = self.get_model_card_name()
-        _, onnx_path = QEfficient.export(
-            model_name=model_card_name, model_kv=self, tokenizer=self.tokenizer, full_batch_size=full_batch_size
+        onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(
+            model_card_name, full_batch_size, onnx_dir_suffix
         )
-        assert self.runtime == Runtime.CPU_ORT, "Something went wrong while exporting model to ONNX"
-        return onnx_path
+
+        if onnx_path_exists:
+            logger.warning(f"Pre-exported ONNX files found at {onnx_dir_path}, Jumping to Compilation")
+        else:
+            _, onnx_path = QEfficient.export(
+                model_name=model_card_name,
+                model_kv=self,
+                tokenizer=self.tokenizer,
+                full_batch_size=full_batch_size,
+                onnx_dir_path=onnx_dir_path,
+            )
+            assert self.runtime == Runtime.CPU_ORT, "Something went wrong while exporting model to ONNX"
+
+        ort_runtime_args = QEFFAutoModelForCausalLMCPUORTRuntimeArgs(onnx_model_path=onnx_model_path)
+        self.set_runtime(runtime=Runtime.CPU_ORT, runtime_args=ort_runtime_args)
 
     def compile(
         self,
+        onnx_model_path: str,
         num_cores: int,
         device_group: List[int],
         batch_size: int = 1,
@@ -211,28 +230,33 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             full_batch_size=full_batch_size,
         )
         qpc_base_dir_name = qpc_base_dir_name + "_" + qpc_dir_suffix if qpc_dir_suffix else qpc_base_dir_name
-        _, qpc_dir_path = qpc_exists(model_name=self.get_model_card_name(), qpc_base_dir_name=qpc_base_dir_name)
-
-        # Compile
-        QEfficient.compile(
-            onnx_path=self.ort_runtime_args.onnx_model_path,
-            qpc_path=os.path.dirname(qpc_dir_path),
-            num_cores=num_cores,
-            device_group=device_group,
-            aic_enable_depth_first=aic_enable_depth_first,
-            mos=mos,
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            mxfp6=mxfp6,
-            mxint8=mxint8,
-            full_batch_size=full_batch_size,
+        qpc_path_exists, qpc_dir_path = qpc_exists(
+            model_name=self.get_model_card_name(), qpc_base_dir_name=qpc_base_dir_name
         )
+
+        # Handle qpc generation
+        if qpc_path_exists:
+            logger.warning(f"Pre-compiled qpc found at {qpc_dir_path}, use excute api() for inference")
+        else:
+            # Compile
+            QEfficient.compile(
+                onnx_path=onnx_model_path,
+                qpc_path=os.path.dirname(qpc_dir_path),
+                num_cores=num_cores,
+                device_group=device_group,
+                aic_enable_depth_first=aic_enable_depth_first,
+                mos=mos,
+                batch_size=batch_size,
+                prompt_len=prompt_len,
+                ctx_len=ctx_len,
+                mxfp6=mxfp6,
+                mxint8=mxint8,
+                full_batch_size=full_batch_size,
+            )
         cloud_ai_100_runtime_args = QEFFAutoModelForCausalLMAI100RuntimeArgs(
             qpc_dir_path=qpc_dir_path, device_group=device_group
         )
         self.set_runtime(runtime=Runtime.AI_100, runtime_args=cloud_ai_100_runtime_args)
-
         return qpc_dir_path
 
 

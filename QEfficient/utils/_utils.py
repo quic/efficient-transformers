@@ -96,6 +96,7 @@ def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Tuple[bool, str]:
 
     return qpc_exists_bool, qpc_dir_path
 
+
 def get_onnx_dir_name(model_name, has_fbs):
     """
     Create a unique directory name for the ONNX model
@@ -107,8 +108,9 @@ def get_onnx_dir_name(model_name, has_fbs):
         return f"onnx_{model_name_safe}_with_fbs"
     else:
         return f"onnx_{model_name_safe}_without_fbs"
-    
-def onnx_exists(model_name: str, full_batch_size: str) -> Tuple[bool, str, str]:
+
+
+def onnx_exists(model_name: str, full_batch_size: int, onnx_dir_suffix: Optional[str] = None) -> Tuple[bool, str, str]:
     """
     Checks if qpc files already exists, removes the directory if files have been manipulated.
     ---------
@@ -118,11 +120,13 @@ def onnx_exists(model_name: str, full_batch_size: str) -> Tuple[bool, str, str]:
     """
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
     os.makedirs(model_card_dir, exist_ok=True)
+
     # Determine if we're using full_batch_size
     has_fbs = full_batch_size is not None
 
     # ONNX handling
     onnx_dir_name = get_onnx_dir_name(model_name, has_fbs)
+    onnx_dir_name = onnx_dir_name + "_" + onnx_dir_suffix if onnx_dir_suffix else onnx_dir_name
     onnx_dir_path = os.path.join(model_card_dir, onnx_dir_name)
     os.makedirs(onnx_dir_path, exist_ok=True)
 
