@@ -39,7 +39,9 @@ class QEFFTransformersBase(QEFFBaseModel):
             # FIXME: Use model architectures here instead of complete dictionary TransformersToQEffModulesDict
             model.__class__ in TransformersToQEffModulesDict.values()
         ), f"Given model{model.__class__.__name__} could not be found in transformers library i.e. {MODEL_FOR_CAUSAL_LM_MAPPING.values()}"  # type: ignore
-        self.model.config.use_cache = True  # Always pass use_cache = True, to get KV values as output during ONNX export
+        self.model.config.use_cache = (
+            True  # Always pass use_cache = True, to get KV values as output during ONNX export
+        )
         self.pretrained_model_name_or_path = pretrained_model_name_or_path
 
         # Set model card name, which is used to decide ONNX, QPC files path during export and compile resp.
