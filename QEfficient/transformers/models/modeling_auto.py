@@ -39,7 +39,7 @@ class QEFFTransformersBase(QEFFBaseModel):
             # FIXME: Use model architectures here instead of complete dictionary TransformersToQEffModulesDict
             model.__class__ in TransformersToQEffModulesDict.values()
         ), f"Given model{model.__class__.__name__} could not be found in transformers library i.e. {MODEL_FOR_CAUSAL_LM_MAPPING.values()}"  # type: ignore
-
+        self.model.config.use_cache = True  # Always pass use_cache = True, to get KV values as output during ONNX export
         self.pretrained_model_name_or_path = pretrained_model_name_or_path
 
         # Set model card name, which is used to decide ONNX, QPC files path during export and compile resp.
@@ -76,9 +76,6 @@ class QEFFTransformersBase(QEFFBaseModel):
         :param transform: bool. Whether to optimize model for KV retention; default is True. Pass False to get BertStyle model.
         :param model_card_name: str. HuggingFace model card name or name of the model if custom, used for deciding folder name while saving ONNX/qpc files.
         """
-        kwargs.update(
-            {"use_cache": True}
-        )  # Always pass use_cache = True, to get KV values as output during ONNX export
         model_card_name = kwargs.pop(
             "model_card_name", None
         )  # Remove model_card_name from kwargs for transformers APIs
