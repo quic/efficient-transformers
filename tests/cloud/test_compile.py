@@ -43,7 +43,7 @@ def test_compile(setup, mocker):
         mxint8=ms.mxint8,
     )
 
-    assert os.path.isdir(os.path.join(ms.model_card_dir(), ms.qpc_base_dir_name()))
+    assert os.path.isdir(ms.qpc_dir_path())
     assert os.path.isfile(ms.specialization_json_path())
     assert os.path.isfile(ms.custom_io_file_path())
     assert os.path.isdir(ms.qpc_dir_path())
