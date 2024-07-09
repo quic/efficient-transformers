@@ -5,7 +5,5 @@
 #
 # -----------------------------------------------------------------------------
 
-from QEfficient.src._transformers.auto import QEffAutoModel, QEFFAutoModelForCausalLM
-from QEfficient.src.common import QEFFCommonLoader
-
-__all__ = ["QEffAutoModel", "QEFFAutoModelForCausalLM", "QEFFCommonLoader"]
+from QEfficient.base.common import QEFFCommonLoader  # noqa: F401
+from QEfficient.transformers.models.modeling_auto import QEffAutoModel, QEFFAutoModelForCausalLM  # noqa: F401
