@@ -19,8 +19,8 @@ from typing import Any, Dict, Type
 from transformers import AutoConfig
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 
-from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
-from QEfficient.src.base import QEFFBaseModel
+from QEfficient.base.modeling_qeff import QEFFBaseModel
+from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils._utils import login_and_download_hf_lm
 
 
@@ -30,7 +30,7 @@ class QEFF_MODEL_TYPE(Enum):
     """
 
     CAUSALLM = "LLM"
-    DIFFUSION = "STABLE_DIFFUSION"
+    DIFFUSION = "DIFFUSION"
     AWQ = "AWQ"
 
 
@@ -86,15 +86,17 @@ class QEFFCommonLoader:
         """
         Downloads HuggingFace model if already doesn't exist locally, returns QEffAutoModel object based on type of model.
         """
-        pretrained_model_name_or_path = (
-            pretrained_model_name_or_path
-            if os.path.isdir(pretrained_model_name_or_path)
-            else login_and_download_hf_lm(pretrained_model_name_or_path, *args, **kwargs)
-        )
+        if not os.path.isdir(pretrained_model_name_or_path):
+            # Save model_card_name if passed
+            model_card_name = kwargs.pop("model_card_name", pretrained_model_name_or_path)
+            kwargs.update({"model_card_name": model_card_name})
+            pretrained_model_name_or_path = login_and_download_hf_lm(pretrained_model_name_or_path, *args, **kwargs)
         model_type = get_hf_model_type(hf_model_path=pretrained_model_name_or_path)
         qeff_auto_model_class = MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP[model_type]
         assert issubclass(
             qeff_auto_model_class, QEFFBaseModel
         ), f"Expected class that inherits {QEFFBaseModel}, got {type(qeff_auto_model_class)}"
 
-        return qeff_auto_model_class.from_pretrained(pretrained_model_name_or_path=pretrained_model_name_or_path)
+        return qeff_auto_model_class.from_pretrained(
+            pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs
+        )

@@ -32,7 +32,7 @@ def test_infer(setup, mocker):
     if result["error"] is not None:
         pytest.skip(f'...Skipping Because batch size is not compatible with the number of prompts: {result["error"]}')
     assert result["result"] is not None
-    get_qpc_dir_name_infer_spy = mocker.spy(QEfficient.cloud.infer, "get_qpc_dir_name_infer")
+
     check_batch_size_and_num_prompts_spy = mocker.spy(QEfficient.cloud.infer, "check_batch_size_and_num_prompts")
     load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.infer, "load_hf_tokenizer")
     qpc_exists_spy = mocker.spy(QEfficient.cloud.infer, "qpc_exists")
@@ -55,14 +55,12 @@ def test_infer(setup, mocker):
         device_group=ms.device_group,
     )
     # prompt fucntion check
-    get_qpc_dir_name_infer_spy.assert_called_once()
     check_batch_size_and_num_prompts_spy.assert_called_once()
     # tokenizer check
     load_hf_tokenizer_spy.assert_called_once()
     # qpc exist check
     qpc_exists_spy.assert_called_once()
-    if qpc_exists_spy.spy_return[0] is True:
-        assert ms.qpc_dir_path() == qpc_exists_spy.spy_return[1]
+    if qpc_exists_spy.spy_return is True:
         assert os.path.isdir(ms.qpc_dir_path())
     else:
         get_onnx_model_path_spy.assert_called_once()

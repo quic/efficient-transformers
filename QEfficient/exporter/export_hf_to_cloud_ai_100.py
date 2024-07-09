@@ -14,10 +14,10 @@ import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 import QEfficient
+from QEfficient.base.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
+from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
-from QEfficient.src._transformers.auto import QEFFAutoModelForCausalLM
-from QEfficient.src.base import QEFFBaseModel
-from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
+from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import load_hf_tokenizer, padding_check_and_fix
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
@@ -253,14 +253,12 @@ def export_kvstyle_transformed_model_to_onnx(
     # Build inputs for decode
     inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
     inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-    print(tokenizer.batch_decode(inputs["input_ids"]))
     # Run PyTorch inference for decode in loop
     # todo: vbaddi, fix it to verify on Cloud AI 100.
     for i in range(1):
         pt_outputs = transformed_model(**inputs)
         inputs["input_ids"] = pt_outputs.logits.detach().argmax(2)
         inputs["position_ids"] += 1
-        print(tokenizer.batch_decode(inputs["input_ids"]))
     # To avoid issues in onnx export
     inputs["position_ids"] = torch.full((batch_size, 1), seq_len - 1)
 
@@ -396,8 +394,6 @@ def export_lm_model_for_cloud(
             onnx_dir_path=onnx_dir_path,
             seq_len=seq_length,
         )  # type: ignore
-
-    # return the model path for automation.
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
@@ -443,7 +439,7 @@ def qualcomm_efficient_converter(
         if model_kv
         else QEFFCommonLoader.from_pretrained(
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-            hf_token=hf_token,
+            token=hf_token,
             cache_dir=cache_dir,
         )
     )
@@ -457,6 +453,7 @@ def qualcomm_efficient_converter(
     if onnx_dir_path is None:
         model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
         onnx_dir_path = os.path.join(model_card_dir, "onnx")
+        os.makedirs(onnx_dir_path, exist_ok=True)
 
     # Load tokenizer if not passed
     tokenizer = (

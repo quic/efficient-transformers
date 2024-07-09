@@ -12,7 +12,7 @@ import shutil
 import pytest
 
 from QEfficient.generation.text_generation_inference import check_batch_size_and_num_prompts
-from QEfficient.utils import get_qpc_dir_name_infer
+from QEfficient.utils import get_qpc_dir_path
 from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
 from QEfficient.utils.logging_utils import logger
 
@@ -83,20 +83,18 @@ class ModelSetup:
     def model_card_dir(self):
         return str(os.path.join(QEFF_MODELS_DIR, str(self.model_name)))
 
-    def qpc_base_dir_name(self):
-        return get_qpc_dir_name_infer(
-            self.num_cores,
-            self.mos,
-            self.batch_size,
-            self.prompt_len,
-            self.ctx_len,
-            self.mxfp6,
-            self.mxint8,
-            self.device_group,
-        )
-
     def qpc_dir_path(self):
-        return str(os.path.join(self.model_card_dir(), self.qpc_base_dir_name(), "qpcs"))
+        return get_qpc_dir_path(
+            model_card_name=self.model_name,
+            num_cores=self.num_cores,
+            mos=self.mos,
+            batch_size=self.batch_size,
+            prompt_len=self.prompt_len,
+            ctx_len=self.ctx_len,
+            mxfp6=self.mxfp6,
+            mxint8=self.mxint8,
+            device_group=self.device_group,
+        )
 
     def onnx_dir_path(self):
         return str(os.path.join(self.model_card_dir(), "onnx"))
@@ -113,7 +111,7 @@ class ModelSetup:
         )
 
     def specialization_json_path(self):
-        return str(os.path.join(self.model_card_dir(), self.qpc_base_dir_name(), "specializations.json"))
+        return os.path.join(os.path.dirname(self.qpc_dir_path()), "specializations.json")
 
     def custom_io_file_path(self):
         if self.mxint8:
