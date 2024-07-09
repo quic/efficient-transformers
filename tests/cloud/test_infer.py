@@ -28,7 +28,6 @@ def test_infer(setup, mocker):
     Ref: https://pytest-mock.readthedocs.io/en/latest/usage.html
     """
     ms = setup
-    get_qpc_dir_name_infer_spy = mocker.spy(QEfficient.cloud.infer, "get_qpc_dir_name_infer")
     load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.infer, "load_hf_tokenizer")
     qpc_exists_spy = mocker.spy(QEfficient.cloud.infer, "qpc_exists")
     get_onnx_model_path_spy = mocker.spy(QEfficient.cloud.infer, "get_onnx_model_path")
@@ -49,13 +48,11 @@ def test_infer(setup, mocker):
         mxint8=ms.mxint8,
         device_group=ms.device_group,
     )
-    get_qpc_dir_name_infer_spy.assert_called_once()
     # tokenizer check
     load_hf_tokenizer_spy.assert_called_once()
     # qpc exist check
     qpc_exists_spy.assert_called_once()
-    if qpc_exists_spy.spy_return[0] is True:
-        assert ms.qpc_dir_path() == qpc_exists_spy.spy_return[1]
+    if qpc_exists_spy.spy_return is True:
         assert os.path.isdir(ms.qpc_dir_path())
     else:
         get_onnx_model_path_spy.assert_called_once()

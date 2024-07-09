@@ -171,7 +171,7 @@ def cloud_ai_100_exec_kv_helper(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc_path: str,
     prompt: List[str],
-    ctx_len: Optional[int] = None,
+    ctx_len: int,
     generation_len: Optional[int] = None,
     device_id: List[int] = [0],
     enable_debug_logs: bool = False,

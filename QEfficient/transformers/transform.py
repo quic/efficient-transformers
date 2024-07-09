@@ -10,8 +10,8 @@ import hashlib
 import torch.nn as nn
 import transformers
 
-from QEfficient.src.base import QEFFBaseModel
-from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE
+from QEfficient.base.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE
+from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
 from QEfficient.utils.logging_utils import logger

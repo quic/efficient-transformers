@@ -39,13 +39,19 @@ of the model]
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+import torch
+from onnxruntime import InferenceSession as ORTInferenceSession
+
+from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 
 # Defining placeholder ENUM for execute function
 class Runtime(Enum):
-    CPU_ORT = "CPU ONNX Runtime"
-    CPU_PT = "CPU PyTorch Runtime"
+    CPU_ORT = "CPU_ORT"
+    CPU_PT = "CPU_PT"
     AI_100 = "AI_100"
 
 
@@ -57,15 +63,14 @@ class QEFFBaseModel(ABC):
     All the child classes must provide way to load, transform(optimize), exoprt to ONNX etc. capabilities.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, model: torch.nn.Module) -> None:
         super().__init__()
-        # Users can call generate or execute
-        self.generate = self.execute
-        self._runtime = Runtime.CPU_PT
-
-    @property
-    def runtime(self) -> Runtime:
-        return self._runtime
+        self.model = model
+        self.onnx_path: Optional[str] = None
+        self.ort_session: Optional[ORTInferenceSession] = None
+        self.qpc_path: Optional[str] = None
+        self.device_id: Optional[List[int]] = None
+        self.qpc_session: Optional[QAICInferenceSession] = None
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
@@ -75,17 +80,16 @@ class QEFFBaseModel(ABC):
     def is_transformed(self) -> bool:
         raise NotImplementedError("Must implement for child classes")
 
-    @abstractmethod
-    def transform_export(self, *args, **kwargs) -> Any:
-        pass
+    def run_pytorch(self, inputs):
+        raise NotImplementedError("Reached too far!!")
 
-    @abstractmethod
-    def transform_export_compile(self, *args, **kwargs) -> Any:
-        pass
+    def run_ort(self, inputs: Dict[str, np.ndarray], /, cache_session: bool = False):
+        raise NotImplementedError("Reached too far!!")
 
-    @abstractmethod
-    def execute(self, *args, **kwargs) -> Any:
-        pass
+    def run_cloud_ai_100(
+        self,
+    ):
+        raise NotImplementedError("Reached too far!!")
 
     @abstractmethod
     def transform(self, *args, **kwargs) -> Any:

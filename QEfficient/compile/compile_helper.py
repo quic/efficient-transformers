@@ -112,7 +112,6 @@ def compile(
     custom_io_file_path: Optional[str] = None,
     **kwargs,
 ) -> str:
-    # Dynamically create the specializations JSON
     """
     Api() to compile the Onnx Model on Cloud AI 100 Platform with give config.
     ---------
@@ -129,9 +128,9 @@ def compile(
     :mxint8: Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
     :custom_io_file_path: str. Path to custom IO file.
     """
-
     os.makedirs(qpc_path, exist_ok=True)
     specialization_json_path = os.path.join(qpc_path, "specializations.json")
+    # Dynamically create the specializations JSON
     create_and_dump_specializations(
         batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, path=specialization_json_path
     )

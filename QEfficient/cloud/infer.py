@@ -13,7 +13,7 @@ from typing import List, Optional
 import QEfficient
 from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
+from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 
@@ -62,9 +62,6 @@ def main(
     :cache_dir: str. Cache dir where downloaded huggingface files are stored.
     :hf_token: str. HuggingFace login token to access private repos.
     """
-    qpc_base_dir_name = get_qpc_dir_name_infer(
-        num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
-    )
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
     tokenizer = load_hf_tokenizer(
         pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
@@ -73,9 +70,12 @@ def main(
         local_model_dir=local_model_dir,
     )
 
-    qpc_path_exists, qpc_dir_path = qpc_exists(model_name, qpc_base_dir_name)
+    qpc_dir_path = get_qpc_dir_path(
+        model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
+    )
+
     # Handle qpc generation
-    if qpc_path_exists:
+    if qpc_exists(qpc_dir_path):
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
