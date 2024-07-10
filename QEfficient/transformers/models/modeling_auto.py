@@ -187,13 +187,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         generation_len = kwargs.pop("generation_len", None)
         batch_size, ctx_len = get_compilation_dims(qpc_path=self.qpc_path)
         return QEfficient.cloud_ai_100_exec_kv(
-            batch_size,
-            self.tokenizer,
-            self.qpc_path,
-            prompt=prompts,
-            device_id=self.device_id,
-            generation_len=generation_len,
-            ctx_len=ctx_len,
+            self.tokenizer, self.qpc_path, prompt=prompts, device_id=self.device_id, generation_len=generation_len
         )
 
 
