@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -28,7 +28,7 @@ def update_model_config(model_config):
     config = AutoConfig.from_pretrained(model_config["model_name"])
     n_heads, d_head, n_layer = get_config(config)
 
-    model_config["n_layer"] = 1  # test only single layer model
+    model_config["n_layer"] = 2  # test only 2 layer models
     model_config["model_class"] = AutoModelForCausalLM
     model_config["padding_shape"] = [1, n_heads, Constants.CTX_LEN, d_head]
 
