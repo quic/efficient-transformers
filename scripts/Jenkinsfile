@@ -11,14 +11,6 @@ pipeline
 
     stages 
     {
-        stage('Code Checkout') 
-        {
-            steps 
-            {
-                checkout scm
-            }
-        }
-
         stage('Install QEfficient')
         {
             steps
