@@ -37,10 +37,7 @@ from transformers.models.mistral.modeling_mistral import (
 )
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
-<<<<<<< HEAD
-=======
     MixtralDecoderLayer,
->>>>>>> 09cb3eb (Updated the assert condition for bs > 1 and full batch size >1)
     MixtralForCausalLM,
     MixtralModel,
     MixtralRMSNorm,
@@ -84,6 +81,7 @@ from .models.mistral.modeling_mistral import (
 )
 from .models.mixtral_moe.modeling_mixtral import (
     QEffMixtralAttention,
+    QeffMixtralDecoderLayer,
     QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
@@ -161,10 +159,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     MistralRMSNorm: CustomRMSNormAIC,
     # Mixtral model layers
     MixtralAttention: QEffMixtralAttention,
-<<<<<<< HEAD
-=======
     MixtralDecoderLayer: QeffMixtralDecoderLayer,
->>>>>>> 09cb3eb (Updated the assert condition for bs > 1 and full batch size >1)
     MixtralModel: QEffMixtralModel,
     MixtralForCausalLM: QEffMixtralForCausalLM,
     MixtralRMSNorm: CustomRMSNormAIC,

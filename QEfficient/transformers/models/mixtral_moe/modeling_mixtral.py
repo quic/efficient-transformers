@@ -23,6 +23,7 @@ from transformers.modeling_attn_mask_utils import (
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
+    MixtralDecoderLayer,
     MixtralForCausalLM,
     MixtralModel,
     MixtralSparseMoeBlock,
@@ -48,6 +49,7 @@ class QEffMixtralAttention(MixtralAttention):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -74,16 +76,12 @@ class QEffMixtralAttention(MixtralAttention):
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-<<<<<<< HEAD
-            cache_kwargs = {"sin": sin, "cos": cos, "position_ids": position_ids}  # Specific to RoPE models
-=======
             cache_kwargs = {
                 "sin": sin,
                 "cos": cos,
                 "batch_index": batch_index,
                 "position_ids": position_ids,
             }  # Specific to RoPE models
->>>>>>> 09cb3eb (Updated the assert condition for bs > 1 and full batch size >1)
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         # repeat k/v heads if n_kv_heads < n_heads
@@ -361,8 +359,6 @@ class QEffMixtralModel(MixtralModel):
         )
 
 
-<<<<<<< HEAD
-=======
 class QeffMixtralDecoderLayer(MixtralDecoderLayer):
     """
     Copied from MixtralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
@@ -441,7 +437,6 @@ class QeffMixtralDecoderLayer(MixtralDecoderLayer):
         return outputs
 
 
->>>>>>> 09cb3eb (Updated the assert condition for bs > 1 and full batch size >1)
 class QEffMixtralForCausalLM(MixtralForCausalLM):
     """
     Copied from MixtralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py

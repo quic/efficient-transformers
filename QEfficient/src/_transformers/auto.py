@@ -26,34 +26,12 @@ class QEFFTransformersBase(QEFFBaseModel):
     """
     Parent class for models QEFF provides from transformers i.e. (AutoModel, AutoModelForCausalLM, AutoModelForAudioClassification etc.) from src/transformers/models/auto/modeling_auto.py file.
     """
-<<<<<<< HEAD
     def __init__(self, model: nn.Module, transform:bool = True) -> None:
         assert (model.__class__ in MODEL_FOR_CAUSAL_LM_MAPPING.values() or
                 # FIXME: Use model architectures here instead of complete dictionary TransformersToQEffModulesDict
                 model.__class__ in TransformersToQEffModulesDict.values()), f"Given model{model.__class__.__name__} could not be found in transformers library i.e. {MODEL_FOR_CAUSAL_LM_MAPPING.values()}" # type: ignore
         self.model: nn.Module = model
         if transform:
-=======
-
-    def __init__(self, model: nn.Module, pretrained_model_name_or_path: str, **kwargs) -> None:
-        super().__init__()
-        assert (
-            model.__class__ in MODEL_FOR_CAUSAL_LM_MAPPING.values()
-            or
-            # FIXME: Use model architectures here instead of complete dictionary TransformersToQEffModulesDict
-            model.__class__ in TransformersToQEffModulesDict.values()
-        ), f"Given model{model.__class__.__name__} could not be found in transformers library i.e. {MODEL_FOR_CAUSAL_LM_MAPPING.values()}"  # type: ignore
-        self.model_card_name = kwargs.pop("model_card_name", None)
-        self.pretrained_model_name_or_path = pretrained_model_name_or_path
-        self.model: nn.Module = model
-        try:
-            self.model.config.use_cache = True
-        except Exception:
-            logger.info("Could not set config.use_cache=True, might result into errors while executing the model")
-        self.kwargs = kwargs
-        self._tokenizer = None
-        if kwargs.get("transform", True):
->>>>>>> 09cb3eb (Updated the assert condition for bs > 1 and full batch size >1)
             self.transform()
 
     def __repr__(self) -> str:
@@ -63,26 +41,6 @@ class QEFFTransformersBase(QEFFBaseModel):
     def is_transformed(self) -> bool:
         return getattr(self.model, "qeff_transformed", False)
 
-<<<<<<< HEAD
-=======
-    @property
-    def tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
-        if self._tokenizer is None:
-            self._tokenizer = self.get_tokenizer()
-        return self._tokenizer
-
-    def get_model_card_name(self) -> str:
-        # FIXME: use getter
-        if self.model_card_name is None:
-            # Handle when pretrained_model_name_or_path is a path and we don't know the model_card_name
-            assert not os.path.isdir(
-                self.pretrained_model_name_or_path
-            ), f"Please provide `model_card_name` argument as valid string, got {self.model_card_name}"
-            self.model_card_name = self.pretrained_model_name_or_path
-
-        return self.model_card_name
-
->>>>>>> 09cb3eb (Updated the assert condition for bs > 1 and full batch size >1)
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         """

@@ -531,7 +531,7 @@ class TextGeneration:
         total_num_decoded_tokens, prefill_perf, decode_perf, total_perf
         """
 
-        total_decoded_tokens = sum([(len(self.generated_ids[i]) - 1) for i in range(decode_batch_size)])
+        # total_decoded_tokens = sum([(len(self.generated_ids[i]) - 1) for i in range(decode_batch_size)])
         prefill_time = loop_start - start
         # prefill_perf = 1 / (loop_start - start)
         decode_perf = (total_decoded_tokens) / (end - loop_start)

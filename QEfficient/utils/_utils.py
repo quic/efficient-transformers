@@ -115,7 +115,13 @@ def onnx_exists(model_name: str, full_batch_size: int) -> Tuple[bool, str, str]:
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
     os.makedirs(model_card_dir, exist_ok=True)
 
-    onnx_dir_path = os.path.join(model_card_dir, "onnx")
+    # Determine if we're using full_batch_size
+    has_fbs = full_batch_size is not None
+
+    # ONNX handling
+    onnx_dir_name = get_onnx_dir_name(model_name, has_fbs)
+    onnx_dir_path = os.path.join(model_card_dir, onnx_dir_name)
+    os.makedirs(onnx_dir_path, exist_ok=True)
     clipped_onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
     unclipped_onnx_model_path = clipped_onnx_model_path.replace("_clipped_fp16.onnx", ".onnx")
 
