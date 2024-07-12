@@ -21,6 +21,7 @@ def main(
     model_name: str,
     qpc_path: str,
     device_group: List[int],
+    local_model_dir: Optional[str] = None,
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
     generation_len: Optional[int] = None,
@@ -37,7 +38,12 @@ def main(
     :prompts_txt_file_path: str. Path to txt file for multiple input prompts
     """
 
-    tokenizer = load_hf_tokenizer(model_name, cache_dir, hf_token)
+    tokenizer = load_hf_tokenizer(
+        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+        cache_dir=cache_dir,
+        hf_token=hf_token,
+        local_model_dir=local_model_dir,
+    )
 
     batch_size, ctx_len = get_compilation_dims(qpc_path)
     prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size)
@@ -79,6 +85,9 @@ if __name__ == "__main__":
         help="File path for taking input prompts from txt file, sample prompts.txt file present in examples folder",
     )
     parser.add_argument("--generation_len", "--generation-len", type=int, help="Number of tokens to generate")
+    parser.add_argument(
+        "--local-model-dir", "--local_model_dir", required=False, help="Path to custom model weights and config files"
+    )
     parser.add_argument(
         "--cache-dir",
         "--cache_dir",
