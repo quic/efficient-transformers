@@ -30,17 +30,16 @@ def get_models_dir():
     qeff_cache_home = os.environ.get("QEFF_HOME")
     # Check if XDG_CACHE_HOME is set
     xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
-    if xdg_cache_home:
-        qeff_models_dir = os.path.join(xdg_cache_home, "qeff_models")
-    # Check if QEFF_MODELS_DIR is set
-    elif qeff_cache_home:
+    if qeff_cache_home:
         qeff_models_dir = os.path.join(qeff_cache_home, "qeff_models")
+    # Check if QEFF_MODELS_DIR is set
+    elif xdg_cache_home:
+        qeff_models_dir = os.path.join(xdg_cache_home, "qeff_models")
     else:
         # Use ~/.cache/qeff_models as the default
         qeff_models_dir = os.path.join(os.path.expanduser("~"), ".cache", "qeff_models")
 
     # Set QEFF_MODELS_DIR environment variable
-    os.environ["QEFF_HOME"] = qeff_models_dir
     return qeff_models_dir
 
 

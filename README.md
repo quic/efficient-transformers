@@ -151,14 +151,16 @@ theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth
 
 # Or pass path of txt file with input prompts, Example below, sample txt file(prompts.txt) is present in examples folder .
 
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompts_txt_file_path examples/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first  
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompts_txt_file_path examples/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first
+
+# This will be default store the models in the ~/.cache/qeff_models folder, to override the folder set QEFF_HOME (export QEFF_HOME=/path/to/save/qeff/models)
  ```
 ### 2. Use of QEfficient.cloud.execute
 
 Once we have compiled the QPC, we can now use the precompiled QPC in execute API to run for different prompts, like below:
 
 ```bash
-python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path qeff_models/gpt2/qpc_16cores_1BS_32PL_128CL_1devices_mxfp6/qpcs --prompt "Once upon a time in" --device_group [0]  
+python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path ~/.cache/qeff_models/gpt2/qpc_16cores_1BS_32PL_128CL_1devices_mxfp6/qpcs --prompt "Once upon a time in" --device_group [0]  
 ```
 
 We can also enable MQ, just based on the number of devices. Based on the "--device-group" as input it will create TS config on the fly. If "--device-group [0,1]" it will create TS config for 2 devices and use it for compilation, if "--device-group 0" then TS compilation is skipped and single soc execution is enabled.
@@ -167,7 +169,7 @@ We can also enable MQ, just based on the number of devices. Based on the "--devi
 python -m QEfficient.cloud.infer --model_name Salesforce/codegen-2B-mono --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0,1] --prompt "def fibonacci(n):" --mos 2 --aic_enable_depth_first  
  
 # Once qpc is saved, you can use the execute API to run for different prompts
-python -m QEfficient.cloud.execute --model_name Salesforce/codegen-2B-mono --qpc-path qeff_models/Salesforce/codegen-2B-mono/qpc_16cores_1BS_32PL_128CL_2devices_mxfp6/qpcs --prompt "def binary_search(array: np.array, k: int):" --device-group [0,1] 
+python -m QEfficient.cloud.execute --model_name Salesforce/codegen-2B-mono --qpc-path ~/.cache/qeff_models/Salesforce/codegen-2B-mono/qpc_16cores_1BS_32PL_128CL_2devices_mxfp6/qpcs --prompt "def binary_search(array: np.array, k: int):" --device-group [0,1] 
  
 # To disable MQ, just pass single soc like below:
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first
