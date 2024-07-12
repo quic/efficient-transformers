@@ -175,7 +175,7 @@ def pytest_generate_tests(metafunc):
     -----------
     Ref: https://docs.pytest.org/en/7.3.x/how-to/parametrize.html
     """
-    json_file = os.path.join("tests", "cloud", "high_level_testing.json")
+    json_file = "tests/cloud/high_level_testing.json"
     with open(json_file, "r") as file:
         json_data = json.load(file)
 
