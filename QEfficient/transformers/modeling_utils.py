@@ -49,6 +49,7 @@ from transformers.models.phi3.modeling_phi3 import Phi3Attention, Phi3ForCausalL
 from transformers.models.qwen2.modeling_qwen2 import Qwen2Attention, Qwen2ForCausalLM, Qwen2Model, Qwen2RMSNorm
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
+    Starcoder2DecoderLayer,
     Starcoder2ForCausalLM,
     Starcoder2Model,
 )
@@ -92,6 +93,7 @@ from .models.phi3.modeling_phi3 import QEffPhi3Attention, QEffPhi3ForCausalLM, Q
 from .models.qwen2.modeling_qwen2 import QEffQwen2Attention, QEffQwen2ForCausalLM, QEffQwen2Model
 from .models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
+    QEFFStarcoder2DecoderLayer,
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
 )
@@ -104,6 +106,8 @@ get_lists_of_cb_qeff_models = ModelArchitectures(
     [
         LlamaForCausalLM.__name__,
         MistralForCausalLM.__name__,
+        MixtralForCausalLM.__name__,
+        Starcoder2ForCausalLM.__name__,
     ]
 )
 # Create an instance of the named tuple
@@ -186,4 +190,5 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     Starcoder2Attention: QEffStarcoder2Attention,
     Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
     Starcoder2Model: QEffStarcoder2Model,
+    Starcoder2DecoderLayer:QEFFStarcoder2DecoderLayer
 }

@@ -39,7 +39,7 @@ def get_onnx_model_path(
         :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
         :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
     """
-    onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(model_name, base_dir_name)
+    onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(model_name, full_batch_size)
     if onnx_path_exists:
         logger.info(f"Pre-exported ONNX files found at {onnx_dir_path}! Jumping to Compilation")
     else:

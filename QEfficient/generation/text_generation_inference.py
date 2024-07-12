@@ -67,28 +67,28 @@ def write_io_files(
         io_files = []
     io = []
     os.makedirs(f"{write_io_dir}/{write_io_subdir}", exist_ok=True)
-    for iname, iarray in inputs.items():
-        iarray.tofile(f"{write_io_dir}/{write_io_subdir}/{iname}.raw")
-        ispec = {
+    for iname, i_array in inputs.items():
+        i_array.tofile(f"{write_io_dir}/{write_io_subdir}/{iname}.raw")
+        i_spec = {
             "path": f"{write_io_subdir}/{iname}.raw",
             "io-direction": "in",
-            "elem-size": iarray.itemsize,
+            "elem-size": i_array.itemsize,
             "map-to": iname,
         }
         if include_dims:
-            ispec["dims"] = iarray.shape
-        io.append(ispec)
-    for oname, oarray in outputs.items():
-        oarray.tofile(f"{write_io_dir}/{write_io_subdir}/{oname}.raw")
-        ospec = {
-            "path": f"{write_io_subdir}/{oname}.raw",
+            i_spec["dims"] = i_array.shape
+        io.append(i_spec)
+    for o_name, o_array in outputs.items():
+        o_array.tofile(f"{write_io_dir}/{write_io_subdir}/{o_name}.raw")
+        o_spec = {
+            "path": f"{write_io_subdir}/{o_name}.raw",
             "io-direction": "out",
-            "elem-size": oarray.itemsize,
-            "map-to": oname,
+            "elem-size": o_array.itemsize,
+            "map-to": o_name,
         }
-        if include_dims or oname.endswith("_RetainedState"):
-            ospec["dims"] = oarray.shape
-        io.append(ospec)
+        if include_dims or o_name.endswith("_RetainedState"):
+            o_spec["dims"] = o_array.shape
+        io.append(o_spec)
     io_files.append(io)
     with open(f"{write_io_dir}/{write_io_name}.json", "w") as fp:
         json.dump({"IO-files": io_files}, fp, indent=True)
@@ -342,7 +342,6 @@ def print_latency_stats_kv(prompt, execinfo, automation: bool = False):
     print(execinfo)
     print("=====================================================================")
 
-
 def cloud_ai_100_exec_kv(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc_path: str,
@@ -475,6 +474,71 @@ def cloud_ai_100_exec_kv(
     )
     return execinfo
 
+# def cloud_ai_100_exec_kv(
+#     batch_size,
+#     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+#     qpc_path: str,
+#     prompt: Optional[List[str]] = None,
+#     device_id: List[int] = [0],
+#     ctx_len: Optional[int] = None,
+#     generation_len: Optional[int] = None,
+#     enable_debug_logs: bool = False,
+#     stream: bool = True,
+#     write_io_dir: Optional[str] = None,
+#     automation=False,
+#     full_batch_size: Optional[int] = None,
+# ):
+#     generate_text = TextGeneration(
+#         tokenizer=tokenizer,
+#         prompt=prompt,
+#         qpc_path=qpc_path,
+#         device_id=device_id,
+#         ctx_len=ctx_len,
+#         generation_len=generation_len,
+#         enable_debug_logs=enable_debug_logs,
+#         stream=stream,
+#         write_io_dir=write_io_dir,
+#         full_batch_size=full_batch_size,
+#     )
+#     if batch_size > 1 or full_batch_size is not None:
+#         latency_stats = generate_text.cloud_ai_100_exec_kv_helper(prompt=prompt, generation_len=generation_len)
+#         generated_texts, prefill_time, decode_perf, total_perf, total_time = latency_stats
+#     elif batch_size == 1:
+#         prefill_time = []
+#         decode_perf = []
+#         total_perf = []
+#         total_time = []
+#         generated_texts = []
+#         for i in range(len(prompt)):
+#             latency_stats = generate_text.cloud_ai_100_exec_kv_helper(prompt=[prompt[i]], generation_len=generation_len)
+#             generated_texts.append(latency_stats[0])
+#             prefill_time.append(latency_stats[1])
+#             decode_perf.append(latency_stats[2])
+#             total_perf.append(latency_stats[3])
+#             total_time.append(latency_stats[4])
+
+#         prefill_time = np.average(prefill_time)
+#         decode_perf = np.average(decode_perf)
+#         total_perf = np.average(total_perf)
+#         total_time = np.average(total_time)
+
+#     else:
+#         latency_stats = generate_text.cloud_ai_100_exec_kv_helper(
+#             prompt=prompt,
+#             generation_len=generation_len,
+#         )
+#         generated_texts, prefill_time, decode_perf, total_perf, total_time = latency_stats
+
+#     print_latency_stats_kv(
+#         prompt,
+#         generated_texts,
+#         batch_size,
+#         prefill_time,
+#         decode_perf,
+#         total_perf,
+#         total_time,
+#         automation=automation,
+#     )
 
 class TextGeneration:
     def __init__(
@@ -500,23 +564,27 @@ class TextGeneration:
         self.enable_debug_logs = enable_debug_logs
         self.stream = stream
 
-        self.write_io_dir = (write_io_dir,)
-        self.full_batch_size = full_batch_size
+        self.write_io_dir = write_io_dir
 
         # Load QPC
         self.session = QAICInferenceSession(qpc_path, device_id, enable_debug_logs=enable_debug_logs)
         self.streamer = transformers.TextStreamer(self.tokenizer)
 
+        self.full_batch_size = full_batch_size
+
         # Fetch the variables from the QPC
         self.vocab_size = self._fetch_vocab_size()  # Fetch Vocab size
         self.batch_size, self.prefill_seq_len = self._fetch_batch_size_prefill_seq_len()
-        self.full_batch_size = self._fetch_full_batch_size()  # Check and fetch full batch size if CB is enabled
+        # self.full_batch_size = self._fetch_full_batch_size()  # Check and fetch full batch size if CB is enabled
 
         # Initialize the storage variables.
         self.batch_index = None
         self.batch_index_prefill = None
 
     def set_tokenizer_params(self):
+        """
+        Sets the tokenizer parameters for the model.
+        """
         if self.tokenizer.padding_side != "right":
             logger.warning("Please use padding_side='right' while initializing the tokenizer")
             self.tokenizer.padding_side = "right"
@@ -587,9 +655,6 @@ class TextGeneration:
         compilation_batch_size = int(data["specializations"][0]["batch_size"])
         return compilation_batch_size
 
-        # def get_batch_size_ctx_len(self, ):
-        batch_size, _, ctx_len, _ = self.session.bindings[self.session.binding_index_map["past_key.0"]].dims
-        return batch_size, ctx_len
 
     def _fetch_full_batch_size(
         self,
@@ -671,11 +736,13 @@ class TextGeneration:
         This function creates the decode inputs.
 
         Returns:
-            dict: The decode inputs.
+            dict: The decode inputs. The dictionary contains 'input_ids', 'position_ids', and 'batch_index' (if not None) from the instance.
         """
-        decode_inputs = {}
+        decode_inputs = {} 
         decode_inputs["input_ids"] = self.decode_input_ids
         decode_inputs["position_ids"] = self.decode_pos_ids
+        
+       
         if self.batch_index is not None:
             decode_inputs["batch_index"] = self.batch_index
 
@@ -692,7 +759,6 @@ class TextGeneration:
         Returns:
             prompt: The prepared prompt. If the initial prompt was shorter than the batch size, the prompt is repeated to match the batch size. The returned prompt is then cut off at the batch size.
         """
-        print(len(prompt))
         if len(prompt) < batch_size:
             print(f"Repeating prompt {batch_size} times")
             prompt = prompt * -(batch_size // -len(prompt))  # Repeat prompt to required size
@@ -742,13 +808,13 @@ class TextGeneration:
                 self.streamer.on_finalized_text(next_prompt + " ")
 
             # run prefill for num_chunks
-            outputs, position_ids, generation_len = self.run_prefill(next_prompt, generation_len)
+            outputs, position_ids, generation_len = self.run_prefill(next_prompt, generation_len, decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1,1))
 
             _ = self._update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
 
             # print(f"Prompt : {next_prompt} batch_index: {decode_batch_id} prefill output id:{next_token_id[0]} token: {[self.tokenizer.convert_ids_to_tokens(next_token_id[i]) for i in range(1)]}")
 
-    def run_prefill(self, prompt, generation_len, prefill_logit_bs=1):
+    def run_prefill(self, prompt, generation_len, prefill_logit_bs=1, decode_batch_id=None):
         """
         Runs prefill for a given prompt and generation length.
 
@@ -783,8 +849,8 @@ class TextGeneration:
         inputs = self.tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
 
-        if self.batch_index_prefill is not None:
-            inputs["batch_index"] = self.batch_index_prefill
+        if decode_batch_id is not None:
+            inputs["batch_index"] = decode_batch_id
 
         for i in range(num_chunks):
             chunk_inputs = inputs.copy()
@@ -797,6 +863,7 @@ class TextGeneration:
             outputs = self.session.run(chunk_inputs)
             if self.write_io_dir:
                 write_io_files(inputs, outputs, self.write_io_dir, "prefill", "aic_batch_io", True, False)
+
         return outputs, position_ids, generation_len
 
     def run_continuous_batching_decode(self, prompt_queue, generation_len):
@@ -832,14 +899,16 @@ class TextGeneration:
         while prompt_queue or current_decode_ongoing.any():
             decode_count += 1
             outputs = self.session.run(decode_inputs)
-
+            
             # Prepare inputs for next iteration
             logits = outputs["logits"]
             if len(logits.shape) == 2:
                 logits = np.expand_dims(logits, 1)
             next_token_id = logits.argmax(2)
 
-            # print(f"Decode Iteration: {decode_count} next token : {[self.tokenizer.convert_ids_to_tokens(next_token_id[i]) for i in range(self.batch_size)]} Token ID : {[next_token_id[i] for i in range(self.batch_size)]}")
+            # print(
+            #     f"Decode Iteration: {decode_count} next token : {[self.tokenizer.convert_ids_to_tokens(next_token_id[i]) for i in range(self.batch_size)]} Token ID : {[next_token_id[i] for i in range(self.batch_size)]}"
+            # )
 
             for decode_batch_id in range(self.full_batch_size):
                 if (
@@ -862,7 +931,6 @@ class TextGeneration:
                         current_decode_ongoing[decode_batch_id] = False
                 else:
                     # If the generated sequence is valid and within generation len prepare for next decode
-                    # print("----------->>>>>",next_token_id[decode_batch_id], next_token_id[decode_batch_id].shape, next_token_id.shape)
                     decode_inputs["input_ids"][decode_batch_id] = next_token_id[decode_batch_id]
                     decode_inputs["position_ids"][decode_batch_id] += 1
                     self.generated_ids[batch_id_map[decode_batch_id], generated_id_current_index[decode_batch_id]] = (
@@ -872,7 +940,20 @@ class TextGeneration:
                     generated_id_current_index[decode_batch_id] += 1
 
     def run_decode(self, decode_inputs, generation_len):
+        """
+        Default method for running decode. Executes the decoding process for a given set of inputs and a specified generation length.
+
+        Enters a loop that continues until all sequences are finished or the maximum generation length is reached. In each iteration, it runs the session with the decode inputs, prepares the inputs for the next iteration and checks if all sequences are finished.
+
+        Args:
+            decode_inputs (dict): The initial inputs for decoding. This should be a dictionary containing 'input_ids' and 'position_ids'.
+            generation_len (int): Max allowed length for generating tokens. The decoding process will be terminated  when generation length is reached.
+
+        Returns:
+            num_token (int): The number of tokens processed in the decoding process.
+        """
         finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
+        num_token = 0
         for num_token in range(1, generation_len):
             outputs = self.session.run(decode_inputs)
             if self.write_io_dir:
@@ -889,6 +970,7 @@ class TextGeneration:
 
             if finished_sequences.all():
                 break
+        return num_token
 
     def cloud_ai_100_exec_kv_helper(self, prompt: List[str], generation_len: Optional[int] = None):
         """
@@ -902,10 +984,8 @@ class TextGeneration:
             latency_stats (tuple): A tuple containing the generated texts, prefill time, decode performance, total
             performance, and total time.
         """
-        # TODO add check if full_batch_size is < prompt len. Ideally for if CB is enabled we should have prompt > FBS
         # TODO Check if ctx is none and fetch if its None
         # TODO need to check for FBS while creating QPC path.
-        # TODO <Future improvement> Define a data class for storing the input and output values.
         # FIXME now the code is failing if the infer is called without FBS and then with FBS. Update onnx path with FBS
         # FIXME the input is not getting repeated full batch size time during execution. Need to fix it.
         # FIXME <Important> There is some additional improvement observed in the latency calculation. Need some debugging on that.
@@ -918,8 +998,6 @@ class TextGeneration:
             [x for x in self.session.input_names + self.session.output_names if x.startswith("past_")]
         )
 
-        # Check if batch size > 1 and full batch size is not None
-        # assert (self.batch_size > 1) ^ (self.full_batch_size is not None), "Either batch_size or full_batch_size should be greater than 1, but not both"
         execution_batch_size = self.full_batch_size if self.full_batch_size is not None else self.batch_size
 
         # Truncate prompts to required size
@@ -929,6 +1007,7 @@ class TextGeneration:
 
         # initialize np arrays for storing the prefill output for all the decode batch size.
         self.generated_ids = np.full((len(prompt_queue), self.ctx_len), self.tokenizer.pad_token_id)
+        # self.decode_input_ids = np.full((execution_batch_size, 1), self.tokenizer.pad_token_id)
         self.decode_input_ids = np.zeros((execution_batch_size, 1), np.int64)
         self.decode_pos_ids = np.zeros((execution_batch_size, 1), np.int64)
         self.generation_len = np.zeros((execution_batch_size, 1), np.int64)
@@ -938,8 +1017,6 @@ class TextGeneration:
         # Split the execution between the regular model and using continuous batching.
         if self.full_batch_size is not None:
             self.batch_index = np.arange(self.full_batch_size).reshape(-1, 1)
-            self.batch_index_prefill = np.arange(1).reshape(-1, 1)
-
             # Run prefill one by one
             self.run_prefill_for_all_inputs(prompt_queue, generation_len)
 
@@ -960,8 +1037,9 @@ class TextGeneration:
 
         end = perf_counter()
         generated_texts = self.tokenizer.batch_decode(self.generated_ids, skip_special_tokens=True)
+       
 
-        for i in range(1 if not self.stream else 0, self.batch_size):
+        for i in range(1 if not self.stream else 0, len(prompt)):
             print()
             print(i, prompt[i], generated_texts[i])
 
