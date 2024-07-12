@@ -16,7 +16,7 @@ from QEfficient.generation.text_generation_inference import (
     check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
 )
-from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
+from QEfficient.utils import get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 """
@@ -63,7 +63,6 @@ def main(
     )
 
     prompt: List[str] = check_batch_size_and_num_prompts(prompt, prompts_txt_file_path, batch_size, full_batch_size)
-    cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
 
     tokenizer = load_hf_tokenizer(
         pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
