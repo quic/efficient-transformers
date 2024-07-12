@@ -10,7 +10,9 @@ import os
 UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
 QEFF_DIR = os.path.dirname(UTILS_DIR)
 ROOT_DIR = os.path.dirname(QEFF_DIR)
-QEFF_MODELS_DIR = os.environ.get("QEFF_MODELS_DIR", os.path.join(ROOT_DIR, "qeff_models"))
+# Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
+BASE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "qeff_models")
+QEFF_MODELS_DIR = os.path.join(os.environ.get("QEFF_MODELS_DIR", BASE_DIR), "qeff_models")
 
 
 class Constants:
