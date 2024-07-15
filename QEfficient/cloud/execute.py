@@ -42,7 +42,6 @@ def main(
         pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
         cache_dir=cache_dir,
         hf_token=hf_token,
-        local_model_dir=local_model_dir,
     )
 
     batch_size, ctx_len = get_compilation_dims(qpc_path)
