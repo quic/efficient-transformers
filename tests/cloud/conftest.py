@@ -14,7 +14,7 @@ import pytest
 from QEfficient.generation.text_generation_inference import check_batch_size_and_num_prompts
 from QEfficient.transformers.modeling_utils import get_lists_of_cb_qeff_models
 from QEfficient.utils import get_qpc_dir_name_infer
-from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
+from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -70,9 +70,7 @@ class ModelSetup:
         self.num_cores = num_cores
         self.prompt = prompt
         self.local_model_dir = None
-        self.prompts_txt_file_path = (
-            os.path.join(ROOT_DIR, prompts_txt_file_path) if prompts_txt_file_path is not None else None
-        )
+        self.prompts_txt_file_path = prompts_txt_file_path if prompts_txt_file_path is not None else None
         self.aic_enable_depth_first = aic_enable_depth_first
         self.mos = mos
         self.cache_dir = cache_dir
@@ -188,7 +186,7 @@ def pytest_generate_tests(metafunc):
     -----------
     Ref: https://docs.pytest.org/en/7.3.x/how-to/parametrize.html
     """
-    json_file = os.path.join(ROOT_DIR, "tests", "cloud", "high_level_testing.json")
+    json_file = "tests/cloud/high_level_testing.json"
     with open(json_file, "r") as file:
         json_data = json.load(file)
 
@@ -231,7 +229,7 @@ def pytest_collection_modifyitems(config, items):
     ----------
     Ref: https://docs.pytest.org/en/4.6.x/reference.html#collection-hooks
     """
-    json_file = os.path.join(ROOT_DIR, "tests", "config.json")
+    json_file = "tests/config.json"
     with open(json_file, "r") as file:
         config_data = json.load(file)
 

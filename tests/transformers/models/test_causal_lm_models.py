@@ -6,13 +6,12 @@
 # -----------------------------------------------------------------------------
 
 import json
-import os
 import unittest
 
 import pytest
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from QEfficient.utils.constants import ROOT_DIR, Constants
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id
 from tests.utils import get_cloud_ai_100_tokens, set_up
 
@@ -66,7 +65,7 @@ class TestQEfficientModels(unittest.TestCase):
         :param cls
         """
         cls.model_configs = []
-        test_config_file_path = os.path.join(ROOT_DIR, "tests", "config.json")
+        test_config_file_path = "tests/config.json"
         with open(test_config_file_path, "r") as f:
             configs = json.load(f)
             for model_config in configs["models"]:
