@@ -39,7 +39,7 @@ test = ["pytest","pytest-mock"]
 quality = ["black", "ruff", "hf_doc_builder@git+https://github.com/huggingface/doc-builder.git"]
 
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=62.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
