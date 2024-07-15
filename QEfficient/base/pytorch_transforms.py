@@ -7,20 +7,16 @@
 
 from typing import Dict, Type
 
-from onnx import ModelProto
 from torch import nn
 
 
 class PytorchTransform:
     """
     PytorchTransform is the base class that can do any transformation to a given PyTorch module by overriding apply method.
-    By default, it replaces the PyTorch modules based on the _module_mapping class variable.
     """
 
-    _module_mapping: Dict[Type[nn.Module], Type[nn.Module]]
-
     def __init__(self):
-        raise ValueError("Transform classes are not to be instantiated. Directly use the `apply` method.")
+        raise TypeError("Transform classes are not to be instantiated. Directly use the `apply` method.")
 
     @classmethod
     def apply(cls, model: nn.Module) -> nn.Module:
@@ -30,6 +26,18 @@ class PytorchTransform:
 
         :returns: Torch module after applying the tranform
         """
+        raise NotImplementedError("Use subclasses for Pytorch transform")
+
+
+class ModuleMappingTransform(PytorchTransform):
+    """
+    Replaces the PyTorch modules based on the _module_mapping class variable.
+    """
+
+    _module_mapping: Dict[Type[nn.Module], Type[nn.Module]]
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> nn.Module:
         for module in model.modules():
             if repl_module := cls._module_mapping.get(type(module)):
                 module.__class__ = repl_module
@@ -44,20 +52,9 @@ class PytorchTransform:
         cls._module_mapping[from_module] = to_module
 
 
-class OnnxTransform:
-    """
-    OnnxTransform is the base class for graph modifications on exported onnx.
-    """
+class CustomOps(ModuleMappingTransform):
+    _module_mapping = {}
 
-    def __init__(self):
-        raise ValueError("Transform classes are not to be instantiated. Directly use the `apply` method.")
 
-    @classmethod
-    def apply(cls, model: ModelProto) -> ModelProto:
-        """
-        Override this class to apply a transformation.
-        :param model: The model's ONNX graph to transform
-
-        :returns: ONNX graph after applying the transform
-        """
-        raise NotImplementedError("Use subclasses for ONNX transform")
+class KVCache(ModuleMappingTransform):
+    _module_mapping = {}

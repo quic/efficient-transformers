@@ -9,14 +9,14 @@ import pytest
 import torch
 from torch import nn
 
-from QEfficient.base.transforms import OnnxTransform, PytorchTransform
+from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 
 
-def test_pytorch_transform():
-    with pytest.raises(ValueError):
-        PytorchTransform()
+def test_module_mapping_transform():
+    with pytest.raises(TypeError):
+        ModuleMappingTransform()
 
-    class TestTransform(PytorchTransform):
+    class TestTransform(ModuleMappingTransform):
         _module_mapping = {nn.Linear: nn.Identity}
 
     class TestModel(nn.Module):
@@ -39,8 +39,3 @@ def test_pytorch_transform():
     model = TestTransform.apply(model)
     y2 = model(x)
     assert torch.all(y2 == x)
-
-
-def test_onnx_transform():
-    with pytest.raises(ValueError):
-        OnnxTransform()
