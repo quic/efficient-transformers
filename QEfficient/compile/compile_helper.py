@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from typing import List, Tuple
 
+from QEfficient.utils import qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 
@@ -126,37 +127,41 @@ def compile(
     :mxfp6: bool. Enable compilation for MXFP6 precision
     :mxint8: Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
     """
-    os.makedirs(qpc_path, exist_ok=True)
-    specialization_json_path = os.path.join(qpc_path, "specializations.json")
-    # Dynamically create the specializations JSON
-    create_and_dump_specializations(
-        batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, path=specialization_json_path
-    )
-
-    # Select the customIO config based on the mx flag.
-    if mxint8:
-        custom_io_file_name = "custom_io_int8.yaml"
+    if qpc_exists(qpc_path+"/qpcs"):
+        print(f"Pre-compiled qpc found at {qpc_path}")
     else:
-        custom_io_file_name = "custom_io_fp16.yaml"
-
-    custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)
-
-    if not os.path.isfile(custom_io_file_path):
-        raise FileNotFoundError(
-            f"file {custom_io_file_path} needs to exist in the same directory as onnx model files. Please rerun infer/export Api"
+        os.makedirs(qpc_path, exist_ok=True)
+        specialization_json_path = os.path.join(qpc_path, "specializations.json")
+        # Dynamically create the specializations JSON
+        create_and_dump_specializations(
+            batch_size=batch_size, prompt_len=prompt_len, ctx_len=ctx_len, path=specialization_json_path
         )
 
-    _, qpc_path = compile_kv_model_on_cloud_ai_100(
-        onnx_path=onnx_path,
-        specializations_json=specialization_json_path,
-        num_cores=num_cores,
-        custom_io_path=custom_io_file_path,
-        base_path=qpc_path,
-        mxfp6=mxfp6,
-        aic_enable_depth_first=aic_enable_depth_first,
-        mos=mos,
-        device_group=device_group,
-    )
+        # Select the customIO config based on the mx flag.
+        if mxint8:
+            custom_io_file_name = "custom_io_int8.yaml"
+        else:
+            custom_io_file_name = "custom_io_fp16.yaml"
 
-    logger.info(f"Compiled QPC files can be found here: {qpc_path}")
-    return qpc_path
+        custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)
+
+        if not os.path.isfile(custom_io_file_path):
+            raise FileNotFoundError(
+                f"file {custom_io_file_path} needs to exist in the same directory as onnx model files. Please rerun infer/export Api"
+            )
+
+        _, qpc_path = compile_kv_model_on_cloud_ai_100(
+            onnx_path=onnx_path,
+            specializations_json=specialization_json_path,
+            num_cores=num_cores,
+            custom_io_path=custom_io_file_path,
+            base_path=qpc_path,
+            mxfp6=mxfp6,
+            aic_enable_depth_first=aic_enable_depth_first,
+            mos=mos,
+            device_group=device_group,
+        )
+
+        logger.info(f"Compiled QPC files can be found here: {qpc_path}")
+        return qpc_path
+
