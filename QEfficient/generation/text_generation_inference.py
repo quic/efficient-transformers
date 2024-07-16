@@ -196,7 +196,36 @@ def read_prompts_txt_file(prompts_txt_file_path: str):
     return prompt
 
 
-def cloud_ai_100_exec_kv_helper(
+def print_latency_stats_kv(
+    prompt, generated_texts, batch_size, prefill_time, decode_perf, total_perf, total_time, automation: bool = False
+):
+    if automation:
+        print()
+        print("input=", prompt)
+        print("output=", generated_texts)
+        print("Prefill time a.k.a TTFT is=", round(prefill_time, 2))
+        print("Decode token/sec is=", round(decode_perf * batch_size, 2))
+        print("Total token/sec is=", round(total_perf * batch_size, 2))
+        print("Total (E2E) inference time is=", round(total_time, 2))
+        return
+    print()
+
+    print("===================== Performance Stats =====================")
+    if batch_size > 1:
+        print("Prefill time a.k.a TTFT (batch) is :", round(prefill_time, 2), "s")
+        print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s")
+        print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s")
+        print("Total (E2E) inference time (batch) is=", round(total_time, 2), "s")
+    else:
+        print("Prefill time a.k.a TTFT is=", round(prefill_time, 2), "s")
+        print("Decode:", round(decode_perf, 2), "tok/s")
+        print("E2E:", round(total_perf, 2), "tok/s")
+        print("Total (E2E) inference time is=", round(total_time, 2), "s")
+    print("=============================================================")
+
+
+def cloud_ai_100_exec_kv(
+    batch_size,
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc_path: str,
     prompt: List[str],
@@ -590,7 +619,6 @@ class TextGeneration:
         compilation_batch_size = int(data["specializations"][0]["batch_size"])
         return compilation_batch_size
 
-
     def _fetch_full_batch_size(
         self,
     ):
@@ -741,7 +769,9 @@ class TextGeneration:
                 self.streamer.on_finalized_text(next_prompt + " ")
 
             # run prefill for num_chunks
-            outputs, position_ids, generation_len = self.run_prefill(next_prompt, generation_len, decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1,1))
+            outputs, position_ids, generation_len = self.run_prefill(
+                next_prompt, generation_len, decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1)
+            )
 
             _ = self._update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
 
@@ -969,7 +999,6 @@ class TextGeneration:
 
         end = perf_counter()
         generated_texts = self.tokenizer.batch_decode(self.generated_ids, skip_special_tokens=True)
-       
 
         for i in range(1 if not self.stream else 0, len(prompt)):
             print()

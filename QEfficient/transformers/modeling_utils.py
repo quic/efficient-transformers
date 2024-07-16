@@ -190,5 +190,5 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     Starcoder2Attention: QEffStarcoder2Attention,
     Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
     Starcoder2Model: QEffStarcoder2Model,
-    Starcoder2DecoderLayer:QEFFStarcoder2DecoderLayer
+    Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
 }

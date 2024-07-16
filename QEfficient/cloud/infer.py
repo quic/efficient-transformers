@@ -86,7 +86,8 @@ def main(
     else:
         # Handle onnx model generation
         onnx_model_path = get_onnx_model_path(
-            model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size)#, base_dir_name)
+            model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size
+        )  # , base_dir_name)
 
         #########
         # Compile

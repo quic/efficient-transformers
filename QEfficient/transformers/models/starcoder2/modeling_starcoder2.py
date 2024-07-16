@@ -22,7 +22,6 @@ from transformers.modeling_attn_mask_utils import (
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
-    Starcoder2DecoderLayer,
     Starcoder2ForCausalLM,
     Starcoder2Model,
     apply_rotary_pos_emb,
@@ -282,8 +281,8 @@ class QEffStarcoder2Model(Starcoder2Model):
             attentions=all_self_attns,
         )
 
-class QEFFStarcoder2DecoderLayer(nn.Module):
 
+class QEFFStarcoder2DecoderLayer(nn.Module):
     # Copied from transformers.models.qwen2.modeling_qwen2.Qwen2DecoderLayer.forward
     def forward(
         self,
