@@ -44,29 +44,31 @@ For other models, there is comprehensive documentation to inspire upon the chang
 
 ## Validated Models
 
-* [GPT2](https://huggingface.co/openai-community/gpt2)
-* [Llama-3-8b](https://huggingface.co/meta-llama/Meta-Llama-3-8B)
-* [Llama-3-70b](https://huggingface.co/meta-llama/Meta-Llama-3-70B)
-* [Llama-2-70b](https://huggingface.co/meta-llama/Llama-2-70b-chat-hf)
-* [Llama-2-7b-chat-hf](https://huggingface.co/meta-llama/Llama-2-7b-chat-hf)
-* [Llama-2-13b-chat-hf](https://huggingface.co/meta-llama/Llama-2-13b-chat-hf)
-* [CodeLlama-7b-hf](https://huggingface.co/codellama/CodeLlama-7b-hf)
-* [CodeLlama-13b-hf](https://huggingface.co/codellama/CodeLlama-13b-hf)
-* [CodeLlama-34b-hf](https://huggingface.co/codellama/CodeLlama-34b-hf)
-* [Salesforce/codegen25-7b-mono_P](https://huggingface.co/Salesforce/codegen25-7b-mono_P)
-* [Salesforce/xgen-7b-8k-base](https://huggingface.co/Salesforce/xgen-7b-8k-base)
-* [MPT-7b](https://huggingface.co/mosaicml/mpt-7b)
-* [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1)
-* [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1)
-* [Vicuna-v0](https://huggingface.co/lmsys/vicuna-13b-delta-v0)
-* [Vicuna-v1.3](https://huggingface.co/lmsys/vicuna-13b-v1.3)
-* [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5)
-* [Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)
-* [StarCoder2-15B](https://huggingface.co/bigcode/starcoder2-15b)
-* [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
-* [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1)
-* [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) 
-* [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
+| Model Name | Model Support | Continuous Batching Support |
+| --- | --- | --- |
+| [GPT2](https://huggingface.co/openai-community/gpt2) | ✔️ |  |
+| [Llama-3-8b](https://huggingface.co/meta-llama/Meta-Llama-3-8B) | ✔️ | ✔️ |
+| [Llama-3-70b](https://huggingface.co/meta-llama/Meta-Llama-3-70B) | ✔️ | ✔️ |
+| [Llama-2-70b](https://huggingface.co/meta-llama/Llama-2-70b-chat-hf) | ✔️ | ✔️ |
+| [Llama-2-7b-chat-hf](https://huggingface.co/meta-llama/Llama-2-7b-chat-hf) | ✔️ | ✔️ |
+| [Llama-2-13b-chat-hf](https://huggingface.co/meta-llama/Llama-2-13b-chat-hf) | ✔️ | ✔️ |
+| [CodeLlama-7b-hf](https://huggingface.co/codellama/CodeLlama-7b-hf) | ✔️ | ✔️ |
+| [CodeLlama-13b-hf](https://huggingface.co/codellama/CodeLlama-13b-hf) | ✔️ | ✔️ |
+| [CodeLlama-34b-hf](https://huggingface.co/codellama/CodeLlama-34b-hf) | ✔️ | ✔️ |
+| [Salesforce/codegen25-7b-mono_P](https://huggingface.co/Salesforce/codegen25-7b-mono_P) | ✔️ |  |
+| [Salesforce/xgen-7b-8k-base](https://huggingface.co/Salesforce/xgen-7b-8k-base) | ✔️ |  |
+| [MPT-7b](https://huggingface.co/mosaicml/mpt-7b) | ✔️ |  |
+| [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1) | ✔️ | ✔️ |
+| [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) | ✔️ | ✔️ |
+| [Vicuna-v0](https://huggingface.co/lmsys/vicuna-13b-delta-v0) | ✔️ |  |
+| [Vicuna-v1.3](https://huggingface.co/lmsys/vicuna-13b-v1.3) | ✔️ |  |
+| [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5) | ✔️ |  |
+| [Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct) | ✔️ |  |
+| [StarCoder2-15B](https://huggingface.co/bigcode/starcoder2-15b) | ✔️ |  |
+| [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct) | ✔️ |  |
+| [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1) | ✔️ |  |
+| [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b)  | ✔️ |  |
+| [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b) | ✔️ |  |
 
 ## Models Coming Soon
  
@@ -124,8 +126,8 @@ In summary:
 
 | High Level APIs | Sample use | Arguments         |
 |-----------------|------------|-------------------|
-| QEfficient.cloud.infer           |   [click here](#1-use-qefficientcloudinfer)         |  <li>model_name : $\color{green} {Mandatory}$</li> <li>num_cores : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>batch_size : Optional [Default-1]</li> <li>prompt_len : Optional [Default-32]</li> <li>ctx_len : Optional [Default-128]</li><li>mxfp6 : Optional </li> <li>mxint8 : Optional </li><li>hf_token : Optional </li><li>local_model_dir : Optional [Path to custom model weights and config file]</li><li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li><li>verbose : Optional</li>|
-| QEfficient.cloud.execute  |     [click here](#2-use-of-qefficientcloudexcute)       |   <li>model_name : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li><li>prompt : Optional [Default-"My name is"]</li> <li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>hf_token : Optional </li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li>|
+| QEfficient.cloud.infer           |   [click here](#1-use-qefficientcloudinfer)         |  <li>model_name : $\color{green} {Mandatory}$</li> <li>num_cores : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>batch_size : Optional [Default-1]</li><li>full_batch_size : Optional [Default-None]</li> <li>prompt_len : Optional [Default-32]</li> <li>ctx_len : Optional [Default-128]</li><li>mxfp6 : Optional </li> <li>mxint8 : Optional </li><li>hf_token : Optional </li><li>local_model_dir : Optional [Path to custom model weights and config file]</li><li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li><li>verbose : Optional</li>|
+| QEfficient.cloud.execute  |     [click here](#2-use-of-qefficientcloudexcute)       |   <li>model_name : $\color{green} {Mandatory}$</li> <li>device_group : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li><li>prompt : Optional [Default-"My name is"]</li> <li>cache_dir : Optional ["cache_dir" in current working directory]</li><li>full_batch_size : Optional [Default-None]</li><li>hf_token : Optional </li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li>|
 
 **One argument, prompt or prompts_txt_file_path must be passed.**
 
@@ -179,10 +181,10 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 
 
 
-| High Level APIs | Single SoC | Tensor Slicing         |
-|-----------------|------------|-------------------|
-| QEfficient.cloud.infer           | python -m QEfficient.cloud.infer --model_name $\color{green} {model}$  --batch_size 1 --prompt_len 128 --ctx_len 1024 --num_cores 16 --device-group [0] --prompt "My name is" --mxfp6 --hf_token  $\color{green}{xyz}$  --mos 1 --aic_enable_depth_first |  python -m QEfficient.cloud.infer --model_name $\color{green}{model}$  --batch_size 1 --prompt_len 128 --ctx_len 1024--num_cores 16 --device-group [0,1,2,3] --prompt "My name is" --mxfp6 --hf_token  $\color{green}{xyz}$  --mos 4 --aic_enable_depth_first |
-| QEfficient.cloud.execute  |   python -m QEfficient.cloud.execute --model_name $\color{green}{model}$  --device_group [0] --qpc_path  $\color{green}{path}$  --prompt "My name is"  --hf_token  $\color{green}{xyz}$   |  python -m QEfficient.cloud.execute --model_name $\color{green}{model}$  --device_group [0,1,2,3] --qpc_path  $\color{green}{path}$  --prompt "My name is"  --hf_token  $\color{green}{xyz}$   |
+| High Level APIs | Single SoC | Tensor Slicing | Continuous batching |
+|-----------------|------------|-------------------|-------------------|
+| QEfficient.cloud.infer           | python -m QEfficient.cloud.infer --model_name $\color{green} {model}$  --batch_size 1 --prompt_len 128 --ctx_len 1024 --num_cores 16 --device-group [0] --prompt "My name is" --mxfp6 --hf_token  $\color{green}{xyz}$  --mos 1 --aic_enable_depth_first |  python -m QEfficient.cloud.infer --model_name $\color{green}{model}$  --batch_size 1 --prompt_len 128 --ctx_len 1024--num_cores 16 --device-group [0,1,2,3] --prompt "My name is" --mxfp6 --hf_token  $\color{green}{xyz}$  --mos 4 --aic_enable_depth_first | python -m QEfficient.cloud.infer --model_name $\color{green} {model}$  --prompt_len 128 --ctx_len 1024 --num_cores 16 --device-group [0] --prompt "My name is" --mxfp6 --hf_token  $\color{green}{xyz}$  --mos 1 --aic_enable_depth_first --full_batch-size 4|
+| QEfficient.cloud.execute  |   python -m QEfficient.cloud.execute --model_name $\color{green}{model}$  --device_group [0] --qpc_path  $\color{green}{path}$  --prompt "My name is"  --hf_token  $\color{green}{xyz}$   |  python -m QEfficient.cloud.execute --model_name $\color{green}{model}$  --device_group [0,1,2,3] --qpc_path  $\color{green}{path}$  --prompt "My name is"  --hf_token  $\color{green}{xyz}$   | python -m QEfficient.cloud.execute --model_name $\color{green}{model}$  --device_group [0] --qpc_path  $\color{green}{path}$  --prompt "My name is"  --hf_token  $\color{green}{xyz}$ --full_batch_size 4 |
 
 :memo: Replace $\color{green}{model}$ ,  $\color{green}{path}$  and  $\color{green}{xyz}$  with preffered model card name, qpc path and hf token respectively.
 
@@ -197,9 +199,9 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 | Low Level APIs | Sample use | Arguments         | 
 |-----------------|------------|-------------------|
 |  QEfficient.transform    |   [click here](#1-model-download-and-transform)         |  <li>model : $\color{green} {Mandatory}$</li><li>form_factor : Optional [Default-"cloud"]</li>  | 
-| QEfficient.export |     [click here](#2-onnx-export-of-transformed-model)       |   <li>mode_name : $\color{green} {Mandatory}$</li><li>model_kv : Optional </li><li>local_model_dir : Optional [Path to custom model weights and config file]</li><li>tokenizer : Optional</li><li>onnx_dir_path : Optional </li><li>hf_token : Optional</li><li>seq_length : Optional [Default-128]</li><li>kv : Optional [Default-$\color{green} {True}$]</li><li>form_factor : Optional [Default-"cloud"]</li>
-|     QEfficient.compile | [click here](#3-compile-on-cloud-ai-100) | <li>onnx_path : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li><li>num_cores : $\color{green} {Mandatory}$</li><li>device_group  : $\color{green} {Mandatory}$</li>  <li>batch_size : Optional [Default-1]</li> <li>prompt_len : Optional [Default-32]</li><li>ctx_len : Optional [Default-128]</li><li>aic_enable_depth_first : Optional [Default-False]</li> <li>mos : Optional [Defaul= -1]</li> <li>mxint8 : Optional [Defaul-False]</li><li>mxfp6 : Optional [Default-True]</li>| 
-|QEfficient.cloud_ai_100_exec_kv | [click here](#4-run-benchmark)  | <li>batch_size : $\color{green} {Mandatory}$</li> <li>tokenizer : $\color{green} {Mandatory}$</li> <li>qpc_path : $\color{green} {Mandatory}$</li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li><li>input_len : Optional [Default-None]</li> <li>generation_len : Optional [Default-None]</li> <li>device_id : Optional [Default-[0]]</li> <li>enable_debug_logs : Optional [Default-False]</li> <li>stream : Optional [Default-True]</li> <li>write_io_dir : Optional</li><li>automation : Optional [Default-False]</li>| 
+| QEfficient.export |     [click here](#2-onnx-export-of-transformed-model)       |   <li>mode_name : $\color{green} {Mandatory}$</li><li>model_kv : Optional </li><li>local_model_dir : Optional [Path to custom model weights and config file]</li><li>tokenizer : Optional</li><li>onnx_dir_path : Optional </li><li>hf_token : Optional</li><li>seq_length : Optional [Default-128]</li><li>full_batch_size : Optional [Default-None]</li><li>kv : Optional [Default-$\color{green} {True}$]</li><li>form_factor : Optional [Default-"cloud"]</li>
+|     QEfficient.compile | [click here](#3-compile-on-cloud-ai-100) | <li>onnx_path : $\color{green} {Mandatory}$</li><li>qpc_path : $\color{green} {Mandatory}$</li><li>num_cores : $\color{green} {Mandatory}$</li><li>device_group  : $\color{green} {Mandatory}$</li>  <li>batch_size : Optional [Default-1]</li> <li>full_batch_size : Optional [Default-None]</li><li>prompt_len : Optional [Default-32]</li><li>ctx_len : Optional [Default-128]</li><li>aic_enable_depth_first : Optional [Default-False]</li> <li>mos : Optional [Defaul= -1]</li> <li>mxint8 : Optional [Defaul-False]</li><li>mxfp6 : Optional [Default-True]</li>| 
+|QEfficient.cloud_ai_100_exec_kv | [click here](#4-run-benchmark)  | <li>batch_size : $\color{green} {Mandatory}$</li> <li>tokenizer : $\color{green} {Mandatory}$</li> <li>qpc_path : $\color{green} {Mandatory}$</li><li>**prompt : Optional</li><li>**prompts_txt_file_path : Optional</li><li>input_len : Optional [Default-None]</li> <li>generation_len : Optional [Default-None]</li> <li>device_id : Optional [Default-[0]]</li><li>full_batch_size : Optional [Default-None]</li> <li>enable_debug_logs : Optional [Default-False]</li> <li>stream : Optional [Default-True]</li> <li>write_io_dir : Optional</li><li>automation : Optional [Default-False]</li>| 
 
 **One argument, prompt or prompts_txt_file_path must be passed.<br>
 
