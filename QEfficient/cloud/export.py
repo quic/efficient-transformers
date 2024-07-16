@@ -12,7 +12,7 @@ from typing import Optional, Union
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.utils import check_and_assign_cache_dir, onnx_exists
+from QEfficient.utils import onnx_exists
 from QEfficient.utils.logging_utils import logger
 
 # Specifically for Docker images.
@@ -77,7 +77,6 @@ def main(
     :hf_token: str. HuggingFace login token to access private repos.
     :local_model_dir: str. Path to custom model weights and config files.
     """
-    cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
     get_onnx_model_path(
         model_name=model_name,
         cache_dir=cache_dir,
