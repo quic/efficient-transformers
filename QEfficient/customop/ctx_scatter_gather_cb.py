@@ -10,6 +10,7 @@ import torch
 
 ops = onnxscript.opset13
 
+
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxScatterCB(
     data: onnxscript.FLOAT, batch_index: onnxscript.INT32, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT
