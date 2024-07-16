@@ -76,8 +76,8 @@ def main(
         hf_token=hf_token,
     )
 
-    qpc_dir_path = get_qpc_dir_path(
-        model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
+    qpc_dir_path = get_qpc_dir_name_infer(
+        model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
     )
 
     # Handle qpc generation
@@ -86,8 +86,7 @@ def main(
     else:
         # Handle onnx model generation
         onnx_model_path = get_onnx_model_path(
-            model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size, base_dir_name
-        )
+            model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size)#, base_dir_name)
 
         #########
         # Compile

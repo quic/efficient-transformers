@@ -193,6 +193,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mxint8: bool = False,
         mos: int = -1,
         aic_enable_depth_first: bool = False,
+        full_batch_size: Optional[int] = None,
     ) -> str:
         """
         This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
@@ -221,7 +222,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             self.export(model_card_name=model_card_name)
 
         # Prepare qpc dir path
-        qpc_dir_path = get_qpc_dir_path(
+        qpc_dir_path = get_qpc_dir_name_infer(
             model_card_name=self.model_card_name,
             num_cores=num_cores,
             mos=mos,
