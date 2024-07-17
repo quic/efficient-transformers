@@ -1,34 +1,38 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+"""PyTorch Dbrx model."""
+
 import math
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 import torch.utils.checkpoint
 from torch import nn
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
 from transformers.modeling_attn_mask_utils import (
     _prepare_4d_causal_attention_mask,
-    _prepare_4d_causal_attention_mask_for_sdpa,
 )
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
 from transformers.models.dbrx.modeling_dbrx import (
     DbrxAttention,
+    DbrxConfig,
+    DbrxExperts,
     DbrxForCausalLM,
     DbrxModel,
-    DbrxExperts,
-    DbrxRouter,
-    DbrxConfig,
     DbrxRotaryEmbedding,
-    DbrxNormAttentionNorm,
-    DbrxBlock,
+    DbrxRouter,
     apply_rotary_pos_emb,
     load_balancing_loss_func,
     logger,
     repeat_kv,
-    rotate_half,
 )
-from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 DBRX_ATTENTION_CLASSES = {
     "eager": DbrxAttention,

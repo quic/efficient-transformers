@@ -16,6 +16,7 @@ import onnx
 import onnxruntime
 import torch
 from onnx import external_data_helper, numpy_helper
+
 from QEfficient.utils.constants import Constants
 
 
@@ -85,7 +86,6 @@ def export_onnx(
         raise RuntimeError("Exporting to ONNX failed. {}".format(e))
 
     onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx")
-    loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     shutil.rmtree(f"{gen_models_path}_tmp")
     os.makedirs(f"{gen_models_path}", exist_ok=True)
     info("Clearing files .. ")
@@ -96,7 +96,6 @@ def export_onnx(
     # Save model to single weight file
     info("ONNX model uses external data. Saving external data as split weight files.")
     save_onnx(model_base_name, gen_models_path, model_base_name)
-
     onnx.checker.check_model(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
 
     # Run shape inference in intial model itself

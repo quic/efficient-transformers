@@ -14,12 +14,12 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
+from transformers.models.dbrx.modeling_dbrx import DbrxAttention, DbrxExperts, DbrxForCausalLM, DbrxModel, DbrxRouter
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconForCausalLM,
     FalconModel,
 )
-from transformers.models.dbrx.modeling_dbrx import DbrxAttention, DbrxModel, DbrxExperts, DbrxForCausalLM, DbrxRouter
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
 from transformers.models.llama.modeling_llama import LlamaAttention, LlamaForCausalLM, LlamaModel, LlamaRMSNorm
@@ -53,17 +53,17 @@ from .models.codegen.modeling_codegen import (
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
-from .models.falcon.modeling_falcon import (
-    QEffFalconAttention,
-    QEffFalconForCausalLM,
-    QEffFalconModel,
-)
 from .models.dbrx.modeling_dbrx import (
     QEffDbrxAttention,
     QEffDbrxExperts,
     QEffDbrxForCausalLM,
     QEffDbrxModel,
     QEffDbrxRouter,
+)
+from .models.falcon.modeling_falcon import (
+    QEffFalconAttention,
+    QEffFalconForCausalLM,
+    QEffFalconModel,
 )
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
 from .models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJForCausalLM, QEffGPTJModel
