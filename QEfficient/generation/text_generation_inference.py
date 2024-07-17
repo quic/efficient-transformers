@@ -15,7 +15,7 @@ import transformers
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils import padding_check_and_fix
+from QEfficient.utils import padding_check_and_fix,qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 io_files = []
@@ -290,6 +290,10 @@ def cloud_ai_100_exec_kv(
     write_io_dir: Optional[str] = None,
     automation=False,
 ):
+    #Check of qpc file exist on path
+    if not qpc_exists(qpc_path): 
+        raise FileNotFoundError("The specified qpc file not found at {qpc_path}.")
+
     if batch_size == 1:
         prefill_time = []
         decode_perf = []
