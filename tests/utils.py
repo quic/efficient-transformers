@@ -15,7 +15,7 @@ from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.transform import transform_lm
 from QEfficient.utils import hf_download, load_hf_tokenizer
-from QEfficient.utils.constants import QEFF_MODELS_DIR, ROOT_DIR, Constants
+from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.device_utils import get_available_device_id, is_multi_qranium_setup_available, is_qpc_size_gt_32gb
 from QEfficient.utils.run_utils import ApiRunner
 
@@ -160,7 +160,7 @@ def get_cloud_ai_100_tokens(setup_info):
     if device_id:
         _, test_qpcs_path = compile_kv_model_on_cloud_ai_100(
             onnx_path=setup_info["onnx_model_path"],
-            specializations_json=f"{ROOT_DIR}/scripts/specializations.json",
+            specializations_json="scripts/specializations.json",
             num_cores=14,
             base_path=tests_qpc_dir,
             mxfp6=False,

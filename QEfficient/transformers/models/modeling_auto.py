@@ -14,7 +14,6 @@ from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
-from QEfficient.generation.text_generation_inference import get_compilation_dims
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
@@ -185,7 +184,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             self.device_id is not None
         ), "please pass valid device_id as input argument"  # FIXME: replace with isinstance
         generation_len = kwargs.pop("generation_len", None)
-        batch_size, ctx_len = get_compilation_dims(qpc_path=self.qpc_path)
         return QEfficient.cloud_ai_100_exec_kv(
             self.tokenizer, self.qpc_path, prompt=prompts, device_id=self.device_id, generation_len=generation_len
         )
