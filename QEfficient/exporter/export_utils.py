@@ -16,6 +16,7 @@ import onnx
 import onnxruntime
 import torch
 from onnx import external_data_helper, numpy_helper
+from QEfficient.utils.constants import Constants
 
 
 def export_onnx(
@@ -93,16 +94,9 @@ def export_onnx(
     # model_uses_external_data = check_model_uses_external_data(loaded_model)
     # if model_uses_external_data:
     # Save model to single weight file
-    info("ONNX model uses external data. Saving as external data.")
-    onnx.save_model(
-        loaded_model,
-        os.path.join(gen_models_path, f"{model_base_name}.onnx"),
-        save_as_external_data=True,
-        all_tensors_to_one_file=True,
-        location=f"{model_base_name}.onnxweights.data",
-        size_threshold=1024,
-        convert_attribute=False,
-    )
+    info("ONNX model uses external data. Saving external data as split weight files.")
+    save_onnx(model_base_name, gen_models_path, model_base_name)
+
     onnx.checker.check_model(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
 
     # Run shape inference in intial model itself
@@ -128,21 +122,16 @@ def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_ba
     # Load the external tensors into the ModelProto, so the right size is calculated
     # and re-exported into right external tensor file
     onnx.load_external_data_for_model(model, gen_models_path)
-    GB = 2**30
-
-    if model.ByteSize() <= 2 * GB:
-        onnx.save(model, f=f"{gen_models_path}/{model_base_name}.onnx")
-    else:
-        file_num = 0
-        current_file_size = 0
-        for tensor in external_data_helper._get_all_tensors(model):
-            if tensor.HasField("raw_data") and ((tsize := sys.getsizeof(tensor.raw_data)) >= 1024):
-                current_file_size += tsize
-                if current_file_size > 10 * GB:
-                    file_num += 1
-                    current_file_size = tsize
-                external_data_helper.set_external_data(tensor, f"{model_base_name}_{file_num}.onnx.data")
-        onnx.save(model, f=f"{gen_models_path}/{model_base_name}.onnx")
+    file_num = 0
+    current_file_size = 0
+    for tensor in external_data_helper._get_all_tensors(model):
+        if tensor.HasField("raw_data") and ((tsize := sys.getsizeof(tensor.raw_data)) >= 1024):
+            current_file_size += tsize
+            if current_file_size > 10 * Constants.GB:
+                file_num += 1
+                current_file_size = tsize
+            external_data_helper.set_external_data(tensor, f"{model_base_name}_{file_num}.onnx.data")
+    onnx.save(model, f=f"{gen_models_path}/{model_base_name}.onnx")
 
     return model_base_name
 

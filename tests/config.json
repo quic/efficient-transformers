@@ -1,6 +1,10 @@
 {
   "models": [
     {
+      "model_name":"databricks/dbrx-base",
+      "model_class":"DbrxForCausalLM"
+    },
+    {
       "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
       "model_class": "LlamaForCausalLM"
     },
