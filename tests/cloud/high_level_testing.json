@@ -13,5 +13,6 @@
     "ctx_len" : [128],
     "mxfp6" : [1],
     "mxint8" : [1],
+    "full_batch_size" : [null,3],
     "device_group" : [[0]]
 }
