@@ -11,6 +11,7 @@ import math
 from typing import Any, Optional, Tuple, Union
 
 import torch
+import torch.nn.functional as F
 import torch.utils.checkpoint
 from torch import nn
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
@@ -20,17 +21,17 @@ from transformers.modeling_attn_mask_utils import (
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
 from transformers.models.dbrx.modeling_dbrx import (
     DbrxAttention,
-    DbrxExperts,
     DbrxForCausalLM,
     DbrxModel,
+    DbrxExperts,
     DbrxRouter,
     apply_rotary_pos_emb,
     load_balancing_loss_func,
     logger,
     repeat_kv,
 )
-
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+
 
 DBRX_ATTENTION_CLASSES = {
     "eager": DbrxAttention,
@@ -222,8 +223,6 @@ class QEffDbrxModel(DbrxModel):
             )
 
         if position_ids is None:
-            # position_ids = cache_position.unsqueeze(0)
-            # causal_mask = self._update_causal_mask(attention_mask, inputs_embeds, cache_position)
             device = input_ids.device if input_ids is not None else inputs_embeds.device
             position_ids = torch.arange(
                 past_key_values_length, seq_length + past_key_values_length, dtype=torch.long, device=device

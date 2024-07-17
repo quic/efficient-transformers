@@ -23,6 +23,7 @@ test_models = [
     "wtang06/mpt-125m-c4",
     "hakurei/gpt-j-random-tinier",
     "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    "databricks/dbrx-base"
 ]
 
 
