@@ -292,7 +292,9 @@ def cloud_ai_100_exec_kv(
 ):
     # Check of qpc file exist on path
     if not qpc_exists(qpc_path):
-        raise FileNotFoundError("The specified qpc file not found at {qpc_path}. Run infer/compile to generate qpc file.")
+        raise FileNotFoundError(
+            "The specified qpc file not found at {qpc_path}. Run infer/compile to generate qpc file."
+        )
 
     if batch_size == 1:
         prefill_time = []
