@@ -9,7 +9,6 @@ import json
 import os
 import shutil
 import subprocess
-import warnings
 from typing import List, Tuple
 
 from QEfficient.utils import qpc_exists

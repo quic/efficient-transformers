@@ -445,7 +445,7 @@ def qualcomm_efficient_converter(
         os.path.join(os.path.dirname(onnx_model_path), "custom_io_fp16.yaml")
     ):
         print("Pre-exported ONNX files found at {onnx_dir_path}")
-        return onnx_dir_path, onnx_mpwdodel_path
+        return onnx_dir_path, onnx_model_path
 
     # Get model_kv first
     model_kv = (
