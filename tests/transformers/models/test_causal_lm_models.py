@@ -6,16 +6,15 @@
 # -----------------------------------------------------------------------------
 
 import json
-import os
 
 import pytest
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from QEfficient.utils.constants import ROOT_DIR, Constants
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id
 from tests.utils import get_cloud_ai_100_tokens, set_up
 
-TEST_CONFIG_FILE_PATH = os.path.join(ROOT_DIR, "tests", "config.json")
+TEST_CONFIG_FILE_PATH = "tests/config.json"
 
 
 def get_config(model_config):

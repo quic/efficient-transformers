@@ -11,33 +11,16 @@ pipeline
 
     stages 
     {
-        stage('Code Checkout') 
-        {
-            steps 
-            {
-                checkout scm
-            }
-        }
-        stage('Env Activation')
-        {
-            steps
-            {
-            sh '''
-                    mkdir -p preflight_qeff
-                    python3.8 -m venv preflight_qeff
-                    . preflight_qeff/bin/activate
-                '''
-            } 
-        }
-        stage('Install requirments')
+        stage('Install QEfficient')
         {
             steps
             {
                 sh '''
+                    python3.8 -m venv preflight_qeff
                     . preflight_qeff/bin/activate
                     pip install --upgrade pip setuptools
-                    pip install /opt/qti-aic/dev/lib/x86_64/qaic-0.0.1-py3-none-any.whl
-                    pip install -e .[test]
+                    pip install .[test]
+                    rm -rf QEfficient
                 '''
             }
         }
