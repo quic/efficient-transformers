@@ -128,7 +128,7 @@ def compile(
     :mxint8: Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
     """
     # Checking if qpc file already exist
-    if qpc_exists(qpc_path + "/qpcs"):
+    if qpc_exists(os.path.join(qpc_path,"qpcs")):
         print(f"Pre-compiled qpc found at {qpc_path}")
         return qpc_path
 
