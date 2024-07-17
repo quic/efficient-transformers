@@ -23,7 +23,8 @@ def main(
     generation_len: Optional[int] = None,
     cache_dir: Optional[str] = Constants.CACHE_DIR,
     hf_token: Optional[str] = None,
-) -> None:
+    full_batch_size: Optional[int] = None,
+):
     """
     Helper function used by execute CLI app to run the Model on ``Cloud AI 100`` Platform.
 
@@ -57,6 +58,7 @@ def main(
         prompt=prompt,
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
+        full_batch_size=full_batch_size
     )
 
 
