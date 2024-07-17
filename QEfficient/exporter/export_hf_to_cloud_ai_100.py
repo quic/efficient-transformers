@@ -433,18 +433,20 @@ def qualcomm_efficient_converter(
         DeprecationWarning,
         stacklevel=2,
     )
-    
+
     if onnx_dir_path is None:
         model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
         onnx_dir_path = os.path.join(model_card_dir, "onnx")
-        os.makedirs(onnx_dir_path, exist_ok=True)    
+        os.makedirs(onnx_dir_path, exist_ok=True)
     onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
-    
-    #Checking if onnx file already exist.
-    if os.path.isfile(onnx_model_path) and os.path.isfile(os.path.join(os.path.dirname(onnx_model_path), "custom_io_fp16.yaml")):
+
+    # Checking if onnx file already exist.
+    if os.path.isfile(onnx_model_path) and os.path.isfile(
+        os.path.join(os.path.dirname(onnx_model_path), "custom_io_fp16.yaml")
+    ):
         print("Pre-exported ONNX files found at {onnx_dir_path}")
         return onnx_dir_path, onnx_mpwdodel_path
-    
+
     # Get model_kv first
     model_kv = (
         model_kv

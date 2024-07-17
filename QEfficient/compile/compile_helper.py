@@ -128,8 +128,8 @@ def compile(
     :mxfp6: bool. Enable compilation for MXFP6 precision
     :mxint8: Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
     """
-    #Checking if qpc file already exist
-    if qpc_exists(qpc_path+"/qpcs"): 
+    # Checking if qpc file already exist
+    if qpc_exists(qpc_path + "/qpcs"):
         print(f"Pre-compiled qpc found at {qpc_path}")
         return qpc_path
 
@@ -167,4 +167,3 @@ def compile(
 
     logger.info(f"Compiled QPC files can be found here: {qpc_path}")
     return qpc_path
-
