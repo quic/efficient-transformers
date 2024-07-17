@@ -89,18 +89,8 @@ System Requirements:
 
 ## Installation 
 ```bash
-# Create Python virtual env and activate it. (Required Python 3.8)
- 
-# Login to the Cloud AI 100 Server.
-ssh -X username@hostname
-
-python3.8 -m venv qeff_env
-source qeff_env/bin/activate
- 
-# Clone the QEfficient Repo.
- 
-# Install the qefficient-library in Host machine (Used for CLI APIs) (Until we have docker integrated in Apps SDK)
-pip install -e .
+pip install -U pip
+pip install git+https://github.com/quic/efficient-transformers
 ```
 
 # Quick Start Guide
