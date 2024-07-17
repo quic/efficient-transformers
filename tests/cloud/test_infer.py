@@ -34,19 +34,25 @@ def test_infer(setup, mocker):
     get_onnx_model_path_spy = mocker.spy(QEfficient.cloud.infer, "get_onnx_model_path")
     compile_spy = mocker.spy(QEfficient, "compile")
     cloud_ai_100_exec_kv_spy = mocker.spy(QEfficient.cloud.infer, "cloud_ai_100_exec_kv")
+
     infer(
         model_name=ms.model_name,
         num_cores=ms.num_cores,
         prompt=ms.prompt,
+        local_model_dir=ms.local_model_dir,
         prompts_txt_file_path=ms.prompts_txt_file_path,
         aic_enable_depth_first=ms.aic_enable_depth_first,
         mos=ms.mos,
+        # cache_dir = ms.cache_dir,
         hf_token=ms.hf_token,
         batch_size=ms.batch_size,
         prompt_len=ms.prompt_len,
         ctx_len=ms.ctx_len,
+        generation_len=ms.generation_len,
         mxfp6=ms.mxfp6,
         mxint8=ms.mxint8,
+        full_batch_size=ms.full_batch_size,
+        # device_group=ms.device_group,
     )
     # tokenizer check
     load_hf_tokenizer_spy.assert_called_once()
@@ -59,5 +65,4 @@ def test_infer(setup, mocker):
         assert get_onnx_model_path_spy.spy_return in ms.onnx_model_path()
         compile_spy.assert_called_once()
         assert compile_spy.spy_return == ms.qpc_dir_path()
-
     cloud_ai_100_exec_kv_spy.assert_called_once()
