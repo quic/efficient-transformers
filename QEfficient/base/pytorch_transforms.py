@@ -29,7 +29,7 @@ class PytorchTransform:
         raise NotImplementedError("Use subclasses for Pytorch transform")
 
 
-class ModuleMappingTransform(PytorchTransform):
+class ModuleMapping(PytorchTransform):
     """
     Replaces the PyTorch modules based on the _module_mapping class variable.
     """
@@ -52,9 +52,9 @@ class ModuleMappingTransform(PytorchTransform):
         cls._module_mapping[from_module] = to_module
 
 
-class CustomOps(ModuleMappingTransform):
+class CustomOps(ModuleMapping):
     _module_mapping = {}
 
 
-class KVCache(ModuleMappingTransform):
+class KVCache(ModuleMapping):
     _module_mapping = {}
