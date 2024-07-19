@@ -133,7 +133,7 @@ class ApiRunner:
         # todo:vbaddi; find a better version to do this changes
         # Currently the gathernd invalid index is set to INT MAX(FP16) and hence fails in OnnxRuntime
         # Changing the constant value from INT MAX to -1. Fixes the issue.
-        m = onnx.load(model_path, load_external_data=False)
+        m = onnx.load(model_path)
         for node in m.graph.node:
             if node.op_type == "Constant":
                 np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t)
@@ -141,7 +141,15 @@ class ApiRunner:
                     node.attribute[0].t.raw_data = np.array(-1).tobytes()
 
         onnxruntime_model = model_path[:-5] + "_ort.onnx"
-        onnx.save(m, onnxruntime_model)
+        onnx.save_model(
+            m,
+            onnxruntime_model,
+            save_as_external_data=True,
+            all_tensors_to_one_file=True,
+            location=f"{model_path.split('/')[-1][:-5]}_ort.onnxweights.data",
+            size_threshold=1024,
+            convert_attribute=False,
+        )
         session = onnxruntime.InferenceSession(onnxruntime_model)
 
         generated_ids = []

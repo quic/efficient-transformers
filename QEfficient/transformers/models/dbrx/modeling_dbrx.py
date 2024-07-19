@@ -20,11 +20,9 @@ from transformers.modeling_attn_mask_utils import (
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
 from transformers.models.dbrx.modeling_dbrx import (
     DbrxAttention,
-    DbrxConfig,
     DbrxExperts,
     DbrxForCausalLM,
     DbrxModel,
-    DbrxRotaryEmbedding,
     DbrxRouter,
     apply_rotary_pos_emb,
     load_balancing_loss_func,
@@ -41,39 +39,6 @@ DBRX_ATTENTION_CLASSES = {
 
 class QEffDbrxAttention(DbrxAttention):
     """Multi-head self attention."""
-
-    def __init__(self, config: DbrxConfig, block_idx: Optional[int] = None):
-        super().__init__()
-        self.config = config
-        self.hidden_size = config.d_model
-        self.num_heads = config.n_heads
-        self.head_dim = self.hidden_size // self.num_heads
-        self.max_position_embeddings = config.max_seq_len
-        self.block_idx = block_idx
-        if block_idx is None:
-            logger.warning_once(
-                f"Instantiating {self.__class__.__name__} without passing a `block_idx` is not recommended and will "
-                + "lead to errors during the forward call if caching is used. Please make sure to provide a `block_idx` "
-                + "when creating this class."
-            )
-
-        attn_config = config.attn_config
-        self.attn_pdrop = attn_config.attn_pdrop
-        self.clip_qkv = attn_config.clip_qkv
-        self.num_key_value_heads = attn_config.kv_n_heads
-        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
-        self.rope_theta = attn_config.rope_theta
-        self.is_causal = True
-
-        self.Wqkv = nn.Linear(
-            self.hidden_size, self.hidden_size + 2 * self.num_key_value_heads * self.head_dim, bias=False
-        )
-        self.out_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
-        self.rotary_emb = DbrxRotaryEmbedding(
-            self.head_dim,
-            max_position_embeddings=self.max_position_embeddings,
-            base=self.rope_theta,
-        )
 
     def forward(
         self,
@@ -113,7 +78,6 @@ class QEffDbrxAttention(DbrxAttention):
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.block_idx)
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; position_ids needed for the static cache
-            # cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
             cache_kwargs = {"sin": sin, "cos": cos, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.block_idx, cache_kwargs)
 
@@ -121,10 +85,6 @@ class QEffDbrxAttention(DbrxAttention):
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
-
-        # if attention_mask is not None:  # no matter the length, we just slice it
-        #     causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-        #     attn_weights = attn_weights + causal_mask
 
         if attention_mask is not None:
             attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
@@ -192,19 +152,7 @@ class QEffDbrxExperts(DbrxExperts):
         v1_chunked = [v1.squeeze(dim=0) for v1 in v1_chunked]
         w2_chunked = [w2.squeeze(dim=0) for w2 in w2_chunked]
         for expert_idx in range(0, self.moe_num_experts):
-            # topk_idx, token_idx = torch.where(expert_mask[expert_idx])
-            # if token_idx.shape[0] == 0:
-            #     continue
-
-            # token_list = token_idx
-            # topk_list = topk_idx
-
-            # expert_tokens = x[None, token_list].reshape(-1, hidden_size)
             expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
-            # expert_out = (
-            #     self.mlp(expert_tokens, w1_chunked[expert_idx], v1_chunked[expert_idx], w2_chunked[expert_idx])
-            #     * top_weights[token_list, topk_list, None]
-            # )
             expert_out = (
                 self.mlp(x, w1_chunked[expert_idx], v1_chunked[expert_idx], w2_chunked[expert_idx])
                 * (top_weights * expert_mask_tr).sum(1)[:, None]
@@ -212,7 +160,6 @@ class QEffDbrxExperts(DbrxExperts):
             expert_out = torch.where(
                 (top_weights * expert_mask_tr).sum(1).to(torch.bool)[:, None], expert_out, torch.tensor(0.0)
             )
-            # out.index_add_(0, token_idx, expert_out)
             out = out + expert_out
         out = out.reshape(bsz, q_len, hidden_size)
         return out
@@ -448,10 +395,6 @@ class QEffDbrxForCausalLM(DbrxForCausalLM):
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
-
-        # hidden_states = outputs[0]
-        # logits = self.lm_head(hidden_states)
-
         loss = None
         if labels is not None:
             # Shift so that tokens < n predict n

@@ -34,15 +34,17 @@ def get_config(model_config):
         n_heads = config.num_key_value_heads
         d_head = config.hidden_size // config.num_attention_heads
         n_layer = 1  # config.num_hidden_layers
-    elif hasattr(config, "attn_config"):  # Check for Dbrx
+    elif (
+        hasattr(config, "auto_map") and "modeling_mpt.MPTForCausalLM" in config.auto_map["AutoModelForCausalLM"]
+    ):  # Check for MPT
+        n_heads = config.n_heads
+        d_head = config.d_model // config.n_heads
+        n_layer = 1  # config.n_layers
+    elif hasattr(config, "ffn_config") and config.ffn_config["moe_top_k"]:  # Check for Dbrx
         if config.attn_config.kv_n_heads is not None:
             n_heads = config.attn_config.kv_n_heads
             d_head = config.d_model // config.n_heads
             n_layer = 1  # config.n_layers
-    elif hasattr(config, "n_heads"):  # Check for n_heads and d_model in the config (MPT Model)
-        n_heads = config.n_heads
-        d_head = config.d_model // config.n_heads
-        n_layer = 1  # config.n_layers
     elif hasattr(config, "multi_query"):  # Check for Falcon
         multi_query_value = getattr(config, "multi_query")
         if multi_query_value:

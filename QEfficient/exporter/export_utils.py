@@ -86,6 +86,7 @@ def export_onnx(
         raise RuntimeError("Exporting to ONNX failed. {}".format(e))
 
     onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx")
+    loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     shutil.rmtree(f"{gen_models_path}_tmp")
     os.makedirs(f"{gen_models_path}", exist_ok=True)
     info("Clearing files .. ")
@@ -95,7 +96,7 @@ def export_onnx(
     # if model_uses_external_data:
     # Save model to single weight file
     info("ONNX model uses external data. Saving external data as split weight files.")
-    save_onnx(model_base_name, gen_models_path, model_base_name)
+    save_onnx(loaded_model, gen_models_path, model_base_name)
     onnx.checker.check_model(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
 
     # Run shape inference in intial model itself
@@ -117,7 +118,6 @@ def export_onnx(
 def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_base_name: str) -> str:
     if isinstance(model, str):
         model = onnx.load(f"{gen_models_path}/{model}.onnx")
-
     # Load the external tensors into the ModelProto, so the right size is calculated
     # and re-exported into right external tensor file
     onnx.load_external_data_for_model(model, gen_models_path)
@@ -208,15 +208,7 @@ def fix_onnx_fp16(
         )
 
         model_base_name += "_clipped_fp16"
-        onnx.save_model(
-            model,
-            os.path.join(gen_models_path, f"{model_base_name}.onnx"),
-            save_as_external_data=True,
-            all_tensors_to_one_file=True,
-            location=f"{model_base_name}.onnxweights.data",
-            size_threshold=1024,
-            convert_attribute=False,
-        )
+        save_onnx(model, gen_models_path, model_base_name)
 
         # Check if the FP16-fixed model can be used for FP32
         close_outputs = []
