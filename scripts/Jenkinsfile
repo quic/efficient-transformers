@@ -11,6 +11,36 @@ pipeline
 
     stages 
     {
+        stage('Docker Health Check')
+        {
+            steps {
+                script {
+                    test_results = 'position 1'
+                    try
+                    {
+                        test_results = sh 
+                        (
+                        script: "python3 /home/ubuntu/sdks/build_image.py 
+                        --image_name ubuntu22_nightly
+                        --user_specification_file nightly_image_specs/ubuntu22_nightly.json
+                        --log_level 1  --apps_sdk /home/ubuntu/sdks/qaic-apps-1.17.0.8.zip 
+                        --platform_sdk qaic-platform-sdk-x86_64-deb-1.17.0.8.zip
+                        notpass > output",
+                        returnStdout: true
+                    )
+                    echo "Test results in passed test: ${test_results}"
+                    } 
+                    catch (err) 
+                    {
+                        output = readFile(file: 'output')
+                        echo "Test results in failed test numb 1: " + output
+                        echo "Test results in failed test numb 2: ${test_results}"
+                        echo err.getMessage()
+                        println err.dump()
+                    }
+                }
+            }
+        }
         stage('Install QEfficient')
         {
             steps
