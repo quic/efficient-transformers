@@ -13,26 +13,24 @@ pipeline
     {
         stage('Docker Health Check')
         {
-            steps {
-                script {
-                    test_results = 'position 1'
-                    try
-                    {
-                        test_results = sh 
-                        (
-                       
-                        )
-                    echo "Test results in passed test: ${test_results}"
-                    } 
-                    catch (err) 
-                    {
-                        output = readFile(file: 'output')
-                        echo "Test results in failed test numb 1: " + output
-                        echo "Test results in failed test numb 2: ${test_results}"
-                        echo err.getMessage()
-                        println err.dump()
-                    }
-                }
+            steps
+            {
+                sh '''
+                    python3 /home/ubuntu/amitraj/docker_changec/qaic-docker/build_image.py --image_name ubuntu22_nightly --user_specification_file ./sample_user_specs/user_image_spec_qaic.json --log_level 1  --apps_sdk /home/ubuntu/sdks/qaic-apps-1.17.0.8.zip --platform_sdk /home/ubuntu/sdks/qaic-platform-sdk-x86_64-deb-1.17.0.8.zip 
+                    cd ..
+                    docker run -it -v /home/ubuntu/amitraj/docker_changec/efficient-transformers:/data ubuntu22_nightly bash
+                    python3.8 -m venv preflight_qeff
+                    . preflight_qeff/bin/activate
+                    pip install --upgrade pip setuptools
+                    pip install .[test]
+                    rm -rf QEfficient
+                    . preflight_qeff/bin/activate
+                    export TOKENIZERS_PARALLELISM=false
+                    pytest -W ignore -s -v tests -o junit_logging=all --junitxml=tests/tests_log.xml
+                    deactivate
+                    exit
+
+                '''
             }
         }
         stage('Install QEfficient')
@@ -45,6 +43,7 @@ pipeline
                     pip install --upgrade pip setuptools
                     pip install .[test]
                     rm -rf QEfficient
+                    
                 '''
             }
         }
