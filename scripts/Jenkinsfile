@@ -27,13 +27,13 @@ pipeline
             steps
             {
                 sh '''
-                    docker run -t --name ${CONTAINER_NAME} -v .:/data ubuntu22_nightly bash -c "cd /data &&
+                    docker run -t --name ${CONTAINER_NAME} -v .:/data ubuntu22_nightly bash -c "
+                    cd /data &&
                     python3.8 -m venv preflight_qeff &&
                     . preflight_qeff/bin/activate && 
                     pip install --upgrade pip setuptools &&
                     pip install .[test] &&
-                    rm -rf QEfficient"
-                    
+                    rm -rf QEfficient"  
                 '''
             }
         }
@@ -42,9 +42,10 @@ pipeline
                 steps
                 {
                     //todo(ochougul): Increase when MQ tests are enabled 
-		            timeout(time: 420, unit: 'MINUTES') {
+		            timeout(time: 420, unit: 'MINUTES') 
+                    {
                     sh '''
-                    docker exec ${CONTAINER_NAME} bash -c "
+                    docker run -t --name ${CONTAINER_NAME} -v .:/data ubuntu22_nightly bash -c"
                     . preflight_qeff/bin/activate &&
                     export TOKENIZERS_PARALLELISM=false &&
                     pytest -W ignore -s -v tests -o junit_logging=all --junitxml=tests/tests_log.xml &&
