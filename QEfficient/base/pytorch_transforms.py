@@ -50,11 +50,3 @@ class ModuleMapping(PytorchTransform):
             FlashAttention.register(LLamaAttention, LlamaFlashAttention)
         """
         cls._module_mapping[from_module] = to_module
-
-
-class CustomOps(ModuleMapping):
-    _module_mapping = {}
-
-
-class KVCache(ModuleMapping):
-    _module_mapping = {}
