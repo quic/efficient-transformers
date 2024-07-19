@@ -27,7 +27,8 @@ pipeline
             steps
             {
                 sh '''
-                    docker run -t --name ${CONTAINER_NAME} -v .:/data ubuntu22_nightly bash -c "
+                    docker run -d --name ${CONTAINER_NAME} -v .:/data ubuntu22_nightly sleep infinity
+                    docker exec ${CONTAINER_NAME} bash -c "
                     cd /data &&
                     python3.8 -m venv preflight_qeff &&
                     . preflight_qeff/bin/activate && 
@@ -45,7 +46,7 @@ pipeline
 		            timeout(time: 420, unit: 'MINUTES') 
                     {
                     sh '''
-                    docker run -t --name ${CONTAINER_NAME} -v .:/data ubuntu22_nightly bash -c"
+                    docker exec ${CONTAINER_NAME} bash -c "
                     . preflight_qeff/bin/activate &&
                     export TOKENIZERS_PARALLELISM=false &&
                     pytest -W ignore -s -v tests -o junit_logging=all --junitxml=tests/tests_log.xml &&
