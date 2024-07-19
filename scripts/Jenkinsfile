@@ -64,7 +64,9 @@ pipeline
     {
          always 
          {
+            sh '''
             docker rm -f ${CONTAINER_NAME}
+            '''
             junit 'tests/tests_log.xml'
             echo 'Cleaning Workspace'
             deleteDir() 
