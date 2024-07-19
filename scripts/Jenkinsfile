@@ -27,7 +27,7 @@ pipeline
             steps
             {
                 sh '''
-                    docker run -d --name ${CONTAINER_NAME} -v .:/data ubuntu22_nightly bash -c "cd /data &&
+                    docker run -t --name ${CONTAINER_NAME} -v .:/data ubuntu22_nightly bash -c "cd /data &&
                     python3.8 -m venv preflight_qeff &&
                     . preflight_qeff/bin/activate && 
                     pip install --upgrade pip setuptools &&
