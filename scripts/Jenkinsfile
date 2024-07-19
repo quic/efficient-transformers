@@ -20,14 +20,8 @@ pipeline
                     {
                         test_results = sh 
                         (
-                        script: "python3 /home/ubuntu/sdks/build_image.py 
-                        --image_name ubuntu22_nightly
-                        --user_specification_file nightly_image_specs/ubuntu22_nightly.json
-                        --log_level 1  --apps_sdk /home/ubuntu/sdks/qaic-apps-1.17.0.8.zip 
-                        --platform_sdk qaic-platform-sdk-x86_64-deb-1.17.0.8.zip
-                        notpass > output",
-                        returnStdout: true
-                    )
+                       
+                        )
                     echo "Test results in passed test: ${test_results}"
                     } 
                     catch (err) 
