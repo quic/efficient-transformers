@@ -17,19 +17,16 @@ pipeline
             {
                 sh '''
                     python3 /home/ubuntu/amitraj/docker_changec/qaic-docker/build_image.py --image_name ubuntu22_nightly --user_specification_file /home/ubuntu/amitraj/docker_changec/qaic-docker/sample_user_specs/user_image_spec_qaic.json --log_level 1  --apps_sdk /home/ubuntu/sdks/qaic-apps-1.17.0.8.zip --platform_sdk /home/ubuntu/sdks/qaic-platform-sdk-x86_64-deb-1.17.0.8.zip 
-                    docker run -it -v .:/data ubuntu22_nightly bash
-                    cd /data
-                    python3.8 -m venv preflight_qeff
-                    . preflight_qeff/bin/activate
-                    pip install --upgrade pip setuptools
-                    pip install .[test]
-                    rm -rf QEfficient
-                    . preflight_qeff/bin/activate
-                    export TOKENIZERS_PARALLELISM=false
-                    pytest -W ignore -s -v tests -o junit_logging=all --junitxml=tests/tests_log.xml
-                    deactivate
+                    docker run -t --rm -v .:/data ubuntu22_nightly bash -c "cd /data &&
+                    python3.8 -m venv preflight_qeff &&
+                    . preflight_qeff/bin/activate && 
+                    pip install --upgrade pip setuptools &&
+                    pip install .[test] &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    pytest -W ignore -s -v tests -o junit_logging=all --junitxml=tests/tests_log.xml &&
+                    deactivate &&
                     exit
-
+                    "
                 '''
             }
         }
