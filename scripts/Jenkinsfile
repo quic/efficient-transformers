@@ -47,6 +47,7 @@ pipeline
                     {
                     sh '''
                     docker exec ${CONTAINER_NAME} bash -c "
+                    cd /data &&
                     . preflight_qeff/bin/activate &&
                     export TOKENIZERS_PARALLELISM=false &&
                     pytest -W ignore -s -v tests -o junit_logging=all --junitxml=tests/tests_log.xml &&
