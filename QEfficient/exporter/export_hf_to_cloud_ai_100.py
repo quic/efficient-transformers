@@ -18,8 +18,8 @@ from QEfficient.base.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.utils import load_hf_tokenizer, padding_check_and_fix
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils import load_hf_tokenizer, onnx_exists, padding_check_and_fix
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -433,18 +433,15 @@ def qualcomm_efficient_converter(
         DeprecationWarning,
         stacklevel=2,
     )
-
     if onnx_dir_path is None:
-        model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
-        onnx_dir_path = os.path.join(model_card_dir, "onnx")
-        os.makedirs(onnx_dir_path, exist_ok=True)
-    onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
-
-    # Checking if onnx file already exist.
-    if os.path.isfile(onnx_model_path) and os.path.isfile(
-        os.path.join(os.path.dirname(onnx_model_path), "custom_io_fp16.yaml")
+        onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(model_name)
+        if onnx_path_exists:
+            logger.info(f"Pre-exported ONNX files found at {onnx_dir_path}")
+            return onnx_dir_path, onnx_model_path
+    elif os.path.isfile(onnx_dir_path) and os.path.isfile(
+        os.path.join(os.path.dirname(onnx_dir_path), "custom_io_fp16.yaml")
     ):
-        print("Pre-exported ONNX files found at {onnx_dir_path}")
+        logger.info(f"Pre-exported ONNX files found at {onnx_dir_path}.\n")
         return onnx_dir_path, onnx_model_path
 
     # Get model_kv first
@@ -484,6 +481,7 @@ def qualcomm_efficient_converter(
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length,
         )
+        logger.info(f"Pre-exported ONNX files found at {onnx_dir_path}.\n")
         return onnx_dir_path, generated_onnx_model_path
     else:
         # [TODO]: Apply the class transformation to make changes for the KV models in edge use cases
