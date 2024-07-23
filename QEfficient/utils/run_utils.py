@@ -14,6 +14,7 @@ from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.utils.generate_inputs import InputHandler
 
 
+# TODO: Deprecate this class and encourage the use of `QeffAutoModel...` classes
 class ApiRunner:
     """
     ApiRunner class is responsible for running:

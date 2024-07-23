@@ -40,22 +40,18 @@ class TestQEfficientModels:
         Test function to validate the model before and after KV changes on Pytorch
         :param model_name: Name of model.
         """
-        (
-            (
-                self.setup_infos[model_name]["pytorch_hf_tokens"] == self.setup_infos[model_name]["pytorch_kv_tokens"]
-            ).all(),
-            "Tokens don't match for HF PyTorch model output and KV PyTorch model output",
-        )
+        assert (
+            self.setup_infos[model_name]["pytorch_hf_tokens"] == self.setup_infos[model_name]["pytorch_kv_tokens"]
+        ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
     def test_qefficient_model_onnx(self, model_name):
         """
         Test function to validate the model before and after KV changes on ONNXRT
         :param model_name: Name of model.
         """
-        (
-            (self.setup_infos[model_name]["pytorch_kv_tokens"] == self.setup_infos[model_name]["ort_tokens"]).all(),
-            "Tokens don't match for ONNXRT output and PyTorch output.",
-        )
+        assert (
+            self.setup_infos[model_name]["pytorch_kv_tokens"] == self.setup_infos[model_name]["ort_tokens"]
+        ).all(), "Tokens don't match for ONNXRT output and PyTorch output."
 
     @pytest.mark.skipif(not get_available_device_id, reason="No available devices to run model on Cloud AI 100")
     def test_qefficient_model_cloud_ai_100(self, model_name):
@@ -65,7 +61,6 @@ class TestQEfficientModels:
         """
 
         cloud_ai_100_tokens = get_cloud_ai_100_tokens(self.setup_infos[model_name])
-        (
-            (self.setup_infos[model_name]["ort_tokens"] == cloud_ai_100_tokens).all(),
-            "Tokens don't match for ONNXRT output and Cloud AI 100 output.",
-        )
+        assert (
+            self.setup_infos[model_name]["ort_tokens"] == cloud_ai_100_tokens
+        ).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."
