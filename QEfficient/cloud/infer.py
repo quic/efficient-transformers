@@ -75,7 +75,7 @@ def main(
             hf_token=hf_token,
             cache_dir=cache_dir,
         )  # type: ignore
-        logger.info("Onnx")
+
         #########
         # Compile
         #########
