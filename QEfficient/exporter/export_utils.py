@@ -174,7 +174,8 @@ def fix_onnx_fp16(
     pt_outputs: Dict[str, torch.Tensor],
 ) -> str:
     model = onnx.load(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
-    # TODO: Remove this function and replace with this transform, as we're not utilizing the validations done in this function
+    # TODO: Remove this `fix_onnx_fp16` function and replace with this transform
+    # as we're not utilizing the validations done in this function
     model, fp16_fix = FP16Clip.apply(model)
 
     if fp16_fix:
