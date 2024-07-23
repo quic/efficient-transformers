@@ -15,7 +15,9 @@ import numpy as np
 import onnx
 import onnxruntime
 import torch
-from onnx import external_data_helper, numpy_helper
+from onnx import external_data_helper
+
+from QEfficient.base.onnx_transforms import FP16Clip
 
 
 def export_onnx(
@@ -171,43 +173,9 @@ def fix_onnx_fp16(
     model_base_name: str,
     pt_outputs: Dict[str, torch.Tensor],
 ) -> str:
-    finfo = np.finfo(np.float16)
-    fp16_max = finfo.max
-    fp16_min = finfo.min
-    abs_max_val = np.finfo(np.float16).max
-
     model = onnx.load(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
-
-    fp16_fix = False
-    for tensor in external_data_helper._get_all_tensors(model):
-        nptensor = numpy_helper.to_array(tensor, gen_models_path)
-        if nptensor.dtype == np.float32 and (np.any(nptensor > fp16_max) or np.any(nptensor < fp16_min)):
-            nptensor = np.clip(nptensor, fp16_min, fp16_max)
-            new_tensor = numpy_helper.from_array(nptensor, tensor.name)
-            tensor.CopyFrom(new_tensor)
-            fp16_fix = True
-
-    for idx, node in enumerate(model.graph.node):
-        if node.op_type == "Constant":
-            curr_data = numpy_helper.to_array(node.attribute[0].t)
-            if np.any(np.abs(curr_data) > abs_max_val):
-                updated_data = np.clip(curr_data, -abs_max_val, abs_max_val).astype(curr_data.dtype)
-                updated_tensor = numpy_helper.from_array(updated_data)
-                node.attribute[0].t.CopyFrom(updated_tensor)
-                fp16_fix = True
-
-    for node in model.graph.initializer:
-        curr_data = numpy_helper.to_array(node)
-        if np.any(np.abs(curr_data) > abs_max_val):
-            updated_data = np.clip(curr_data, -abs_max_val, abs_max_val).astype(curr_data.dtype)
-            updated_tensor = numpy_helper.from_array(updated_data)
-            updated_tensor.name = node.name
-            node.CopyFrom(updated_tensor)
-            fp16_fix = True
-
-    # TODO: Check this, variable "fp16_same_as_fp32" is not being used.
-    # fp16_same_as_fp32 = True
-    ort_outputs_fixed = []
+    # TODO: Remove this function and replace with this transform, as we're not utilizing the validations done in this function
+    model, fp16_fix = FP16Clip.apply(model)
 
     if fp16_fix:
         # Save FP16 model
@@ -246,15 +214,8 @@ def fix_onnx_fp16(
                 # TODO: need to the debug this
                 # info(oname, fix_diff)
                 close_outputs.append(fix_diff < 1e-5)
-        else:
-            print(
-                f"Failed to run the onnx {model_base_name} model in onnx runtime:%s",
-                ort_outputs,
-            )
-        # Commenting the below line
-        # fp16_same_as_fp32 = all(close_outputs)
     else:
-        info("No constants out of FP16 range .. ")
+        info("No constants out of FP16 range")
 
     return model_base_name
 
