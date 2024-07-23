@@ -58,10 +58,7 @@ def get_onnx_model_path(
         logger.info(
             f"Generated Onnx_path {generated_onnx_model_path} \nOnnx_model_path {onnx_model_path} \nand Onnx_dir_path is {onnx_dir_path}"
         )
-        assert (
-            generated_onnx_model_path == onnx_model_path
-        ), f"ONNX files were generated at an unusual location, expected {onnx_model_path}, got {generated_onnx_model_path}"
-    return onnx_model_path
+    return generated_onnx_model_path
 
 
 def main(
