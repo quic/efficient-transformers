@@ -18,7 +18,11 @@ from QEfficient.base.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.utils import get_config, load_hf_tokenizer, padding_check_and_fix
+from QEfficient.utils import (
+    get_num_layers_from_config,
+    get_padding_shape_from_config,
+    load_hf_tokenizer,
+)
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.generate_inputs import InputHandler
 from QEfficient.utils.logging_utils import logger
@@ -192,14 +196,11 @@ def export_kvstyle_transformed_model_to_onnx(
     for j, p in enumerate(transformed_model.parameters()):
         p.requires_grad_(False)
 
-    # Check and fix tokenizer viability
-    padding_check_and_fix(tokenizer)
-
     assert seq_len > 0, "Need seq_len to be greater than zero"
 
     config = transformed_model.config
-    n_heads, d_head, n_layer = get_config(config)
-    padding_shape = (1, n_heads, seq_len, d_head)
+    n_layer = get_num_layers_from_config(config)
+    padding_shape = get_padding_shape_from_config(config, 1, seq_len)
 
     # Preprocess inputs
     # Build inputs for prefill

@@ -7,7 +7,8 @@
 
 from QEfficient.utils._utils import (  # noqa: F401
     check_and_assign_cache_dir,
-    get_config,
+    get_num_layers_from_config,
+    get_padding_shape_from_config,
     get_qpc_dir_path,
     hf_download,
     load_hf_tokenizer,

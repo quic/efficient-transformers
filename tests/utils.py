@@ -117,7 +117,6 @@ def set_up(model_config, device_group=[0]):
         print(f"Pytorch HuggingFace Pytorch Model run failed due to : {e}")
 
     model_kv = transform_lm(model_hf)
-    model_kv.eval()
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(
         model_kv,
         model_config["n_layer"],

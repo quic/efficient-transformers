@@ -10,7 +10,7 @@ import json
 import pytest
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from QEfficient.utils import get_config
+from QEfficient.utils import get_padding_shape_from_config
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id
 from tests.utils import get_cloud_ai_100_tokens, set_up
@@ -25,11 +25,11 @@ def update_model_config(model_config):
     :return model_config - Dict
     """
     config = AutoConfig.from_pretrained(model_config["model_name"])
-    n_heads, d_head, n_layer = get_config(config)
+    padding_shape = get_padding_shape_from_config(config, 1, Constants.CTX_LEN)
 
     model_config["n_layer"] = 2  # test only 2 layer models
     model_config["model_class"] = AutoModelForCausalLM
-    model_config["padding_shape"] = [1, n_heads, Constants.CTX_LEN, d_head]
+    model_config["padding_shape"] = padding_shape
 
     return model_config
 

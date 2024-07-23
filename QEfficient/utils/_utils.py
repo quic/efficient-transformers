@@ -62,13 +62,13 @@ def hf_download(
             )
             break
         except requests.ReadTimeout as e:
-            print(f"Read timeout: {e}")
+            logger.info(f"Read timeout: {e}")
             retry_count += 1
 
         except HTTPError as e:
             retry_count = max_retries
             if e.response.status_code == 401:
-                print("You need to pass a valid `--hf_token=...` to download private checkpoints.")
+                logger.info("You need to pass a valid `--hf_token=...` to download private checkpoints.")
             else:
                 raise e
 
@@ -190,29 +190,28 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
             tokenizer.pad_token_id = tokenizer.vocab_size - 1
 
 
-def get_config(config):
+def get_padding_shape_from_config(config, batch_size, seq_len):
     """
-    Gets number of heads, layers and hidden size from model config
+    Gets padding dims from model config number of kv heads, d_head
+    (batch_size, number of kv heads, seq_len, hidden size)
+    required for initialization of past_key_values
     --------
 
     config: AutoConfig from pretrained model.
-    :return: Union[Tuple[int, int, int]]: number of heads, layers and hidden size
+    :return: List[int, int, int, int]
     """
 
     if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
         n_heads = config.n_head
         d_head = config.n_embd // config.n_head
-        n_layer = config.n_layer
     elif hasattr(config, "num_key_value_heads") and hasattr(
         config, "num_attention_heads"
     ):  # Check for num_key_value_heads (Llama/Mistral)
         n_heads = config.num_key_value_heads
         d_head = config.hidden_size // config.num_attention_heads
-        n_layer = config.num_hidden_layers
     elif hasattr(config, "n_heads"):  # Check for n_heads and d_model in the config (MPT Model)
         n_heads = config.n_heads
         d_head = config.d_model // config.n_heads
-        n_layer = config.n_layers
     elif hasattr(config, "multi_query"):  # Check for Falcon
         multi_query_value = getattr(config, "multi_query")
         if multi_query_value:
@@ -220,8 +219,28 @@ def get_config(config):
         else:
             n_heads = config.num_attention_heads
         d_head = config.hidden_size // config.num_attention_heads
-        n_layer = config.num_hidden_layers
     else:
         raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
+    padding_shape = [1, n_heads, seq_len, d_head]
+    return padding_shape
 
-    return n_heads, d_head, n_layer
+
+def get_num_layers_from_config(config):
+    """
+    Gets number of layers from model config
+    --------
+
+    config: AutoConfig from pretrained model.
+    :return: int: number of layers
+    """
+
+    if hasattr(config, "n_layer"):  # Assuming n_layer is a key in the config (GPTs/CodeGen)
+        n_layer = config.n_layer
+    elif hasattr(config, "num_hidden_layers"):  # llama/Mistral/Falcon
+        n_layer = config.num_hidden_layers
+    elif hasattr(config, "n_layers"):  # Check for n_layers in the config (MPT Model)
+        n_layer = config.n_layers
+    else:
+        raise ValueError("Invalid model configuration: n_layer/n_layers or num_hidden_layers not found.")
+
+    return n_layer

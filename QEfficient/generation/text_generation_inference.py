@@ -123,8 +123,13 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
     qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
     specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
     logger.info(f"specialization_file_path : {specialization_file_path}")
-    with open(specialization_file_path, "r") as file:
-        data = json.load(file)
+
+    if os.path.exists(specialization_file_path):
+        with open(specialization_file_path, "r") as file:
+            data = json.load(file)
+    else:
+        raise FileNotFoundError(f"expected specializations.json file at path, {qpc_base_path}")
+
     compilation_batch_size = int(data["specializations"][0]["batch_size"])
     compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
     return compilation_batch_size, compilation_ctx_len
@@ -143,7 +148,7 @@ def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
     return prompt
 
 
-def check_batch_size_and_num_prompts(prompt: List[str], batch_size: int):
+def fix_prompts_and_get_num_iters(prompt: List[str], batch_size: int):
     n = len(prompt) // batch_size
     if len(prompt) < batch_size:
         logger.warning("Number of prompts are less than batch size, repeating to required batch size")
@@ -156,7 +161,7 @@ def check_batch_size_and_num_prompts(prompt: List[str], batch_size: int):
             logger.warning(
                 "Number of prompts are not multiple of batch size, dropping last incomplete batch from given input prompts"
             )
-    return prompt, n
+    return n
 
 
 def read_prompts_txt_file(prompts_txt_file_path: str):
@@ -328,7 +333,7 @@ def cloud_ai_100_exec_kv(
 ):
     batch_size, ctx_len = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
-    prompt, n = check_batch_size_and_num_prompts(prompt, batch_size)
+    n = fix_prompts_and_get_num_iters(prompt, batch_size)
 
     prefill_time = []
     decode_perf = []
