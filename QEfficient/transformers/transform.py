@@ -65,7 +65,7 @@ def transform_lm(model: nn.Module) -> nn.Module:
 
     # Get Hash of all params for checking later
     prior_params_hash = get_params_hash(model)
-    logger.warning(f"The model {model.__class__} layers has been upadted to QEff layers in-place")
+    logger.warning(f"The model {model.__class__} layers has been updated to QEff layers in-place")
     # Replace with QEff layers
     replace_module_with_qeff_layers(model)
 
