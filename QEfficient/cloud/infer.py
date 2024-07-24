@@ -66,7 +66,7 @@ def main(
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
-        _, onnx_model_path = qualcomm_efficient_converter(
+        _, onnx_model_path = QEfficient.export(
             model_name=model_name,
             local_model_dir=local_model_dir,
             tokenizer=tokenizer,

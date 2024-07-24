@@ -9,7 +9,7 @@ import argparse
 import os
 from typing import Optional
 
-from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
+import QEfficient
 from QEfficient.utils import check_and_assign_cache_dir
 
 # Specifically for Docker images.
@@ -21,7 +21,7 @@ def main(
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
     local_model_dir: Optional[str] = None,
-) -> None:
+) -> str:
     """
     Api() for exporting to Onnx Model.
     ---------
@@ -31,7 +31,7 @@ def main(
     :local_model_dir: str. Path to custom model weights and config files.
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
-    qualcomm_efficient_converter(
+    QEfficient.export(
         model_name=model_name,
         local_model_dir=local_model_dir,
         kv=True,
