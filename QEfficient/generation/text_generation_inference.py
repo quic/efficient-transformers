@@ -163,8 +163,7 @@ def fix_prompts(prompt: List[str], batch_size: int):
             logger.warning(
                 "Number of prompts are not multiple of batch size, dropping last incomplete batch from given input prompts"
             )
-            n = len(prompt) // batch_size
-            prompt = prompt[: batch_size * n]
+            prompt = prompt[: batch_size * (len(prompt) // batch_size)]
     return prompt
 
 
@@ -326,7 +325,7 @@ def cloud_ai_100_exec_kv(
 ):
     batch_size, ctx_len = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
-    prompts = fix_prompts(prompt, batch_size)
+    prompt = fix_prompts(prompt, batch_size)
 
     prefill_time = []
     decode_perf = []
@@ -335,10 +334,10 @@ def cloud_ai_100_exec_kv(
     generated_texts = []
     generated_ids = []
 
-    for i in range(0, len(prompts), batch_size):
+    for i in range(0, len(prompt), batch_size):
         execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=tokenizer,
-            prompt=prompts[i : i + batch_size],
+            prompt=prompt[i : i + batch_size],
             qpc_path=qpc_path,
             device_id=device_id,
             ctx_len=ctx_len,
