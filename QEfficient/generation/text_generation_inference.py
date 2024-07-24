@@ -24,7 +24,8 @@ from QEfficient.utils.logging_utils import logger
 class CloudAI100ExecInfo:
     """
     holds all the information about Cloud AI 100 execution
-    :param generated_texts: List[str]
+    :batch_size: int
+    :generated_texts: List[str]
     :generated_ids: np.ndarray
     :prefill_time: float
     :decode_perf: float
@@ -32,12 +33,16 @@ class CloudAI100ExecInfo:
     :total_time: float
     """
 
+    batch_size: int
     generated_texts: List[str]
     generated_ids: np.ndarray
     prefill_time: float
     decode_perf: float
     total_perf: float
     total_time: float
+
+    def __repr__(self):
+        return f"Prefill time a.k.a TTFT is= {round(self.prefill_time, 2)} \nDecode token/sec is= {round(self.decode_perf * self.batch_size, 2)} \nTotal token/sec is= {round(self.total_perf * self.batch_size, 2)} \nTotal (E2E) inference time is= {round(self.total_time, 2)}"
 
 
 io_files = []
@@ -283,6 +288,7 @@ def cloud_ai_100_exec_kv_helper(
     print()
 
     return CloudAI100ExecInfo(
+        batch_size=batch_size,
         generated_texts=generated_texts,
         generated_ids=generated_ids,
         prefill_time=prefill_time,
@@ -294,26 +300,15 @@ def cloud_ai_100_exec_kv_helper(
 
 def print_latency_stats_kv(prompt, batch_size, execinfo, automation: bool = False):
     if automation:
-        print()
         print("input=", prompt)
         print("output=", execinfo.generated_texts)
-        print("Prefill time a.k.a TTFT is=", round(execinfo.prefill_time, 2))
-        print("Decode token/sec is=", round(execinfo.decode_perf * batch_size, 2))
-        print("Total token/sec is=", round(execinfo.total_perf * batch_size, 2))
-        print("Total (E2E) inference time is=", round(execinfo.total_time, 2))
+        print(execinfo)
         return
 
     print("========================= Performance Stats =========================")
     if batch_size > 1:
-        print("Prefill time a.k.a TTFT (batch) is :", round(execinfo.prefill_time, 2), "s")
-        print("Decode (batch):", round(execinfo.decode_perf * batch_size, 2), "tok/s")
-        print("E2E (batch):", round(execinfo.total_perf * batch_size, 2), "tok/s")
-        print("Total (E2E) inference time (batch) is=", round(execinfo.total_time, 2), "s")
-    else:
-        print("Prefill time a.k.a TTFT is=", round(execinfo.prefill_time, 2), "s")
-        print("Decode:", round(execinfo.decode_perf, 2), "tok/s")
-        print("E2E:", round(execinfo.total_perf, 2), "tok/s")
-        print("Total (E2E) inference time is=", round(execinfo.total_time, 2), "s")
+        print("Batch Performance : \n")
+    print(execinfo)
     print("=====================================================================")
 
 
@@ -364,6 +359,7 @@ def cloud_ai_100_exec_kv(
     total_time = np.average(total_time)
 
     execinfo = CloudAI100ExecInfo(
+        batch_size=batch_size,
         generated_texts=generated_texts,
         generated_ids=generated_ids,
         prefill_time=prefill_time,
