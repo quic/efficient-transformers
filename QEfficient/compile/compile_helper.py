@@ -115,7 +115,8 @@ def compile(
     """
     Api() to compile the Onnx Model on Cloud AI 100 Platform with give config.
     ---------
-    :param onnx_path: str. Generated Onnx Model Path.
+
+    :onnx_path: str. Generated Onnx Model Path.
     :qpc_path: str. Path for saving compiled qpc binaries.
     :num_cores: int. Number of cores to compile model on.
     :device_group: List[int]. Used for finding number of devices to compile for.

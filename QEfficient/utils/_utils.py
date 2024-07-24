@@ -192,12 +192,15 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
 
 def get_padding_shape_from_config(config, batch_size, seq_len):
     """
-    Gets padding dims from model config number of kv heads, d_head
-    (batch_size, number of kv heads, seq_len, hidden size)
+    Gets padding dims from model config - number of kv heads and d_head
+    and returns padding shape - (batch_size, number of kv heads, seq_len, hidden size)
     required for initialization of past_key_values
     --------
 
-    config: AutoConfig from pretrained model.
+    :config: AutoConfig from pretrained model.
+    :batch_size: int. number of input prompts used to create inputs
+    :seq_len: int. sequence length to run the model for.
+
     :return: List[int, int, int, int]
     """
 
@@ -230,7 +233,8 @@ def get_num_layers_from_config(config):
     Gets number of layers from model config
     --------
 
-    config: AutoConfig from pretrained model.
+    :config: AutoConfig from pretrained model.
+
     :return: int: number of layers
     """
 

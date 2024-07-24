@@ -31,6 +31,7 @@ def main(
     :model_name: str. Hugging Face Model Card name, Example: "gpt2"
     :qpc_path: str.  Path to the generated binary after compilation.
     :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
+    :local_model_dir: str. Path to custom model weights and config files.
     :prompt: str. Sample prompt for the model text generation
     :prompts_txt_file_path: str. Path to txt file for multiple input prompts
     :generation_len: int. Number of tokens to be generated.

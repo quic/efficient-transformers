@@ -74,8 +74,8 @@ class QEFFTransformersBase(QEFFBaseModel):
         This method accepts All the parameters that are acceptable by transformers.AutoModelForCausalLM.
         There are few additional parameters that this method can take.
         ---------
-        :param transform: bool. Whether to optimize model for KV retention; default is True. Pass False to get BertStyle model.
-        :param model_card_name: str. HuggingFace model card name or name of the model if custom, used for deciding folder name while saving ONNX/qpc files.
+        :transform: bool. Whether to optimize model for KV retention; default is True. Pass False to get BertStyle model.
+        :model_card_name: str. HuggingFace model card name or name of the model if custom, used for deciding folder name while saving ONNX/qpc files.
         """
         model_card_name = kwargs.pop(
             "model_card_name", None
