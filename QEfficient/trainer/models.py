@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 from .config import QEffConfig, QEffTrainingArguments
 from .data_utils import QEffDataManager
 from .model_manager import QEffModelManager
