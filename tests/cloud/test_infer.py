@@ -10,7 +10,7 @@ import os
 import pytest
 
 import QEfficient
-import QEfficient.cloud.infer 
+import QEfficient.cloud.infer
 from QEfficient.cloud.infer import main as infer
 
 

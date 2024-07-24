@@ -11,7 +11,6 @@ import os
 from typing import List, Optional
 
 import QEfficient
-from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import (
     check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
