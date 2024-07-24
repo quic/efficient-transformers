@@ -11,7 +11,6 @@ import os
 from typing import List, Optional
 
 import QEfficient
-from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import (
     check_batch_size_and_num_prompts,
     cloud_ai_100_exec_kv,
@@ -65,7 +64,15 @@ def main(
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
-        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token, local_model_dir)
+        _, onnx_model_path = QEfficient.export(
+            model_name=model_name,
+            local_model_dir=local_model_dir,
+            tokenizer=tokenizer,
+            kv=True,
+            form_factor="cloud",
+            hf_token=hf_token,
+            cache_dir=cache_dir,
+        )  # type: ignore
 
         #########
         # Compile

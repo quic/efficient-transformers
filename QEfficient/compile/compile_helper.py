@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from typing import List, Tuple
 
+from QEfficient.utils import qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 
@@ -115,7 +116,7 @@ def compile(
     Api() to compile the Onnx Model on Cloud AI 100 Platform with give config.
     ---------
     :param onnx_path: str. Generated Onnx Model Path.
-    :param qpc_path: str. Path for saving compiled qpc binaries.
+    :param qpc_path: str. Path for saving compiled qpc binaries. We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation.
     :num_cores: int. Number of cores to compile model on.
     :device_group: List[int]. Used for finding number of devices to compile for.
     :aic_enable_depth_first: bool. Enables DFS with default memory size, disabled by default.
@@ -126,6 +127,11 @@ def compile(
     :mxfp6: bool. Enable compilation for MXFP6 precision
     :mxint8: Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
     """
+    # Checking if qpc file already exist
+    if qpc_exists(os.path.join(qpc_path, "qpcs")):
+        print(f"Pre-compiled qpc found at {qpc_path}")
+        return qpc_path
+
     os.makedirs(qpc_path, exist_ok=True)
     specialization_json_path = os.path.join(qpc_path, "specializations.json")
     # Dynamically create the specializations JSON
