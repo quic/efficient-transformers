@@ -221,9 +221,7 @@ def cloud_ai_100_exec_kv_helper(
     generated_ids = np.full((batch_size, generation_len), tokenizer.pad_token_id)
     if stream:
         streamer = transformers.TextStreamer(tokenizer)
-        print()
-        streamer.on_finalized_text("Prompt : " + prompt[0])
-        print()
+        streamer.on_finalized_text("\n" + "Prompt : " + prompt[0] + "\n")
         streamer.on_finalized_text("Completion :")
 
     # Prepare inputs for prefill/first iteration

@@ -221,7 +221,7 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
         d_head = config.hidden_size // config.num_attention_heads
     else:
         raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
-    padding_shape = [1, n_heads, seq_len, d_head]
+    padding_shape = [batch_size, n_heads, seq_len, d_head]
     return padding_shape
 
 

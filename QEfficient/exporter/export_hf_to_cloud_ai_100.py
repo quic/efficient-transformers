@@ -200,7 +200,7 @@ def export_kvstyle_transformed_model_to_onnx(
 
     config = transformed_model.config
     n_layer = get_num_layers_from_config(config)
-    padding_shape = get_padding_shape_from_config(config, 1, seq_len)
+    padding_shape = get_padding_shape_from_config(config, batch_size=1, seq_len=seq_len)
 
     # Preprocess inputs
     # Build inputs for prefill

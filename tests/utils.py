@@ -7,14 +7,15 @@
 
 import functools
 import os
-import shutil
 import unittest
+
+from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.transform import transform_lm
-from QEfficient.utils import hf_download, load_hf_tokenizer
+from QEfficient.utils import get_padding_shape_from_config, hf_download, load_hf_tokenizer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.device_utils import get_available_device_id, is_multi_qranium_setup_available, is_qpc_size_gt_32gb
 from QEfficient.utils.run_utils import ApiRunner
@@ -33,31 +34,6 @@ def skip_if_mq_not_enabled(test_method):
         return test_method(self)
 
     return wrapper
-
-
-def prepare_work_dir(work_dir):
-    """
-    Function to create the work directory location
-
-    :param type(str): path to the workspace directory
-    :return: folder is created successfully
-    """
-    temp_dir = os.path.join(work_dir)
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir)
-    # create empty temp dir
-    os.makedirs(temp_dir)
-
-
-def remove_temp_dir(work_dir):
-    """
-    Function to remove the temp work directory location
-
-    :param type(str): path to the workspace directory
-    """
-    temp_dir = os.path.join(work_dir)
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir)
 
 
 def load_pytorch_model(model_config):
@@ -101,6 +77,13 @@ def set_up(model_config, device_group=[0]):
     Set up function to set up the test environment for TestQEfficientModel class
     :param None
     """
+    config = AutoConfig.from_pretrained(model_config["model_name"])
+    padding_shape = get_padding_shape_from_config(config, 1, Constants.CTX_LEN)
+
+    model_config["n_layer"] = 2  # test only 2 layer models
+    model_config["model_class"] = AutoModelForCausalLM
+    model_config["padding_shape"] = padding_shape
+
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_config["model_name"])
     api_runner = ApiRunner(
         tokenizer,

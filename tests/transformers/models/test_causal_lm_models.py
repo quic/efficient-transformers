@@ -8,30 +8,11 @@
 import json
 
 import pytest
-from transformers import AutoConfig, AutoModelForCausalLM
 
-from QEfficient.utils import get_padding_shape_from_config
-from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id
 from tests.utils import get_cloud_ai_100_tokens, set_up
 
 TEST_CONFIG_FILE_PATH = "tests/config.json"
-
-
-def update_model_config(model_config):
-    """
-    Function to get number of layers, model class and padding shape from model_config
-    :param model_config: Dict containing model configuration
-    :return model_config - Dict
-    """
-    config = AutoConfig.from_pretrained(model_config["model_name"])
-    padding_shape = get_padding_shape_from_config(config, 1, Constants.CTX_LEN)
-
-    model_config["n_layer"] = 2  # test only 2 layer models
-    model_config["model_class"] = AutoModelForCausalLM
-    model_config["padding_shape"] = padding_shape
-
-    return model_config
 
 
 @pytest.mark.parametrize(
@@ -49,7 +30,7 @@ class TestQEfficientModels:
         with open(TEST_CONFIG_FILE_PATH, "r") as f:
             configs = json.load(f)
             for model_config in configs["models"]:
-                cls.model_configs.append(update_model_config(model_config))
+                cls.model_configs.append(model_config)
 
         cls.setup_infos = {model_config["model_name"]: set_up(model_config) for model_config in cls.model_configs}
 
