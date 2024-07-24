@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -135,7 +135,7 @@ class QEffCodeGenAttention(CodeGenAttention):
         if use_cache is True:
             # Note that this cast is quite ugly, but is not implemented before ROPE as k_rot in the original codebase is always in fp32.
             # Reference: https://github.com/salesforce/CodeGen/blob/f210c3bb1216c975ad858cd4132c0fdeabf4bfc2/codegen1/jaxformer/hf/codegen/modeling_codegen.py#L38
-            present = (key.to(hidden_states.dtype), value)
+            present = (pkv.key_cache[0].to(hidden_states.dtype), pkv.value_cache[0])
         else:
             present = None
 

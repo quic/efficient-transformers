@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -56,7 +56,7 @@ class QEffMptAttention(MptAttention):
                 pkv.value_cache.append(past_key_value[1])
                 key_states, value_states = pkv.update(key_states, value_states, 0, cache_kwargs)
         if use_cache:
-            past_key_value = (key_states, value_states)
+            past_key_value = (pkv.key_cache[0], pkv.value_cache[0])
         else:
             past_key_value = None
 
