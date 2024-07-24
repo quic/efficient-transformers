@@ -153,20 +153,19 @@ def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
     return prompt
 
 
-def fix_prompts_and_get_num_iters(prompt: List[str], batch_size: int):
-    n = len(prompt) // batch_size
+def fix_prompts(prompt: List[str], batch_size: int):
     if len(prompt) < batch_size:
         logger.warning("Number of prompts are less than batch size, repeating to required batch size")
         prompt = prompt * -(batch_size // -len(prompt))  # Repeat prompt to required size
         prompt = prompt[:batch_size]  # Truncate prompts to required size
-        n += 1
     else:
         if (len(prompt) % batch_size) > 0:
-            prompt = prompt[: batch_size * n]
             logger.warning(
                 "Number of prompts are not multiple of batch size, dropping last incomplete batch from given input prompts"
             )
-    return n
+            n = len(prompt) // batch_size
+            prompt = prompt[: batch_size * n]
+    return prompt
 
 
 def read_prompts_txt_file(prompts_txt_file_path: str):
@@ -208,6 +207,7 @@ def cloud_ai_100_exec_kv_helper(
         batch_size, prefill_seq_len = session.bindings[session.binding_index_map["input_ids"]].dims
 
     inputs = tokenizer(prompt, return_tensors="np", padding=True)
+
     position_ids_update = inputs["attention_mask"].sum(1, keepdims=True)
     padded_len = inputs["input_ids"].shape[1]
     num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
@@ -326,7 +326,7 @@ def cloud_ai_100_exec_kv(
 ):
     batch_size, ctx_len = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
-    n = fix_prompts_and_get_num_iters(prompt, batch_size)
+    prompts = fix_prompts(prompt, batch_size)
 
     prefill_time = []
     decode_perf = []
@@ -334,10 +334,11 @@ def cloud_ai_100_exec_kv(
     total_time = []
     generated_texts = []
     generated_ids = []
-    for i in range(n):
+
+    for i in range(0, len(prompts), batch_size):
         execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=tokenizer,
-            prompt=prompt[batch_size * i : batch_size * (i + 1)],
+            prompt=prompts[i : i + batch_size],
             qpc_path=qpc_path,
             device_id=device_id,
             ctx_len=ctx_len,
