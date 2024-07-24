@@ -18,7 +18,7 @@ class Constants:
     SEQ_LEN = 32
     CTX_LEN = 32
     PROMPT_LEN = 8
-    INPUT_STR = "My name is"
+    INPUT_STR = ["My name is"]
 
     CACHE_DIR = os.path.join(ROOT_DIR, "cache_dir")
 

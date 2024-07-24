@@ -8,40 +8,42 @@
 import numpy as np
 import torch
 
-from QEfficient.utils import padding_check_and_fix
+from QEfficient.utils import get_num_layers_from_config, get_padding_shape_from_config, padding_check_and_fix
 
 
 class InputHandler:
-    def __init__(self, tokenizer, input_str, prompt_len, ctx_len):
+    def __init__(self, tokenizer, config, prompt, prompt_len, ctx_len, n_layer=0):
         """
         Initialization
         --------
 
         :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
-        :input_str: List[str]. String to used as input prompt for the model.
+        :config: AutoConfig from pretrained model.
+        :prompt: List[str]. String to used as input prompt for the model.
         :prompt_len: int. prompt length for the model to compile.
         :ctx_len: int. Maximum context length to compile the model.
+        :n_layer : int. Number of layers present in the model.
+        :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
         """
         # check and fix tokenizer viability
         padding_check_and_fix(tokenizer)
         self.tokenizer = tokenizer
-        self.input_str = input_str
+        self.prompt = prompt
         self.prompt_len = prompt_len
         self.ctx_len = ctx_len
+        self.n_layer = n_layer if n_layer > 0 else get_num_layers_from_config(config)
+        self.padding_shape = get_padding_shape_from_config(config, batch_size=len(prompt), seq_len=ctx_len)
 
-    def prepare_pytorch_inputs(self, n_layer, padding_shape):
+    def prepare_pytorch_inputs(self):
         """
         Function responsible for creating Prefill stage tensor inputs for PyTorch model.
         --------
-
-        :n_layer : int. Number of layers present in the model.
-        :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
 
         :return inputs: Dict. input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
-            self.input_str,
+            self.prompt,
             return_tensors="pt",
             padding=True,
         )
@@ -66,9 +68,9 @@ class InputHandler:
         )
 
         past_key_values = []
-        for i in range(n_layer):
-            past_key = torch.zeros((padding_shape), dtype=torch.float32)
-            past_value = torch.zeros((padding_shape), dtype=torch.float32)
+        for i in range(self.n_layer):
+            past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
+            past_value = torch.zeros((self.padding_shape), dtype=torch.float32)
             pkv = (past_key, past_value)
             past_key_values.append(pkv)
         inputs["past_key_values"] = tuple(past_key_values)
@@ -93,19 +95,16 @@ class InputHandler:
         )
         return updated_inputs
 
-    def prepare_ort_inputs(self, n_layer, padding_shape):
+    def prepare_ort_inputs(self):
         """
         Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.
         --------
-
-        :n_layer : int. Number of layers present in the model.
-        :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
 
         :return inputs: Dict. input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
-            self.input_str,
+            self.prompt,
             return_tensors="np",
             padding=True,
         )
@@ -122,20 +121,19 @@ class InputHandler:
             axis=1,
         ).astype(np.int64)
 
-        for i in range(n_layer):
-            inputs["past_key." + str(i)] = np.zeros((padding_shape), dtype=np.float32)
-            inputs["past_value." + str(i)] = np.zeros((padding_shape), dtype=np.float32)
+        for i in range(self.n_layer):
+            inputs["past_key." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
+            inputs["past_value." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
 
         return inputs
 
-    def update_ort_inputs(self, inputs, ort_outputs, n_layer):
+    def update_ort_inputs(self, inputs, ort_outputs):
         """
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
         --------
 
         :inputs: Dict. NumPy inputs of Onnx model from previous iteration
         :ort_outputs: Dict. Numpy outputs of Onnx model from previous iteration
-        :n_layer : int. Number of layers present in the model.
 
         :return updated_inputs: Dict. Updated input_ids, position_ids and past_key_values
         """
@@ -143,8 +141,31 @@ class InputHandler:
         updated_inputs = {}
         updated_inputs["input_ids"] = ort_outputs["logits"].argmax(-1)
         updated_inputs["position_ids"] = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
-        for i in range(n_layer):
+        for i in range(self.n_layer):
             updated_inputs["past_key." + str(i)] = ort_outputs["past_key_values"][i * 2]
             updated_inputs["past_value." + str(i)] = ort_outputs["past_key_values"][i * 2 + 1]
 
         return updated_inputs
+
+    def update_ort_outputs(self, ort_outputs):
+        """
+        Function responsible for updating ONNXRT session outputs.
+        --------
+
+        :ort_outputs: Dict. Numpy outputs of Onnx model from current iteration
+
+        :return updated_outputs: Dict. Updated past_key_values, logits
+        """
+
+        present_key_values = []
+        for i in range(self.n_layer):
+            if "past_key." + str(i) + "_RetainedState" in ort_outputs:
+                present_key_values.append(ort_outputs["past_key." + str(i) + "_RetainedState"])
+            if "past_value." + str(i) + "_RetainedState" in ort_outputs:
+                present_key_values.append(ort_outputs["past_value." + str(i) + "_RetainedState"])
+
+        outputs = {}
+        outputs["past_key_values"] = present_key_values
+        outputs["logits"] = ort_outputs["logits"]
+
+        return outputs

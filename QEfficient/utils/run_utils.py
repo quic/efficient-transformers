@@ -25,15 +25,17 @@ class ApiRunner:
     4. ONNX model on Cloud AI 100
     """
 
-    def __init__(self, tokenizer, prompt, prompt_len, ctx_len):
+    def __init__(self, tokenizer, config, prompt, prompt_len, ctx_len, n_layer=0):
         """
         Initialization
         --------
 
         :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
+        :config: AutoConfig from pretrained model.
         :input_str: List[str]. input prompt for running the model.
         :prompt_len: int. prompt length to compile the model.
         :ctx_len: int. Maximum context length to compile the model.
+        :n_layer : int. Number of layers present in the model.
         """
 
         self.tokenizer = tokenizer
@@ -42,7 +44,7 @@ class ApiRunner:
         self.ctx_len = ctx_len
         self.gen_len = self.ctx_len - self.prompt_len
 
-        self.input_handler = InputHandler(self.tokenizer, self.prompt, self.prompt_len, self.ctx_len)
+        self.input_handler = InputHandler(self.tokenizer, config, self.prompt, self.prompt_len, self.ctx_len, n_layer)
 
     @torch.no_grad()
     def run_hf_model_on_pytorch(self, model_hf):
@@ -54,7 +56,7 @@ class ApiRunner:
 
         :return generated_ids: numpy.ndarray. Generated output tokens
         """
-        input_ids = self.tokenizer.encode(self.prompt, return_tensors="pt")
+        input_ids = self.tokenizer.encode(self.prompt[0], return_tensors="pt")
 
         input_ids_len = len(input_ids[0])
 
@@ -71,20 +73,18 @@ class ApiRunner:
         print("Completion:", repr(generated_text))
         return generated_ids
 
-    def run_kv_model_on_pytorch(self, model, n_layer, padding_shape):
+    def run_kv_model_on_pytorch(self, model):
         """
         Function responsible for running KV PyTorch model and return the output tokens
         --------
 
         :model: torch.nn.module. Transformed PyTorch model
-        :n_layer : int. Number of layers present in the model.
-        :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
 
         :return generated_ids: numpy.ndarray. Generated output tokens
         """
 
         generated_ids = []
-        inputs = self.input_handler.prepare_pytorch_inputs(n_layer, padding_shape)
+        inputs = self.input_handler.prepare_pytorch_inputs()
 
         pt_outputs = model(**inputs)
         for _ in range(1, self.gen_len):
@@ -100,7 +100,7 @@ class ApiRunner:
         print("Completion:", repr(predicted_string))
         return generated_ids
 
-    def run_ort_session(self, inputs, session, n_layer):
+    def run_ort_session(self, inputs, session):
         """
         Function responsible for running onnxrt session with given inputs and
         passing retained state outputs to be used for next iteration inputs
@@ -108,12 +108,9 @@ class ApiRunner:
 
         :inputs: Dict. Numpy inputs of Onnx model
         :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
-        :n_layer : int. Number of layers present in the model.
 
         :return outputs: Dict. Numpy outputs of Onnx model
         """
-
-        outputs = {}
         output_names = [x.name for x in session.get_outputs()]
         session_input_names = [x.name for x in session.get_inputs()]
         session_inputs = {}
@@ -122,27 +119,14 @@ class ApiRunner:
                 session_inputs[inp_name] = inputs[inp_name]
         outputs_data = session.run(output_names, session_inputs)
         ort_outputs = dict(zip(output_names, outputs_data))
+        return ort_outputs
 
-        present_key_values = []
-        for i in range(n_layer):
-            if "past_key." + str(i) + "_RetainedState" in ort_outputs:
-                present_key_values.append(ort_outputs["past_key." + str(i) + "_RetainedState"])
-            if "past_value." + str(i) + "_RetainedState" in ort_outputs:
-                present_key_values.append(ort_outputs["past_value." + str(i) + "_RetainedState"])
-
-        outputs["past_key_values"] = present_key_values
-        outputs["logits"] = ort_outputs["logits"]
-
-        return outputs
-
-    def run_kv_model_on_ort(self, model_path, n_layer, padding_shape):
+    def run_kv_model_on_ort(self, model_path):
         """
         Function responsible for running ONNX model on onnxruntime and return the output tokens
         --------
 
         :model_path: str. Path to the Onnx model.
-        :n_layer : int. Number of layers present in the model.
-        :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
 
         :return generated_ids: numpy.ndarray. Generated output tokens
         """
@@ -162,13 +146,16 @@ class ApiRunner:
         session = onnxruntime.InferenceSession(onnxruntime_model)
 
         generated_ids = []
-        inputs = self.input_handler.prepare_ort_inputs(n_layer, padding_shape)
-        ort_outputs = self.run_ort_session(inputs, session, n_layer)
+        inputs = self.input_handler.prepare_ort_inputs()
+        ort_outputs = self.run_ort_session(inputs, session)
+        breakpoint()
+        ort_outputs = self.input_handler.update_ort_outputs(ort_outputs)
 
         for _ in range(1, self.gen_len):
             generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
-            inputs = self.input_handler.update_ort_inputs(inputs, ort_outputs, n_layer)
-            ort_outputs = self.run_ort_session(inputs, session, n_layer)
+            inputs = self.input_handler.update_ort_inputs(inputs, ort_outputs)
+            ort_outputs = self.run_ort_session(inputs, session)
+            ort_outputs = self.input_handler.update_ort_outputs(ort_outputs)
 
         generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
         generated_ids = np.concatenate(generated_ids, axis=1)
