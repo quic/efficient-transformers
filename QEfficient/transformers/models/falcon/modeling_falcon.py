@@ -124,7 +124,7 @@ class QEffFalconAttention(FalconAttention):
 
         kv_length = key_layer.shape[-2]
         if use_cache:
-            present = (key_layer, value_layer)
+            present = (pkv.key_cache[0], pkv.value_cache[0])
         else:
             present = None
 
