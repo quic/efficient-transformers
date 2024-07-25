@@ -23,7 +23,6 @@ class InputHandler:
         :prompt_len: int. prompt length for the model to compile.
         :ctx_len: int. Maximum context length to compile the model.
         :n_layer : int. Number of layers present in the model.
-        :padding_shape : List[int]. Shape of Past Key values used for initialization with zeros in first iteration.
         """
         # check and fix tokenizer viability
         padding_check_and_fix(tokenizer)

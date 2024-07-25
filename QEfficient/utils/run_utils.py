@@ -32,7 +32,7 @@ class ApiRunner:
 
         :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
         :config: AutoConfig from pretrained model.
-        :input_str: List[str]. input prompt for running the model.
+        :prompt: List[str]. input prompt for running the model.
         :prompt_len: int. prompt length to compile the model.
         :ctx_len: int. Maximum context length to compile the model.
         :n_layer : int. Number of layers present in the model.

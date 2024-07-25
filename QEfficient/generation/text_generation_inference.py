@@ -225,8 +225,7 @@ def cloud_ai_100_exec_kv_helper(
     generated_ids = np.full((batch_size, generation_len), tokenizer.pad_token_id)
     if stream:
         streamer = transformers.TextStreamer(tokenizer)
-        streamer.on_finalized_text("\n" + "Prompt : " + prompt[0] + "\n")
-        streamer.on_finalized_text("Completion :")
+        streamer.on_finalized_text("\n" + "Prompt : " + prompt[0] + "\n" + "Completion :")
 
     # Prepare inputs for prefill/first iteration
     start = perf_counter()
@@ -278,13 +277,12 @@ def cloud_ai_100_exec_kv_helper(
             print("\n\n=====================================================================\n")
             print("Prompt : ", prompt[i])
             print("Completion :", generated_texts[i])
-        print("\n\n=====================================================================\n")
+        print("\n\n=====================================================================\n\n")
 
     prefill_time = loop_start - start
     decode_perf = (num_token - 1) / (end - loop_start)
     total_perf = num_token / (end - start)
     total_time = end - start
-    print()
 
     return CloudAI100ExecInfo(
         batch_size=batch_size,
@@ -297,7 +295,7 @@ def cloud_ai_100_exec_kv_helper(
     )
 
 
-def print_latency_stats_kv(prompt, batch_size, execinfo, automation: bool = False):
+def print_latency_stats_kv(prompt, execinfo, automation: bool = False):
     if automation:
         print("input=", prompt)
         print("output=", execinfo.generated_texts)
@@ -305,7 +303,7 @@ def print_latency_stats_kv(prompt, batch_size, execinfo, automation: bool = Fals
         return
 
     print("========================= Performance Stats =========================")
-    if batch_size > 1:
+    if execinfo.batch_size > 1:
         print("Batch Performance : \n")
     print(execinfo)
     print("=====================================================================")
@@ -369,7 +367,6 @@ def cloud_ai_100_exec_kv(
     )
     print_latency_stats_kv(
         prompt,
-        batch_size=batch_size,
         execinfo=execinfo,
         automation=automation,
     )
