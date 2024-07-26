@@ -196,11 +196,14 @@ def export_kvstyle_transformed_model_to_onnx(
 
     # Preprocess inputs
     # Build inputs for prefill
-    input_handler = InputHandler(tokenizer=tokenizer,
-                                 config=transformed_model.config,
-                                 prompt=Constants.INPUT_STR,
-                                 prompt_len=Constants.PROMPT_LEN,
-                                 ctx_len=seq_len)
+    input_handler = InputHandler(
+        batch_size=len(Constants.INPUT_STR),
+        tokenizer=tokenizer,
+        config=transformed_model.config,
+        prompt=Constants.INPUT_STR,
+        prompt_len=Constants.PROMPT_LEN,
+        ctx_len=seq_len,
+    )
     inputs = input_handler.prepare_pytorch_inputs()
 
     pt_outputs = transformed_model(**inputs)

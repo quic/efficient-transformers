@@ -37,9 +37,7 @@ def main(
     :generation_len: int. Number of tokens to be generated.
     :cache_dir: str. Cache dir where downloaded huggingface files are stored.
     :hf_token: str. HuggingFace login token to access private repos.
-
     """
-
     tokenizer = load_hf_tokenizer(
         pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
         cache_dir=cache_dir,

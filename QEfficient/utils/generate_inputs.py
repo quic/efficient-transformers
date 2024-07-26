@@ -12,17 +12,17 @@ from QEfficient.utils import get_num_layers_from_config, get_padding_shape_from_
 
 
 class InputHandler:
-    def __init__(self, tokenizer, config, prompt, prompt_len, ctx_len, n_layer=0):
+    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len):
         """
         Initialization
         --------
 
+        :batch_size: int. Number of prompts to run in one batch.
         :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
         :config: AutoConfig from pretrained model.
         :prompt: List[str]. String to used as input prompt for the model.
         :prompt_len: int. prompt length for the model to compile.
         :ctx_len: int. Maximum context length to compile the model.
-        :n_layer : int. Number of layers present in the model.
         """
         # check and fix tokenizer viability
         padding_check_and_fix(tokenizer)
@@ -30,8 +30,8 @@ class InputHandler:
         self.prompt = prompt
         self.prompt_len = prompt_len
         self.ctx_len = ctx_len
-        self.n_layer = n_layer if n_layer > 0 else get_num_layers_from_config(config)
-        self.padding_shape = get_padding_shape_from_config(config, batch_size=len(prompt), seq_len=ctx_len)
+        self.n_layer = get_num_layers_from_config(config)
+        self.padding_shape = get_padding_shape_from_config(config=config, batch_size=batch_size, seq_len=ctx_len)
 
     def prepare_pytorch_inputs(self):
         """

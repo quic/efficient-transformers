@@ -9,7 +9,7 @@ import functools
 import os
 import unittest
 
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import AutoModelForCausalLM
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100
@@ -39,14 +39,17 @@ def skip_if_mq_not_enabled(test_method):
 def load_pytorch_model(model_config):
     """
     Function to load model from huggingface and transform to KV model
-    :param model_config: json object
-    :return model_hf
+    --------
+
+    :model_config: Dict
+
+    :return model_hf, params
     """
     model_path = hf_download(
         repo_id=model_config["model_name"],
         ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
-    model_hf = model_config["model_class"].from_pretrained(
+    model_hf = AutoModelForCausalLM.from_pretrained(
         model_path, use_cache=True, num_hidden_layers=model_config["n_layer"], attn_implementation="eager"
     )  # Run models for single layers only
     params = sum(p.numel() for p in model_hf.parameters())
@@ -54,12 +57,16 @@ def load_pytorch_model(model_config):
     return model_hf, params
 
 
-def export_onnx(model_kv, tokenizer, model_name, model_class):
+def export_onnx(model_kv, tokenizer, model_name):
     """
     Function to export onnx model
-    :param model_name: str
-    :param model_class: type
-    :return onnx_model_path : str
+    ---------
+
+    :model_kv: transformed pytorch model to be exported to ONNX.
+    :tokenizer: model tokenizer.
+    :model_name: str.
+
+    :return base_path, onnx_model_path : str
     """
     onnx_dir_path = os.path.join(QEFF_MODELS_DIR, model_name)
     base_path, onnx_model_path = qualcomm_efficient_converter(
@@ -75,25 +82,24 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
 def set_up(model_config, device_group=[0]):
     """
     Set up function to set up the test environment for TestQEfficientModel class
-    :param None
     """
-    config = AutoConfig.from_pretrained(model_config["model_name"])
-
     model_config["n_layer"] = 2  # test only 2 layer models
-    model_config["model_class"] = AutoModelForCausalLM
+
+    mxfp6 = False
+    model_hf, params = load_pytorch_model(model_config)
+    qpc_gt_32gb = is_qpc_size_gt_32gb(params, mxfp6)
 
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_config["model_name"])
+    config = model_hf.config
+    batch_size = len(Constants.INPUT_STR)
     api_runner = ApiRunner(
+        batch_size,
         tokenizer,
         config,
         Constants.INPUT_STR,
         Constants.PROMPT_LEN,
         Constants.CTX_LEN,
-        model_config["n_layer"],
     )
-    mxfp6 = False
-    model_hf, params = load_pytorch_model(model_config)
-    qpc_gt_32gb = is_qpc_size_gt_32gb(params, mxfp6)
     try:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
     except Exception as e:
@@ -106,7 +112,6 @@ def set_up(model_config, device_group=[0]):
         model_kv,
         tokenizer,
         model_config["model_name"],
-        model_config["model_class"],
     )
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path)
 

@@ -71,7 +71,7 @@ def main(
     local_model_dir: Optional[str] = None,
 ) -> None:
     """
-    Helper function used by export CLI app for exporting to Onnx Model.
+    Helper function used by export CLI app for exporting to ONNX Model.
     ---------
 
     :model_name: str. Hugging Face Model Card name, Example: gpt2

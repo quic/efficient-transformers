@@ -51,7 +51,7 @@ def main(
     :aic_enable_depth_first: bool. Enables DFS with default memory size, disabled by default.
     :mos: int. Effort level to reduce the on-chip memory.
     :batch_size: int. Batch size to compile the model for.
-    :prompt_len: int. prompt len for the model to compile.
+    :prompt_len: int. prompt length for the model to compile.
     :ctx_len: int. Maximum context length to compile the model.
     :generation_len: int. Number of tokens to be generated.
     :mxfp6: bool. Enable compilation for MXFP6 precision

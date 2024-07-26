@@ -113,7 +113,7 @@ def compile(
     **kwargs,
 ) -> str:
     """
-    API to compile the Onnx Model on Cloud AI 100 Platform with given config.
+    API to compile the ONNX Model on Cloud AI 100 Platform with given config.
     ---------
 
     :onnx_path: str. Generated Onnx Model Path.

@@ -25,26 +25,28 @@ class ApiRunner:
     4. ONNX model on Cloud AI 100
     """
 
-    def __init__(self, tokenizer, config, prompt, prompt_len, ctx_len, n_layer=0):
+    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len):
         """
         Initialization
         --------
 
+        :batch_size: int. Number of prompts to run in one batch.
         :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
         :config: AutoConfig from pretrained model.
         :prompt: List[str]. input prompt for running the model.
         :prompt_len: int. prompt length to compile the model.
         :ctx_len: int. Maximum context length to compile the model.
-        :n_layer : int. Number of layers present in the model.
         """
+        self.input_handler = InputHandler(
+            batch_size=batch_size,
+            tokenizer=tokenizer,
+            config=config,
+            prompt=prompt,
+            prompt_len=prompt_len,
+            ctx_len=ctx_len,
+        )
 
-        self.tokenizer = tokenizer
-        self.prompt = prompt
-        self.prompt_len = prompt_len
-        self.ctx_len = ctx_len
-        self.gen_len = self.ctx_len - self.prompt_len
-
-        self.input_handler = InputHandler(self.tokenizer, config, self.prompt, self.prompt_len, self.ctx_len, n_layer)
+        self.gen_len = self.input_handler.ctx_len - self.input_handler.prompt_len
 
     @torch.no_grad()
     def run_hf_model_on_pytorch(self, model_hf):
@@ -56,7 +58,7 @@ class ApiRunner:
 
         :return generated_ids: numpy.ndarray. Generated output tokens
         """
-        input_ids = self.tokenizer.encode(self.prompt[0], return_tensors="pt")
+        input_ids = self.input_handler.tokenizer.encode(self.input_handler.prompt[0], return_tensors="pt")
 
         input_ids_len = len(input_ids[0])
 
@@ -67,9 +69,9 @@ class ApiRunner:
             input_ids = torch.cat([input_ids, predicted_token_id.unsqueeze(1)], dim=-1)
 
         generated_ids = input_ids[0][input_ids_len:].detach().numpy()
-        generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        generated_text = self.input_handler.tokenizer.decode(generated_ids, skip_special_tokens=True)
         print("Original HF Model Outputs (Torch CPU): \n")
-        print("Prompt:", repr(self.prompt))
+        print("Prompt:", repr(self.input_handler.prompt))
         print("Completion:", repr(generated_text))
         return generated_ids
 
@@ -94,9 +96,9 @@ class ApiRunner:
 
         generated_ids.append(pt_outputs["logits"].argmax(-1).reshape(-1, 1))
         generated_ids = np.concatenate(generated_ids, axis=1)
-        predicted_string = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        predicted_string = self.input_handler.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
         print("QEff Transformed HF Model Outputs (Torch CPU): \n")
-        print("Prompt:", repr(self.prompt))
+        print("Prompt:", repr(self.input_handler.prompt))
         print("Completion:", repr(predicted_string))
         return generated_ids
 
@@ -158,9 +160,9 @@ class ApiRunner:
 
         generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
         generated_ids = np.concatenate(generated_ids, axis=1)
-        predicted_string = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        predicted_string = self.input_handler.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
         print("QEff Transformed Onnx Model Outputs (OnnxRuntime CPU): \n")
-        print("Prompt:", repr(self.prompt))
+        print("Prompt:", repr(self.input_handler.prompt))
         print("Completion:", repr(predicted_string))
         return generated_ids
 
@@ -175,16 +177,16 @@ class ApiRunner:
         :return generated_ids: numpy.ndarray. Generated output tokens
         """
         execinfo = cloud_ai_100_exec_kv_helper(
-            tokenizer=self.tokenizer,
+            tokenizer=self.input_handler.tokenizer,
             qpc_path=qpc_path,
             device_id=device_group,
-            ctx_len=self.ctx_len,
+            ctx_len=self.input_handler.ctx_len,
             generation_len=self.gen_len,
-            prompt=self.prompt,
+            prompt=self.input_handler.prompt,
             stream=False,
         )
-        predicted_string = self.tokenizer.batch_decode(execinfo.generated_ids, skip_special_tokens=True)
+        predicted_string = self.input_handler.tokenizer.batch_decode(execinfo.generated_ids, skip_special_tokens=True)
         print("QEff Transformed Model Outputs (Cloud AI 100): \n")
-        print("Prompt:", repr(self.prompt))
+        print("Prompt:", repr(self.input_handler.prompt))
         print("Completion:", repr(predicted_string))
         return execinfo.generated_ids
