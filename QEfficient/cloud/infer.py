@@ -20,6 +20,7 @@ from QEfficient.utils.logging_utils import logger
 def main(
     model_name: str,
     num_cores: int,
+    device_group: List[int],
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
@@ -30,15 +31,12 @@ def main(
     generation_len: Optional[int] = None,
     mxfp6: bool = False,
     mxint8: bool = False,
-    device_group: List[int] = [0],
     local_model_dir: Optional[str] = None,
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
 ) -> None:
     """
-    API() to export, compile and execute the model on Cloud AI 100 Platform.
-
-    ---------
+    Helper function used by infer CLI app; to export, compile and execute the model on Cloud AI 100 Platform.
     1. Check if compiled qpc for given config already exists, if it does jump to execute, else
     2. Check if exported ONNX file already exists, if true, jump to compilation -> execution, else
     3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
@@ -47,6 +45,7 @@ def main(
 
     :model_name: str. Hugging Face Model Card name, Example: "gpt2"
     :num_cores: int. :num_cores: int. Number of cores to compile model on.
+    :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
     :prompt: str. Sample prompt for the model text generation
     :prompts_txt_file_path: str. Path to txt file for multiple input prompts
     :aic_enable_depth_first: bool. Enables DFS with default memory size, disabled by default.
@@ -57,7 +56,6 @@ def main(
     :generation_len: int. Number of tokens to be generated.
     :mxfp6: bool. Enable compilation for MXFP6 precision
     :mxint8: Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
-    :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
     :local_model_dir: str. Path to custom model weights and config files.
     :cache_dir: str. Cache dir where downloaded huggingface files are stored.
     :hf_token: str. HuggingFace login token to access private repos.

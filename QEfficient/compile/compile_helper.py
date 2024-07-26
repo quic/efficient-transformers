@@ -113,7 +113,7 @@ def compile(
     **kwargs,
 ) -> str:
     """
-    Api() to compile the Onnx Model on Cloud AI 100 Platform with give config.
+    API to compile the Onnx Model on Cloud AI 100 Platform with given config.
     ---------
 
     :onnx_path: str. Generated Onnx Model Path.
@@ -147,7 +147,7 @@ def compile(
 
     if not os.path.isfile(custom_io_file_path):
         raise FileNotFoundError(
-            f"Custom IO file {custom_io_file_name} is not present at the expected path {custom_io_file_path} nor exists in the onnx model files directory. Please pass the correct file path or rerun infer/export Api"
+            f"Custom IO file {custom_io_file_name} is not present at the expected path {custom_io_file_path}. Please pass the correct file path or rerun infer/export API"
         )
 
     _, qpc_path = compile_kv_model_on_cloud_ai_100(

@@ -25,7 +25,7 @@ def main(
     hf_token: Optional[str] = None,
 ) -> None:
     """
-    API() to run the Model on Cloud AI 100 Platform.
+    Helper function used by execute CLI app to run the Model on Cloud AI 100 Platform.
     ---------
 
     :model_name: str. Hugging Face Model Card name, Example: "gpt2"

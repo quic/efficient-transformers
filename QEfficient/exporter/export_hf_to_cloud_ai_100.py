@@ -189,16 +189,18 @@ def export_kvstyle_transformed_model_to_onnx(
     seq_len: int,
 ) -> str:
     # Disabling requires_grad on all parameters
-    for j, p in enumerate(transformed_model.parameters()):
+    for _, p in enumerate(transformed_model.parameters()):
         p.requires_grad_(False)
 
     assert seq_len > 0, "Need seq_len to be greater than zero"
 
-    config = transformed_model.config
-
     # Preprocess inputs
     # Build inputs for prefill
-    input_handler = InputHandler(tokenizer, config, Constants.INPUT_STR, Constants.PROMPT_LEN, seq_len)
+    input_handler = InputHandler(tokenizer=tokenizer,
+                                 config=transformed_model.config,
+                                 prompt=Constants.INPUT_STR,
+                                 prompt_len=Constants.PROMPT_LEN,
+                                 ctx_len=seq_len)
     inputs = input_handler.prepare_pytorch_inputs()
 
     pt_outputs = transformed_model(**inputs)
