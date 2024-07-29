@@ -302,7 +302,6 @@ def print_latency_stats_kv(prompt, execinfo, automation: bool = False):
         print("output=", execinfo.generated_texts)
         print(execinfo)
         return
-
     print("========================= Performance Stats =========================")
     if execinfo.batch_size > 1:
         print("Batch Performance : \n")
@@ -334,7 +333,7 @@ def cloud_ai_100_exec_kv(
     generated_ids = []
 
     for i in range(0, len(prompt), batch_size):
-        print("Inference iteration =", i//batch_size)
+        print("Inference iteration =", i // batch_size)
         execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=tokenizer,
             prompt=prompt[i : i + batch_size],
