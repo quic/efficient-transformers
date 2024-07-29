@@ -228,7 +228,7 @@ def cloud_ai_100_exec_kv_helper(
     generated_ids = np.full((batch_size, generation_len), tokenizer.pad_token_id)
     if stream:
         streamer = transformers.TextStreamer(tokenizer)
-        streamer.on_finalized_text("\n" + "Prompt : " + prompt[0] + "\n" + "Completion :")
+        streamer.on_finalized_text("\nPrompt : " + prompt[0] + "\nCompletion :")
 
     # Prepare inputs for prefill/first iteration
     start = perf_counter()
@@ -277,10 +277,8 @@ def cloud_ai_100_exec_kv_helper(
 
     if stream:
         for i in range(1, batch_size):
-            print("\n\n=====================================================================\n")
-            print("Prompt : ", prompt[i])
+            print("\n\nPrompt : ", prompt[i])
             print("Completion :", generated_texts[i])
-        print("\n\n=====================================================================\n\n")
 
     prefill_time = loop_start - start
     decode_perf = (num_token - 1) / (end - loop_start)
@@ -336,6 +334,7 @@ def cloud_ai_100_exec_kv(
     generated_ids = []
 
     for i in range(0, len(prompt), batch_size):
+        print("Inference iteration =", i//batch_size)
         execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=tokenizer,
             prompt=prompt[i : i + batch_size],
