@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -11,7 +11,6 @@ import shutil
 
 import pytest
 
-from QEfficient.generation.text_generation_inference import check_batch_size_and_num_prompts
 from QEfficient.utils import get_qpc_dir_path
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
@@ -23,7 +22,7 @@ def pytest_addoption(parser):
 
 class ModelSetup:
     """
-    model_setup is a set up class for all the High Level testing script,
+    ModelSetup is a set up class for all the High Level testing script,
     which provides all neccessary objects needed for checking the flow and creation
     of the HL API code.
     """
@@ -116,13 +115,6 @@ class ModelSetup:
             return str(os.path.join(self.onnx_dir_path(), "custom_io_int8.yaml"))
         else:
             return str(os.path.join(self.onnx_dir_path(), "custom_io_fp16.yaml"))
-
-    def check_batch_size_for_asserion_error(self):
-        try:
-            result = check_batch_size_and_num_prompts(self.prompt, self.prompts_txt_file_path, self.batch_size)
-            return {"result": result, "error": None}
-        except AssertionError as e:
-            return {"result": None, "error": str(e)}
 
 
 @pytest.fixture

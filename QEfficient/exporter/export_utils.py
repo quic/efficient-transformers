@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -319,12 +319,12 @@ def run_model_on_ort(
         past_value_mean = past_key_sum / num
         print(f"past_keys (mean) \t\t {past_key_mean}")
         print(f"past_value (mean) \t\t {past_value_mean}")
-        print("\n=============================================================\n")
+        print("\n=====================================================================\n")
 
         return input_names, ort_outputs
     except Exception as e:
         model = onnx.load(onnx_path, load_external_data=False)
         input_names = [x.name for x in model.graph.input]
         print(f"Failed to run the onnx {onnx_path} model in onnx runtime:%s", e)
-        print("\n=============================================================\n")
+        print("\n=====================================================================\n")
         return input_names, None

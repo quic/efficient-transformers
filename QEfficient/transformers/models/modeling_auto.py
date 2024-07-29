@@ -14,7 +14,6 @@ from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
-from QEfficient.generation.text_generation_inference import get_compilation_dims
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
@@ -75,8 +74,8 @@ class QEFFTransformersBase(QEFFBaseModel):
         This method accepts All the parameters that are acceptable by transformers.AutoModelForCausalLM.
         There are few additional parameters that this method can take.
         ---------
-        :param transform: bool. Whether to optimize model for KV retention; default is True. Pass False to get BertStyle model.
-        :param model_card_name: str. HuggingFace model card name or name of the model if custom, used for deciding folder name while saving ONNX/qpc files.
+        :transform: bool. Whether to optimize model for KV retention; default is True. Pass False to get BertStyle model.
+        :model_card_name: str. HuggingFace model card name or name of the model if custom, used for deciding folder name while saving ONNX/qpc files.
         """
         model_card_name = kwargs.pop(
             "model_card_name", None
@@ -185,15 +184,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             self.device_id is not None
         ), "please pass valid device_id as input argument"  # FIXME: replace with isinstance
         generation_len = kwargs.pop("generation_len", None)
-        batch_size, ctx_len = get_compilation_dims(qpc_path=self.qpc_path)
         return QEfficient.cloud_ai_100_exec_kv(
-            batch_size,
-            self.tokenizer,
-            self.qpc_path,
-            prompt=prompts,
-            device_id=self.device_id,
-            generation_len=generation_len,
-            ctx_len=ctx_len,
+            self.tokenizer, self.qpc_path, prompt=prompts, device_id=self.device_id, generation_len=generation_len
         )
 
 
