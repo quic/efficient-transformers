@@ -42,10 +42,10 @@ class CloudAI100ExecInfo:
     total_time: float
 
     def __repr__(self):
-        return f"Prefill time a.k.a TTFT is= {round(self.prefill_time, 2)} \n \
-                Decode token/sec is= {round(self.decode_perf * self.batch_size, 2)} \n \
-                Total token/sec is= {round(self.total_perf * self.batch_size, 2)} \n \
-                Total (E2E) inference time is= {round(self.total_time, 2)}"
+        return f"Prefill time a.k.a TTFT is= {round(self.prefill_time, 2)}\
+        \nDecode token/sec is= {round(self.decode_perf * self.batch_size, 2)}\
+        \nTotal token/sec is= {round(self.total_perf * self.batch_size, 2)}\
+        \nTotal (E2E) inference time is= {round(self.total_time, 2)}"
 
 
 io_files = []
