@@ -105,7 +105,7 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
 
     onnx_dir_path = os.path.join(model_card_dir, "onnx")
     clipped_onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
-    unclipped_onnx_model_path = clipped_onnx_model_path.replace("_kv_clipped_fp16.onnx", ".onnx")
+    unclipped_onnx_model_path = clipped_onnx_model_path.replace("_clipped_fp16.onnx", ".onnx")
 
     # Compute the boolean indicating if the ONNX model exists
     onnx_exists_bool = False
