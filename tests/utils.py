@@ -83,11 +83,11 @@ def set_up(model_config, device_group=[0]):
     """
     Set up function to set up the test environment for TestQEfficientModel class
     """
-    if model_config['model_name'] == "microsoft/Phi-3-mini-4k-instruct":
+    if model_config["model_name"] == "microsoft/Phi-3-mini-4k-instruct":
         n_layer = 2  # test only 2 layer models
     else:
         n_layer = 1
-    
+
     model_config["n_layer"] = n_layer
 
     mxfp6 = False
