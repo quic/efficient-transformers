@@ -113,7 +113,7 @@ def compile(
     **kwargs,
 ) -> str:
     """
-    API to compile the ONNX Model on Cloud AI 100 Platform with given config.
+    Helper function used by compile CLI app for compiling the Onnx Model on Cloud AI 100 Platform with given config.
     ---------
 
     :onnx_path: str. Generated Onnx Model Path.
@@ -137,10 +137,7 @@ def compile(
     )
 
     # Select the customIO config based on the mx flag.
-    if mxint8:
-        custom_io_file_name = "custom_io_int8.yaml"
-    else:
-        custom_io_file_name = "custom_io_fp16.yaml"
+    custom_io_file_name = "custom_io_int8.yaml" if mxint8 else "custom_io_fp16.yaml"
 
     if custom_io_file_path is None:
         custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)

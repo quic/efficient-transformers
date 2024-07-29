@@ -34,14 +34,14 @@ def convert_to_cloud_bertstyle(
     """
     Function to convert the model to Bertstyle approach.
     Bertstyle Approach:
-        1. No Prefill/Decode sepeartly compiled
-        2. No KV retaintion logic.
-        3. KV is everytime computed for all the tokens until EOS/max_length
+        1. No Prefill/Decode separably compiled
+        2. No KV retention logic.
+        3. KV is every time computed for all the tokens until EOS/max_length
 
     Args:
         model_name (str): The name of the model to be used.
         qeff_model (QEFFBaseModel): Transformed KV torch model to be used
-        tokenizer (HF AutoTokenizer): Tokenzier to prepare inputs.
+        tokenizer (HF AutoTokenizer): Tokenizer to prepare inputs.
         onnx_dir_path (str, optional): The path where the model is stored. If None, the model is loaded from the default location.
         seq_len (int, optional): The length of the sequence. Default is 128.
     """
@@ -192,7 +192,8 @@ def export_kvstyle_transformed_model_to_onnx(
     for _, p in enumerate(transformed_model.parameters()):
         p.requires_grad_(False)
 
-    assert seq_len > 0, "Need seq_len to be greater than zero"
+    if seq_len <= 0:
+        raise ValueError(f"Need seq_len to be greater than zero, got seq_len={seq_len}")
 
     # Preprocess inputs
     # Build inputs for prefill

@@ -19,7 +19,7 @@ class ApiRunner:
     ApiRunner class is responsible for running:
     ---------
 
-    1. Huggingface PyTorch model
+    1. HuggingFace PyTorch model
     2. Transformed KV Pytorch Model
     3. ONNX model on ONNXRT
     4. ONNX model on Cloud AI 100
@@ -51,7 +51,7 @@ class ApiRunner:
     @torch.no_grad()
     def run_hf_model_on_pytorch(self, model_hf):
         """
-        Function responsible for running Huggingface PyTorch model and return the output tokens
+        Function responsible for running HuggingFace PyTorch model and return the output tokens
         --------
 
         :model_hf: torch.nn.module. Original PyTorch model

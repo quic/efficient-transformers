@@ -31,7 +31,7 @@ def get_onnx_model_path(
     ---------
 
     :model_name: str. Hugging Face Model Card name, Example: "gpt2"
-    :cache_dir: str. Cache dir where downloaded huggingface files are stored.
+    :cache_dir: str. Cache dir where downloaded HuggingFace files are stored.
     :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
     :hf_token: str. HuggingFace login token to access private repos.
     :local_model_dir: str. Path to custom model weights and config files.
@@ -75,7 +75,7 @@ def main(
     ---------
 
     :model_name: str. Hugging Face Model Card name, Example: gpt2
-    :cache_dir: str. Cache dir to store the downloaded huggingface files.
+    :cache_dir: str. Cache dir to store the downloaded HuggingFace files.
     :hf_token: str. HuggingFace login token to access private repos.
     :local_model_dir: str. Path to custom model weights and config files.
     """

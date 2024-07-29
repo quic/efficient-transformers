@@ -57,7 +57,7 @@ def main(
     :mxfp6: bool. Enable compilation for MXFP6 precision
     :mxint8: Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
     :local_model_dir: str. Path to custom model weights and config files.
-    :cache_dir: str. Cache dir where downloaded huggingface files are stored.
+    :cache_dir: str. Cache dir where downloaded HuggingFace files are stored.
     :hf_token: str. HuggingFace login token to access private repos.
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
@@ -115,7 +115,7 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Inference command, the model will be downloaded from HF, optmized, compiled, executed on Cloud AI 100"
+        description="Inference command, the model will be downloaded from HF, optimized, compiled, executed on Cloud AI 100"
     )
     parser.add_argument("--model-name", "--model_name", required=True, help="HF Model card name/id")
     parser.add_argument(
@@ -157,7 +157,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--prompt",
         type=lambda prompt: prompt.split("|"),
-        help="Input prompt, if executing for batch size>1, pass input prompts in single string but seperate with pipe (|) symbol",
+        help="Input prompt, if executing for batch size>1, pass input prompts in single string but separate with pipe (|) symbol",
     )
     parser.add_argument(
         "--prompts_txt_file_path",

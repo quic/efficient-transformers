@@ -25,8 +25,8 @@ class CloudAI100ExecInfo:
     """
     holds all the information about Cloud AI 100 execution
     :batch_size: int
-    :generated_texts: List[str]
-    :generated_ids: np.ndarray
+    :generated_texts: Union[List[List[str]], List[str]]
+    :generated_ids: Union[List[np.ndarray], np.ndarray]
     :prefill_time: float
     :decode_perf: float
     :total_perf: float
@@ -34,15 +34,18 @@ class CloudAI100ExecInfo:
     """
 
     batch_size: int
-    generated_texts: List[str]
-    generated_ids: np.ndarray
+    generated_texts: Union[List[str], List[List[str]]]
+    generated_ids: Union[List[np.ndarray], np.ndarray]
     prefill_time: float
     decode_perf: float
     total_perf: float
     total_time: float
 
     def __repr__(self):
-        return f"Prefill time a.k.a TTFT is= {round(self.prefill_time, 2)} \nDecode token/sec is= {round(self.decode_perf * self.batch_size, 2)} \nTotal token/sec is= {round(self.total_perf * self.batch_size, 2)} \nTotal (E2E) inference time is= {round(self.total_time, 2)}"
+        return f"Prefill time a.k.a TTFT is= {round(self.prefill_time, 2)} \n \
+                Decode token/sec is= {round(self.decode_perf * self.batch_size, 2)} \n \
+                Total token/sec is= {round(self.total_perf * self.batch_size, 2)} \n \
+                Total (E2E) inference time is= {round(self.total_time, 2)}"
 
 
 io_files = []
@@ -143,7 +146,7 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
 def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
     assert (
         prompt is not None or prompts_txt_file_path is not None
-    ), "Please pass atleast one argument either using --prompt or --prompts_txt_file_path"
+    ), "Please pass at least one argument either using --prompt or --prompts_txt_file_path"
     if prompts_txt_file_path is not None:
         if prompt is not None:
             logger.warning("Found inputs passed using txt file as well as CLI, taking inputs from given txt file")
