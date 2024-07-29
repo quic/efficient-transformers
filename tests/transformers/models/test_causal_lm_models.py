@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -8,61 +8,11 @@
 import json
 
 import pytest
-from transformers import AutoConfig, AutoModelForCausalLM
 
-from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id
 from tests.utils import get_cloud_ai_100_tokens, set_up
 
 TEST_CONFIG_FILE_PATH = "tests/config.json"
-
-
-def get_config(model_config):
-    """
-    Function to get config info from model_config
-    :param model_config: Dict containing model configuration
-    :return model_config - Dict
-    """
-    config = AutoConfig.from_pretrained(model_config["model_name"])
-    if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
-        n_heads = config.n_head
-        d_head = config.n_embd // config.n_head
-        n_layer = 1  # config.n_layer
-    elif hasattr(config, "num_key_value_heads") and hasattr(
-        config, "num_attention_heads"
-    ):  # Check for num_key_value_heads (Llama/Mistral)
-        n_heads = config.num_key_value_heads
-        d_head = config.hidden_size // config.num_attention_heads
-        n_layer = 1  # config.num_hidden_layers
-    elif (
-        hasattr(config, "auto_map") and "modeling_mpt.MPTForCausalLM" in config.auto_map["AutoModelForCausalLM"]
-    ):  # Check for MPT
-        n_heads = config.n_heads
-        d_head = config.d_model // config.n_heads
-        n_layer = 1  # config.n_layers
-    elif hasattr(config, "ffn_config") and config.ffn_config["moe_top_k"]:  # Check for Dbrx
-        if config.attn_config.kv_n_heads is not None:
-            n_heads = config.attn_config.kv_n_heads
-            d_head = config.d_model // config.n_heads
-            n_layer = 1  # config.n_layers
-    elif hasattr(config, "multi_query"):  # Check for Falcon
-        multi_query_value = getattr(config, "multi_query")
-        if multi_query_value:
-            n_heads = 1  # MQA
-            d_head = config.hidden_size // config.num_attention_heads
-            n_layer = 1  # Due to multi query
-        else:
-            n_heads = config.num_attention_heads
-            d_head = config.hidden_size // config.num_attention_heads
-            n_layer = 1
-    else:
-        raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
-
-    model_config["n_layer"] = n_layer
-    model_config["model_class"] = AutoModelForCausalLM
-    model_config["padding_shape"] = [1, n_heads, Constants.CTX_LEN, d_head]
-
-    return model_config
 
 
 @pytest.mark.parametrize(
@@ -80,7 +30,7 @@ class TestQEfficientModels:
         with open(TEST_CONFIG_FILE_PATH, "r") as f:
             configs = json.load(f)
             for model_config in configs["models"]:
-                cls.model_configs.append(get_config(model_config))
+                cls.model_configs.append(model_config)
 
         cls.setup_infos = {model_config["model_name"]: set_up(model_config) for model_config in cls.model_configs}
 

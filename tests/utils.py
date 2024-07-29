@@ -1,14 +1,15 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-24 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
 
 import functools
 import os
-import shutil
 import unittest
+
+from transformers import AutoModelForCausalLM
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100
@@ -35,52 +36,20 @@ def skip_if_mq_not_enabled(test_method):
     return wrapper
 
 
-def prepare_work_dir(work_dir):
-    """
-    Function to create the work directory location
-
-    :param type(str): path to the workspace directory
-    :return: folder is created successfully
-    """
-    temp_dir = os.path.join(work_dir)
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir)
-    # create empty temp dir
-    os.makedirs(temp_dir)
-
-
-def remove_temp_dir(work_dir):
-    """
-    Function to remove the temp work directory location
-
-    :param type(str): path to the workspace directory
-    """
-    temp_dir = os.path.join(work_dir)
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir)
-
-
-def get_tokenizer(model_name):
-    """
-    Function to get tokenizer info from transformers.AutoTokenizer
-    :param model_name: str
-    :return tokenizer
-    """
-    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
-    return tokenizer
-
-
 def load_pytorch_model(model_config):
     """
     Function to load model from huggingface and transform to KV model
-    :param model_config: json object
-    :return model_hf
+    --------
+
+    :model_config: Dict
+
+    :return model_hf, params
     """
     model_path = hf_download(
         repo_id=model_config["model_name"],
-        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
+        ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
-    model_hf = model_config["model_class"].from_pretrained(
+    model_hf = AutoModelForCausalLM.from_pretrained(
         model_path, use_cache=True, num_hidden_layers=model_config["n_layer"], attn_implementation="eager"
     )  # Run models for single layers only
     params = sum(p.numel() for p in model_hf.parameters())
@@ -88,23 +57,16 @@ def load_pytorch_model(model_config):
     return model_hf, params
 
 
-def transform_pt_model_with_qeff(model_hf):
-    """
-    Function to take huggingface model and transform to KV model
-    :param model_hf: pytorch model
-    :return model_kv
-    """
-    model_kv = transform_lm(model_hf)
-    model_kv.eval()
-    return model_kv
-
-
-def export_onnx(model_kv, tokenizer, model_name, model_class):
+def export_onnx(model_kv, tokenizer, model_name):
     """
     Function to export onnx model
-    :param model_name: str
-    :param model_class: type
-    :return onnx_model_path : str
+    ---------
+
+    :model_kv: transformed pytorch model to be exported to ONNX.
+    :tokenizer: model tokenizer.
+    :model_name: str.
+
+    :return base_path, onnx_model_path : str
     """
     onnx_dir_path = os.path.join(QEFF_MODELS_DIR, model_name)
     base_path, onnx_model_path = qualcomm_efficient_converter(
@@ -120,41 +82,43 @@ def export_onnx(model_kv, tokenizer, model_name, model_class):
 def set_up(model_config, device_group=[0]):
     """
     Set up function to set up the test environment for TestQEfficientModel class
-    :param None
     """
-    tokenizer = get_tokenizer(model_config["model_name"])
-    api_runner = ApiRunner(
-        tokenizer,
-        Constants.INPUT_STRING,
-        Constants.PROMPT_LEN,
-        Constants.CTX_LEN,
-    )
+    if model_config["model_name"] == "microsoft/Phi-3-mini-4k-instruct":
+        n_layer = 2  # test only 2 layer models
+    else:
+        n_layer = 1
+
+    model_config["n_layer"] = n_layer
+
     mxfp6 = False
     model_hf, params = load_pytorch_model(model_config)
     qpc_gt_32gb = is_qpc_size_gt_32gb(params, mxfp6)
+
+    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_config["model_name"])
+    config = model_hf.config
+    batch_size = len(Constants.INPUT_STR)
+    api_runner = ApiRunner(
+        batch_size,
+        tokenizer,
+        config,
+        Constants.INPUT_STR,
+        Constants.PROMPT_LEN,
+        Constants.CTX_LEN,
+    )
     try:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
     except Exception as e:
         print(f"Pytorch HuggingFace Pytorch Model run failed due to : {e}")
 
-    model_kv = transform_pt_model_with_qeff(model_hf)
-    pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(
-        model_kv,
-        model_config["n_layer"],
-        model_config["padding_shape"],
-    )
+    model_kv = transform_lm(model_hf)
+    pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(model_kv)
 
     base_path, onnx_model_path = export_onnx(
         model_kv,
         tokenizer,
         model_config["model_name"],
-        model_config["model_class"],
     )
-    ort_tokens = api_runner.run_kv_model_on_ort(
-        onnx_model_path,
-        model_config["n_layer"],
-        model_config["padding_shape"],
-    )
+    ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path)
 
     setup_info = {}
     setup_info["model_config"] = model_config
@@ -188,15 +152,11 @@ def get_cloud_ai_100_tokens(setup_info):
             aic_enable_depth_first=False,
             device_group=setup_info["device_group"],
         )
-        from QEfficient.generation.cloud_infer import QAICInferenceSession
-
-        session = QAICInferenceSession(test_qpcs_path, device_id, enable_debug_logs=False)
         try:
             cloud_ai_100_tokens = setup_info["api_runner"].run_kv_model_on_cloud_ai_100(
-                session,
-                setup_info["model_config"]["n_layer"],
-                setup_info["model_config"]["padding_shape"],
+                test_qpcs_path, setup_info["device_group"]
             )
         except Exception as e:
             print(f"ONNX Model run on Cloud AI 100 failed due to : {e}")
+
         return cloud_ai_100_tokens

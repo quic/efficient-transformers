@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -28,6 +28,13 @@ def get_onnx_model_path(
 ):
     """
     exports the model to onnx if pre-exported file is not found and returns onnx_model_path
+    ---------
+
+    :model_name: str. Hugging Face Model Card name, Example: "gpt2"
+    :cache_dir: str. Cache dir where downloaded HuggingFace files are stored.
+    :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
+    :hf_token: str. HuggingFace login token to access private repos.
+    :local_model_dir: str. Path to custom model weights and config files.
     """
     onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(model_name)
     if onnx_path_exists:
@@ -64,10 +71,11 @@ def main(
     local_model_dir: Optional[str] = None,
 ) -> None:
     """
-    Api() for exporting to Onnx Model.
+    Helper function used by export CLI app for exporting to ONNX Model.
     ---------
-    :param model_name: str. Hugging Face Model Card name, Example: gpt2
-    :cache_dir: str. Cache dir to store the downloaded huggingface files.
+
+    :model_name: str. Hugging Face Model Card name, Example: gpt2
+    :cache_dir: str. Cache dir to store the downloaded HuggingFace files.
     :hf_token: str. HuggingFace login token to access private repos.
     :local_model_dir: str. Path to custom model weights and config files.
     """
