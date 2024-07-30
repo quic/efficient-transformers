@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -28,12 +28,6 @@ def test_infer(setup, mocker):
     Ref: https://pytest-mock.readthedocs.io/en/latest/usage.html
     """
     ms = setup
-    result = ms.check_batch_size_for_asserion_error()
-    if result["error"] is not None:
-        pytest.skip(f'...Skipping Because batch size is not compatible with the number of prompts: {result["error"]}')
-    assert result["result"] is not None
-
-    check_batch_size_and_num_prompts_spy = mocker.spy(QEfficient.cloud.infer, "check_batch_size_and_num_prompts")
     load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.infer, "load_hf_tokenizer")
     qpc_exists_spy = mocker.spy(QEfficient.cloud.infer, "qpc_exists")
     get_onnx_model_path_spy = mocker.spy(QEfficient.cloud.infer, "get_onnx_model_path")
@@ -54,8 +48,6 @@ def test_infer(setup, mocker):
         mxint8=ms.mxint8,
         device_group=ms.device_group,
     )
-    # prompt fucntion check
-    check_batch_size_and_num_prompts_spy.assert_called_once()
     # tokenizer check
     load_hf_tokenizer_spy.assert_called_once()
     # qpc exist check

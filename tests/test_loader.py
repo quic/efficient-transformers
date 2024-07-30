@@ -18,12 +18,7 @@ model_name_to_params_dict: Dict[str, Dict[str, Any]] = {
         "qeff_class": QEFFAutoModelForCausalLM,
         "hf_class": GPT2LMHeadModel,
         "prompt": "Equator is",
-    },
-    # "TinyLlama/TinyLlama-1.1B-Chat-v1.0":{
-    #     "qeff_class": QEFFAutoModelForCausalLM,
-    #     "hf_class": LlamaForCausalLM,
-    #     "prompt": "Equator is"
-    # }
+    }
 }
 
 model_names = model_name_to_params_dict.keys()
@@ -38,9 +33,7 @@ def test_qeff_auto_model_for_causal_lm(model_name: str):
 
     qpc_dir_path = model.compile(
         num_cores=14,
-        device_group=[
-            0,
-        ],
+        device_group=[0],
         batch_size=1,
         prompt_len=32,
         ctx_len=128,
