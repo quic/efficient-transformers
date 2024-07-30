@@ -24,7 +24,7 @@ pipeline
                     cd data/
                     . /opt/qeff-env/bin/activate
                     pip install --upgrade pip setuptools &&
-                    pip install .[test] &&
+                    pip install .[test]"
                 '''
             }
         }
@@ -52,6 +52,10 @@ pipeline
     {
          always 
          {
+             sh 
+            '''
+                docker rm -f ${CONTAINER_NAME}
+            '''
             junit 'tests/tests_log.xml'
             echo 'Cleaning Workspace'
             deleteDir() 
