@@ -20,10 +20,11 @@ class OnnxTransform:
         raise TypeError("Transform classes are not to be instantiated. Directly use the `apply` method.")
 
     @classmethod
-    def apply(cls, model: ModelProto) -> [ModelProto, bool]:
+    def apply(cls, model: ModelProto, onnx_base_dir: Optional[str] = None) -> [ModelProto, bool]:
         """
         Override this class to apply a transformation.
         :param model: The model's ONNX graph to transform
+        :param onnx_base_dir: Directory where the model and external files are present
 
         :returns: ONNX graph after applying the transform
         :returns: Boolean indicating whether tranform was applied
