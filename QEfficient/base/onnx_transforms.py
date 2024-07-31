@@ -5,7 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 from onnx import ModelProto, external_data_helper, numpy_helper
@@ -20,14 +20,14 @@ class OnnxTransform:
         raise TypeError("Transform classes are not to be instantiated. Directly use the `apply` method.")
 
     @classmethod
-    def apply(cls, model: ModelProto, onnx_base_dir: Optional[str] = None) -> [ModelProto, bool]:
+    def apply(cls, model: ModelProto, onnx_base_dir: Optional[str] = None) -> Tuple[ModelProto, bool]:
         """
         Override this class to apply a transformation.
         :param model: The model's ONNX graph to transform
         :param onnx_base_dir: Directory where the model and external files are present
 
         :returns: ONNX graph after applying the transform
-        :returns: Boolean indicating whether tranform was applied
+        :returns: Boolean indicating whether transform was applied
         """
         raise NotImplementedError("Use subclasses for ONNX transform")
 
@@ -38,7 +38,7 @@ class FP16Clip(OnnxTransform):
     """
 
     @classmethod
-    def apply(cls, model: ModelProto, onnx_base_dir: Optional[str] = None) -> [ModelProto, bool]:
+    def apply(cls, model: ModelProto, onnx_base_dir: Optional[str] = None) -> Tuple[ModelProto, bool]:
         finfo = np.finfo(np.float16)
         fp16_max = finfo.max
         fp16_min = finfo.min

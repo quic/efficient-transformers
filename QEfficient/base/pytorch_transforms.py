@@ -5,7 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Dict, Type
+from typing import Dict, Tuple, Type
 
 from torch import nn
 
@@ -19,13 +19,13 @@ class PytorchTransform:
         raise TypeError("Transform classes are not to be instantiated. Directly use the `apply` method.")
 
     @classmethod
-    def apply(cls, model: nn.Module) -> [nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         """
         Override this class method to apply a transformation.
-        :param model: The torch module to transform, this module may be tranformed in-place
+        :param model: The torch module to transform, this module may be transformed in-place
 
-        :returns: Torch module after applying the tranform
-        :returns: Boolean indicating whether tranform was applied
+        :returns: Torch module after applying the transform
+        :returns: Boolean indicating whether transform was applied
         """
         raise NotImplementedError("Use subclasses for Pytorch transform")
 
@@ -38,7 +38,7 @@ class ModuleMapping(PytorchTransform):
     _module_mapping: Dict[Type[nn.Module], Type[nn.Module]]
 
     @classmethod
-    def apply(cls, model: nn.Module) -> [nn.Module, bool]:
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         transformed = False
         for module in model.modules():
             if repl_module := cls._module_mapping.get(type(module)):
