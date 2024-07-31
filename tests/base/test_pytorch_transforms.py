@@ -36,6 +36,7 @@ def test_module_mapping_transform():
     y1 = model(x)
     assert torch.any(y1 != x)
 
-    model = TestTransform.apply(model)
+    model, transformed = TestTransform.apply(model)
+    assert transformed
     y2 = model(x)
     assert torch.all(y2 == x)
