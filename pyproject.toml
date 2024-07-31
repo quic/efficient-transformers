@@ -56,3 +56,4 @@ lint.extend-select = ["I"]
 
 [tool.pytest.ini_options]
 doctest_optionflags = "NUMBER NORMALIZE_WHITESPACE ELLIPSIS"
+[]
