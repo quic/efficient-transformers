@@ -81,7 +81,7 @@ def main(
         #########
         # Compile
         #########
-        generated_qpc_path = QEfficient.compile(
+        _ = QEfficient.compile(
             onnx_path=onnx_model_path,
             qpc_path=os.path.dirname(
                 qpc_dir_path
@@ -96,9 +96,6 @@ def main(
             mos=mos,
             device_group=device_group,
         )
-        assert (
-            generated_qpc_path == qpc_dir_path
-        ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
 
     #########
     # Execute

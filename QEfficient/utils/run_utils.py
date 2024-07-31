@@ -14,6 +14,7 @@ from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.utils.generate_inputs import InputHandler
 
 
+# TODO: Deprecate this class and encourage the use of `QeffAutoModel...` classes
 class ApiRunner:
     """
     ApiRunner class is responsible for running:
@@ -133,19 +134,22 @@ class ApiRunner:
         :return generated_ids: numpy.ndarray. Generated output tokens
         """
 
-        # todo:vbaddi; find a better version to do this changes
-        # Currently the gathernd invalid index is set to INT MAX(FP16) and hence fails in OnnxRuntime
-        # Changing the constant value from INT MAX to -1. Fixes the issue.
+        # Replace invalid index value for INT32 max to 0 using add_initializer
         m = onnx.load(model_path, load_external_data=False)
+        # NOTE: OrtValue objects should be kept around until the session is run, hence this dict is required
+        added_initializers = {}
         for node in m.graph.node:
             if node.op_type == "Constant":
                 np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t)
-                if len(np_tensor.shape) == 0 and np_tensor.item() == 65504:
-                    node.attribute[0].t.raw_data = np.array(-1).tobytes()
+                if len(np_tensor.shape) == 0 and np_tensor.item() == 2147483647:
+                    added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(
+                        np.array(0, np_tensor.dtype)
+                    )
 
-        onnxruntime_model = model_path[:-5] + "_ort.onnx"
-        onnx.save(m, onnxruntime_model)
-        session = onnxruntime.InferenceSession(onnxruntime_model)
+        session_options = onnxruntime.SessionOptions()
+        for name, value in added_initializers.items():
+            session_options.add_initializer(name, value)
+        session = onnxruntime.InferenceSession(model_path, session_options)
 
         generated_ids = []
         inputs = self.input_handler.prepare_ort_inputs()
