@@ -19,7 +19,7 @@ pipeline
             steps
             {
                 sh '''
-                    docker run --privileged -dit --name ${CONTAINER_NAME} -v ./:/data -v  /home/ubuntu/.cache/huggingface/hub:/root/.cache/huggingface/hub docker-registry.qualcomm.com/qraniumtest/qranium:master_latest
+                    docker run --privileged -dit --name ${CONTAINER_NAME} -v ./:/data -v  ${huggingface_hub_path}:${docker_huggingface_hub_path} ${docker_latest}:master_latest
                     docker exec ${CONTAINER_NAME} bash -c "
                     cd /data
                     . /opt/qeff-env/bin/activate
@@ -43,6 +43,7 @@ pipeline
                     pytest -W ignore -s -v tests -o junit_logging=all --junitxml=tests/tests_log.xml &&
                     deactivate &&
                     exit"
+                    sudo chown -R ubuntu ./*
                     '''     
                 }
             }
@@ -52,12 +53,23 @@ pipeline
     {
          always 
          {
-             sh '''
-                docker rm -f ${CONTAINER_NAME}
-                '''
-            junit 'tests/tests_log.xml'
+            script
+            {
+                try 
+                {
+                    sh '''
+                    docker ps
+                    docker rm -f ${CONTAINER_NAME}
+                    '''
+                } 
+                catch (err) 
+                {
+                    echo "Failed to delete container ${CONTAINER_NAME}: ${err}"
+                }
+            }
+            
             echo 'Cleaning Workspace'
-            deleteDir() 
+            deleteDir()
          }
     }
        
