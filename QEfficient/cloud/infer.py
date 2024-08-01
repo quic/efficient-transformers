@@ -12,8 +12,16 @@ from typing import List, Optional
 
 import QEfficient
 from QEfficient.cloud.export import get_onnx_model_path
+<<<<<<< HEAD
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
+=======
+from QEfficient.generation.text_generation_inference import (
+    check_batch_size_and_num_prompts,
+    cloud_ai_100_exec_kv,
+)
+from QEfficient.utils import get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
+>>>>>>> 207d39b (Removed cache path from infer and export module, Updated default cache path in constants)
 from QEfficient.utils.logging_utils import logger
 
 """
