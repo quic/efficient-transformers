@@ -110,14 +110,12 @@ def set_up(model_config, device_group=[0]):
     except Exception as e:
         print(f"Pytorch HuggingFace Pytorch Model run failed due to : {e}")
 
-    model_kv = transform_lm(model_hf)
-    pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(model_kv)
+    # model_kv = transform_lm(model_hf)
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, f"{model_config['model_name']}")
 
-    base_path, onnx_model_path = export_onnx(
-        model_kv,
-        tokenizer,
-        model_config["model_name"],
-    )
+    pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
+
+    onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path)
 
     setup_info = {}
@@ -127,7 +125,6 @@ def set_up(model_config, device_group=[0]):
     setup_info["qpc_gt_32gb"] = qpc_gt_32gb
     setup_info["pytorch_hf_tokens"] = pytorch_hf_tokens
     setup_info["pytorch_kv_tokens"] = pytorch_kv_tokens
-    setup_info["base_path"] = base_path
     setup_info["onnx_model_path"] = onnx_model_path
     setup_info["ort_tokens"] = ort_tokens
     return setup_info
@@ -139,7 +136,8 @@ def get_cloud_ai_100_tokens(setup_info):
     :param None
     """
     device_id = get_available_device_id()
-    tests_qpc_dir = os.path.join(setup_info["base_path"], "tests_qpc")
+    base_path = os.path.dirname(setup_info["onnx_model_path"])
+    tests_qpc_dir = os.path.join(base_path, "tests_qpc")
     os.makedirs(tests_qpc_dir, exist_ok=True)
     if device_id:
         _, test_qpcs_path = compile_kv_model_on_cloud_ai_100(
@@ -148,7 +146,7 @@ def get_cloud_ai_100_tokens(setup_info):
             num_cores=14,
             base_path=tests_qpc_dir,
             mxfp6=False,
-            custom_io_path=os.path.join(setup_info["base_path"], "custom_io_fp16.yaml"),
+            custom_io_path=os.path.join(base_path, "custom_io_fp16.yaml"),
             aic_enable_depth_first=False,
             device_group=setup_info["device_group"],
         )

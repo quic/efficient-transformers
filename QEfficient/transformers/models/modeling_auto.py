@@ -14,6 +14,7 @@ from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
+from QEfficient.base.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
@@ -52,15 +53,12 @@ class QEFFTransformersBase(QEFFBaseModel):
         )
         self.kwargs = kwargs
         self._tokenizer = None
+        self.is_transformed = False
         if kwargs.get("transform", True):
             self.transform()
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}\n" + self.model.__repr__()
-
-    @property
-    def is_transformed(self) -> bool:
-        return getattr(self.model, "qeff_transformed", False)
 
     @property
     def tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
@@ -95,16 +93,17 @@ class QEFFTransformersBase(QEFFBaseModel):
         tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=self.pretrained_model_name_or_path, **self.kwargs)
         return tokenizer
 
-    def transform(self):
-        # FIXME: break down transform into optmization passes i.e. HW specific optimization(RMSNorm), KV retention pass etc.
-        QEfficient.transform(self)
-        return self
-
 
 class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
     QEFF class for manipulating any causal language model from HuggingFace hub.
     """
+    _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
+
+    def transform(self):
+        for transform in self._pytorch_transforms:
+            transform.apply(self.model)
+        self.is_transformed = True
 
     def execute(self, *args, **kwargs):  # type: ignore
         raise NotImplementedError("Reached too far!!")
