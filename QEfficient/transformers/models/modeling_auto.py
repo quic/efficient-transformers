@@ -98,6 +98,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
     QEFF class for manipulating any causal language model from HuggingFace hub.
     """
+
     _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
 
     def transform(self):
