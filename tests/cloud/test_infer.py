@@ -47,7 +47,7 @@ def test_infer(setup, mocker):
         mxfp6=ms.mxfp6,
         mxint8=ms.mxint8,
         device_group=ms.device_group,
-        cache_dir=os.environ.get("docker_huggingface_hub_path"),
+        cache_dir=os.environ.get("DOCKER_HF_PATH"),
     )
     # tokenizer check
     load_hf_tokenizer_spy.assert_called_once()
