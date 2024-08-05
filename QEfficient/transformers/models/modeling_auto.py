@@ -10,12 +10,10 @@ from typing import Any, List, Optional, Union
 
 import torch.nn as nn
 from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast
-from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
-from QEfficient.base.pytorch_transforms import CustomOpsTransform, KVCacheTransform
-from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
+from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
@@ -33,12 +31,6 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __init__(self, model: nn.Module, pretrained_model_name_or_path: str, **kwargs) -> None:
         super().__init__(model)
-        assert (
-            model.__class__ in MODEL_FOR_CAUSAL_LM_MAPPING.values()
-            or
-            # FIXME: Use model architectures here instead of complete dictionary TransformersToQEffModulesDict
-            model.__class__ in TransformersToQEffModulesDict.values()
-        ), f"Given model{model.__class__.__name__} could not be found in transformers library i.e. {MODEL_FOR_CAUSAL_LM_MAPPING.values()}"  # type: ignore
         self.model.config.use_cache = (
             True  # Always pass use_cache = True, to get KV values as output during ONNX export
         )

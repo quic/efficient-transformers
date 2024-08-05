@@ -10,41 +10,17 @@ import random
 import pytest
 import torch
 from torch import nn
-from transformers.cache_utils import DynamicCache
+from transformers.models.gpt2.modeling_gpt2 import GPT2Config, GPT2LMHeadModel
 from transformers.models.llama.modeling_llama import LlamaConfig, LlamaForCausalLM
 
-from QEfficient.base.pytorch_transforms import CustomOpsTransform, KVCacheTransform, ModuleMapping
+from QEfficient.base.pytorch_transforms import ModuleMapping
+from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils.logging_utils import logger
 
 
-def get_intermediate_outputs(name, saver_dict):
-    def hook(model, input, output):
-        saver_dict[name] = output
-
-    return hook
-
-
-@torch.no_grad()
-def get_all_kv_cache_transform_intermediate_outputs(llama_model, inputs):
-    model_intermediates = dict()
-    model_handles = []
-
-    for name, module in llama_model.named_modules():
-        if isinstance(module, tuple(KVCacheTransform._module_mapping.keys())) and name != "":
-            model_handles.append(module.register_forward_hook(get_intermediate_outputs(name, model_intermediates)))
-
-    model_out = llama_model(**inputs)
-    [handle.remove() for handle in model_handles]
-    model_intermediates.update({"final_output": model_out})
-    return model_intermediates
-
-
-def compare_original_vs_kv_model_outputs(original_val, kv_val, tolerance=1e-6) -> bool:
-    # Base Case
-    if isinstance(original_val, DynamicCache):
-        # To handle-> KV cache model Cache shape and original model cache shape is different
-        return True
-    elif original_val is None:
+def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6) -> bool:
+    # Base case
+    if original_val is None:
         assert kv_val is None
         return True
     elif isinstance(original_val, torch.Tensor):
@@ -54,27 +30,54 @@ def compare_original_vs_kv_model_outputs(original_val, kv_val, tolerance=1e-6) -
             return False
         return True
 
-    # Call recursively if tuple/dict
+    # Call recursively if tuple/list
     elif isinstance(original_val, (tuple, list)):
         for sub_orig_val, sub_kv_val in zip(original_val, kv_val):
-            if not compare_original_vs_kv_model_outputs(sub_orig_val, sub_kv_val, tolerance):
-                return False
-        return True
-    elif isinstance(original_val, dict) or hasattr(original_val, "__dict__"):
-        for output_name in original_val.keys():
-            sub_orig_val = original_val[output_name]
-            sub_k_val = kv_val[output_name]
-            if isinstance(sub_orig_val, DynamicCache) or output_name == "past_key_values":
-                # To handle mismatch of shapes for past_key_values
-                continue
-            if output_name == "logits":
-                # FIXME: Why is the tolerance need to be so high for logits?
-                tolerance = 0.8
-            if not compare_original_vs_kv_model_outputs(sub_orig_val, sub_k_val, tolerance):
+            if not compare_original_vs_kv_model_pt_outputs(sub_orig_val, sub_kv_val, tolerance):
                 return False
         return True
     else:
         raise TypeError(f"got unexpected type inputs {type(original_val)}")
+
+
+def run_kv_cache_transform_and_test(hf_model, num_hidden_layers, vocab_size, hidden_size, num_attention_heads, num_key_value_heads, ctx_len, input_len):
+    # Run original model
+    input_ids = torch.randint(0, vocab_size, size=(1, input_len))
+    with torch.inference_mode():
+        original_model_outputs = hf_model(input_ids=input_ids, output_hidden_states=True)
+
+    # Apply transform
+    hf_model, transformed = KVCacheTransform.apply(hf_model)
+    assert transformed
+
+    # Prepare KV model inputs
+    padding_shape = [1, num_key_value_heads, ctx_len, hidden_size // num_attention_heads]
+    past_key_values = []
+    for _ in range(num_hidden_layers):
+        past_key = torch.zeros((padding_shape), dtype=torch.float32)
+        past_value = torch.zeros((padding_shape), dtype=torch.float32)
+        pkv = (past_key, past_value)
+        past_key_values.append(pkv)
+
+    # Run KV model
+    with torch.inference_mode():
+        transformed_model_outputs = hf_model(input_ids=input_ids, position_ids=torch.Tensor([range(input_ids.shape[1])]).long(),
+                                         past_key_values=tuple(past_key_values), output_hidden_states=True)
+    
+    assert original_model_outputs.keys() == transformed_model_outputs.keys()
+
+    # FIXME: Tolerance should not be so high for logits
+    assert compare_original_vs_kv_model_pt_outputs(original_model_outputs['logits'], transformed_model_outputs['logits'], tolerance=0.8), "Logits are not matching with tolerance=0.8"
+    assert compare_original_vs_kv_model_pt_outputs(original_model_outputs['hidden_states'], transformed_model_outputs['hidden_states'], tolerance=1e-6)
+    
+    # Slice Past key values based on input_len
+    pkv = transformed_model_outputs['past_key_values'][0]
+    new_pkv = []
+    for past_key_value in pkv:
+        new_pkv.append(past_key_value[:, :, :input_len, :])
+    transformed_model_outputs['past_key_values'] = (tuple(new_pkv),)
+
+    assert compare_original_vs_kv_model_pt_outputs(original_model_outputs['past_key_values'], transformed_model_outputs['past_key_values'], tolerance=1e-10)
 
 
 def test_module_mapping_transform():
@@ -132,19 +135,18 @@ def test_custom_ops_transform(module: nn.Module, hidden_size: int, input_size: i
     assert torch.all(original_output == transformed_model_output)
 
 
+@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
 @pytest.mark.parametrize("hidden_size", [128], ids=lambda x: "hidden_size=" + str(x))
 @pytest.mark.parametrize("intermediate_size", [512], ids=lambda x: "intermediate_size=" + str(x))
-@pytest.mark.parametrize("vocab_size", [32000], ids=lambda x: "vocab_size=" + str(x))
 @pytest.mark.parametrize("num_key_value_heads", [8, 32], ids=lambda x: "num_key_value_heads=" + str(x))
 @pytest.mark.parametrize("num_attention_heads", [32], ids=lambda x: "num_attention_heads=" + str(x))
 @pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-@pytest.mark.parametrize("num_hidden_layers", [1], ids=lambda x: "num_hidden_layers=" + str(x))
+@pytest.mark.parametrize("num_hidden_layers", [1, 3], ids=lambda x: "num_hidden_layers=" + str(x))
 def test_kv_cache_transform_llama(
-    num_hidden_layers, vocab_size, hidden_size, intermediate_size, num_attention_heads, num_key_value_heads, ctx_len
+    num_hidden_layers, hidden_size, intermediate_size, num_attention_heads, num_key_value_heads, ctx_len, input_len
 ) -> None:
     # Create small model
     config = LlamaConfig(
-        vocab_size=vocab_size,
         hidden_size=hidden_size,
         intermediate_size=intermediate_size,
         num_attention_heads=num_attention_heads,
@@ -154,32 +156,26 @@ def test_kv_cache_transform_llama(
     )
     hf_model = LlamaForCausalLM(config=config)
     hf_model.eval()
+    run_kv_cache_transform_and_test(hf_model, num_hidden_layers, config.vocab_size, hidden_size, num_attention_heads, num_key_value_heads, ctx_len, input_len)
 
-    # Run original model
-    input_ids = torch.randint(0, vocab_size, size=(1, 8))
-    original_model_outputs = get_all_kv_cache_transform_intermediate_outputs(hf_model, {"input_ids": input_ids})
 
-    # Apply transform
-    hf_model, transformed = KVCacheTransform.apply(hf_model)
-    assert transformed
-
-    # Prepare KV model inputs
-    padding_shape = [1, num_key_value_heads, ctx_len, hidden_size // num_attention_heads]
-    past_key_values = []
-    for _ in range(num_hidden_layers):
-        past_key = torch.zeros((padding_shape), dtype=torch.float32)
-        past_value = torch.zeros((padding_shape), dtype=torch.float32)
-        pkv = (past_key, past_value)
-        past_key_values.append(pkv)
-
-    # Run KV model
-    transformed_model_outputs = get_all_kv_cache_transform_intermediate_outputs(
-        hf_model,
-        inputs={
-            "input_ids": input_ids,
-            "position_ids": torch.Tensor([range(input_ids.shape[1])]).long(),
-            "past_key_values": tuple(past_key_values),
-        },
+@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
+@pytest.mark.parametrize("n_embd", [192], ids=lambda x: "n_embd=" + str(x))
+@pytest.mark.parametrize("n_inner", [512], ids=lambda x: "n_inner=" + str(x))
+@pytest.mark.parametrize("n_head", [12], ids=lambda x: "n_head=" + str(x))
+@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
+@pytest.mark.parametrize("n_layer", [1, 3], ids=lambda x: "n_layer=" + str(x))
+def test_kv_cache_transform_gpt2(
+    n_layer, n_embd, n_inner, n_head, ctx_len, input_len
+) -> None:
+    # Create small model
+    config = GPT2Config(
+        n_embd=n_embd,
+        n_inner=n_inner,
+        n_head=n_head,
+        n_layer=n_layer,
+        use_cache=True,
     )
-
-    assert compare_original_vs_kv_model_outputs(original_model_outputs, transformed_model_outputs, tolerance=1e-6)
+    hf_model = GPT2LMHeadModel(config=config)
+    hf_model.eval()
+    run_kv_cache_transform_and_test(hf_model, n_layer, config.vocab_size, n_embd, n_head, n_head, ctx_len, input_len)
