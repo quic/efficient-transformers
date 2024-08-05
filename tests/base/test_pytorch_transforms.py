@@ -40,7 +40,9 @@ def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6
         raise TypeError(f"got unexpected type inputs {type(original_val)}")
 
 
-def run_kv_cache_transform_and_test(hf_model, num_hidden_layers, vocab_size, hidden_size, num_attention_heads, num_key_value_heads, ctx_len, input_len):
+def run_kv_cache_transform_and_test(
+    hf_model, num_hidden_layers, vocab_size, hidden_size, num_attention_heads, num_key_value_heads, ctx_len, input_len
+):
     # Run original model
     input_ids = torch.randint(0, vocab_size, size=(1, input_len))
     with torch.inference_mode():
@@ -61,23 +63,33 @@ def run_kv_cache_transform_and_test(hf_model, num_hidden_layers, vocab_size, hid
 
     # Run KV model
     with torch.inference_mode():
-        transformed_model_outputs = hf_model(input_ids=input_ids, position_ids=torch.Tensor([range(input_ids.shape[1])]).long(),
-                                         past_key_values=tuple(past_key_values), output_hidden_states=True)
-    
+        transformed_model_outputs = hf_model(
+            input_ids=input_ids,
+            position_ids=torch.Tensor([range(input_ids.shape[1])]).long(),
+            past_key_values=tuple(past_key_values),
+            output_hidden_states=True,
+        )
+
     assert original_model_outputs.keys() == transformed_model_outputs.keys()
 
     # FIXME: Tolerance should not be so high for logits
-    assert compare_original_vs_kv_model_pt_outputs(original_model_outputs['logits'], transformed_model_outputs['logits'], tolerance=0.8), "Logits are not matching with tolerance=0.8"
-    assert compare_original_vs_kv_model_pt_outputs(original_model_outputs['hidden_states'], transformed_model_outputs['hidden_states'], tolerance=1e-6)
-    
+    assert compare_original_vs_kv_model_pt_outputs(
+        original_model_outputs["logits"], transformed_model_outputs["logits"], tolerance=0.8
+    ), "Logits are not matching with tolerance=0.8"
+    assert compare_original_vs_kv_model_pt_outputs(
+        original_model_outputs["hidden_states"], transformed_model_outputs["hidden_states"], tolerance=1e-6
+    )
+
     # Slice Past key values based on input_len
-    pkv = transformed_model_outputs['past_key_values'][0]
+    pkv = transformed_model_outputs["past_key_values"][0]
     new_pkv = []
     for past_key_value in pkv:
         new_pkv.append(past_key_value[:, :, :input_len, :])
-    transformed_model_outputs['past_key_values'] = (tuple(new_pkv),)
+    transformed_model_outputs["past_key_values"] = (tuple(new_pkv),)
 
-    assert compare_original_vs_kv_model_pt_outputs(original_model_outputs['past_key_values'], transformed_model_outputs['past_key_values'], tolerance=1e-10)
+    assert compare_original_vs_kv_model_pt_outputs(
+        original_model_outputs["past_key_values"], transformed_model_outputs["past_key_values"], tolerance=1e-10
+    )
 
 
 def test_module_mapping_transform():
@@ -156,7 +168,16 @@ def test_kv_cache_transform_llama(
     )
     hf_model = LlamaForCausalLM(config=config)
     hf_model.eval()
-    run_kv_cache_transform_and_test(hf_model, num_hidden_layers, config.vocab_size, hidden_size, num_attention_heads, num_key_value_heads, ctx_len, input_len)
+    run_kv_cache_transform_and_test(
+        hf_model,
+        num_hidden_layers,
+        config.vocab_size,
+        hidden_size,
+        num_attention_heads,
+        num_key_value_heads,
+        ctx_len,
+        input_len,
+    )
 
 
 @pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
@@ -165,9 +186,7 @@ def test_kv_cache_transform_llama(
 @pytest.mark.parametrize("n_head", [12], ids=lambda x: "n_head=" + str(x))
 @pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
 @pytest.mark.parametrize("n_layer", [1, 3], ids=lambda x: "n_layer=" + str(x))
-def test_kv_cache_transform_gpt2(
-    n_layer, n_embd, n_inner, n_head, ctx_len, input_len
-) -> None:
+def test_kv_cache_transform_gpt2(n_layer, n_embd, n_inner, n_head, ctx_len, input_len) -> None:
     # Create small model
     config = GPT2Config(
         n_embd=n_embd,
