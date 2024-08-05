@@ -11,21 +11,26 @@ pipeline
     {
         CONTAINER_NAME = "qeff_container"
     }
+    
     stages 
     {
-        
         stage('Install QEfficient')
         {
             steps
             {
-                sh '''
+
+                script
+                {
+                    sh '''
+                    . ~/.bashrc
                     docker run --privileged -dit --name ${CONTAINER_NAME} -v ./:/data -v  ${huggingface_hub_path}:${docker_huggingface_hub_path} ${docker_latest}:master_latest
                     docker exec ${CONTAINER_NAME} bash -c "
-                    cd /data
-                    . /opt/qeff-env/bin/activate
+                    cd /data &&
+                    . /opt/qeff-env/bin/activate &&
                     pip install --upgrade pip setuptools &&
                     pip install .[test]"
-                '''
+                    '''
+                }
             }
         }
         stage('Test')
@@ -38,13 +43,14 @@ pipeline
                     sh '''
                     docker exec ${CONTAINER_NAME} bash -c "
                     cd /data &&
-                    . /opt/qeff-env/bin/activate
+                    . /opt/qeff-env/bin/activate &&
                     export TOKENIZERS_PARALLELISM=false &&
                     pytest -W ignore -s -v tests -o junit_logging=all --junitxml=tests/tests_log.xml &&
                     deactivate &&
-                    exit"
+                    exit" 
                     sudo chown -R ubuntu ./*
-                    '''     
+                    '''
+                    
                 }
             }
         }
@@ -62,9 +68,9 @@ pipeline
                     docker rm -f ${CONTAINER_NAME}
                     '''
                 } 
-                catch (err) 
+                catch (error) 
                 {
-                    echo "Failed to delete container ${CONTAINER_NAME}: ${err}"
+                    echo "Failed to delete container ${CONTAINER_NAME}: ${error}"
                 }
             }
             
