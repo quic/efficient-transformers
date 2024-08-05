@@ -48,7 +48,6 @@ pipeline
                     pytest -W ignore -s -v tests -o junit_logging=all --junitxml=tests/tests_log.xml &&
                     deactivate &&
                     exit" 
-                    sudo chown -R ubuntu ./*
                     '''
                     
                 }
@@ -64,8 +63,8 @@ pipeline
                 try 
                 {
                     sh '''
-                    docker ps
                     docker rm -f ${CONTAINER_NAME}
+                    sudo chown -R ubuntu ./*
                     '''
                 } 
                 catch (error) 
@@ -74,6 +73,7 @@ pipeline
                 }
             }
             
+            junit 'tests/tests_log.xml'
             echo 'Cleaning Workspace'
             deleteDir()
          }
