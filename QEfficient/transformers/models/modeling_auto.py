@@ -15,7 +15,7 @@ from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
-from QEfficient.utils import get_qpc_dir_name_infer, load_hf_tokenizer
+from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
 # Dictionary that defines the interface from transformers to be used underneath the QEFF interface
@@ -144,7 +144,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             self.export(model_card_name=model_card_name)
 
         # Prepare qpc dir path
-        qpc_dir_path = get_qpc_dir_name_infer(
+        qpc_dir_path = get_qpc_dir_path(
             model_card_name=self.model_card_name,
             num_cores=num_cores,
             mos=mos,
