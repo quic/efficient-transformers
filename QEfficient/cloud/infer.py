@@ -37,10 +37,10 @@ def main(
 ) -> None:
     """
     Helper function used by infer CLI app; to export, compile and execute the model on Cloud AI 100 Platform.
-    1. Check if compiled qpc for given config already exists, if it does jump to execute, else
-    2. Check if exported ONNX file already exists, if true, jump to compilation -> execution, else
-    3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
-    4. Download HF model -> transform -> export -> compile -> execute
+        1. Check if compiled qpc for given config already exists, if it does jump to execute, else
+        2. Check if exported ONNX file already exists, if true, jump to compilation -> execution, else
+        3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
+        4. Download HF model -> transform -> export -> compile -> execute
     ---------
 
     :model_name: str. Hugging Face Model Card name, Example: "gpt2"

@@ -57,7 +57,8 @@ class ApiRunner:
 
         :model_hf: torch.nn.module. Original PyTorch model
 
-        :return generated_ids: numpy.ndarray. Generated output tokens
+        Return:
+            generated_ids: numpy.ndarray. Generated output tokens
         """
         input_ids = self.input_handler.tokenizer.encode(self.input_handler.prompt[0], return_tensors="pt")
 
@@ -103,16 +104,15 @@ class ApiRunner:
         print("Completion:", repr(predicted_string))
         return generated_ids
 
-    def run_ort_session(self, inputs, session):
+    def run_ort_session(self, inputs, session) -> dict:
         """
-        Function responsible for running onnxrt session with given inputs and
-        passing retained state outputs to be used for next iteration inputs
-        --------
-
-        :inputs: Dict. Numpy inputs of Onnx model
+        Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
+        ---------
+        :param inputs: Dict.
         :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
 
-        :return outputs: Dict. Numpy outputs of Onnx model
+        Return:
+            outputs: Dict. Numpy outputs of Onnx model
         """
         output_names = [x.name for x in session.get_outputs()]
         session_input_names = [x.name for x in session.get_inputs()]
@@ -131,7 +131,8 @@ class ApiRunner:
 
         :model_path: str. Path to the Onnx model.
 
-        :return generated_ids: numpy.ndarray. Generated output tokens
+        Return:
+            generated_ids: numpy.ndarray. Generated output tokens
         """
 
         # Replace invalid index value for INT32 max to 0 using add_initializer
@@ -178,7 +179,8 @@ class ApiRunner:
         :qpc_path: str. path to qpc generated after compilation
         :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
 
-        :return generated_ids: numpy.ndarray. Generated output tokens
+        Return:
+            generated_ids: numpy.ndarray. Generated output tokens
         """
         execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=self.input_handler.tokenizer,
