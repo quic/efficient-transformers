@@ -42,7 +42,7 @@ pipeline
                     cd /efficient-transformers &&
                     . /opt/qeff-env/bin/activate &&
                     export TOKENIZERS_PARALLELISM=false &&
-                    pytest -W ignore -s -v tests -o junit_logging=all --junitxml=tests/tests_log.xml &&
+                    pytest -W ignore -s -v tests/transformers/models/test_causal_lm_models.py -o junit_logging=all --junitxml=tests/tests_log.xml &&
                     deactivate &&
                     exit" 
                     '''

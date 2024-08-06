@@ -45,9 +45,11 @@ def hf_download(
         local_dir = f"{cache_dir}/{repo_id}"
 
     os.makedirs(f"{cache_dir}/{repo_id}", exist_ok=True)
+    print(f"cache_dir={cache_dir}")
     max_retries = 5
     retry_count = 0
     while retry_count < max_retries:
+        print(f"retry_count={retry_count}")
         try:
             model_path = snapshot_download(
                 repo_id,
@@ -60,6 +62,7 @@ def hf_download(
                 allow_patterns=allow_patterns,
                 ignore_patterns=ignore_patterns,
             )
+            print(f"model_path={model_path}")
             break
         except requests.ReadTimeout as e:
             logger.info(f"Read timeout: {e}")
