@@ -83,7 +83,8 @@ class ApiRunner:
 
         :model: torch.nn.module. Transformed PyTorch model
 
-        :return generated_ids: numpy.ndarray. Generated output tokens
+        Return:
+            generated_ids: numpy.ndarray. Generated output tokens
         """
 
         generated_ids = []
@@ -107,7 +108,8 @@ class ApiRunner:
         """
         Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
         ---------
-        :param inputs: Dict.
+        
+        :inputs: Dict.
         :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
 
         Return:
