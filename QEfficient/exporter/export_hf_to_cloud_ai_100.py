@@ -217,7 +217,7 @@ def export_kvstyle_transformed_model_to_onnx(
     assert seq_len > 0, "Need seq_len to be greater than zero"
     # inputs = tokenizer(Constants.input_str, return_tensors="pt",padding=True)
     batch_size, prompt_len = inputs["input_ids"].shape
-    inputs.pop("attention_mask")
+    # inputs.pop("attention_mask")
     inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
     if full_batch_size:
         inputs["position_ids"] = torch.arange(prompt_len).view(1, prompt_len)  # FIXME remove is this is not required

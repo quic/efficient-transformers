@@ -169,7 +169,7 @@ def load_hf_tokenizer(
     return tokenizer
 
 
-def get_qpc_dir_name_infer(
+def get_qpc_dir_path(
     model_card_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
 ):
     # Create a unique directory name for the QPC model based on all parameters
