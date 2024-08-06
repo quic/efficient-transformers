@@ -36,9 +36,13 @@ class InputHandler:
     def prepare_pytorch_inputs(self):
         """
         Function responsible for creating Prefill stage tensor inputs for PyTorch model.
-        --------
+        ---------
 
-        :return inputs: Dict. input_ids, position_ids, past_key_values
+        :n_layer : int
+        :padding_shape : List[int]
+
+        Return:
+            inputs: Dict - input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
@@ -76,15 +80,17 @@ class InputHandler:
 
         return inputs
 
-    def update_pytorch_inputs(self, inputs, pt_outputs):
+    def update_pytorch_inputs(self, iteration, inputs, pt_outputs):
         """
-        Function responsible for updating Prefill stage inputs to create decode stage inputs for PyTorch model.
-        --------
+        Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for PyTorch model.
+        ---------
 
-        :inputs: Dict. Pytorch inputs from previous iteration
-        :pt_outputs: Dict. Pytorch outputs from previous iteration
+        :iteration: int. Current iteration number.
+        :inputs: Dict. Previous iteration inputs.
+        :pt_outputs: Dict. Previous iteration PyTorch outputs.
 
-        :return updated_inputs: Dict. Updated input_ids, position_ids and past_key_values
+        Return:
+            inputs: Dict - input_ids, position_ids, past_key_values
         """
         updated_inputs = {}
         updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
@@ -99,7 +105,8 @@ class InputHandler:
         Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.
         --------
 
-        :return inputs: Dict. input_ids, position_ids, past_key_values
+        Return:
+            inputs: Dict. input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
@@ -134,7 +141,8 @@ class InputHandler:
         :inputs: Dict. NumPy inputs of Onnx model from previous iteration
         :ort_outputs: Dict. Numpy outputs of Onnx model from previous iteration
 
-        :return updated_inputs: Dict. Updated input_ids, position_ids and past_key_values
+        Return:
+            updated_inputs: Dict. Updated input_ids, position_ids and past_key_values
         """
 
         updated_inputs = {}
@@ -153,7 +161,8 @@ class InputHandler:
 
         :ort_outputs: Dict. Numpy outputs of Onnx model from current iteration
 
-        :return updated_outputs: Dict. Updated past_key_values, logits
+        Return:
+            updated_outputs: Dict. Updated past_key_values, logits
         """
 
         present_key_values = []

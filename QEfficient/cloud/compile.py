@@ -55,7 +55,7 @@ if __name__ == "__main__":
         "--device-group",
         required=True,
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
-        help="Cloud AI 100 device ids (comma-separated) e.g. [0] ",
+        help="Cloud AI 100 device ids (comma-separated) e.g. [0,1] ",
     )
     parser.add_argument(
         "--aic_enable_depth_first",
