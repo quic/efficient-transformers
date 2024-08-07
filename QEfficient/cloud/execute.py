@@ -53,7 +53,7 @@ def main(
         prompt=prompt,
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
-        full_batch_size=full_batch_size
+        full_batch_size=full_batch_size,
     )
 
 
