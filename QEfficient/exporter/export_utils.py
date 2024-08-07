@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import math
 import os
 import shutil
 import sys
@@ -18,6 +19,7 @@ import torch
 from onnx import external_data_helper
 
 from QEfficient.base.onnx_transforms import FP16Clip
+from QEfficient.utils.constants import Constants
 
 
 def export_onnx(
@@ -86,27 +88,31 @@ def export_onnx(
         raise RuntimeError("Exporting to ONNX failed. {}".format(e))
 
     onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx")
-    loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
-    shutil.rmtree(f"{gen_models_path}_tmp")
-    os.makedirs(f"{gen_models_path}", exist_ok=True)
-    info("Clearing files .. ")
 
-    # Check if model uses external data format to save the weight tensors
-    # model_uses_external_data = check_model_uses_external_data(loaded_model)
-    # if model_uses_external_data:
     # Save model to single weight file
-    info("ONNX model uses external data. Saving as external data.")
-    onnx.save_model(
-        loaded_model,
-        os.path.join(gen_models_path, f"{model_base_name}.onnx"),
-        save_as_external_data=True,
-        all_tensors_to_one_file=True,
-        location=f"{model_base_name}.onnxweights.data",
-        size_threshold=1024,
-        convert_attribute=False,
-    )
-    onnx.checker.check_model(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
-
+    params = sum(p.numel() for p in pt_model.parameters())
+    model_size = math.ceil((params * 4) / Constants.GB)
+    if model_size < 380:
+        info("ONNX model uses external data. Saving external data as single weight file.")
+        loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
+        os.makedirs(f"{gen_models_path}", exist_ok=True)
+        shutil.rmtree(f"{gen_models_path}_tmp")
+        info("Clearing files .. ")
+        onnx.save_model(
+            loaded_model,
+            os.path.join(gen_models_path, f"{model_base_name}.onnx"),
+            save_as_external_data=True,
+            all_tensors_to_one_file=True,
+            location=f"{model_base_name}.onnxweights.data",
+            size_threshold=1024,
+            convert_attribute=False,
+        )
+        onnx.checker.check_model(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
+    else:
+        info("Skip saving external data as a single file.")
+        if os.path.exists(f"{gen_models_path}"):
+            shutil.rmtree(f"{gen_models_path}")
+        shutil.move(f"{gen_models_path}_tmp", f"{gen_models_path}")
     # Run shape inference in intial model itself
     onnx.shape_inference.infer_shapes_path(
         os.path.join(gen_models_path, f"{model_base_name}.onnx"),
