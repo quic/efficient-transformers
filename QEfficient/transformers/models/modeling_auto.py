@@ -73,7 +73,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         )  # Remove model_card_name from kwargs for transformers APIs
 
         model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
-            pretrained_model_name_or_path,num_hidden_layers=1, attn_implementation="eager", *args, **kwargs
+            pretrained_model_name_or_path, num_hidden_layers=1, attn_implementation="eager", *args, **kwargs
         )
         return cls(
             model,
