@@ -279,9 +279,7 @@ def export_kvstyle_transformed_model_to_onnx(
 
     # Build inputs for next iteration from outputs
     # Build inputs for decode
-    
 
-   
     if full_batch_size:
         input_ids = pt_outputs.logits.detach().argmax(2)
         inputs["input_ids"] = torch.full((full_batch_size, 1), tokenizer.pad_token_id)
@@ -394,7 +392,7 @@ def export_for_cloud(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_length: int = Constants.SEQ_LEN,
-    full_batch_size:Optional[int] = None,
+    full_batch_size: Optional[int] = None,
 ) -> str:
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore

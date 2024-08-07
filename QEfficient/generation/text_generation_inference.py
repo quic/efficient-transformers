@@ -271,8 +271,10 @@ def cloud_ai_100_exec_kv(
         full_batch_size=full_batch_size,
     )
     if full_batch_size is None:
-        exec_info = [generate_text.cloud_ai_100_exec_kv_helper(prompt[i:i + batch_size], generation_len)
-                     for i in range(0, len(prompt), batch_size)]
+        exec_info = [
+            generate_text.cloud_ai_100_exec_kv_helper(prompt[i : i + batch_size], generation_len)
+            for i in range(0, len(prompt), batch_size)
+        ]
         prefill_time = np.average([info.prefill_time for info in exec_info])
         decode_perf = np.average([info.decode_perf for info in exec_info])
         total_perf = np.average([info.total_perf for info in exec_info])
@@ -683,8 +685,11 @@ class TextGeneration:
                     if prompt_queue:
                         start = perf_counter()
                         # run prefill for next prompt input.
-                        outputs, position_ids, generation_len = self.run_prefill(prompt_queue.popleft(), generation_len,
-                                                                                  decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1))
+                        outputs, position_ids, generation_len = self.run_prefill(
+                            prompt_queue.popleft(),
+                            generation_len,
+                            decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1),
+                        )
 
                         new_token_id = self._update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
 
@@ -706,6 +711,7 @@ class TextGeneration:
 
                     generated_id_current_index[decode_batch_id] += 1
         return decode_pause_time
+
     def run_decode(self, decode_inputs, generation_len):
         """
         Default method for running decode. Executes the decoding process for a given set of inputs and a specified generation length.
@@ -793,7 +799,7 @@ class TextGeneration:
             loop_start = perf_counter()  # Decode loop timer start
 
             decode_pause_time = self.run_continuous_batching_decode(prompt_queue, generation_len)
-            loop_start+=decode_pause_time # Compensate for the prefill time here. 
+            loop_start += decode_pause_time  # Compensate for the prefill time here.
 
         else:
             # Run prefill with batch size > 1
