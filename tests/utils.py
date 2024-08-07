@@ -152,7 +152,7 @@ def get_cloud_ai_100_tokens(setup_info):
             aic_enable_depth_first=False,
             device_group=setup_info["device_group"],
         )
-        
+
         cloud_ai_100_tokens = setup_info["api_runner"].run_kv_model_on_cloud_ai_100(
             test_qpcs_path, setup_info["device_group"]
         )
