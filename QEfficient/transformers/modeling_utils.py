@@ -14,6 +14,7 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
+from transformers.models.dbrx.modeling_dbrx import DbrxAttention, DbrxExperts, DbrxForCausalLM, DbrxModel, DbrxRouter
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconForCausalLM,
@@ -51,6 +52,13 @@ from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
+)
+from .models.dbrx.modeling_dbrx import (
+    QEffDbrxAttention,
+    QEffDbrxExperts,
+    QEffDbrxForCausalLM,
+    QEffDbrxModel,
+    QEffDbrxRouter,
 )
 from .models.falcon.modeling_falcon import (
     QEffFalconAttention,
@@ -103,6 +111,7 @@ qeff_supported_architectures = ModelArchitectures(
         FalconForCausalLM.__name__,
         Qwen2ForCausalLM.__name__,
         Starcoder2ForCausalLM.__name__,
+        DbrxForCausalLM.__name__,
     ]
 )
 
@@ -114,6 +123,12 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     GPT2Block: QEffGPT2Block,
     GPT2Attention: QEffGPT2Attention,
     GPT2LMHeadModel: QEffGPT2LMHeadModel,
+    # Dbrx model layers
+    DbrxAttention: QEffDbrxAttention,
+    DbrxRouter: QEffDbrxRouter,
+    DbrxExperts: QEffDbrxExperts,
+    DbrxModel: QEffDbrxModel,
+    DbrxForCausalLM: QEffDbrxForCausalLM,
     # GPTJ model layers
     GPTJModel: QEffGPTJModel,
     GPTJAttention: QEffGPTJAttention,
