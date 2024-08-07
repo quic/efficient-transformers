@@ -13,7 +13,7 @@ from typing import List, Optional
 import QEfficient
 from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
+from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 """
@@ -22,6 +22,7 @@ from QEfficient.utils.logging_utils import logger
 3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
 4. Download HF model -> transform -> export -> compile -> execute
 """
+
 
 def main(
     model_name: str,
