@@ -35,8 +35,6 @@ class QEFFTransformersBase(QEFFBaseModel):
             True  # Always pass use_cache = True, to get KV values as output during ONNX export
         )
         # FIXME: Check if this attr is present in all supported models and remove if condition
-        if hasattr(self.model.config, "_attn_implementation"):
-            self.model.config._attn_implementation = "eager"  # Always use eager model attn for KV cache optimization
         self.pretrained_model_name_or_path = pretrained_model_name_or_path
 
         # Set model card name, which is used to decide ONNX, QPC files path during export and compile resp.
@@ -75,7 +73,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         )  # Remove model_card_name from kwargs for transformers APIs
 
         model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
-            pretrained_model_name_or_path, *args, **kwargs
+            pretrained_model_name_or_path,num_hidden_layers=1, attn_implementation="eager", *args, **kwargs
         )
         return cls(
             model,
