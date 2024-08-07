@@ -831,7 +831,6 @@ class TextGeneration:
         prefill_time, decode_perf, total_perf, total_time = self.calculate_latency(
             total_decode_tokens, loop_start, start, end
         )
-        print(f"total time {total_time} decode time {end-loop_start} ")
 
         latency_stats = CloudAI100ExecInfo(
             batch_size=self.batch_size,

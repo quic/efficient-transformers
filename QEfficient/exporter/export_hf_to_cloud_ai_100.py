@@ -266,10 +266,6 @@ def export_kvstyle_transformed_model_to_onnx(
         for _ in range(n_layer)
     ]
 
-    model_architecture = config.architectures[0]
-    if full_batch_size and model_architecture not in get_lists_of_cb_qeff_models.architectures:
-        raise Exception(f"Continuous batching support for {model_architecture} is not enabled currently")
-
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
 
@@ -394,6 +390,10 @@ def export_for_cloud(
     seq_length: int = Constants.SEQ_LEN,
     full_batch_size: Optional[int] = None,
 ) -> str:
+    # Check if model architecture is supported for continuous batching. 
+    if full_batch_size and qeff_model.model.config.architectures[0] not in get_lists_of_cb_qeff_models.architectures:
+        raise NotImplementedError(f"Continuous batching is not supported for {qeff_model.model.config.architectures[0]}")
+    
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
         return export_lm_model_for_cloud(

@@ -23,9 +23,6 @@ from QEfficient.utils.logging_utils import logger
 4. Download HF model -> transform -> export -> compile -> execute
 """
 
-# TODO update the heck_batch_size_and_num_prompts method for FBS
-
-
 def main(
     model_name: str,
     num_cores: int,
@@ -70,7 +67,6 @@ def main(
         python -m QEfficient.cloud.infer OPTIONS
 
     """
-    cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
     tokenizer = load_hf_tokenizer(
         pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
         cache_dir=cache_dir,

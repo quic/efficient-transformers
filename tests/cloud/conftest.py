@@ -11,7 +11,6 @@ import shutil
 
 import pytest
 
-from QEfficient.generation.text_generation_inference import check_batch_size_and_num_prompts
 from QEfficient.transformers.modeling_utils import get_lists_of_cb_qeff_models
 from QEfficient.utils import get_qpc_dir_path
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
