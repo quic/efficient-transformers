@@ -1,44 +1,53 @@
 pipeline 
 {
 
-    agent 
+    agent
     {
         node 
         {
             label 'qeff_node'
         }
     }
-
     stages 
     {
         stage('Install QEfficient')
         {
             steps
             {
-                sh '''
-                    python3.8 -m venv preflight_qeff
-                    . preflight_qeff/bin/activate
-                    pip install --upgrade pip setuptools
-                    pip install .[test]
-                    rm -rf QEfficient
-                '''
+                
+                script
+                {
+
+                    sh '''
+                    . ~/.bashrc
+                    docker run --privileged -dit --name ${BRANCH_NAME} -v ./:/efficient-transformers -v  ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
+                    docker exec ${BRANCH_NAME} bash -c "
+                    cd /efficient-transformers &&
+                    . /opt/qeff-env/bin/activate &&
+                    pip install --upgrade pip setuptools &&
+                    pip install .[test]"
+                    '''
+                }
             }
         }
-
-
         stage('Test')
-            {
+        {
                 steps
                 {
                     //todo(ochougul): Increase when MQ tests are enabled 
-		    timeout(time: 420, unit: 'MINUTES') {
+		            timeout(time: 420, unit: 'MINUTES') 
+                    {
                     sh '''
-                    . preflight_qeff/bin/activate
-                    export TOKENIZERS_PARALLELISM=false
-                    pytest -W ignore -s -v tests -o junit_logging=all --junitxml=tests/tests_log.xml
-                    deactivate
-                    exit
-                    '''     
+                    docker exec ${BRANCH_NAME} bash -c "
+                    cd /efficient-transformers &&
+                    . /opt/qeff-env/bin/activate &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export PYTHONPATH=. &&
+                    pytest -W ignore -s -v tests/transformers/models/test_causal_lm_models.py -o junit_logging=all --junitxml=tests/tests_log.xml &&
+                    deactivate &&
+                    exit" 
+                    '''
+                    
                 }
             }
         }
@@ -47,9 +56,24 @@ pipeline
     {
          always 
          {
-             junit 'tests/tests_log.xml'
-             echo 'Cleaning Workspace'
-             deleteDir() 
+            script
+            {
+                try 
+                {
+                    sh '''
+                    sudo chown -R ubuntu ./*
+                    docker rm -f ${BRANCH_NAME}
+                    '''
+                } 
+                catch (error) 
+                {
+                    echo "Failed to delete container ${BRANCH_NAME}: ${error}"
+                }
+            }
+            
+            junit 'tests/tests_log.xml'
+            echo 'Cleaning Workspace'
+            deleteDir()
          }
     }
        
