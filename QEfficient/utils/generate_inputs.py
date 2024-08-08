@@ -12,7 +12,7 @@ from QEfficient.utils import get_num_layers_from_config, get_padding_shape_from_
 
 
 class InputHandler:
-    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len):
+    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size):
         """
         Initialization
 
@@ -30,8 +30,10 @@ class InputHandler:
         self.prompt = prompt
         self.prompt_len = prompt_len
         self.ctx_len = ctx_len
+        self.full_batch_size = full_batch_size
         self.n_layer = get_num_layers_from_config(config)
-        self.padding_shape = get_padding_shape_from_config(config=config, batch_size=batch_size, seq_len=ctx_len)
+        self.padding_shape = get_padding_shape_from_config(config=config, batch_size=full_batch_size if full_batch_size else batch_size , seq_len=ctx_len)
+        
 
     def prepare_pytorch_inputs(self):
         """
@@ -66,13 +68,19 @@ class InputHandler:
             1,
         )
 
+        
+        if self.full_batch_size:
+            inputs["input_ids"] = input_ids
+            inputs["position_ids"] = torch.arange(input_len).view(1, input_len)
+            inputs["batch_index"] = torch.arange(1).view(-1, 1)
+        
         past_key_values = []
         for i in range(self.n_layer):
             past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
             past_value = torch.zeros((self.padding_shape), dtype=torch.float32)
             pkv = (past_key, past_value)
             past_key_values.append(pkv)
-        inputs["past_key_values"] = tuple(past_key_values)
+        inputs["past_key_values"] = tuple(past_key_values)            
 
         return inputs
 
@@ -88,11 +96,27 @@ class InputHandler:
             :Dict: Updated input_ids, position_ids and past_key_values
         """
         updated_inputs = {}
-        updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
-        updated_inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
+        if self.full_batch_size:
+            batch_index = torch.arange(1).view(-1, 1)
+            
+            input_ids = pt_outputs.logits.detach().argmax(2)
+            updated_inputs["input_ids"] = torch.full((self.full_batch_size, 1), self.tokenizer.pad_token_id)
+            updated_inputs["input_ids"][batch_index.view(-1)] = input_ids
+
+            position_ids = inputs["position_ids"].max(1, keepdim=True).values + 1
+            updated_inputs["position_ids"] = torch.full((self.full_batch_size, 1), 0)
+            updated_inputs["position_ids"][batch_index.view(-1)] = position_ids
+
+            updated_inputs["batch_index"] = torch.arange(self.full_batch_size).view(-1, 1)
+            
+        else:
+            updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
+            updated_inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
+        
         updated_inputs["past_key_values"] = tuple(
             [(key.detach(), value.detach()) for key, value in pt_outputs["past_key_values"]]
         )
+
         return updated_inputs
 
     def prepare_ort_inputs(self):

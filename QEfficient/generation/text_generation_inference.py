@@ -281,20 +281,8 @@ def cloud_ai_100_exec_kv(
         total_time = np.average([info.total_time for info in exec_info])
         generated_texts = [info.generated_texts for info in exec_info]
         generated_ids = [info.generated_ids for info in exec_info]
-    else:
-        exec_info = generate_text.cloud_ai_100_exec_kv_helper(prompt=prompt, generation_len=generation_len)
-        # prefill_time = np.average(exec_info.prefill_time)
-        # decode_perf = np.average(exec_info.decode_perf)
-        # total_perf = np.average(exec_info.total_perf)
-        # total_time = np.average(exec_info.total_time)
-        prefill_time = exec_info.prefill_time
-        decode_perf = exec_info.decode_perf
-        total_perf = exec_info.total_perf
-        total_time = exec_info.total_time
-        generated_texts = exec_info.generated_texts
-        generated_ids = exec_info.generated_ids
-
-    exec_info = CloudAI100ExecInfo(
+        
+        exec_info = CloudAI100ExecInfo(
         batch_size=batch_size,
         generated_texts=generated_texts,
         generated_ids=generated_ids,
@@ -303,6 +291,8 @@ def cloud_ai_100_exec_kv(
         total_perf=total_perf,
         total_time=total_time,
     )
+    else:
+        exec_info = generate_text.cloud_ai_100_exec_kv_helper(prompt=prompt, generation_len=generation_len)   
 
     print_latency_stats_kv(prompt, exec_info=exec_info, automation=automation)
     return exec_info
@@ -338,12 +328,12 @@ class TextGeneration:
         self.session = QAICInferenceSession(qpc_path, device_id, enable_debug_logs=enable_debug_logs)
         self.streamer = transformers.TextStreamer(self.tokenizer)
 
-        self.full_batch_size = full_batch_size
+        # self.full_batch_size = full_batch_size
 
         # Fetch the variables from the QPC
         self.vocab_size = self._fetch_vocab_size()  # Fetch Vocab size
         self.batch_size, self.prefill_seq_len = self._fetch_batch_size_prefill_seq_len()
-        # self.full_batch_size = self._fetch_full_batch_size()  # Check and fetch full batch size if CB is enabled
+        self.full_batch_size = full_batch_size if full_batch_size else self._fetch_full_batch_size()  # Check and fetch full batch size if CB is enabled
 
         # Initialize the storage variables.
         self.batch_index = None
@@ -376,44 +366,6 @@ class TextGeneration:
 
         return prefill_time, decode_perf, total_perf, total_time
 
-    def latency_stats_bertstyle(
-        self,
-        model_name: str,
-        qpc: str,
-        seq_len: int,
-        prompt: str,
-        device_id: List[int] = [0],
-    ):
-        session = QAICInferenceSession(qpc, device_id)
-        tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
-        if tokenizer.pad_token_id is None:
-            tokenizer.pad_token_id = tokenizer.eos_token_id
-        inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
-        next_token_id = inputs["input_ids"][0, -1]
-        cur_len = inputs["attention_mask"].sum().item()
-        print(prompt, end=" ", flush=True)
-        init_len = cur_len
-        start = perf_counter()
-        while next_token_id != tokenizer.eos_token_id and cur_len <= seq_len:
-            outputs = session.run(inputs)
-            logits = outputs["logits"]
-            next_token_id = logits[0, -1].argmax().item()
-            inputs["input_ids"] = np.concatenate(
-                [
-                    inputs["input_ids"][:, 1:],
-                    np.ones((1, 1), dtype=np.int64) * next_token_id,
-                ],
-                1,
-            )
-            inputs["attention_mask"] = np.concatenate(
-                [inputs["attention_mask"][:, 1:], np.ones((1, 1), dtype=np.int64)], 1
-            )
-            print(tokenizer.decode(next_token_id), end=" ", flush=True)
-            cur_len += 1
-        end = perf_counter()
-        print()
-        print(round((cur_len - init_len) / (end - start), 2), "tok/s")
-
     def get_compilation_batch_size(self, qpc_path: str):
         qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
         specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
@@ -437,7 +389,7 @@ class TextGeneration:
         full_batch_size = None
         if "batch_index" in self.session.binding_index_map:
             if self.session.allowed_shapes:
-                _, full_batch_size = [
+                full_batch_size,_ = [
                     x[self.session.binding_index_map["batch_index"]][1][0] for x in self.session.allowed_shapes
                 ]
             else:
@@ -579,8 +531,6 @@ class TextGeneration:
 
             _ = self._update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
 
-            # print(f"Prompt : {next_prompt} batch_index: {decode_batch_id} prefill output id:{next_token_id[0]} token: {[self.tokenizer.convert_ids_to_tokens(next_token_id[i]) for i in range(1)]}")
-
     def run_prefill(self, prompt, generation_len, prefill_logit_bs=1, decode_batch_id=None):
         """
         Runs prefill for a given prompt and generation length.
@@ -651,13 +601,11 @@ class TextGeneration:
         current_decode_ongoing = np.full((self.full_batch_size, 1), True)
 
         # Generate an array for maintaining the tokens generated in each batch ID
-        # TODO <rishinr> validate if this can be replaced with generated_ids. Fetching the count might be slower compared to this.
         generated_id_current_index = np.ones((self.full_batch_size, 1), np.int64)
 
         # Generate a batch ID map for mapping the batch ID if input > full_batch_size.
         # This ID map will be used for storing all generated tokens
         batch_id_map = {i: i for i in range(self.full_batch_size)}
-        # TODO check this can be achieved using generated_id_current_index. this would be needed for calculating the performance.
         decode_count = 0
         decode_pause_time = 0
         # Prepare decode inputs inputs.
@@ -672,10 +620,6 @@ class TextGeneration:
             if len(logits.shape) == 2:
                 logits = np.expand_dims(logits, 1)
             next_token_id = logits.argmax(2)
-
-            # print(
-            #     f"Decode Iteration: {decode_count} next token : {[self.tokenizer.convert_ids_to_tokens(next_token_id[i]) for i in range(self.batch_size)]} Token ID : {[next_token_id[i] for i in range(self.batch_size)]}"
-            # )
 
             for decode_batch_id in range(self.full_batch_size):
                 if (
@@ -757,12 +701,6 @@ class TextGeneration:
             latency_stats (tuple): A tuple containing the generated texts, prefill time, decode performance, total
             performance, and total time.
         """
-        # TODO Check if ctx is none and fetch if its None
-        # TODO need to check for FBS while creating QPC path.
-        # FIXME now the code is failing if the infer is called without FBS and then with FBS. Update onnx path with FBS
-        # FIXME the input is not getting repeated full batch size time during execution. Need to fix it.
-        # FIXME <Important> There is some additional improvement observed in the latency calculation. Need some debugging on that.
-
         # set tokenizer params
         self.set_tokenizer_params()
 
@@ -774,7 +712,6 @@ class TextGeneration:
         execution_batch_size = self.full_batch_size if self.full_batch_size is not None else self.batch_size
 
         # Truncate prompts to required size
-        # TODO check this can be done prior as a input processing module.
         prompt = self.prepare_prompt(prompt, execution_batch_size)
         prompt_queue = deque(prompt)
 

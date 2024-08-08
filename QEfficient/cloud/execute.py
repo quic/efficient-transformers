@@ -23,7 +23,6 @@ def main(
     generation_len: Optional[int] = None,
     cache_dir: Optional[str] = Constants.CACHE_DIR,
     hf_token: Optional[str] = None,
-    full_batch_size: Optional[int] = None,
 ):
     """
     Helper function used by execute CLI app to run the Model on ``Cloud AI 100`` Platform.
@@ -58,7 +57,6 @@ def main(
         prompt=prompt,
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
-        full_batch_size=full_batch_size,
     )
 
 
@@ -95,9 +93,6 @@ if __name__ == "__main__":
         default=Constants.CACHE_DIR,
         required=False,
         help="Cache dir to store HF Downloads",
-    )
-    parser.add_argument(
-        "--full_batch_size", "--full-batch-size", type=int, default=None, help="Batch size for text generation"
     )
     parser.add_argument(
         "--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models"
