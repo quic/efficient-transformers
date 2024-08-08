@@ -13,7 +13,7 @@ from typing import List, Optional
 import QEfficient
 from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer, qpc_exists
+from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 """
@@ -68,6 +68,7 @@ def main(
         python -m QEfficient.cloud.infer OPTIONS
 
     """
+    cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
     tokenizer = load_hf_tokenizer(
         pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
         cache_dir=cache_dir,

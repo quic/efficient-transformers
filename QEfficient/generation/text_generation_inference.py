@@ -182,10 +182,14 @@ def fix_prompts(prompt: List[str], batch_size: int, full_batch_size: int):
             prompt = prompt[: batch_size * (len(prompt) // batch_size)]
 
         if full_batch_size:
-            assert batch_size == 1, "Only either batch_size or full_batch_size should be greater than one"
-            assert (
-                full_batch_size <= len(prompt)
-            ), f"No of prompts {len(prompt)} should be grater than or equal to the full batch size {full_batch_size}; please pass correct input"
+            if batch_size != 1:
+                raise ValueError("Only either batch_size or full_batch_size should be greater than one")
+
+        if full_batch_size > len(prompt):
+            raise ValueError(
+                f"No of prompts {len(prompt)} should be greater than or equal to the full batch size {full_batch_size}; please pass correct input"
+            )
+
     return prompt
 
 
@@ -281,18 +285,18 @@ def cloud_ai_100_exec_kv(
         total_time = np.average([info.total_time for info in exec_info])
         generated_texts = [info.generated_texts for info in exec_info]
         generated_ids = [info.generated_ids for info in exec_info]
-        
+
         exec_info = CloudAI100ExecInfo(
-        batch_size=batch_size,
-        generated_texts=generated_texts,
-        generated_ids=generated_ids,
-        prefill_time=prefill_time,
-        decode_perf=decode_perf,
-        total_perf=total_perf,
-        total_time=total_time,
-    )
+            batch_size=batch_size,
+            generated_texts=generated_texts,
+            generated_ids=generated_ids,
+            prefill_time=prefill_time,
+            decode_perf=decode_perf,
+            total_perf=total_perf,
+            total_time=total_time,
+        )
     else:
-        exec_info = generate_text.cloud_ai_100_exec_kv_helper(prompt=prompt, generation_len=generation_len)   
+        exec_info = generate_text.cloud_ai_100_exec_kv_helper(prompt=prompt, generation_len=generation_len)
 
     print_latency_stats_kv(prompt, exec_info=exec_info, automation=automation)
     return exec_info
@@ -333,7 +337,9 @@ class TextGeneration:
         # Fetch the variables from the QPC
         self.vocab_size = self._fetch_vocab_size()  # Fetch Vocab size
         self.batch_size, self.prefill_seq_len = self._fetch_batch_size_prefill_seq_len()
-        self.full_batch_size = full_batch_size if full_batch_size else self._fetch_full_batch_size()  # Check and fetch full batch size if CB is enabled
+        self.full_batch_size = (
+            full_batch_size if full_batch_size else self._fetch_full_batch_size()
+        )  # Check and fetch full batch size if CB is enabled
 
         # Initialize the storage variables.
         self.batch_index = None
@@ -389,7 +395,7 @@ class TextGeneration:
         full_batch_size = None
         if "batch_index" in self.session.binding_index_map:
             if self.session.allowed_shapes:
-                full_batch_size,_ = [
+                full_batch_size, _ = [
                     x[self.session.binding_index_map["batch_index"]][1][0] for x in self.session.allowed_shapes
                 ]
             else:

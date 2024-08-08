@@ -85,8 +85,6 @@ def export_onnx(
     if "past_key.0" in input_names and "attention_mask" in input_names:
         dynamic_axes["attention_mask"] = {0: "batch_size", 1: "ctx_len"}
 
-    # custom_opsets = {"com.qti.aisw.onnx": 1} if dynamic_axis_past_key == "full_batch_size" else None
-    # return input_names, output_names, model_base_name
     os.makedirs(f"{gen_models_path}_tmp", exist_ok=True)
     try:
         info("Exporting to ONNX...")
@@ -98,7 +96,7 @@ def export_onnx(
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             opset_version=13,
-            # custom_opsets=custom_opsets,
+            custom_opsets={"com.qti.aisw.onnx": 1},
         )
     except Exception as e:
         raise RuntimeError("Exporting to ONNX failed. {}".format(e))
