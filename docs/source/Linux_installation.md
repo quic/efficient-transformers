@@ -29,10 +29,9 @@ bash install.sh —enable-qeff
 
 python3.8 -m venv qeff_env
 source qeff_env/bin/activate
- 
-# Clone the QEfficient Repo.
-git clone https://github.com/quic/efficient-transformers
- 
-# Install the qefficient-library in Host machine (Used for CLI APIs) (Until we have docker integrated in Apps SDK)
-pip install -e .
+pip install -U pip
+
+# Clone and Install the QEfficient Repo.
+pip install git+https://github.com/quic/efficient-transformers
+
 ``` 
