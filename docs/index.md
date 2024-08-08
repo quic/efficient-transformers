@@ -53,13 +53,6 @@ source/low_level_api
 source/other_api
 
 ```
-<!-- ```{toctree}
-:caption: 'Performance'
-:maxdepth: 2
-
-source/performance
-
-``` -->
  
 ```{toctree}
 :caption: 'Blogs'
@@ -76,15 +69,3 @@ source/blogs
 source/reference
 
 ```
-
-
-
-<!-- 
-
-# Indices and tables
-
- 
-
-- {ref}`genindex`
-- {ref}`modindex`
-- {ref}`search` -->

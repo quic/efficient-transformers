@@ -15,7 +15,7 @@ In summary:
 * Opt for low-level APIs when you need fine-tuned control, optimization, or advanced customization.
 
  
-# Using COMMAND LINE INTERFACE
+# Using command line interface
 
 ## 1. Use QEfficient.cloud.infer 
 

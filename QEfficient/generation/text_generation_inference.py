@@ -109,7 +109,7 @@ def latency_stats_bertstyle(
     :prompt: str. Sample prompt for the model text generation.
     :device_id: List[int]. Device Ids to be used for compilation. if devices > 1, it enables multiple card setup.
     """
-    session = QAICInferenceSession(qpc, device_id)
+    session = QAICInferenceSession(qpc_path, device_id)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
