@@ -37,10 +37,6 @@ class InputHandler:
         """
         Function responsible for creating Prefill stage tensor inputs for PyTorch model.
         ---------
-
-        :n_layer : int
-        :padding_shape : List[int]
-
         Return:
             inputs: Dict - input_ids, position_ids, past_key_values
         """
@@ -85,7 +81,6 @@ class InputHandler:
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for PyTorch model.
         ---------
 
-        :iteration: int. Current iteration number.
         :inputs: Dict. Previous iteration inputs.
         :pt_outputs: Dict. Previous iteration PyTorch outputs.
 

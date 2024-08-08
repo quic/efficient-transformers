@@ -19,7 +19,6 @@
 #
 import os
 import sys
-
 sys.path.insert(0, os.path.abspath(".."))
 
 
@@ -55,16 +54,29 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 #
 html_theme = "sphinx_rtd_theme"
 
+<<<<<<< HEAD
 
 def setup(app):
     app.add_css_file("my_theme.css")
 
 
+=======
+def setup(app):
+    app.add_css_file('my_theme.css')
+>>>>>>> 511f76265fb20de1fe1ef56d54dabc22f88e5efe
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ["_static"]
 source = [".md"]
+<<<<<<< HEAD
 html_theme_options = {"rightsidebar": "true", "relbarbgcolor": "black", "stickysidebar": "true"}
+=======
+html_theme_options = {
+    "rightsidebar": "true",
+    "relbarbgcolor": "black",
+    "stickysidebar": "true"
+}
+>>>>>>> 511f76265fb20de1fe1ef56d54dabc22f88e5efe
 
 todo_include_todos = True

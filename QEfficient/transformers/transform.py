@@ -49,7 +49,7 @@ def get_params_hash(model: nn.Module) -> str:
 
 def transform_lm(model: nn.Module) -> nn.Module:
     """
-    Replaces some Transformers torch.nn.Module layers for equivalent optimized modules for cloud AI 100.
+    Replaces some Transformers torch.nn.Module layers for equivalent optimized modules for Cloud AI 100.
     ---------
     Args:
     param model (torch.nn.Module): PyTorch model.
@@ -84,7 +84,7 @@ def transform_lm(model: nn.Module) -> nn.Module:
 
 def transform(model: QEFFBaseModel, form_factor="cloud"):
     """
-    This function serves for optimizing any kind of model (i.e. LLM, SD, AWQ etc.) for cloud AI 100.
+    This function serves for optimizing any kind of model (i.e. LLM, SD, AWQ etc.) for Cloud AI 100.
     Will replace the torch.nn.Module layers of passed QEffModel with optimized implementation of the same.
 
     model: object of any instance of class that is child of `QEFFBaseAutoModelFactory`

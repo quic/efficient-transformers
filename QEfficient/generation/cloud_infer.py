@@ -143,7 +143,7 @@ class QAICInferenceSession:
 
     def run(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         """
-        Execute on cloud AI 100
+        Execute on Cloud AI 100
         ---------
 
         :inputs: Dict[str, np.ndarray]). Processed numpy inputs for the model.

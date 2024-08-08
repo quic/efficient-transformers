@@ -84,7 +84,8 @@ class ApiRunner:
 
         :model: torch.nn.module. Transformed PyTorch model
 
-        :return generated_ids: numpy.ndarray. Generated output tokens
+        Return:
+            generated_ids: numpy.ndarray. Generated output tokens
         """
 
         generated_ids = []
