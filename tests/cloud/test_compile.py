@@ -21,8 +21,13 @@ def test_compile(setup, mocker):
     mocker: mocker is itself a pytest fixture, uses to mock or spy internal functions.
     """
     ms = setup
+    for onnx_model_path in ms.onnx_model_path():
+        if os.path.isfile(onnx_model_path):
+            break
+    else:
+        raise RuntimeError(f"onnx file not found: {ms.onnx_model_path()}")
     QEfficient.compile(
-        onnx_path=ms.onnx_model_path(),
+        onnx_path=onnx_model_path,
         qpc_path=os.path.dirname(ms.qpc_dir_path()),
         num_cores=ms.num_cores,
         device_group=ms.device_group,

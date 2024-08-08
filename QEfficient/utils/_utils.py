@@ -104,12 +104,19 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
     os.makedirs(model_card_dir, exist_ok=True)
 
     onnx_dir_path = os.path.join(model_card_dir, "onnx")
-    onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
+    clipped_onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
+    unclipped_onnx_model_path = clipped_onnx_model_path.replace("_clipped_fp16.onnx", ".onnx")
 
     # Compute the boolean indicating if the ONNX model exists
-    onnx_exists_bool = os.path.isfile(onnx_model_path) and os.path.isfile(
-        os.path.join(os.path.dirname(onnx_model_path), "custom_io_fp16.yaml")
-    )
+    onnx_exists_bool = False
+    onnx_model_path = None
+    if os.path.isfile(os.path.join(onnx_dir_path, "custom_io_fp16.yaml")):
+        if os.path.isfile(clipped_onnx_model_path):
+            onnx_exists_bool = True
+            onnx_model_path = clipped_onnx_model_path
+        elif os.path.isfile(unclipped_onnx_model_path):
+            onnx_exists_bool = True
+            onnx_model_path = unclipped_onnx_model_path
 
     # Return the boolean, onnx_dir_path, and onnx_model_path
     return onnx_exists_bool, onnx_dir_path, onnx_model_path

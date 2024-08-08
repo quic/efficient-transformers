@@ -45,7 +45,7 @@ def get_onnx_model_path(
         ####################
         # Export to the Onnx
         logger.info(f"Exporting Pytorch {model_name} model to ONNX...")
-        _, generated_onnx_model_path = qualcomm_efficient_converter(
+        _, onnx_model_path = qualcomm_efficient_converter(
             model_name=model_name,
             local_model_dir=local_model_dir,
             tokenizer=tokenizer,
@@ -55,12 +55,7 @@ def get_onnx_model_path(
             hf_token=hf_token,
             cache_dir=cache_dir,
         )  # type: ignore
-        logger.info(
-            f"Generated Onnx_path {generated_onnx_model_path} \nOnnx_model_path {onnx_model_path} \nand Onnx_dir_path is {onnx_dir_path}"
-        )
-        assert (
-            generated_onnx_model_path == onnx_model_path
-        ), f"ONNX files were generated at an unusual location, expected {onnx_model_path}, got {generated_onnx_model_path}"
+        logger.info(f"Generated onnx_path: {onnx_model_path}, onnx_dir_path: {onnx_dir_path}")
     return onnx_model_path
 
 
