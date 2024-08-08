@@ -25,7 +25,7 @@ class CloudAI100ExecInfo:
     """
     holds all the information about Cloud AI 100 execution
     --------
-    
+
     :batch_size: int
     :generated_texts: Union[List[List[str]], List[str]]
     :generated_ids: Union[List[np.ndarray], np.ndarray]
