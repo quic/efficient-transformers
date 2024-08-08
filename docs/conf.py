@@ -19,7 +19,6 @@
 #
 import os
 import sys
-
 sys.path.insert(0, os.path.abspath(".."))
 
 
@@ -27,7 +26,6 @@ sys.path.insert(0, os.path.abspath(".."))
 
 project = "Efficient-Transformers"
 copyright = "2024, Qualcomm"
-author = "amitraj"
 
 # The full version, including alpha/beta/rc tags
 release = "1.16"
@@ -56,21 +54,18 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 #
 html_theme = "sphinx_rtd_theme"
 
+
+def setup(app):
+    app.add_css_file("my_theme.css")
+
+
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ["_static"]
 source = [".md"]
-
-
-def skip_member(app, what, name, obj, skip, options):
-    if name == "qpc_exists":
-        return True
-    return skip
-
-
-def setup(app):
-    app.connect("autodoc-skip-member", skip_member)
-
-
 todo_include_todos = True
+
+suppress_warnings = [
+    "ref.rst_pilog",  # Suppress warnings about excluded toctree entries
+]

@@ -16,7 +16,7 @@ Welcome to Efficient-Transformers Documentation!
 :caption: 'Getting Started'
 :maxdepth: 4
  
-source/Introduction
+source/introduction
 source/Validate
 ```
 
@@ -25,7 +25,7 @@ source/Validate
 :caption: 'Installation'
 :maxdepth: 2
 
-source/Linux_installation
+source/installation
 ```
 
 
@@ -34,28 +34,23 @@ source/Linux_installation
 :maxdepth: 4
 
 source/quick_start
-source/kv_change
-
 ```
 
+```{toctree}
+:caption: 'Command Line Interface Use (CLI)'
+:maxdepth: 2
+source/cli_api
+```
 
  
 ```{toctree}
 :caption: 'Python API'
 :maxdepth: 2
 
-source/high_level_api
-source/low_level_api
-source/other_api
+source/hl_api
+source/ll_api
 
 ```
-<!-- ```{toctree}
-:caption: 'Performance'
-:maxdepth: 2
-
-source/performance
-
-``` -->
  
 ```{toctree}
 :caption: 'Blogs'
@@ -72,15 +67,3 @@ source/blogs
 source/reference
 
 ```
-
-
-
-<!-- 
-
-# Indices and tables
-
- 
-
-- {ref}`genindex`
-- {ref}`modindex`
-- {ref}`search` -->

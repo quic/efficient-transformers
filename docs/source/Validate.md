@@ -1,3 +1,4 @@
+(validated_models)=
 # Validated Models
 
 * [GPT2](https://huggingface.co/openai-community/gpt2)
@@ -24,9 +25,10 @@
 * [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) 
 * [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
 
+(coming_soon_models)=
 # Models Coming Soon
  
 * [Jais-13b](https://huggingface.co/core42/jais-13b)
 * [Jais-30b](https://huggingface.co/core42/jais-30b-chat-v1)
 * [Chatglm2-6b](https://huggingface.co/THUDM/chatglm2-6b)
-* [Baichuan2-7B-Base](baichuan-inc/Baichuan2-7B-Base)
+* [Baichuan2-7B-Base](https://huggingface.co/baichuan-inc/Baichuan2-7B-Base)

@@ -31,12 +31,12 @@ class ApiRunner:
         Initialization
         --------
 
-        :batch_size: int. Number of prompts to run in one batch.
-        :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
-        :config: AutoConfig from pretrained model.
-        :prompt: List[str]. input prompt for running the model.
-        :prompt_len: int. prompt length to compile the model.
-        :ctx_len: int. Maximum context length to compile the model.
+        :batch_size: `int` - Number of prompts to run in one batch.
+        :tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` - Pass model tokenizer.
+        :config: `AutoConfig` from pretrained model.
+        :prompt: `List[str]` - Input prompt for running the model.
+        :prompt_len: `int` - Prompt length to compile the model.
+        :ctx_len: `int` - Maximum context length to compile the model.
         """
         self.input_handler = InputHandler(
             batch_size=batch_size,
@@ -55,10 +55,10 @@ class ApiRunner:
         Function responsible for running HuggingFace PyTorch model and return the output tokens
         --------
 
-        :model_hf: torch.nn.module. Original PyTorch model
+        :model_hf: `torch.nn.module` - Original PyTorch model
 
         Return:
-            generated_ids: numpy.ndarray. Generated output tokens
+            generated_ids: `numpy.ndarray` - Generated output tokens
         """
         input_ids = self.input_handler.tokenizer.encode(self.input_handler.prompt[0], return_tensors="pt")
 
@@ -82,9 +82,10 @@ class ApiRunner:
         Function responsible for running KV PyTorch model and return the output tokens
         --------
 
-        :model: torch.nn.module. Transformed PyTorch model
+        :model: `torch.nn.module` - Transformed PyTorch model
 
-        :return generated_ids: numpy.ndarray. Generated output tokens
+        Return:
+            generated_ids: `numpy.ndarray` - Generated output tokens
         """
 
         generated_ids = []
@@ -108,11 +109,12 @@ class ApiRunner:
         """
         Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
         ---------
-        :param inputs: Dict.
-        :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
+
+        :inputs: `Dict`
+        :session: `onnxruntime.capi.onnxruntime_inference_collection.InferenceSession`
 
         Return:
-            outputs: Dict. Numpy outputs of Onnx model
+            outputs: `Dict` - Numpy outputs of Onnx model
         """
         output_names = [x.name for x in session.get_outputs()]
         session_input_names = [x.name for x in session.get_inputs()]
@@ -129,10 +131,10 @@ class ApiRunner:
         Function responsible for running ONNX model on onnxruntime and return the output tokens
         --------
 
-        :model_path: str. Path to the Onnx model.
+        :model_path: `str` - Path to the Onnx model.
 
         Return:
-            generated_ids: numpy.ndarray. Generated output tokens
+            generated_ids: `numpy.ndarray` - Generated output tokens
         """
 
         # Replace invalid index value for INT32 max to 0 using add_initializer
@@ -176,11 +178,11 @@ class ApiRunner:
         Function responsible for running ONNX model on Cloud AI 100 and return the output tokens
         --------
 
-        :qpc_path: str. path to qpc generated after compilation
-        :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
+        :qpc_path: `str` - path to qpc generated after compilation
+        :device_group: `List[int]` - Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
 
         Return:
-            generated_ids: numpy.ndarray. Generated output tokens
+            generated_ids: `numpy.ndarray` - Generated output tokens
         """
         execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=self.input_handler.tokenizer,

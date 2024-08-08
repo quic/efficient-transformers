@@ -4,26 +4,22 @@ This directory contains the stuff for building static html documentations based 
 
 
 ## Build the docs
-Firstly, install the packages:
+Firstly, install the packages if QEfficient Repo is not installed else skip:
 
 ```sh
-python3 -m pip install -r ./requirements.txt
+ pip install -r docs/requirements.txt
 ```
 
-
-And then, make the docs:
+And then, change directory to docs folder to make the docs.
 
 ```sh
-make html
+cd docs/
+sphinx-build -M html . ./build
 ```
 ## Preview the docs locally
-
-The basic way to preview the docs is using the `http.server`:
-
-```sh
-cd build/html
-
-python3 -m http.server 8080
+ 
+```bash
+cd build
+python -m http.server
 ```
-
-And you can visit the page with your web browser with url `http://localhost:8080`.
+You can visit the page with your web browser with url `http://localhost:8080`.

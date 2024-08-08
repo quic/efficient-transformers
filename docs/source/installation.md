@@ -1,4 +1,4 @@
-# Requirements
+# Pre-requisites
 System Requirements:
 1. [Supported Linux OS](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/#operating-systems) - Ubuntu, RHEL and AWS Linux 
 2. [Pre-requisites installed](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Pre-requisites/pre-requisites/)
@@ -9,6 +9,7 @@ System Requirements:
 * **If using ZSH terminal then "device_group" should be in single quotes e.g.  "--device_group [0]"**
 
 # Linux Installation 
+There are two different way to install efficient-transformers.
 
 ## Using SDK
 
@@ -16,7 +17,7 @@ System Requirements:
 
 
 ```bash
-# Install Apps SDK
+# Install using Apps SDK
 
 bash install.sh —enable-qeff
 
@@ -29,10 +30,9 @@ bash install.sh —enable-qeff
 
 python3.8 -m venv qeff_env
 source qeff_env/bin/activate
- 
-# Clone the QEfficient Repo.
-git clone https://github.com/quic/efficient-transformers
- 
-# Install the qefficient-library in Host machine (Used for CLI APIs) (Until we have docker integrated in Apps SDK)
-pip install -e .
+pip install -U pip
+
+# Clone and Install the QEfficient Repo.
+pip install git+https://github.com/quic/efficient-transformers
+
 ``` 

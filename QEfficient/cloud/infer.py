@@ -43,22 +43,22 @@ def main(
         4. Download HF model -> transform -> export -> compile -> execute
     ---------
 
-    :model_name: str. Hugging Face Model Card name, Example: "gpt2"
-    :num_cores: int. :num_cores: int. Number of cores to compile model on.
-    :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
-    :prompt: str. Sample prompt for the model text generation
-    :prompts_txt_file_path: str. Path to txt file for multiple input prompts
-    :aic_enable_depth_first: bool. Enables DFS with default memory size, disabled by default.
-    :mos: int. Effort level to reduce the on-chip memory.
-    :batch_size: int. Batch size to compile the model for.
-    :prompt_len: int. prompt length for the model to compile.
-    :ctx_len: int. Maximum context length to compile the model.
-    :generation_len: int. Number of tokens to be generated.
-    :mxfp6: bool. Enable compilation for MXFP6 precision
-    :mxint8: Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
-    :local_model_dir: str. Path to custom model weights and config files.
-    :cache_dir: str. Cache dir where downloaded HuggingFace files are stored.
-    :hf_token: str. HuggingFace login token to access private repos.
+    :model_name: `str` - Hugging Face Model Card name, Example: `gpt2`
+    :num_cores: `int` - Number of cores to compile model on.
+    :device_group: `List[int]` - Device Ids to be used for compilation. If len(device_group) > 1, multiple Card setup is enabled.
+    :prompt: `str` - Sample prompt for the model text generation.
+    :prompts_txt_file_path: `str` - Path to txt file for multiple input prompts.
+    :aic_enable_depth_first: `bool` - Enables DFS with default memory size, disabled by default.
+    :mos: `int` - Effort level to reduce the on-chip memory.
+    :batch_size: `int` - Batch size to compile the model for.
+    :prompt_len: `int` - Prompt length for the model to compile.
+    :ctx_len: `int` - Maximum context length to compile the model.
+    :generation_len: `int` - Number of tokens to be generated.
+    :mxfp6: `bool` - Enable compilation for MXFP6 precision.
+    :mxint8: `bool` - Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
+    :local_model_dir: `str` - Path to custom model weights and config files.
+    :cache_dir: `str` - Cache dir where downloaded HuggingFace files are stored.
+    :hf_token: `str` - HuggingFace login token to access private repos.
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
     tokenizer = load_hf_tokenizer(

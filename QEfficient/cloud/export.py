@@ -30,11 +30,11 @@ def get_onnx_model_path(
     exports the model to onnx if pre-exported file is not found and returns onnx_model_path
     ---------
 
-    :model_name: str. Hugging Face Model Card name, Example: "gpt2"
-    :cache_dir: str. Cache dir where downloaded HuggingFace files are stored.
-    :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
-    :hf_token: str. HuggingFace login token to access private repos.
-    :local_model_dir: str. Path to custom model weights and config files.
+    :model_name: `str` - Hugging Face Model Card name, Example: `gpt2`.
+    :cache_dir: `str` - Cache dir where downloaded HuggingFace files are stored.
+    :tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` - Pass model tokenizer.
+    :hf_token: `str` - HuggingFace login token to access private repos.
+    :local_model_dir: `str` - Path to custom model weights and config files.
     """
     onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(model_name)
     if onnx_path_exists:
@@ -69,10 +69,10 @@ def main(
     Helper function used by export CLI app for exporting to ONNX Model.
     ---------
 
-    :model_name: str. Hugging Face Model Card name, Example: gpt2
-    :cache_dir: str. Cache dir to store the downloaded HuggingFace files.
-    :hf_token: str. HuggingFace login token to access private repos.
-    :local_model_dir: str. Path to custom model weights and config files.
+    :model_name: `str` - Hugging Face Model Card name, Example: gpt2
+    :cache_dir: `str` - Cache dir to store the downloaded HuggingFace files.
+    :hf_token: `str` - HuggingFace login token to access private repos.
+    :local_model_dir: `str` - Path to custom model weights and config files.
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
     get_onnx_model_path(model_name=model_name, cache_dir=cache_dir, hf_token=hf_token, local_model_dir=local_model_dir)

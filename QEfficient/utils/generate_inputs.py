@@ -17,12 +17,13 @@ class InputHandler:
         Initialization
         --------
 
-        :batch_size: int. Number of prompts to run in one batch.
-        :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
-        :config: AutoConfig from pretrained model.
-        :prompt: List[str]. String to used as input prompt for the model.
-        :prompt_len: int. prompt length for the model to compile.
-        :ctx_len: int. Maximum context length to compile the model.
+        :batch_size: `int` - Number of prompts to run in one batch.
+        :tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` - Pass model tokenizer.
+        :config: `AutoConfig` from pretrained model.
+        :prompt: `List[str]` - String to used as input prompt for the model.
+        :prompt_len: `int` - Prompt length for the model to compile.
+        :ctx_len: `int` - Maximum context length to compile the model.
+
         """
         # check and fix tokenizer viability
         padding_check_and_fix(tokenizer)
@@ -36,13 +37,10 @@ class InputHandler:
     def prepare_pytorch_inputs(self):
         """
         Function responsible for creating Prefill stage tensor inputs for PyTorch model.
-        ---------
-
-        :n_layer : int
-        :padding_shape : List[int]
+        --------
 
         Return:
-            inputs: Dict - input_ids, position_ids, past_key_values
+            inputs: `Dict` - input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
@@ -80,17 +78,16 @@ class InputHandler:
 
         return inputs
 
-    def update_pytorch_inputs(self, iteration, inputs, pt_outputs):
+    def update_pytorch_inputs(self, inputs, pt_outputs):
         """
-        Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for PyTorch model.
-        ---------
+        Function responsible for updating Prefill stage inputs to create decode stage inputs for PyTorch model.
+        --------
 
-        :iteration: int. Current iteration number.
-        :inputs: Dict. Previous iteration inputs.
-        :pt_outputs: Dict. Previous iteration PyTorch outputs.
+        :inputs: `Dict` - Pytorch inputs from previous iteration
+        :pt_outputs: `Dict` - Pytorch outputs from previous iteration
 
         Return:
-            inputs: Dict - input_ids, position_ids, past_key_values
+         updated_inputs: `Dict` -` Updated input_ids, position_ids and past_key_values
         """
         updated_inputs = {}
         updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
@@ -106,7 +103,7 @@ class InputHandler:
         --------
 
         Return:
-            inputs: Dict. input_ids, position_ids, past_key_values
+            inputs: `Dict` - input_ids, position_ids, past_key_values
         """
 
         inputs = self.tokenizer(
@@ -138,11 +135,11 @@ class InputHandler:
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
         --------
 
-        :inputs: Dict. NumPy inputs of Onnx model from previous iteration
-        :ort_outputs: Dict. Numpy outputs of Onnx model from previous iteration
+        :inputs: `Dict` - NumPy inputs of Onnx model from previous iteration
+        :ort_outputs: `Dict` - Numpy outputs of Onnx model from previous iteration
 
         Return:
-            updated_inputs: Dict. Updated input_ids, position_ids and past_key_values
+            updated_inputs: `Dict` - Updated input_ids, position_ids and past_key_values
         """
 
         updated_inputs = {}
@@ -159,10 +156,10 @@ class InputHandler:
         Function responsible for updating ONNXRT session outputs.
         --------
 
-        :ort_outputs: Dict. Numpy outputs of Onnx model from current iteration
+        :ort_outputs: `Dict` - Numpy outputs of Onnx model from current iteration
 
         Return:
-            updated_outputs: Dict. Updated past_key_values, logits
+            updated_outputs: `Dict` - Updated past_key_values, logits
         """
 
         present_key_values = []

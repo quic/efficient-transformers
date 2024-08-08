@@ -1,74 +1,78 @@
-# Quick Start Guide
 
 QEfficient Library was designed with one goal: 
 
 **To make onboarding of models inference straightforward for any Transformer architecture, while leveraging the complete power of Cloud AI platform**
 
 To achieve this, we have 2 levels of APIs, with different levels of abstraction.
-1. High-level APIs abstract away complex details, offering a simpler interface. They're ideal for quick development and prototyping. If you're new to a technology or want to minimize coding effort, high-level APIs are more user-friendly.
+1. Command line interface abstracts away complex details, offering a simpler interface. They're ideal for quick development and prototyping. If you're new to a technology or want to minimize coding effort.
 
-2. Low-level APIs offer more granular control, ideal for when customization is necessary. These are particularly useful for users who are trying their own models, not hosted on HF but are implemented based on Transformers.
-
-In summary:
-
-* Choose high-level APIs for quick development, simplicity, and ease of use.
-* Opt for low-level APIs when you need fine-tuned control, optimization, or advanced customization.
-
+2. Python high level APIs offer more granular control, ideal for when customization is necessary.
  
-# Using High Level API
+## Command Line Interface
 
-## 1. Use QEfficient.cloud.infer 
+### QEfficient.cloud.infer
 
-This is the single e2e python api in the library, which takes model_card name as input along with other compile args if necessary and does everything in one go. 
+This is the single e2e CLI API, which takes `model_card` name as input along with other compilation arguments. Check [Infer API doc](infer_api) for more details.
 
-* Torch Download → Optimize for Cloud AI 100 → Export to ONNX → Verify (CPU) → Compile on Cloud AI 100 → [Execute](#2-use-of-qefficientcloudexecute)
-* It skips the ONNX export/compile stage if ONNX file or qpc found on path
+* HuggingFace model files Download → Optimize for Cloud AI 100 → Export to `ONNX` → Compile on Cloud AI 100 → [Execute](#qefficientcloudexecute)
+* It skips the export/compile stage based if `ONNX` or `qpc` files are found. If you use infer second time with different compilation arguments, it will automatically skip `ONNX` model creation and directly jump to compile stage.
 
 
 ```bash
-# Check out the options using the help menu
+# Check out the options using the help
 python -m QEfficient.cloud.infer --help
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first  
+```
+If executing for batch size>1,
+You can pass input prompts in single string but separate with pipe (|) symbol". Example below
 
-# If executing for batch size>1,
-
-# Either pass input prompts in single string but seperate with pipe (|) symbol". Example below
-
+```bash
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth 
 theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first
+```
 
-# Or pass path of txt file with input prompts, Example below, sample txt file(prompts.txt) is present in examples folder .
+You can also pass path of txt file with input prompts when you want to run inference on lot of prompts, Example below, sample txt file(prompts.txt) is present in examples folder.
 
+```bash
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompts_txt_file_path examples/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first  
  ```
-## 2. Use of QEfficient.cloud.execute
-Once we have compiled the QPC, we can now use the precompiled QPC in execute API to run for different prompts, like below:
+
+
+### QEfficient.cloud.execute
+You can first run `infer` API and then use `execute` to run the pre-compiled model on Cloud AI 100 cards.
+Once we have compiled the QPC, we can now use the precompiled QPC in execute API to run for different prompts. Make sure to pass same `--device_group` as used during infer. Refer [Execute API doc](execute_api) for more details.
 
 ```bash
 python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path qeff_models/gpt2/qpc_16cores_1BS_32PL_128CL_1devices_mxfp6/qpcs --prompt "Once upon a time in" --device_group [0]  
 ```
 
-We can also enable MQ, just based on the number of devices. Based on the "--device-group" as input it will create TS config on the fly. If "--device-group [0,1]" it will create TS config for 2 devices and use it for compilation, if "--device-group 0" then TS compilation is skipped and single soc execution is enabled.
+### Multi-Qranium Inference
+You can also enable MQ, just based on the number of devices. Based on the `--device-group` as input it will create TS config on the fly. If `--device-group [0,1]` it will create TS config for 2 devices and use it for compilation, if `--device-group [0]` then TS compilation is skipped and single soc execution is enabled.
 
 ```bash
 python -m QEfficient.cloud.infer --model_name Salesforce/codegen-2B-mono --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0,1] --prompt "def fibonacci(n):" --mos 2 --aic_enable_depth_first  
- 
-# Once qpc is saved, you can use the execute API to run for different prompts
+``` 
+Above step will save the `qpc` files under `efficient-transformers/qeff_models/{model_card_name}`, you can use the execute API to run for different prompts. This will automatically pick the pre-compiled `qpc` files.
+
+```bash
 python -m QEfficient.cloud.execute --model_name Salesforce/codegen-2B-mono --qpc-path qeff_models/Salesforce/codegen-2B-mono/qpc_16cores_1BS_32PL_128CL_2devices_mxfp6/qpcs --prompt "def binary_search(array: np.array, k: int):" --device-group [0,1] 
- 
-# To disable MQ, just pass single soc like below:
+```
+
+To disable MQ, just pass single soc like below, below step will compile the model again and reuse the `ONNX` file as only compilation argument are different from above commands.
+
+```bash
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first
 ```
 
-# Using Low Level API
+## Python API
 
 ### 1.  Model download and Optimize for Cloud AI 100
-
-Initialize QEfficient and transform the models, Check the list of supported architectures in the repo.
+If your models falls into the model architectures that are [already supported](validated_models), Below steps should work fine.
+Please raise an [issue](https://github.com/quic/efficient-transformers/issues), in case of trouble.
 
 ```Python
-# Initiate the Orignal Transformer model
-import os
+# Initiate the Original Transformer model
+# import os
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 
@@ -108,7 +112,7 @@ generated_qpc_path = qeff_model.compile(
 )
 ```
 
-### 3. Run Benchmark 
+### 3. Execute
 
 Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/sec
 
