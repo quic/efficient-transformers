@@ -6,6 +6,7 @@
   <title>QEfficient.exporter.export_hf_to_cloud_ai_100 &mdash; Efficient-Transformers 1.16 documentation</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=19f00094" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/my_theme.css?v=547657ed" />
 
   
   <!--[if lt IE 9]>
@@ -55,14 +56,23 @@
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Quick Start Guide</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#using-high-level-api">Using High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#using-command-line-interface">Using COMMAND LINE INTERFACE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#using-python-api">Using python API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/high_level_api.html">QEfficient.cloud.infer</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/high_level_api.html#qefficient-cloud-execute">QEfficient.cloud.execute</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/high_level_api.html#qefficient-cloud-compile">QEfficient.cloud.compile</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/high_level_api.html#qefficient-cloud-export">QEfficient.cloud.export</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/high_level_api.html">High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/low_level_api.html">Low level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/low_level_api.html">QEfficient.QEFFAutoModelForCausalLM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/low_level_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100">QEfficient.exporter.export_hf_to_cloud_ai_100 module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/low_level_api.html#module-QEfficient.compile.compile_helper">QEfficient.compile</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/low_level_api.html#module-QEfficient.generation.text_generation_inference">QEfficient.generation.text_generation_inference module</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/other_api.html">Utilities</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
@@ -123,12 +133,13 @@
 <span class="kn">from</span> <span class="nn">transformers</span> <span class="kn">import</span> <span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span>
 
 <span class="kn">import</span> <span class="nn">QEfficient</span>
+<span class="kn">from</span> <span class="nn">QEfficient.base.common</span> <span class="kn">import</span> <span class="n">AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP</span><span class="p">,</span> <span class="n">QEFF_MODEL_TYPE</span><span class="p">,</span> <span class="n">QEFFCommonLoader</span>
+<span class="kn">from</span> <span class="nn">QEfficient.base.modeling_qeff</span> <span class="kn">import</span> <span class="n">QEFFBaseModel</span>
 <span class="kn">from</span> <span class="nn">QEfficient.exporter.export_utils</span> <span class="kn">import</span> <span class="n">export_onnx</span><span class="p">,</span> <span class="n">fix_onnx_fp16</span><span class="p">,</span> <span class="n">generate_input_files</span><span class="p">,</span> <span class="n">run_model_on_ort</span>
-<span class="kn">from</span> <span class="nn">QEfficient.src._transformers.auto</span> <span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span>
-<span class="kn">from</span> <span class="nn">QEfficient.src.base</span> <span class="kn">import</span> <span class="n">QEFFBaseModel</span>
-<span class="kn">from</span> <span class="nn">QEfficient.src.common</span> <span class="kn">import</span> <span class="n">AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP</span><span class="p">,</span> <span class="n">QEFF_MODEL_TYPE</span><span class="p">,</span> <span class="n">QEFFCommonLoader</span>
-<span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">load_hf_tokenizer</span><span class="p">,</span> <span class="n">padding_check_and_fix</span>
+<span class="kn">from</span> <span class="nn">QEfficient.transformers.models.modeling_auto</span> <span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span>
+<span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">load_hf_tokenizer</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.constants</span> <span class="kn">import</span> <span class="n">QEFF_MODELS_DIR</span><span class="p">,</span> <span class="n">Constants</span>
+<span class="kn">from</span> <span class="nn">QEfficient.utils.generate_inputs</span> <span class="kn">import</span> <span class="n">InputHandler</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.logging_utils</span> <span class="kn">import</span> <span class="n">logger</span>
 
 
@@ -172,7 +183,7 @@
     <span class="n">model_base_name</span> <span class="o">=</span> <span class="n">model_name</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">,</span> <span class="s2">&quot;_&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;_bertstyle&quot;</span>
     <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 
-    <span class="n">input_str</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">input_str</span>
+    <span class="n">input_str</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">INPUT_STR</span>
     <span class="c1"># Preprocess inputs</span>
     <span class="k">if</span> <span class="n">seq_len</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
         <span class="n">inputs</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span>
@@ -305,59 +316,23 @@
     <span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="c1"># Disabling requires_grad on all parameters</span>
-    <span class="k">for</span> <span class="n">j</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">transformed_model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()):</span>
+    <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">transformed_model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()):</span>
         <span class="n">p</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
 
-    <span class="c1"># Check and fix tokenizer viability</span>
-    <span class="n">padding_check_and_fix</span><span class="p">(</span><span class="n">tokenizer</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">seq_len</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Need seq_len to be greater than zero, got seq_len=</span><span class="si">{</span><span class="n">seq_len</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
     <span class="c1"># Preprocess inputs</span>
     <span class="c1"># Build inputs for prefill</span>
-    <span class="k">assert</span> <span class="n">seq_len</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;Need seq_len to be greater than zero&quot;</span>
-    <span class="n">inputs</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">Constants</span><span class="o">.</span><span class="n">input_str</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span>
-    <span class="n">batch_size</span><span class="p">,</span> <span class="n">prompt_len</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span>
-    <span class="n">inputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">)</span>
-    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">prompt_len</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
-
-    <span class="n">config</span> <span class="o">=</span> <span class="n">transformed_model</span><span class="o">.</span><span class="n">config</span>
-    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;n_head&quot;</span><span class="p">):</span>  <span class="c1"># Assuming n_head is a key in the config (GPTs/CodeGen)</span>
-        <span class="n">n_heads</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">n_head</span>
-        <span class="n">d_head</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">n_embd</span> <span class="o">//</span> <span class="n">config</span><span class="o">.</span><span class="n">n_head</span>
-        <span class="n">n_layer</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">n_layer</span>
-    <span class="k">elif</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;num_key_value_heads&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">hasattr</span><span class="p">(</span>
-        <span class="n">config</span><span class="p">,</span> <span class="s2">&quot;num_attention_heads&quot;</span>
-    <span class="p">):</span>  <span class="c1"># Check for num_key_value_heads (Llama/Mistral)</span>
-        <span class="n">n_heads</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">num_key_value_heads</span>
-        <span class="n">d_head</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">hidden_size</span> <span class="o">//</span> <span class="n">config</span><span class="o">.</span><span class="n">num_attention_heads</span>
-        <span class="n">n_layer</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">num_hidden_layers</span>
-    <span class="k">elif</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;n_heads&quot;</span><span class="p">):</span>  <span class="c1"># Check for n_heads and d_model in the config (MPT Model)</span>
-        <span class="n">n_heads</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">n_heads</span>
-        <span class="n">d_head</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">d_model</span> <span class="o">//</span> <span class="n">config</span><span class="o">.</span><span class="n">n_heads</span>
-        <span class="n">n_layer</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">n_layers</span>
-    <span class="k">elif</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;multi_query&quot;</span><span class="p">):</span>  <span class="c1"># Check for Falcon</span>
-        <span class="n">multi_query_value</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;multi_query&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">multi_query_value</span><span class="p">:</span>
-            <span class="n">n_heads</span> <span class="o">=</span> <span class="mi">1</span>  <span class="c1"># MQA</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">n_heads</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">num_attention_heads</span>
-        <span class="n">d_head</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">hidden_size</span> <span class="o">//</span> <span class="n">config</span><span class="o">.</span><span class="n">num_attention_heads</span>
-        <span class="n">n_layer</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">num_hidden_layers</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Invalid model configuration: n_head/n_heads or num_key_value_heads not found.&quot;</span><span class="p">)</span>
-    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;past_key_values&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span>
-        <span class="nb">tuple</span><span class="p">(</span>
-            <span class="p">[</span>
-                <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
-                    <span class="n">batch_size</span><span class="p">,</span>
-                    <span class="n">n_heads</span><span class="p">,</span>
-                    <span class="n">seq_len</span><span class="p">,</span>  <span class="c1"># seq_len for running decode loop</span>
-                    <span class="n">d_head</span><span class="p">,</span>
-                    <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
-                <span class="p">)</span>
-                <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
-            <span class="p">]</span>
-        <span class="p">)</span>
-        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_layer</span><span class="p">)</span>
-    <span class="p">]</span>
+    <span class="n">input_handler</span> <span class="o">=</span> <span class="n">InputHandler</span><span class="p">(</span>
+        <span class="n">batch_size</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">Constants</span><span class="o">.</span><span class="n">INPUT_STR</span><span class="p">),</span>
+        <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+        <span class="n">config</span><span class="o">=</span><span class="n">transformed_model</span><span class="o">.</span><span class="n">config</span><span class="p">,</span>
+        <span class="n">prompt</span><span class="o">=</span><span class="n">Constants</span><span class="o">.</span><span class="n">INPUT_STR</span><span class="p">,</span>
+        <span class="n">prompt_len</span><span class="o">=</span><span class="n">Constants</span><span class="o">.</span><span class="n">PROMPT_LEN</span><span class="p">,</span>
+        <span class="n">ctx_len</span><span class="o">=</span><span class="n">seq_len</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">inputs</span> <span class="o">=</span> <span class="n">input_handler</span><span class="o">.</span><span class="n">prepare_pytorch_inputs</span><span class="p">()</span>
 
     <span class="n">pt_outputs</span> <span class="o">=</span> <span class="n">transformed_model</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
     <span class="n">output_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">pt_outputs</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
@@ -368,18 +343,10 @@
 
     <span class="c1"># Build inputs for next iteration from outputs</span>
     <span class="c1"># Build inputs for decode</span>
-    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">pt_outputs</span><span class="o">.</span><span class="n">logits</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
-    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">values</span> <span class="o">+</span> <span class="mi">1</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">batch_decode</span><span class="p">(</span><span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]))</span>
-    <span class="c1"># Run PyTorch inference for decode in loop</span>
-    <span class="c1"># todo: vbaddi, fix it to verify on Cloud AI 100.</span>
-    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">):</span>
-        <span class="n">pt_outputs</span> <span class="o">=</span> <span class="n">transformed_model</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
-        <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">pt_outputs</span><span class="o">.</span><span class="n">logits</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
-        <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
-        <span class="nb">print</span><span class="p">(</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">batch_decode</span><span class="p">(</span><span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]))</span>
+    <span class="n">inputs</span> <span class="o">=</span> <span class="n">input_handler</span><span class="o">.</span><span class="n">update_pytorch_inputs</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">pt_outputs</span><span class="p">)</span>
+
     <span class="c1"># To avoid issues in onnx export</span>
-    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">seq_len</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">seq_len</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
 
     <span class="c1"># Run PyTorch inference with past</span>
     <span class="n">pt_outputs</span> <span class="o">=</span> <span class="n">transformed_model</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
@@ -468,7 +435,7 @@
     <span class="n">qeff_model</span><span class="p">:</span> <span class="n">QEFFBaseModel</span><span class="p">,</span>
     <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">],</span>
     <span class="n">onnx_dir_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-    <span class="n">seq_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">seq_length</span><span class="p">,</span>
+    <span class="n">seq_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">SEQ_LEN</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="c1"># FIXME: move all this to class instead of here, and just call qeff_model.export here.</span>
     <span class="k">if</span> <span class="n">AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">qeff_model</span><span class="o">.</span><span class="vm">__class__</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="o">==</span> <span class="n">QEFF_MODEL_TYPE</span><span class="o">.</span><span class="n">CAUSALLM</span><span class="p">:</span>  <span class="c1"># type: ignore</span>
@@ -526,7 +493,7 @@
     <span class="n">cache_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">onnx_dir_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">hf_token</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">seq_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">seq_length</span><span class="p">,</span>
+    <span class="n">seq_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">SEQ_LEN</span><span class="p">,</span>
     <span class="n">kv</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="n">form_factor</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cloud&quot;</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
@@ -553,13 +520,14 @@
         <span class="ne">DeprecationWarning</span><span class="p">,</span>
         <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
     <span class="p">)</span>
+
     <span class="c1"># Get model_kv first</span>
     <span class="n">model_kv</span> <span class="o">=</span> <span class="p">(</span>
         <span class="n">model_kv</span>
         <span class="k">if</span> <span class="n">model_kv</span>
         <span class="k">else</span> <span class="n">QEFFCommonLoader</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
             <span class="n">pretrained_model_name_or_path</span><span class="o">=</span><span class="p">(</span><span class="n">local_model_dir</span> <span class="k">if</span> <span class="n">local_model_dir</span> <span class="k">else</span> <span class="n">model_name</span><span class="p">),</span>
-            <span class="n">hf_token</span><span class="o">=</span><span class="n">hf_token</span><span class="p">,</span>
+            <span class="n">token</span><span class="o">=</span><span class="n">hf_token</span><span class="p">,</span>
             <span class="n">cache_dir</span><span class="o">=</span><span class="n">cache_dir</span><span class="p">,</span>
         <span class="p">)</span>
     <span class="p">)</span>
@@ -573,6 +541,7 @@
     <span class="k">if</span> <span class="n">onnx_dir_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">model_card_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">QEFF_MODELS_DIR</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">model_name</span><span class="p">))</span>
         <span class="n">onnx_dir_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">model_card_dir</span><span class="p">,</span> <span class="s2">&quot;onnx&quot;</span><span class="p">)</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 
     <span class="c1"># Load tokenizer if not passed</span>
     <span class="n">tokenizer</span> <span class="o">=</span> <span class="p">(</span>
@@ -582,7 +551,6 @@
             <span class="n">pretrained_model_name_or_path</span><span class="o">=</span><span class="p">(</span><span class="n">local_model_dir</span> <span class="k">if</span> <span class="n">local_model_dir</span> <span class="k">else</span> <span class="n">model_name</span><span class="p">),</span>
             <span class="n">hf_token</span><span class="o">=</span><span class="n">hf_token</span><span class="p">,</span>
             <span class="n">cache_dir</span><span class="o">=</span><span class="n">cache_dir</span><span class="p">,</span>
-            <span class="n">local_model_dir</span><span class="o">=</span><span class="n">local_model_dir</span><span class="p">,</span>
         <span class="p">)</span>
     <span class="p">)</span>
 

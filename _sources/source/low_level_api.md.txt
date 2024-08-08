@@ -1,26 +1,24 @@
-# Low level API
-
-## QEfficient.src._transformers.auto.QEFFAutoModelForCausalLM
+# QEfficient.QEFFAutoModelForCausalLM
 ```{eval-rst}
-.. automodule:: QEfficient.src._transformers.auto 
+.. automodule:: QEfficient.QEFFAutoModelForCausalLM 
    :members:
    :show-inheritance:
    :exclude-members: QEffAutoModel,QEFFTransformersBase
 ``` 
-## QEfficient.exporter.export_hf_to_cloud_ai_100 module
+# QEfficient.exporter.export_hf_to_cloud_ai_100 module
 ```{eval-rst} 
 .. automodule:: QEfficient.exporter.export_hf_to_cloud_ai_100
    :members:
    :show-inheritance:
    :exclude-members: convert_to_edge
 ```
-## QEfficient.compile
+# QEfficient.compile
 ```{eval-rst}
 .. automodule:: QEfficient.compile.compile_helper
    :members:
    :show-inheritance:
 ```
-## QEfficient.generation.text_generation_inference module
+# QEfficient.generation.text_generation_inference module
 
 ```{eval-rst}
 .. automodule:: QEfficient.generation.text_generation_inference

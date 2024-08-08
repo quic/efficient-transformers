@@ -6,6 +6,7 @@
   <title>Index &mdash; Efficient-Transformers 1.16 documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
+      <link rel="stylesheet" type="text/css" href="_static/my_theme.css?v=547657ed" />
 
   
   <!--[if lt IE 9]>
@@ -55,14 +56,23 @@
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/quick_start.html">Quick Start Guide</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#using-high-level-api">Using High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#using-command-line-interface">Using command line interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#using-python-api">Using python API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="source/high_level_api.html">QEfficient.cloud.infer</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/high_level_api.html#qefficient-cloud-execute">QEfficient.cloud.execute</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/high_level_api.html#qefficient-cloud-compile">QEfficient.cloud.compile</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/high_level_api.html#qefficient-cloud-export">QEfficient.cloud.export</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="source/high_level_api.html">High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/low_level_api.html">Low level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/low_level_api.html">QEfficient.QEFFAutoModelForCausalLM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/low_level_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100">QEfficient.exporter.export_hf_to_cloud_ai_100 module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/low_level_api.html#module-QEfficient.compile.compile_helper">QEfficient.compile</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/low_level_api.html#module-QEfficient.generation.text_generation_inference">QEfficient.generation.text_generation_inference module</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/other_api.html">Utilities</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
@@ -118,8 +128,6 @@
  | <a href="#P"><strong>P</strong></a>
  | <a href="#Q"><strong>Q</strong></a>
  | <a href="#R"><strong>R</strong></a>
- | <a href="#S"><strong>S</strong></a>
- | <a href="#T"><strong>T</strong></a>
  | <a href="#U"><strong>U</strong></a>
  
 </div>
@@ -138,9 +146,9 @@
 <h2 id="C">C</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/other_api.html#QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter.cache_index">cache_index (QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter attribute)</a>
-</li>
       <li><a href="source/low_level_api.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv">cloud_ai_100_exec_kv() (in module QEfficient.generation.text_generation_inference)</a>
+</li>
+      <li><a href="source/low_level_api.html#QEfficient.generation.text_generation_inference.CloudAI100ExecInfo">CloudAI100ExecInfo (class in QEfficient.generation.text_generation_inference)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
@@ -167,10 +175,6 @@
       <li><a href="source/other_api.html#QEfficient.utils.generate_inputs.InputHandler">InputHandler (class in QEfficient.utils.generate_inputs)</a>
 </li>
   </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/other_api.html#QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter.is_causal">is_causal (QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter attribute)</a>
-</li>
-  </ul></td>
 </tr></table>
 
 <h2 id="L">L</h2>
@@ -184,33 +188,21 @@
 <h2 id="M">M</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/high_level_api.html#QEfficient.cloud.execute.main">main() (in module QEfficient.cloud.execute)</a>
-
-      <ul>
-        <li><a href="source/high_level_api.html#QEfficient.cloud.infer.main">(in module QEfficient.cloud.infer)</a>
-</li>
-      </ul></li>
       <li><a href="source/other_api.html#QEfficient.transformers.modeling_utils.ModelArchitectures">ModelArchitectures (class in QEfficient.transformers.modeling_utils)</a>
 </li>
       <li>
     module
 
       <ul>
-        <li><a href="source/high_level_api.html#module-QEfficient.cloud.execute">QEfficient.cloud.execute</a>
-</li>
-        <li><a href="source/high_level_api.html#module-QEfficient.cloud.infer">QEfficient.cloud.infer</a>
-</li>
         <li><a href="source/low_level_api.html#module-QEfficient.compile.compile_helper">QEfficient.compile.compile_helper</a>
 </li>
         <li><a href="source/low_level_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100">QEfficient.exporter.export_hf_to_cloud_ai_100</a>
 </li>
         <li><a href="source/low_level_api.html#module-QEfficient.generation.text_generation_inference">QEfficient.generation.text_generation_inference</a>
 </li>
-        <li><a href="source/low_level_api.html#module-QEfficient.src._transformers.auto">QEfficient.src._transformers.auto</a>
+        <li><a href="source/low_level_api.html#module-QEfficient.QEFFAutoModelForCausalLM">QEfficient.QEFFAutoModelForCausalLM</a>
 </li>
         <li><a href="source/other_api.html#module-QEfficient.transformers.modeling_attn_mask_utils">QEfficient.transformers.modeling_attn_mask_utils</a>
-</li>
-        <li><a href="source/other_api.html#module-QEfficient.transformers.modeling_outputs">QEfficient.transformers.modeling_outputs</a>
 </li>
         <li><a href="source/other_api.html#module-QEfficient.transformers.modeling_utils">QEfficient.transformers.modeling_utils</a>
 </li>
@@ -227,12 +219,10 @@
 <h2 id="P">P</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/other_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_cloud_ai_100_inputs">prepare_cloud_ai_100_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
+      <li><a href="source/other_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs">prepare_ort_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/other_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs">prepare_ort_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
-</li>
       <li><a href="source/other_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs">prepare_pytorch_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
 </li>
   </ul></td>
@@ -241,32 +231,6 @@
 <h2 id="Q">Q</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/other_api.html#QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter">QEffAttentionMaskConverter (class in QEfficient.transformers.modeling_attn_mask_utils)</a>
-</li>
-      <li><a href="source/low_level_api.html#QEfficient.src._transformers.auto.QEFFAutoModelForCausalLM">QEFFAutoModelForCausalLM (class in QEfficient.src._transformers.auto)</a>
-</li>
-      <li><a href="source/other_api.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPast">QEffBaseModelOutputWithPast (class in QEfficient.transformers.modeling_outputs)</a>
-</li>
-      <li><a href="source/other_api.html#QEfficient.transformers.modeling_outputs.QEffBaseModelOutputWithPastAndCrossAttentions">QEffBaseModelOutputWithPastAndCrossAttentions (class in QEfficient.transformers.modeling_outputs)</a>
-</li>
-      <li><a href="source/other_api.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithCrossAttentions">QEffCausalLMOutputWithCrossAttentions (class in QEfficient.transformers.modeling_outputs)</a>
-</li>
-      <li><a href="source/other_api.html#QEfficient.transformers.modeling_outputs.QEffCausalLMOutputWithPast">QEffCausalLMOutputWithPast (class in QEfficient.transformers.modeling_outputs)</a>
-</li>
-      <li>
-    QEfficient.cloud.execute
-
-      <ul>
-        <li><a href="source/high_level_api.html#module-QEfficient.cloud.execute">module</a>
-</li>
-      </ul></li>
-      <li>
-    QEfficient.cloud.infer
-
-      <ul>
-        <li><a href="source/high_level_api.html#module-QEfficient.cloud.infer">module</a>
-</li>
-      </ul></li>
       <li>
     QEfficient.compile.compile_helper
 
@@ -288,13 +252,11 @@
         <li><a href="source/low_level_api.html#module-QEfficient.generation.text_generation_inference">module</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li>
-    QEfficient.src._transformers.auto
+    QEfficient.QEFFAutoModelForCausalLM
 
       <ul>
-        <li><a href="source/low_level_api.html#module-QEfficient.src._transformers.auto">module</a>
+        <li><a href="source/low_level_api.html#module-QEfficient.QEFFAutoModelForCausalLM">module</a>
 </li>
       </ul></li>
       <li>
@@ -304,13 +266,8 @@
         <li><a href="source/other_api.html#module-QEfficient.transformers.modeling_attn_mask_utils">module</a>
 </li>
       </ul></li>
-      <li>
-    QEfficient.transformers.modeling_outputs
-
-      <ul>
-        <li><a href="source/other_api.html#module-QEfficient.transformers.modeling_outputs">module</a>
-</li>
-      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li>
     QEfficient.transformers.modeling_utils
 
@@ -339,10 +296,6 @@
         <li><a href="source/other_api.html#module-QEfficient.utils.run_utils">module</a>
 </li>
       </ul></li>
-      <li><a href="source/other_api.html#QEfficient.transformers.modeling_outputs.QEffMoeCausalLMOutputWithPast">QEffMoeCausalLMOutputWithPast (class in QEfficient.transformers.modeling_outputs)</a>
-</li>
-      <li><a href="source/other_api.html#QEfficient.transformers.modeling_outputs.QEffMoeModelOutputWithPast">QEffMoeModelOutputWithPast (class in QEfficient.transformers.modeling_outputs)</a>
-</li>
       <li><a href="source/low_level_api.html#QEfficient.exporter.export_hf_to_cloud_ai_100.qualcomm_efficient_converter">qualcomm_efficient_converter() (in module QEfficient.exporter.export_hf_to_cloud_ai_100)</a>
 </li>
   </ul></td>
@@ -366,30 +319,14 @@
   </ul></td>
 </tr></table>
 
-<h2 id="S">S</h2>
-<table style="width: 100%" class="indextable genindextable"><tr>
-  <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/other_api.html#QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter.sliding_window">sliding_window (QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter attribute)</a>
-</li>
-  </ul></td>
-</tr></table>
-
-<h2 id="T">T</h2>
-<table style="width: 100%" class="indextable genindextable"><tr>
-  <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/other_api.html#QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter.to_4d">to_4d() (QEfficient.transformers.modeling_attn_mask_utils.QEffAttentionMaskConverter method)</a>
-</li>
-  </ul></td>
-</tr></table>
-
 <h2 id="U">U</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/other_api.html#QEfficient.utils.generate_inputs.InputHandler.update_cloud_ai_100_inputs">update_cloud_ai_100_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
+      <li><a href="source/other_api.html#QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs">update_ort_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/other_api.html#QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs">update_ort_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
+      <li><a href="source/other_api.html#QEfficient.utils.generate_inputs.InputHandler.update_ort_outputs">update_ort_outputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
 </li>
       <li><a href="source/other_api.html#QEfficient.utils.generate_inputs.InputHandler.update_pytorch_inputs">update_pytorch_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
 </li>

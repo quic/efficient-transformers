@@ -50,7 +50,7 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#linux-installation">Linux Installation</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -109,7 +109,7 @@
   <h1>Source code for QEfficient.transformers.modeling_utils</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -----------------------------------------------------------------------------</span>
 <span class="c1">#</span>
-<span class="c1"># Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
+<span class="c1"># Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
 <span class="c1"># SPDX-License-Identifier: BSD-3-Clause</span>
 <span class="c1">#</span>
 <span class="c1"># -----------------------------------------------------------------------------</span>
@@ -145,6 +145,7 @@
     <span class="n">MixtralSparseMoeBlock</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span> <span class="nn">transformers.models.mpt.modeling_mpt</span> <span class="kn">import</span> <span class="n">MptAttention</span><span class="p">,</span> <span class="n">MptBlock</span><span class="p">,</span> <span class="n">MptForCausalLM</span><span class="p">,</span> <span class="n">MptModel</span>
+<span class="kn">from</span> <span class="nn">transformers.models.phi.modeling_phi</span> <span class="kn">import</span> <span class="n">PhiAttention</span><span class="p">,</span> <span class="n">PhiForCausalLM</span><span class="p">,</span> <span class="n">PhiModel</span>
 <span class="kn">from</span> <span class="nn">transformers.models.phi3.modeling_phi3</span> <span class="kn">import</span> <span class="n">Phi3Attention</span><span class="p">,</span> <span class="n">Phi3ForCausalLM</span><span class="p">,</span> <span class="n">Phi3Model</span><span class="p">,</span> <span class="n">Phi3RMSNorm</span>
 <span class="kn">from</span> <span class="nn">transformers.models.qwen2.modeling_qwen2</span> <span class="kn">import</span> <span class="n">Qwen2Attention</span><span class="p">,</span> <span class="n">Qwen2ForCausalLM</span><span class="p">,</span> <span class="n">Qwen2Model</span><span class="p">,</span> <span class="n">Qwen2RMSNorm</span>
 <span class="kn">from</span> <span class="nn">transformers.models.starcoder2.modeling_starcoder2</span> <span class="kn">import</span> <span class="p">(</span>
@@ -184,6 +185,7 @@
     <span class="n">QEffMixtralSparseMoeBlock</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span> <span class="nn">.models.mpt.modeling_mpt</span> <span class="kn">import</span> <span class="n">QEffMptAttention</span><span class="p">,</span> <span class="n">QEffMptBlock</span><span class="p">,</span> <span class="n">QEffMptForCausalLM</span><span class="p">,</span> <span class="n">QEFfMptModel</span>
+<span class="kn">from</span> <span class="nn">.models.phi.modeling_phi</span> <span class="kn">import</span> <span class="n">QEffPhiAttention</span><span class="p">,</span> <span class="n">QEffPhiForCausalLM</span><span class="p">,</span> <span class="n">QEffPhiModel</span>
 <span class="kn">from</span> <span class="nn">.models.phi3.modeling_phi3</span> <span class="kn">import</span> <span class="n">QEffPhi3Attention</span><span class="p">,</span> <span class="n">QEffPhi3ForCausalLM</span><span class="p">,</span> <span class="n">QEffPhi3Model</span>
 <span class="kn">from</span> <span class="nn">.models.qwen2.modeling_qwen2</span> <span class="kn">import</span> <span class="n">QEffQwen2Attention</span><span class="p">,</span> <span class="n">QEffQwen2ForCausalLM</span><span class="p">,</span> <span class="n">QEffQwen2Model</span>
 <span class="kn">from</span> <span class="nn">.models.starcoder2.modeling_starcoder2</span> <span class="kn">import</span> <span class="p">(</span>
@@ -206,6 +208,7 @@
         <span class="n">MistralForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
         <span class="n">MixtralForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
         <span class="n">Phi3ForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
+        <span class="n">PhiForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
         <span class="n">FalconForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
         <span class="n">Qwen2ForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
         <span class="n">Starcoder2ForCausalLM</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
@@ -254,6 +257,10 @@
     <span class="n">Phi3Model</span><span class="p">:</span> <span class="n">QEffPhi3Model</span><span class="p">,</span>
     <span class="n">Phi3ForCausalLM</span><span class="p">:</span> <span class="n">QEffPhi3ForCausalLM</span><span class="p">,</span>
     <span class="n">Phi3RMSNorm</span><span class="p">:</span> <span class="n">CustomRMSNormAIC</span><span class="p">,</span>
+    <span class="c1"># Phi model layers</span>
+    <span class="n">PhiAttention</span><span class="p">:</span> <span class="n">QEffPhiAttention</span><span class="p">,</span>
+    <span class="n">PhiModel</span><span class="p">:</span> <span class="n">QEffPhiModel</span><span class="p">,</span>
+    <span class="n">PhiForCausalLM</span><span class="p">:</span> <span class="n">QEffPhiForCausalLM</span><span class="p">,</span>
     <span class="c1"># Falcon model layers</span>
     <span class="n">FalconAttention</span><span class="p">:</span> <span class="n">QEffFalconAttention</span><span class="p">,</span>
     <span class="n">FalconForCausalLM</span><span class="p">:</span> <span class="n">QEffFalconForCausalLM</span><span class="p">,</span>

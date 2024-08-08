@@ -7,6 +7,7 @@
   <title>Introduciton Qualcomm Efficient-Transformers &mdash; Efficient-Transformers 1.16 documentation</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
+      <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=547657ed" />
 
   
   <!--[if lt IE 9]>
@@ -58,14 +59,23 @@
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start Guide</a></li>
-<li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-high-level-api">Using High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-low-level-api">Using Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-command-line-interface">Using COMMAND LINE INTERFACE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html#using-python-api">Using python API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="high_level_api.html">QEfficient.cloud.infer</a></li>
+<li class="toctree-l1"><a class="reference internal" href="high_level_api.html#qefficient-cloud-execute">QEfficient.cloud.execute</a></li>
+<li class="toctree-l1"><a class="reference internal" href="high_level_api.html#qefficient-cloud-compile">QEfficient.cloud.compile</a></li>
+<li class="toctree-l1"><a class="reference internal" href="high_level_api.html#qefficient-cloud-export">QEfficient.cloud.export</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="high_level_api.html">High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="low_level_api.html">Low level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="low_level_api.html">QEfficient.QEFFAutoModelForCausalLM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="low_level_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100">QEfficient.exporter.export_hf_to_cloud_ai_100 module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="low_level_api.html#module-QEfficient.compile.compile_helper">QEfficient.compile</a></li>
+<li class="toctree-l1"><a class="reference internal" href="low_level_api.html#module-QEfficient.generation.text_generation_inference">QEfficient.generation.text_generation_inference module</a></li>
 <li class="toctree-l1"><a class="reference internal" href="other_api.html">Utilities</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
@@ -116,7 +126,7 @@
 <hr class="docutils" />
 <p><em><strong>Latest news</strong></em> : <br></p>
 <ul class="simple">
-<li><p>[coming soon] Support for more popular <a class="reference internal" href="Validate.html#validated-models"><span class="std std-ref">models</span></a> and inference optimization techniques like continuous batching and speculative decoding <br></p></li>
+<li><p>[coming soon] Support for more popular <a class="reference internal" href="#models-coming-soon"><span class="xref myst">models</span></a> and inference optimization techniques like continuous batching and speculative decoding <br></p></li>
 </ul>
 <ul class="simple">
 <li><p>[06/2024] Added support for <a class="reference external" href="https://huggingface.co/EleutherAI/gpt-j-6b">GPT-J-6B</a></p></li>
@@ -128,9 +138,9 @@
 <li><p>[06/2024] Added support for <a class="reference external" href="https://huggingface.co/mistralai/Codestral-22B-v0.1">Codestral-22B-v0.1</a></p></li>
 <li><p>[06/2024] Added support for <a class="reference external" href="https://huggingface.co/lmsys/vicuna-13b-v1.5">Vicuna-v1.5</a></p></li>
 <li><p>[05/2024] Added support for <a class="reference external" href="https://huggingface.co/mistralai/Mixtral-8x7B-v0.1">Mixtral-8x7B</a> &amp; <a class="reference external" href="https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1">Mistral-7B-Instruct-v0.1</a>.</p></li>
-<li><p>[04/2024] Initial release of <a class="reference external" href="https://github.com/quic/efficient-transformers">efficient transformers</a> for seamless inference on pre-trained LLMs.
-<strong>Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain</strong></p></li>
+<li><p>[04/2024] Initial release of <a class="reference external" href="https://github.com/quic/efficient-transformers">efficient transformers</a> for seamless inference on pre-trained LLMs.</p></li>
 </ul>
+<p><strong>Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain</strong></p>
 <p>This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AI 100.
 There are several models which can be directly transformed from a pre-trained original form to a deployment ready optimized form.
 For other models, there is comprehensive documentation to inspire upon the changes needed and How-To(s).</p>
