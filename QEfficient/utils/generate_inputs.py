@@ -37,6 +37,7 @@ class InputHandler:
         """
         Function responsible for creating Prefill stage tensor inputs for PyTorch model.
         ---------
+
         Return:
             inputs: Dict - input_ids, position_ids, past_key_values
         """
@@ -78,7 +79,7 @@ class InputHandler:
 
     def update_pytorch_inputs(self, iteration, inputs, pt_outputs):
         """
-        Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for PyTorch model.
+        Function responsible for updating previous inputs to create decode stage inputs for PyTorch model.
         ---------
 
         :inputs: Dict. Previous iteration inputs.
@@ -130,7 +131,7 @@ class InputHandler:
 
     def update_ort_inputs(self, inputs, ort_outputs):
         """
-        Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
+        Function responsible for updating previous inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
         --------
 
         :inputs: Dict. NumPy inputs of Onnx model from previous iteration
