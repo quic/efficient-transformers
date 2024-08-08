@@ -24,6 +24,8 @@ from QEfficient.utils.logging_utils import logger
 class CloudAI100ExecInfo:
     """
     holds all the information about Cloud AI 100 execution
+    --------
+    
     :batch_size: int
     :generated_texts: Union[List[List[str]], List[str]]
     :generated_ids: Union[List[np.ndarray], np.ndarray]
@@ -100,16 +102,16 @@ def latency_stats_bertstyle(
     device_id: List[int] = [0],
 ):
     """
-    API to execute Bertstyle ONNX model on Cloud AI 100.
+    Function to execute Bertstyle ONNX model on Cloud AI 100.
     ---------
 
     :model_name: str. Hugging Face Model Card name, Example: gpt2.
-    :qpc: str.  Path to save generated binary file after compilation.
+    :qpc_path: str.  Path to save generated binary file after compilation.
     :seq_len: int. Sequence length.
     :prompt: str. Sample prompt for the model text generation.
     :device_id: List[int]. Device Ids to be used for compilation. if devices > 1, it enables multiple card setup.
     """
-    session = QAICInferenceSession(qpc, device_id)
+    session = QAICInferenceSession(qpc_path, device_id)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
@@ -200,11 +202,11 @@ def cloud_ai_100_exec_kv_helper(
     write_io_dir: Optional[str] = None,
 ):
     """
-    API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.
+    Helper function to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.
     ---------
 
     :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. model tokenizer.
-    :qpc: str.  Path to the save generated binary file after compilation.
+    :qpc_path: str.  Path to the save generated binary file after compilation.
     :prompt: str. Sample prompt for the model text generation.
     :ctx_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.
     :generation_len: int. Maximum context length for the model to compile.
@@ -348,7 +350,7 @@ def cloud_ai_100_exec_kv(
     automation=False,
 ):
     """
-    API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.
+    Helper function to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.
     ---------
 
     :batch_size: int. Batch size of which qpc is compiled.
