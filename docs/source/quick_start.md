@@ -15,7 +15,7 @@ In summary:
 * Opt for low-level APIs when you need fine-tuned control, optimization, or advanced customization.
 
  
-# Using High Level API
+# Using COMMAND LINE INTERFACE
 
 ## 1. Use QEfficient.cloud.infer 
 
@@ -60,7 +60,15 @@ python -m QEfficient.cloud.execute --model_name Salesforce/codegen-2B-mono --qpc
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first
 ```
 
-# Using Low Level API
+| High Level APIs | Single SoC | Tensor Slicing         |
+|-----------------|------------|-------------------|
+| QEfficient.cloud.infer           | python -m QEfficient.cloud.infer --model_name ${model}  --batch_size 1 --prompt_len 128 --ctx_len 1024 --num_cores 16 --device_group [0] --prompt "My name is" --mxfp6 --hf_token  ${xyz}  --mos 1 --aic_enable_depth_first |  python -m QEfficient.cloud.infer --model_name ${model}  --batch_size 1 --prompt_len 128 --ctx_len 1024 --num_cores 16 --device_group [0,1,2,3] --prompt "My name is" --mxfp6 --hf_token  ${xyz}  --mos 1 --aic_enable_depth_first |
+| QEfficient.cloud.execute  |   python -m QEfficient.cloud.execute --model_name ${model}  --device_group [0] --qpc_path  ${path}  --prompt "My name is"  --hf_token  ${xyz}   |  python -m QEfficient.cloud.execute --model_name ${model}  --device_group [0,1,2,3] --qpc_path  ${path}  --prompt "My name is"  --hf_token  ${xyz}   |
+
+:memo: Replace ${model} ,  ${path}  and  ${xyz}  with preferred model card name, qpc path and hf token respectively.
+
+
+# Using python API
 
 ### 1.  Model download and Optimize for Cloud AI 100
 

@@ -38,13 +38,17 @@ source/kv_change
 
 ```
 
+```{toctree}
+:caption: 'Command Line Interface Use (CLI)'
+:maxdepth: 2
+source/high_level_api
+```
 
  
 ```{toctree}
 :caption: 'Python API'
 :maxdepth: 2
 
-source/high_level_api
 source/low_level_api
 source/other_api
 

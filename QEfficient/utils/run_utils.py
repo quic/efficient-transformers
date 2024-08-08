@@ -108,7 +108,7 @@ class ApiRunner:
         """
         Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
         ---------
-        
+
         :inputs: Dict.
         :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
 
