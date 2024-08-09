@@ -25,6 +25,7 @@ from transformers.modeling_outputs import (
 )
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
+    MistralDecoderLayer,
     MistralForCausalLM,
     MistralModel,
     apply_rotary_pos_emb,
@@ -37,9 +38,9 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 class QEffMistralAttention(MistralAttention):
     """
-    Copied from MistralAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
+    Copied from MistralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
     The only differences are:
-    - add new args position idx for the cache_kwargs for kv retention
+    - add new args cache idx for the kv retention
     """
 
     def forward(
@@ -48,6 +49,7 @@ class QEffMistralAttention(MistralAttention):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -74,7 +76,7 @@ class QEffMistralAttention(MistralAttention):
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "position_ids": position_ids}  # Specific to RoPE models
+            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         # repeat k/v heads if n_kv_heads < n_heads
@@ -121,10 +123,9 @@ class QEffMistralAttention(MistralAttention):
 
 class QEffMistralModel(MistralModel):
     """
-    Copied from MistralModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
+    Copied from MistralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
     The only differences are:
-    - add new args position idx for the cache_kwargs for kv retention
-    - update causal attention mask
+    - add new args cache idx for the kv retention
     """
 
     def forward(
@@ -133,6 +134,7 @@ class QEffMistralModel(MistralModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -251,6 +253,7 @@ class QEffMistralModel(MistralModel):
                     attention_mask=attention_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_values,
+                    batch_index=batch_index,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                 )
@@ -283,12 +286,75 @@ class QEffMistralModel(MistralModel):
         )
 
 
+class QEffMistralDecoderLayer(MistralDecoderLayer):
+    """
+    Copied from MistralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
+    The only differences are:
+    - add new args batch idx for the CB retention
+    """
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+        """
+        Args:
+            hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
+            attention_mask (`torch.FloatTensor`, *optional*): attention mask of size
+                `(batch, sequence_length)` where padding elements are indicated by 0.
+            output_attentions (`bool`, *optional*):
+                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
+                returned tensors for more detail.
+            use_cache (`bool`, *optional*):
+                If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding
+                (see `past_key_values`).
+            past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
+        """
+
+        residual = hidden_states
+
+        hidden_states = self.input_layernorm(hidden_states)
+
+        # Self Attention
+        hidden_states, self_attn_weights, present_key_value = self.self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            batch_index=batch_index,
+            output_attentions=output_attentions,
+            use_cache=use_cache,
+        )
+        hidden_states = residual + hidden_states
+
+        # Fully Connected
+        residual = hidden_states
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = residual + hidden_states
+
+        outputs = (hidden_states,)
+
+        if output_attentions:
+            outputs += (self_attn_weights,)
+
+        if use_cache:
+            outputs += (present_key_value,)
+
+        return outputs
+
+
 class QEffMistralForCausalLM(MistralForCausalLM):
     """
     Copied from MistralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mistral/modeling_mistral.py
     The only differences are:
-    - add new args position idx for the cache_kwargs for kv retention
-    - update the hidden_states, and fix for onnx model
+    - add new args cache idx for the kv retention
     """
 
     def forward(
@@ -297,6 +363,7 @@ class QEffMistralForCausalLM(MistralForCausalLM):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
@@ -342,6 +409,7 @@ class QEffMistralForCausalLM(MistralForCausalLM):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             output_attentions=output_attentions,

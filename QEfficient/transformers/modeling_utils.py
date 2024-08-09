@@ -21,15 +21,23 @@ from transformers.models.falcon.modeling_falcon import (
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
-from transformers.models.llama.modeling_llama import LlamaAttention, LlamaForCausalLM, LlamaModel, LlamaRMSNorm
+from transformers.models.llama.modeling_llama import (
+    LlamaAttention,
+    LlamaDecoderLayer,
+    LlamaForCausalLM,
+    LlamaModel,
+    LlamaRMSNorm,
+)
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
+    MistralDecoderLayer,
     MistralForCausalLM,
     MistralModel,
     MistralRMSNorm,
 )
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
+    MixtralDecoderLayer,
     MixtralForCausalLM,
     MixtralModel,
     MixtralRMSNorm,
@@ -41,6 +49,7 @@ from transformers.models.phi3.modeling_phi3 import Phi3Attention, Phi3ForCausalL
 from transformers.models.qwen2.modeling_qwen2 import Qwen2Attention, Qwen2ForCausalLM, Qwen2Model, Qwen2RMSNorm
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
+    Starcoder2DecoderLayer,
     Starcoder2ForCausalLM,
     Starcoder2Model,
 )
@@ -61,16 +70,19 @@ from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT
 from .models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJForCausalLM, QEffGPTJModel
 from .models.llama.modeling_llama import (
     QEffLlamaAttention,
+    QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
 )
 from .models.mistral.modeling_mistral import (
     QEffMistralAttention,
+    QEffMistralDecoderLayer,
     QEffMistralForCausalLM,
     QEffMistralModel,
 )
 from .models.mixtral_moe.modeling_mixtral import (
     QEffMixtralAttention,
+    QeffMixtralDecoderLayer,
     QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
@@ -81,6 +93,7 @@ from .models.phi3.modeling_phi3 import QEffPhi3Attention, QEffPhi3ForCausalLM, Q
 from .models.qwen2.modeling_qwen2 import QEffQwen2Attention, QEffQwen2ForCausalLM, QEffQwen2Model
 from .models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
+    QEFFStarcoder2DecoderLayer,
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
 )
@@ -88,6 +101,15 @@ from .models.starcoder2.modeling_starcoder2 import (
 # Define a named tuple for ModelArchitectures
 # Required for the Automation tool
 ModelArchitectures = namedtuple("ModelArchitectures", ["architectures"])
+
+get_lists_of_cb_qeff_models = ModelArchitectures(
+    [
+        LlamaForCausalLM.__name__,
+        MistralForCausalLM.__name__,
+        MixtralForCausalLM.__name__,
+        Starcoder2ForCausalLM.__name__,
+    ]
+)
 # Create an instance of the named tuple
 qeff_supported_architectures = ModelArchitectures(
     [
@@ -122,6 +144,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     LlamaModel: QEffLlamaModel,
     LlamaAttention: QEffLlamaAttention,
     LlamaForCausalLM: QEffLlamaForCausalLM,
+    LlamaDecoderLayer: QEffLlamaDecoderLayer,
     LlamaRMSNorm: CustomRMSNormAIC,
     # MPT model layers
     MptAttention: QEffMptAttention,
@@ -134,11 +157,13 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     CodeGenForCausalLM: QEffCodeGenForCausalLM,
     # Mistral model layers
     MistralAttention: QEffMistralAttention,
+    MistralDecoderLayer: QEffMistralDecoderLayer,
     MistralModel: QEffMistralModel,
     MistralForCausalLM: QEffMistralForCausalLM,
     MistralRMSNorm: CustomRMSNormAIC,
     # Mixtral model layers
     MixtralAttention: QEffMixtralAttention,
+    MixtralDecoderLayer: QeffMixtralDecoderLayer,
     MixtralModel: QEffMixtralModel,
     MixtralForCausalLM: QEffMixtralForCausalLM,
     MixtralRMSNorm: CustomRMSNormAIC,
@@ -165,4 +190,5 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     Starcoder2Attention: QEffStarcoder2Attention,
     Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
     Starcoder2Model: QEffStarcoder2Model,
+    Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
 }

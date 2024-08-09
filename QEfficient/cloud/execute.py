@@ -23,7 +23,7 @@ def main(
     generation_len: Optional[int] = None,
     cache_dir: Optional[str] = Constants.CACHE_DIR,
     hf_token: Optional[str] = None,
-) -> None:
+):
     """
     Helper function used by execute CLI app to run the Model on Cloud AI 100 Platform.
     ---------

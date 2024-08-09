@@ -136,6 +136,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mxint8: bool = False,
         mos: int = -1,
         aic_enable_depth_first: bool = False,
+        full_batch_size: Optional[int] = None,
     ) -> str:
         # Export first if self.ort_runtime_args are not populated
         if self.onnx_path is None:
@@ -153,6 +154,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxfp6=mxfp6,
             mxint8=mxint8,
             device_group=device_group,
+            full_batch_size=full_batch_size,
         )
 
         # Compile
