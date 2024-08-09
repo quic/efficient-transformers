@@ -76,10 +76,6 @@ class QEFFBaseModel(ABC):
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         raise NotImplementedError("Must implement for child classes")
 
-    @property
-    def is_transformed(self) -> bool:
-        raise NotImplementedError("Must implement for child classes")
-
     def run_pytorch(self, inputs):
         raise NotImplementedError("Reached too far!!")
 
