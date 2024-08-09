@@ -71,9 +71,13 @@ class QEFFTransformersBase(QEFFBaseModel):
         model_card_name = kwargs.pop(
             "model_card_name", None
         )  # Remove model_card_name from kwargs for transformers APIs
+        attn_implementation = kwargs.get("attn_implementation", None)
+        if attn_implementation != "eager":
+            logger.warning(f"Updating attn_implementation to be 'eager', got {attn_implementation}")
+            kwargs.update({"attn_implementation": "eager"})
 
         model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
-            pretrained_model_name_or_path, num_hidden_layers=1, attn_implementation="eager", *args, **kwargs
+            pretrained_model_name_or_path, *args, **kwargs
         )
         return cls(
             model,

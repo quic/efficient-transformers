@@ -1,3 +1,12 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+from typing import Tuple
+
 import transformers
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
@@ -154,7 +163,7 @@ class KVCacheTransform(ModuleMapping):
     }
 
     @classmethod
-    def apply(cls, model: nn.Module):
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
         # FIXME: see if we can merge into _module_mapping dict
         transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update
