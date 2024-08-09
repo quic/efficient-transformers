@@ -212,9 +212,9 @@ def export_kvstyle_transformed_model_to_onnx(
         prompt=Constants.INPUT_STR,
         prompt_len=Constants.PROMPT_LEN,
         ctx_len=seq_len,
-        full_batch_size=full_batch_size
+        full_batch_size=full_batch_size,
     )
-    
+
     inputs = input_handler.prepare_pytorch_inputs()
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
@@ -227,7 +227,7 @@ def export_kvstyle_transformed_model_to_onnx(
     # Build inputs for decode
     inputs = input_handler.update_pytorch_inputs(inputs, pt_outputs)
     # To avoid issues in onnx export
-    inputs["position_ids"] = torch.full((1, 1), seq_len - 1)
+    inputs["position_ids"] = torch.full((full_batch_size if full_batch_size else 1, 1), seq_len - 1)
 
     # Run PyTorch inference with past
     pt_outputs = transformed_model(**inputs)

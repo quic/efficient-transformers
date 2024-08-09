@@ -185,10 +185,10 @@ def fix_prompts(prompt: List[str], batch_size: int, full_batch_size: int):
             if batch_size != 1:
                 raise ValueError("Only either batch_size or full_batch_size should be greater than one")
 
-        if full_batch_size > len(prompt):
-            raise ValueError(
-                f"No of prompts {len(prompt)} should be greater than or equal to the full batch size {full_batch_size}; please pass correct input"
-            )
+            if full_batch_size > len(prompt):
+                raise ValueError(
+                    f"No of prompts {len(prompt)} should be greater than or equal to the full batch size {full_batch_size}; please pass correct input"
+                )
 
     return prompt
 
@@ -355,18 +355,15 @@ class TextGeneration:
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
-    def calculate_latency(self, total_decoded_tokens, loop_start, start, end):
+    def calculate_latency(self, total_decoded_tokens, loop_start, start, end, decode_pause_time):
         """
         Method will calculate the latency metrics using the time loops and based on the total decoded token count.
 
         Returns:
         total_num_decoded_tokens, prefill_perf, decode_perf, total_perf
         """
-
-        # total_decoded_tokens = sum([(len(self.generated_ids[i]) - 1) for i in range(decode_batch_size)])
-        prefill_time = loop_start - start
-        # prefill_perf = 1 / (loop_start - start)
-        decode_perf = (total_decoded_tokens) / (end - loop_start)
+        prefill_time = loop_start - start + decode_pause_time
+        decode_perf = (total_decoded_tokens) / (end - loop_start - decode_pause_time)
         total_perf = (total_decoded_tokens) / (end - start)
         total_time = end - start
 
@@ -732,6 +729,7 @@ class TextGeneration:
             self.streamer.on_finalized_text("\nPrompt : " + prompt[0] + "\nCompletion :")
 
         start = perf_counter()
+        decode_pause_time = 0
 
         # Split the execution between the regular model and using continuous batching.
         if self.full_batch_size is not None:
@@ -742,8 +740,6 @@ class TextGeneration:
             loop_start = perf_counter()  # Decode loop timer start
 
             decode_pause_time = self.run_continuous_batching_decode(prompt_queue, generation_len)
-            loop_start += decode_pause_time  # Compensate for the prefill time here.
-
         else:
             # Run prefill with batch size > 1
             outputs, position_ids, generation_len = self.run_prefill(
@@ -766,17 +762,14 @@ class TextGeneration:
 
         # Calculate total generated tokens in case of continuos batching or regular execution.
         total_decode_tokens = (
-            sum([(len(self.generated_ids[i]) - 1) for i in range(self.full_batch_size)])
-            if self.full_batch_size
-            else num_token
+            sum([(len(self.generated_ids[i]) - 1) for i in range(len(prompt))]) if self.full_batch_size else num_token
         )
 
         prefill_time, decode_perf, total_perf, total_time = self.calculate_latency(
-            total_decode_tokens, loop_start, start, end
+            total_decode_tokens, loop_start, start, end, decode_pause_time
         )
-
         latency_stats = CloudAI100ExecInfo(
-            batch_size=self.batch_size,
+            batch_size=1 if self.full_batch_size else self.batch_size,
             generated_texts=generated_texts,
             generated_ids=self.generated_ids,
             prefill_time=prefill_time,
