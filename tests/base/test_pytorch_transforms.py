@@ -5,8 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import random
-
 import pytest
 import torch
 from torch import nn
@@ -25,7 +23,443 @@ from transformers.models.starcoder2.modeling_starcoder2 import Starcoder2Config,
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
+from QEfficient.utils._utils import get_padding_shape_from_config
 from QEfficient.utils.logging_utils import logger
+
+KVCacheTransformTestConfigs = [
+    (
+        LlamaConfig,
+        LlamaForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 8,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        LlamaConfig,
+        LlamaForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 8,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        LlamaConfig,
+        LlamaForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 32,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        LlamaConfig,
+        LlamaForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 32,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (GPT2Config, GPT2LMHeadModel, 8, 32, {"n_layer": 3, "n_head": 12, "n_embd": 192, "n_inner": 512}, 0.8),
+    (GPT2Config, GPT2LMHeadModel, 8, 32, {"n_layer": 1, "n_head": 12, "n_embd": 192, "n_inner": 512}, 0.8),
+    (CodeGenConfig, CodeGenForCausalLM, 8, 32, {"n_layer": 1, "n_head": 16, "n_embd": 1024, "n_inner": 2048}, 0.8),
+    (CodeGenConfig, CodeGenForCausalLM, 8, 32, {"n_layer": 3, "n_head": 16, "n_embd": 1024, "n_inner": 2048}, 0.8),
+    (
+        FalconConfig,
+        FalconForCausalLM,
+        8,
+        32,
+        {"num_hidden_layers": 1, "multi_query": True, "num_attention_heads": 71, "hidden_size": 4544},
+        1.5,
+    ),
+    (
+        FalconConfig,
+        FalconForCausalLM,
+        8,
+        32,
+        {"num_hidden_layers": 3, "multi_query": False, "num_attention_heads": 71, "hidden_size": 4544},
+        1.5,
+    ),
+    (
+        FalconConfig,
+        FalconForCausalLM,
+        8,
+        32,
+        {"num_hidden_layers": 1, "multi_query": False, "num_attention_heads": 71, "hidden_size": 4544},
+        1.5,
+    ),
+    (
+        FalconConfig,
+        FalconForCausalLM,
+        8,
+        32,
+        {"num_hidden_layers": 3, "multi_query": True, "num_attention_heads": 71, "hidden_size": 4544},
+        1.5,
+    ),
+    (GPTJConfig, GPTJForCausalLM, 8, 32, {"n_layer": 3, "n_head": 16, "n_embd": 4096, "n_inner": 512}, 1),
+    (GPTJConfig, GPTJForCausalLM, 8, 32, {"n_layer": 1, "n_head": 16, "n_embd": 4096, "n_inner": 512}, 1.2),
+    (
+        MistralConfig,
+        MistralForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 8,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        MistralConfig,
+        MistralForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 32,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        MistralConfig,
+        MistralForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 8,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        MistralConfig,
+        MistralForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 32,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        MixtralConfig,
+        MixtralForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 8,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        MixtralConfig,
+        MixtralForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 32,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        MixtralConfig,
+        MixtralForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 8,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        MixtralConfig,
+        MixtralForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 32,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (MptConfig, MptForCausalLM, 8, 32, {"n_layers": 1, "n_heads": 16, "d_model": 2048}, 0.8),
+    (MptConfig, MptForCausalLM, 8, 32, {"n_layers": 3, "n_heads": 16, "d_model": 2048}, 0.8),
+    (
+        PhiConfig,
+        PhiForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 8,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        PhiConfig,
+        PhiForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 32,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        PhiConfig,
+        PhiForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 8,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        PhiConfig,
+        PhiForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 32,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        Phi3Config,
+        Phi3ForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 32,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        Phi3Config,
+        Phi3ForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 8,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        Phi3Config,
+        Phi3ForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 32,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        Phi3Config,
+        Phi3ForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 8,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        Qwen2Config,
+        Qwen2ForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 8,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        Qwen2Config,
+        Qwen2ForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 32,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        Qwen2Config,
+        Qwen2ForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 8,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        Qwen2Config,
+        Qwen2ForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 32,
+            "num_attention_heads": 32,
+            "hidden_size": 128,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        Starcoder2Config,
+        Starcoder2ForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 2,
+            "num_attention_heads": 24,
+            "hidden_size": 192,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        Starcoder2Config,
+        Starcoder2ForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 2,
+            "num_attention_heads": 24,
+            "hidden_size": 192,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        Starcoder2Config,
+        Starcoder2ForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 24,
+            "num_attention_heads": 24,
+            "hidden_size": 192,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+    (
+        Starcoder2Config,
+        Starcoder2ForCausalLM,
+        8,
+        32,
+        {
+            "num_hidden_layers": 3,
+            "num_key_value_heads": 24,
+            "num_attention_heads": 24,
+            "hidden_size": 192,
+            "intermediate_size": 512,
+        },
+        0.8,
+    ),
+]
 
 
 def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6) -> bool:
@@ -53,14 +487,12 @@ def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6
 def run_kv_cache_transform_and_test(
     hf_model,
     num_hidden_layers,
+    padding_shape,
     vocab_size,
-    hidden_size,
-    num_attention_heads,
-    num_key_value_heads,
-    ctx_len,
     input_len,
     logits_tolerance=0.8,
 ):
+    hf_model.eval()
     # Run original model
     input_ids = torch.randint(0, vocab_size, size=(1, input_len))
     with torch.inference_mode():
@@ -71,7 +503,6 @@ def run_kv_cache_transform_and_test(
     assert transformed
 
     # Prepare KV model inputs
-    padding_shape = [1, num_key_value_heads, ctx_len, hidden_size // num_attention_heads]
     past_key_values = []
     for _ in range(num_hidden_layers):
         past_key = torch.zeros((padding_shape), dtype=torch.float32)
@@ -140,10 +571,10 @@ def test_module_mapping_transform():
     assert torch.all(y2 == x)
 
 
-@pytest.mark.parametrize("input_size", [random.randint(0, 10)], ids=lambda x: "input_size=" + str(x))
-@pytest.mark.parametrize("hidden_size", random.sample([4, 64, 2048, 4096], 2), ids=lambda x: "hidden_size=" + str(x))
+@pytest.mark.parametrize("input_size", [2, 5], ids=lambda x: "input_size=" + str(x))
+@pytest.mark.parametrize("hidden_size", [64, 1024], ids=lambda x: "hidden_size=" + str(x))
 @pytest.mark.parametrize("module", CustomOpsTransform._module_mapping.keys(), ids=lambda x: "module=" + x.__name__)
-def test_custom_ops_transform(module: nn.Module, hidden_size: int, input_size: int) -> None:
+def test_rms_norm_ops_transform(module: nn.Module, hidden_size: int, input_size: int) -> None:
     """Test custom Ops transform individually
 
     Args:
@@ -165,360 +596,24 @@ def test_custom_ops_transform(module: nn.Module, hidden_size: int, input_size: i
     assert torch.all(original_output == transformed_model_output)
 
 
-@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
-@pytest.mark.parametrize("hidden_size", [128], ids=lambda x: "hidden_size=" + str(x))
-@pytest.mark.parametrize("intermediate_size", [512], ids=lambda x: "intermediate_size=" + str(x))
-@pytest.mark.parametrize("num_key_value_heads", [8, 32], ids=lambda x: "num_key_value_heads=" + str(x))
-@pytest.mark.parametrize("num_attention_heads", [32], ids=lambda x: "num_attention_heads=" + str(x))
-@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-@pytest.mark.parametrize("num_hidden_layers", [1, 3], ids=lambda x: "num_hidden_layers=" + str(x))
-def test_kv_cache_transform_llama(
-    num_hidden_layers, hidden_size, intermediate_size, num_attention_heads, num_key_value_heads, ctx_len, input_len
-) -> None:
-    # Create small model
-    config = LlamaConfig(
-        hidden_size=hidden_size,
-        intermediate_size=intermediate_size,
-        num_attention_heads=num_attention_heads,
-        num_key_value_heads=num_key_value_heads,
+@pytest.mark.parametrize(
+    "config_class,model_class,input_len,ctx_len,kwargs,logits_tolerance", KVCacheTransformTestConfigs
+)
+def test_kv_cache_transform(config_class, model_class, input_len, ctx_len, kwargs, logits_tolerance):
+    kwargs.update({"attn_implementation": "eager", "use_cache": True})
+    config = config_class(**kwargs)
+    hf_model = model_class(config=config)
+
+    num_hidden_layers = kwargs.get(
+        "num_hidden_layers", kwargs.get("n_layer", kwargs.get("n_layers"))
+    )  # Not all configs have this params e.g. gpt2
+    padding_shape = get_padding_shape_from_config(config=config, batch_size=1, seq_len=ctx_len)
+
+    run_kv_cache_transform_and_test(
+        hf_model,
         num_hidden_layers=num_hidden_layers,
-        use_cache=True,
-    )
-    hf_model = LlamaForCausalLM(config=config)
-    hf_model.eval()
-    run_kv_cache_transform_and_test(
-        hf_model,
-        num_hidden_layers,
-        config.vocab_size,
-        hidden_size,
-        num_attention_heads,
-        num_key_value_heads,
-        ctx_len,
-        input_len,
-    )
-
-
-@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
-@pytest.mark.parametrize("n_embd", [192], ids=lambda x: "n_embd=" + str(x))
-@pytest.mark.parametrize("n_inner", [512], ids=lambda x: "n_inner=" + str(x))
-@pytest.mark.parametrize("n_head", [12], ids=lambda x: "n_head=" + str(x))
-@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-@pytest.mark.parametrize("n_layer", [1, 3], ids=lambda x: "n_layer=" + str(x))
-def test_kv_cache_transform_gpt2(n_layer, n_embd, n_inner, n_head, ctx_len, input_len) -> None:
-    # Create small model
-    config = GPT2Config(
-        n_embd=n_embd,
-        n_inner=n_inner,
-        n_head=n_head,
-        n_layer=n_layer,
-        use_cache=True,
-    )
-    hf_model = GPT2LMHeadModel(config=config)
-    hf_model.eval()
-    run_kv_cache_transform_and_test(hf_model, n_layer, config.vocab_size, n_embd, n_head, n_head, ctx_len, input_len)
-
-
-@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
-@pytest.mark.parametrize("n_embd", [1024], ids=lambda x: "n_embd=" + str(x))
-@pytest.mark.parametrize("n_inner", [2048], ids=lambda x: "n_inner=" + str(x))
-@pytest.mark.parametrize("n_head", [16], ids=lambda x: "n_head=" + str(x))
-@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-@pytest.mark.parametrize("n_layer", [1, 3], ids=lambda x: "n_layer=" + str(x))
-def test_kv_cache_transform_codegen(n_layer, n_embd, n_inner, n_head, ctx_len, input_len) -> None:
-    # Create small model
-    config = CodeGenConfig(
-        n_embd=n_embd,
-        n_inner=n_inner,
-        n_head=n_head,
-        n_layer=n_layer,
-        use_cache=True,
-    )
-    hf_model = CodeGenForCausalLM(config=config)
-    hf_model.eval()
-    run_kv_cache_transform_and_test(hf_model, n_layer, config.vocab_size, n_embd, n_head, n_head, ctx_len, input_len)
-
-
-@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
-@pytest.mark.parametrize("hidden_size", [4544], ids=lambda x: "hidden_size=" + str(x))
-@pytest.mark.parametrize("num_hidden_layers", [1], ids=lambda x: "num_hidden_layers=" + str(x))
-@pytest.mark.parametrize("multi_query", [True, False], ids=lambda x: "multi_query=" + str(x))
-@pytest.mark.parametrize("num_attention_heads", [71], ids=lambda x: "num_attention_heads=" + str(x))
-@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-def test_kv_cache_transform_falcon(
-    hidden_size, num_hidden_layers, num_attention_heads, ctx_len, input_len, multi_query
-) -> None:
-    # Create small model
-    config = FalconConfig(
-        hidden_size=hidden_size,
-        num_hidden_layers=num_hidden_layers,
-        num_attention_heads=num_attention_heads,
-        multi_query=multi_query,
-        use_cache=True,
-        _attn_implementation="eager",
-    )
-    hf_model = FalconForCausalLM(config=config)
-    hf_model.eval()
-    # FIXME: Logits Tolerance is too high!!!
-    run_kv_cache_transform_and_test(
-        hf_model,
-        num_hidden_layers,
-        config.vocab_size,
-        hidden_size,
-        num_attention_heads,
-        num_attention_heads,
-        ctx_len,
-        input_len,
-        logits_tolerance=1.5,
-    )
-
-
-@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
-@pytest.mark.parametrize("n_embd", [4096], ids=lambda x: "n_embd=" + str(x))
-@pytest.mark.parametrize("n_inner", [512], ids=lambda x: "n_inner=" + str(x))
-@pytest.mark.parametrize("n_head", [16], ids=lambda x: "n_head=" + str(x))
-@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-@pytest.mark.parametrize("n_layer", [1, 3], ids=lambda x: "n_layer=" + str(x))
-def test_kv_cache_transform_gptj(n_layer, n_embd, n_inner, n_head, ctx_len, input_len) -> None:
-    # Create small model
-    config = GPTJConfig(
-        n_embd=n_embd,
-        n_inner=n_inner,
-        n_head=n_head,
-        n_layer=n_layer,
-        use_cache=True,
-    )
-    hf_model = GPTJForCausalLM(config=config)
-    hf_model.eval()
-    if n_layer == 1:
-        logits_tolerance = 1.2
-    else:
-        logits_tolerance = 0.8
-    run_kv_cache_transform_and_test(
-        hf_model,
-        n_layer,
-        config.vocab_size,
-        n_embd,
-        n_head,
-        n_head,
-        ctx_len,
-        input_len,
+        padding_shape=padding_shape,
+        vocab_size=config.vocab_size,
+        input_len=input_len,
         logits_tolerance=logits_tolerance,
-    )
-
-
-@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
-@pytest.mark.parametrize("hidden_size", [128], ids=lambda x: "hidden_size=" + str(x))
-@pytest.mark.parametrize("intermediate_size", [512], ids=lambda x: "intermediate_size=" + str(x))
-@pytest.mark.parametrize("num_key_value_heads", [8, 32], ids=lambda x: "num_key_value_heads=" + str(x))
-@pytest.mark.parametrize("num_attention_heads", [32], ids=lambda x: "num_attention_heads=" + str(x))
-@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-@pytest.mark.parametrize("num_hidden_layers", [1, 3], ids=lambda x: "num_hidden_layers=" + str(x))
-def test_kv_cache_transform_mistral(
-    num_hidden_layers, hidden_size, intermediate_size, num_attention_heads, num_key_value_heads, ctx_len, input_len
-) -> None:
-    # Create small model
-    config = MistralConfig(
-        hidden_size=hidden_size,
-        intermediate_size=intermediate_size,
-        num_attention_heads=num_attention_heads,
-        num_key_value_heads=num_key_value_heads,
-        num_hidden_layers=num_hidden_layers,
-        use_cache=True,
-    )
-    hf_model = MistralForCausalLM(config=config)
-    hf_model.eval()
-    run_kv_cache_transform_and_test(
-        hf_model,
-        num_hidden_layers,
-        config.vocab_size,
-        hidden_size,
-        num_attention_heads,
-        num_key_value_heads,
-        ctx_len,
-        input_len,
-    )
-
-
-@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
-@pytest.mark.parametrize("hidden_size", [128], ids=lambda x: "hidden_size=" + str(x))
-@pytest.mark.parametrize("intermediate_size", [512], ids=lambda x: "intermediate_size=" + str(x))
-@pytest.mark.parametrize("num_key_value_heads", [8, 32], ids=lambda x: "num_key_value_heads=" + str(x))
-@pytest.mark.parametrize("num_attention_heads", [32], ids=lambda x: "num_attention_heads=" + str(x))
-@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-@pytest.mark.parametrize("num_hidden_layers", [1, 3], ids=lambda x: "num_hidden_layers=" + str(x))
-def test_kv_cache_transform_mixtral(
-    num_hidden_layers, hidden_size, intermediate_size, num_attention_heads, num_key_value_heads, ctx_len, input_len
-) -> None:
-    # Create small model
-    config = MixtralConfig(
-        hidden_size=hidden_size,
-        intermediate_size=intermediate_size,
-        num_attention_heads=num_attention_heads,
-        num_key_value_heads=num_key_value_heads,
-        num_hidden_layers=num_hidden_layers,
-        use_cache=True,
-    )
-    hf_model = MixtralForCausalLM(config=config)
-    hf_model.eval()
-    run_kv_cache_transform_and_test(
-        hf_model,
-        num_hidden_layers,
-        config.vocab_size,
-        hidden_size,
-        num_attention_heads,
-        num_key_value_heads,
-        ctx_len,
-        input_len,
-    )
-
-
-@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
-@pytest.mark.parametrize("d_model", [2048], ids=lambda x: "d_model=" + str(x))
-@pytest.mark.parametrize("n_heads", [16], ids=lambda x: "n_heads=" + str(x))
-@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-@pytest.mark.parametrize("n_layers", [1, 3], ids=lambda x: "n_layers=" + str(x))
-def test_kv_cache_transform_mpt(n_layers, d_model, n_heads, ctx_len, input_len) -> None:
-    # Create small model
-    config = MptConfig(
-        d_model=d_model,
-        n_heads=n_heads,
-        n_layers=n_layers,
-        use_cache=True,
-    )
-    hf_model = MptForCausalLM(config=config)
-    hf_model.eval()
-    run_kv_cache_transform_and_test(
-        hf_model, n_layers, config.vocab_size, d_model, n_heads, n_heads, ctx_len, input_len
-    )
-
-
-@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
-@pytest.mark.parametrize("hidden_size", [128], ids=lambda x: "hidden_size=" + str(x))
-@pytest.mark.parametrize("intermediate_size", [512], ids=lambda x: "intermediate_size=" + str(x))
-@pytest.mark.parametrize("num_key_value_heads", [8, 32], ids=lambda x: "num_key_value_heads=" + str(x))
-@pytest.mark.parametrize("num_attention_heads", [32], ids=lambda x: "num_attention_heads=" + str(x))
-@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-@pytest.mark.parametrize("num_hidden_layers", [1, 3], ids=lambda x: "num_hidden_layers=" + str(x))
-def test_kv_cache_transform_phi(
-    num_hidden_layers, hidden_size, intermediate_size, num_attention_heads, num_key_value_heads, ctx_len, input_len
-) -> None:
-    # Create small model
-    config = PhiConfig(
-        hidden_size=hidden_size,
-        intermediate_size=intermediate_size,
-        num_attention_heads=num_attention_heads,
-        num_key_value_heads=num_key_value_heads,
-        num_hidden_layers=num_hidden_layers,
-        use_cache=True,
-    )
-    hf_model = PhiForCausalLM(config=config)
-    hf_model.eval()
-    run_kv_cache_transform_and_test(
-        hf_model,
-        num_hidden_layers,
-        config.vocab_size,
-        hidden_size,
-        num_attention_heads,
-        num_key_value_heads,
-        ctx_len,
-        input_len,
-    )
-
-
-@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
-@pytest.mark.parametrize("hidden_size", [128], ids=lambda x: "hidden_size=" + str(x))
-@pytest.mark.parametrize("intermediate_size", [512], ids=lambda x: "intermediate_size=" + str(x))
-@pytest.mark.parametrize("num_key_value_heads", [8, 32], ids=lambda x: "num_key_value_heads=" + str(x))
-@pytest.mark.parametrize("num_attention_heads", [32], ids=lambda x: "num_attention_heads=" + str(x))
-@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-@pytest.mark.parametrize("num_hidden_layers", [1, 3], ids=lambda x: "num_hidden_layers=" + str(x))
-def test_kv_cache_transform_phi3(
-    num_hidden_layers, hidden_size, intermediate_size, num_attention_heads, num_key_value_heads, ctx_len, input_len
-) -> None:
-    # Create small model
-    config = Phi3Config(
-        hidden_size=hidden_size,
-        intermediate_size=intermediate_size,
-        num_attention_heads=num_attention_heads,
-        num_key_value_heads=num_key_value_heads,
-        num_hidden_layers=num_hidden_layers,
-        use_cache=True,
-    )
-    hf_model = Phi3ForCausalLM(config=config)
-    hf_model.eval()
-    run_kv_cache_transform_and_test(
-        hf_model,
-        num_hidden_layers,
-        config.vocab_size,
-        hidden_size,
-        num_attention_heads,
-        num_key_value_heads,
-        ctx_len,
-        input_len,
-    )
-
-
-@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
-@pytest.mark.parametrize("hidden_size", [128], ids=lambda x: "hidden_size=" + str(x))
-@pytest.mark.parametrize("intermediate_size", [512], ids=lambda x: "intermediate_size=" + str(x))
-@pytest.mark.parametrize("num_key_value_heads", [8, 32], ids=lambda x: "num_key_value_heads=" + str(x))
-@pytest.mark.parametrize("num_attention_heads", [32], ids=lambda x: "num_attention_heads=" + str(x))
-@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-@pytest.mark.parametrize("num_hidden_layers", [1, 3], ids=lambda x: "num_hidden_layers=" + str(x))
-def test_kv_cache_transform_qwen2(
-    num_hidden_layers, hidden_size, intermediate_size, num_attention_heads, num_key_value_heads, ctx_len, input_len
-) -> None:
-    # Create small model
-    config = Qwen2Config(
-        hidden_size=hidden_size,
-        intermediate_size=intermediate_size,
-        num_attention_heads=num_attention_heads,
-        num_key_value_heads=num_key_value_heads,
-        num_hidden_layers=num_hidden_layers,
-        use_cache=True,
-    )
-    hf_model = Qwen2ForCausalLM(config=config)
-    hf_model.eval()
-    run_kv_cache_transform_and_test(
-        hf_model,
-        num_hidden_layers,
-        config.vocab_size,
-        hidden_size,
-        num_attention_heads,
-        num_key_value_heads,
-        ctx_len,
-        input_len,
-    )
-
-
-@pytest.mark.parametrize("input_len", [8], ids=lambda x: "input_len=" + str(x))
-@pytest.mark.parametrize("hidden_size", [128], ids=lambda x: "hidden_size=" + str(x))
-@pytest.mark.parametrize("intermediate_size", [512], ids=lambda x: "intermediate_size=" + str(x))
-@pytest.mark.parametrize("num_key_value_heads", [8, 16], ids=lambda x: "num_key_value_heads=" + str(x))
-@pytest.mark.parametrize("num_attention_heads", [16], ids=lambda x: "num_attention_heads=" + str(x))
-@pytest.mark.parametrize("ctx_len", [32], ids=lambda x: "ctx_len=" + str(x))
-@pytest.mark.parametrize("num_hidden_layers", [1, 3], ids=lambda x: "num_hidden_layers=" + str(x))
-def test_kv_cache_transform_starcoder2(
-    num_hidden_layers, hidden_size, intermediate_size, num_attention_heads, num_key_value_heads, ctx_len, input_len
-) -> None:
-    # Create small model
-    config = Starcoder2Config(
-        hidden_size=hidden_size,
-        intermediate_size=intermediate_size,
-        num_attention_heads=num_attention_heads,
-        num_key_value_heads=num_key_value_heads,
-        num_hidden_layers=num_hidden_layers,
-        use_cache=True,
-    )
-    hf_model = Starcoder2ForCausalLM(config=config)
-    hf_model.eval()
-    run_kv_cache_transform_and_test(
-        hf_model,
-        num_hidden_layers,
-        config.vocab_size,
-        hidden_size,
-        num_attention_heads,
-        num_key_value_heads,
-        ctx_len,
-        input_len,
     )
