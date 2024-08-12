@@ -175,11 +175,6 @@ class QEffLlamaAttention(LlamaAttention):
                 )
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
 
-        # self.rotary_emb = QEffLlamaRotaryEmbedding(
-        #     self.config.hidden_size // self.config.num_attention_heads,
-        #     max_position_embeddings=self.config.max_position_embeddings,
-        #     base=self.config.rope_theta,
-        # )
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
