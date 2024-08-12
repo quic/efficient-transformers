@@ -98,6 +98,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
 
     def transform(self):
+        if self.is_transformed:
+            return
         for transform in self._pytorch_transforms:
             transform.apply(self.model)
         self.is_transformed = True
