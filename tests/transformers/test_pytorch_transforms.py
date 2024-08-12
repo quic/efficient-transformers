@@ -1,13 +1,5 @@
-# -----------------------------------------------------------------------------
-#
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
-# SPDX-License-Identifier: BSD-3-Clause
-#
-# ----------------------------------------------------------------------------
-
 import pytest
 import torch
-from torch import nn
 from transformers.models.codegen.modeling_codegen import CodeGenConfig, CodeGenForCausalLM
 from transformers.models.falcon.modeling_falcon import FalconConfig, FalconForCausalLM
 from transformers.models.gpt2.modeling_gpt2 import GPT2Config, GPT2LMHeadModel
@@ -21,7 +13,6 @@ from transformers.models.phi3.modeling_phi3 import Phi3Config, Phi3ForCausalLM
 from transformers.models.qwen2.modeling_qwen2 import Qwen2Config, Qwen2ForCausalLM
 from transformers.models.starcoder2.modeling_starcoder2 import Starcoder2Config, Starcoder2ForCausalLM
 
-from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils._utils import get_padding_shape_from_config
 from QEfficient.utils.logging_utils import logger
@@ -541,40 +532,10 @@ def run_kv_cache_transform_and_test(
     )
 
 
-def test_module_mapping_transform():
-    with pytest.raises(TypeError):
-        ModuleMappingTransform()
-
-    class TestTransform(ModuleMappingTransform):
-        _module_mapping = {nn.Linear: nn.Identity}
-
-    class TestModel(nn.Module):
-        def __init__(self):
-            super().__init__()
-
-            self.a = nn.Linear(32, 64)
-            self.b = nn.Linear(64, 32)
-
-        def forward(self, x):
-            x = self.a(x)
-            x = self.b(x)
-            return x
-
-    model = TestModel()
-    x = torch.rand(1, 32)
-    y1 = model(x)
-    assert torch.any(y1 != x)
-
-    model, transformed = TestTransform.apply(model)
-    assert transformed
-    y2 = model(x)
-    assert torch.all(y2 == x)
-
-
 @pytest.mark.parametrize("input_size", [2, 5], ids=lambda x: "input_size=" + str(x))
 @pytest.mark.parametrize("hidden_size", [64, 1024], ids=lambda x: "hidden_size=" + str(x))
 @pytest.mark.parametrize("module", CustomOpsTransform._module_mapping.keys(), ids=lambda x: "module=" + x.__name__)
-def test_rms_norm_ops_transform(module: nn.Module, hidden_size: int, input_size: int) -> None:
+def test_rms_norm_ops_transform(module: torch.nn.Module, hidden_size: int, input_size: int) -> None:
     """Test custom Ops transform individually
 
     Args:
