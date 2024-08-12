@@ -45,7 +45,7 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Model,
 )
 
-from QEfficient.base.pytorch_transforms import ModuleMapping
+from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.codegen.modeling_codegen import (
@@ -97,7 +97,7 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
 )
 
 
-class CustomOpsTransform(ModuleMapping):
+class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
         LlamaRMSNorm: CustomRMSNormAIC,
         MistralRMSNorm: CustomRMSNormAIC,
@@ -107,7 +107,7 @@ class CustomOpsTransform(ModuleMapping):
     }
 
 
-class KVCacheTransform(ModuleMapping):
+class KVCacheTransform(ModuleMappingTransform):
     _module_mapping = {
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,

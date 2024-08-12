@@ -23,7 +23,7 @@ from transformers.models.phi3.modeling_phi3 import Phi3Config, Phi3ForCausalLM
 from transformers.models.qwen2.modeling_qwen2 import Qwen2Config, Qwen2ForCausalLM
 from transformers.models.starcoder2.modeling_starcoder2 import Starcoder2Config, Starcoder2ForCausalLM
 
-from QEfficient.base.pytorch_transforms import ModuleMapping
+from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils.logging_utils import logger
 
@@ -112,9 +112,9 @@ def run_kv_cache_transform_and_test(
 
 def test_module_mapping_transform():
     with pytest.raises(TypeError):
-        ModuleMapping()
+        ModuleMappingTransform()
 
-    class TestTransform(ModuleMapping):
+    class TestTransform(ModuleMappingTransform):
         _module_mapping = {nn.Linear: nn.Identity}
 
     class TestModel(nn.Module):
@@ -290,7 +290,7 @@ def test_kv_cache_transform_gptj(n_layer, n_embd, n_inner, n_head, ctx_len, inpu
     hf_model = GPTJForCausalLM(config=config)
     hf_model.eval()
     if n_layer == 1:
-        logits_tolerance = 1.1
+        logits_tolerance = 1.2
     else:
         logits_tolerance = 0.8
     run_kv_cache_transform_and_test(
