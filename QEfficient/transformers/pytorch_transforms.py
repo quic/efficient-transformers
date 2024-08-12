@@ -3,10 +3,11 @@
 # Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
-# ----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 from typing import Tuple
 
+import transformers
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
@@ -44,48 +45,59 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Model,
 )
 
-from QEfficient.base.pytorch_transforms import ModuleMapping
+from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC
-from QEfficient.models.codegen.modeling_codegen import (
+from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
-from QEfficient.models.falcon.modeling_falcon import (
+from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
     QEffFalconForCausalLM,
     QEffFalconModel,
 )
-from QEfficient.models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
-from QEfficient.models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJForCausalLM, QEffGPTJModel
-from QEfficient.models.llama.modeling_llama import (
+from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
+    QEffGPT2Attention,
+    QEffGPT2Block,
+    QEffGPT2LMHeadModel,
+    QEffGPT2Model,
+)
+from QEfficient.transformers.models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJForCausalLM, QEffGPTJModel
+from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
 )
-from QEfficient.models.mistral.modeling_mistral import (
+from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
     QEffMistralForCausalLM,
     QEffMistralModel,
 )
-from QEfficient.models.mixtral_moe.modeling_mixtral import (
+from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralAttention,
     QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
 )
-from QEfficient.models.mpt.modeling_mpt import QEffMptAttention, QEffMptBlock, QEffMptForCausalLM, QEFfMptModel
-from QEfficient.models.phi.modeling_phi import QEffPhiAttention, QEffPhiForCausalLM, QEffPhiModel
-from QEfficient.models.phi3.modeling_phi3 import QEffPhi3Attention, QEffPhi3ForCausalLM, QEffPhi3Model
-from QEfficient.models.qwen2.modeling_qwen2 import QEffQwen2Attention, QEffQwen2ForCausalLM, QEffQwen2Model
-from QEfficient.models.starcoder2.modeling_starcoder2 import (
+from QEfficient.transformers.models.mpt.modeling_mpt import (
+    QEffMptAttention,
+    QEffMptBlock,
+    QEffMptForCausalLM,
+    QEFfMptModel,
+)
+from QEfficient.transformers.models.phi.modeling_phi import QEffPhiAttention, QEffPhiForCausalLM, QEffPhiModel
+from QEfficient.transformers.models.phi3.modeling_phi3 import QEffPhi3Attention, QEffPhi3ForCausalLM, QEffPhi3Model
+from QEfficient.transformers.models.qwen2.modeling_qwen2 import QEffQwen2Attention, QEffQwen2ForCausalLM, QEffQwen2Model
+from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
 )
 
 
-class CustomOps(ModuleMapping):
+class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
         LlamaRMSNorm: CustomRMSNormAIC,
         MistralRMSNorm: CustomRMSNormAIC,
@@ -95,7 +107,7 @@ class CustomOps(ModuleMapping):
     }
 
 
-class KVCache(ModuleMapping):
+class KVCacheTransform(ModuleMappingTransform):
     _module_mapping = {
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
@@ -152,4 +164,7 @@ class KVCache(ModuleMapping):
 
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
-        return super().apply(model)
+        model, transformed = super().apply(model)
+        # FIXME: see if we can merge into _module_mapping dict
+        transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update
+        return model, transformed

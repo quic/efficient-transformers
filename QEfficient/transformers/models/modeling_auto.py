@@ -10,11 +10,10 @@ from typing import Any, List, Optional, Union
 
 import torch.nn as nn
 from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast
-from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
-from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
+from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
@@ -32,12 +31,6 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __init__(self, model: nn.Module, pretrained_model_name_or_path: str, **kwargs) -> None:
         super().__init__(model)
-        assert (
-            model.__class__ in MODEL_FOR_CAUSAL_LM_MAPPING.values()
-            or
-            # FIXME: Use model architectures here instead of complete dictionary TransformersToQEffModulesDict
-            model.__class__ in TransformersToQEffModulesDict.values()
-        ), f"Given model{model.__class__.__name__} could not be found in transformers library i.e. {MODEL_FOR_CAUSAL_LM_MAPPING.values()}"  # type: ignore
         self.model.config.use_cache = (
             True  # Always pass use_cache = True, to get KV values as output during ONNX export
         )
@@ -52,15 +45,12 @@ class QEFFTransformersBase(QEFFBaseModel):
         )
         self.kwargs = kwargs
         self._tokenizer = None
+        self.is_transformed = False
         if kwargs.get("transform", True):
             self.transform()
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}\n" + self.model.__repr__()
-
-    @property
-    def is_transformed(self) -> bool:
-        return getattr(self.model, "qeff_transformed", False)
 
     @property
     def tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
@@ -80,6 +70,10 @@ class QEFFTransformersBase(QEFFBaseModel):
         model_card_name = kwargs.pop(
             "model_card_name", None
         )  # Remove model_card_name from kwargs for transformers APIs
+        attn_implementation = kwargs.get("attn_implementation", None)
+        if attn_implementation != "eager":
+            logger.warning(f"Updating attn_implementation to be 'eager', got {attn_implementation}")
+            kwargs.update({"attn_implementation": "eager"})
 
         model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
@@ -95,16 +89,20 @@ class QEFFTransformersBase(QEFFBaseModel):
         tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=self.pretrained_model_name_or_path, **self.kwargs)
         return tokenizer
 
-    def transform(self):
-        # FIXME: break down transform into optmization passes i.e. HW specific optimization(RMSNorm), KV retention pass etc.
-        QEfficient.transform(self)
-        return self
-
 
 class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
     QEFF class for manipulating any causal language model from HuggingFace hub.
     """
+
+    _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
+
+    def transform(self):
+        if self.is_transformed:
+            return
+        for transform in self._pytorch_transforms:
+            transform.apply(self.model)
+        self.is_transformed = True
 
     def execute(self, *args, **kwargs):  # type: ignore
         raise NotImplementedError("Reached too far!!")

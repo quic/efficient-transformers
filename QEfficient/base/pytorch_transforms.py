@@ -30,7 +30,7 @@ class PytorchTransform:
         raise NotImplementedError("Use subclasses for Pytorch transform")
 
 
-class ModuleMapping(PytorchTransform):
+class ModuleMappingTransform(PytorchTransform):
     """
     Replaces the PyTorch modules based on the _module_mapping class variable.
     """
