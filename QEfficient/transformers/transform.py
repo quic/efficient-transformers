@@ -23,7 +23,18 @@ def replace_module_with_qeff_layers(model: nn.Module) -> None:
     ----------
     :param model: torch.nn.Module. Base PyTorch model.
     """
-    # Replace if module class is registed in TransformersToQEffModulesDict
+
+    # Todo: vbaddi, Check if we can do it in better way
+    # Handling the special case of updating _init_ for LlamaAttention to pick the RotaryEmbedding changes
+    for name, module in model.named_children():
+        target_module_class = TransformersToQEffModulesDict.get(type(module))
+        if target_module_class is not None:
+            if isinstance(module, transformers.models.llama.modeling_llama.LlamaAttention):
+                # Special handling for LlamaAttention
+                new_module = target_module_class(module.config, module.layer_idx)
+                new_module.load_state_dict(module.state_dict())
+                setattr(model, name, new_module)
+
     target_module = TransformersToQEffModulesDict.get(model.__class__)
     if target_module is not None:
         model.__class__ = target_module
