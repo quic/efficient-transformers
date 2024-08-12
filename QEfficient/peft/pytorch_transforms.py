@@ -7,14 +7,9 @@
 
 from peft import PeftModelForCausalLM
 
-from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import ModuleMapping
 from QEfficient.peft.peft_model import QEffPeftModelForCausalLM
 
 
-class AdaptersPytorch(ModuleMapping):
+class PeftModelInputsTransform(ModuleMapping):
     _module_mapping = {PeftModelForCausalLM: QEffPeftModelForCausalLM}
-
-
-class AdaptersOnnx(OnnxTransform):
-    pass
