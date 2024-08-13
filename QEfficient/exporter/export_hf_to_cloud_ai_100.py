@@ -38,16 +38,15 @@ def convert_to_cloud_bertstyle(
             2. No KV retention logic.
             3. KV is every time computed for all the tokens until EOS/max_length.
 
-    ---------
-
-    :model_name: `str` - Hugging Face Model Card name, Example: `gpt2`.
-    :qeff_model: `QEFFAutoModelForCausalLM` – Transformed KV torch model to be used.
-    :tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` – Model tokenizer.
-    :onnx_dir_path: `str` – Path to save exported ONNX file.
-    :seq_len: `int` – The length of the sequence.
-
-    Return:
-        Path of exported ONNX file.
+    Args:
+        :model_name (str): Hugging Face Model Card name, Example: `gpt2`.
+        :qeff_model (QEFFAutoModelForCausalLM): Transformed KV torch model to be used.
+        :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
+        :onnx_dir_path (str): Path to save exported ONNX file.
+        :seq_len (int): The length of the sequence.
+        
+    Returns:
+         :str: Path of exported ``ONNX`` file.
     """
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
@@ -158,16 +157,15 @@ def convert_to_cloud_kvstyle(
         3. And contextual information from earlier tokens is crucial for predicting the next token.
         4. The inclusion of a kV cache enhances the efficiency of the decoding process, making it more computationally efficient.
 
-    ---------
-
-    :model_name: `str` - Hugging Face Model Card name, Example: `gpt2`.
-    :qeff_model: `QEFFAutoModelForCausalLM` – Transformed KV torch model to be used.
-    :tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` – Model tokenizer.
-    :onnx_dir_path: `str` – Path to save exported ONNX file.
-    :seq_len: `int` – The length of the sequence.NX file.
+    Args:
+        :model_name (str): Hugging Face Model Card name, Example: `gpt2`.
+        :qeff_model (QEFFAutoModelForCausalLM): Transformed KV torch model to be used.
+        :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
+        :onnx_dir_path (str): Path to save exported ONNX file.
+        :seq_len (int): The length of the sequence.
 
     Returns:
-        Path of exported ONNX file.
+         :str: Path of exported ``ONNX`` file.
     """
     warnings.warn(
         "\033[93mThis function will be deprecated soon, use QEfficient.export instead\033[0m",
@@ -382,22 +380,24 @@ def qualcomm_efficient_converter(
     Usage 1: This method can be used by passing ``model_name`` and ``local_model_dir`` or ``cache_dir`` if required for loading from local dir.
     This will download the model from ``HuggingFace`` and export it to ``ONNX`` graph and returns generated files path check below.
 
-    Usage 2: You can pass ``model_name`` and ``model_kv`` as an object of ``QEfficient.QEFFAutoModelForCausalLM``, In this case will directly export the ``model_kv.model` to ``ONNX``
+    Usage 2: You can pass ``model_name`` and ``model_kv`` as an object of ``QEfficient.QEFFAutoModelForCausalLM``, In this case will directly export the ``model_kv.model`` to ``ONNX``
 
     We will be deprecating this function and it will be replaced by ``QEffAutoModelForCausalLM.export``.
 
-    :model_name: `str` – The name of the model to be used.
-    :model_kv: `torch.nn.Module` – Transformed KV torch model to be used.
-    :local_model_dir: `str` – Path of local model.
-    :tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` – Model tokenizer.
-    :cache_dir: `str` – Path of the cache directory.
-    :onnx_dir_path: `str` – Path to store ONNX file.
-    :hf_token: `str` – ``Huggingface`` token to access gated models. Default is None.
-    :seq_len: `int` – The length of the sequence. Default is 128.
-    :kv: `bool` – If false, it will export to Bert style. Default is true.
-    :form_factor: `str` – Form factor of the hardware, currently only "cloud" is accepted.
+    Args:
+        :model_name (str): The name of the model to be used.
+        :model_kv (torch.nn.Module): Transformed ``KV torch model`` to be used.
+        :local_model_dir (str): Path of local model.
+        :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
+        :cache_dir (str): Path of the ``cache`` directory.
+        :onnx_dir_path (str): Path to store ``ONNX`` file.
+        :hf_token (str): Huggingface token to access gated models. Default is ``None``.
+        :seq_len (int): The length of the sequence. Default is ``128``.
+        :kv (bool): If false, it will export to Bert style. Default is ``true``.
+        :form_factor (str): Form factor of the hardware, currently only ``cloud`` is accepted.
 
-    :Returns (Tuple[str, str]): Path to Base ``ONNX`` dir and path to generated ``ONNX`` model
+    Returns:
+        :Tuple[str, str]: Path to Base ``ONNX`` dir and path to generated ``ONNX`` model
 
         
     .. code-block:: python

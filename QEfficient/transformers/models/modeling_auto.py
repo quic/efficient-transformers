@@ -72,10 +72,9 @@ class QEFFTransformersBase(QEFFBaseModel):
 
 class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
-    QEFF class for manipulating any causal language model from HuggingFace hub.
-    You can initialize the class directly in case you don't want to use ``from_pretrained`` method.
-    We recommend using ``from_pretrained`` method for initializing the class.
-    This class is also part of ``QEfficient`` module.
+    The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
+    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+    Please note that the QEFF class is also a part of the ``QEfficient`` module.
 
     Args:
         :model (nn.Module):  PyTorch model
@@ -91,8 +90,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
     def transform(self):
         """
-        Applies all the relevant Optimization transforms on the model and toggles ``self.is_transformed`` to True, will return if already transformed.
-        Does not take any input argument.
+        This method applies all relevant optimization transforms on the model and toggles the ``self.is_transformed`` attribute to True. If the model is already transformed, the method will simply return.
+        Please note that this method does not require any input arguments."
 
         Returns:
             :obj: Same object with transformed ``self.model``
@@ -154,8 +153,9 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
     def export(self, model_card_name: Optional[str] = None) -> str:
         """Exports the model to ``ONNX`` format using ``torch.onnx.export``.
-        The model should already be transformed i.e. ``self.is_transformed`` should be ``True``, Otherwise this will raise ``AssertionError``.
-        We currently don't support exporting non-transformed models. Check ``convert_to_cloud_bertstyle`` for legacy function in **Low level API** which support that.
+        The model should already be transformed i.e. ``self.is_transformed`` should be ``True``.
+        Otherwise, this will raise an ``AssertionError``. 
+        We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
 
         Args:
             :model_card_name (Optional[str]): Name of the model card. Mandatory when model is initialized with path for ``pretrained_model_name_or_path`` argument during initialization. Defaults to None.
@@ -194,9 +194,9 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         aic_enable_depth_first: bool = False,
     ) -> str:
         """
-        Compiles the exported ``ONNX`` model using Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generated ``qpc`` package.
-        This will ``export`` the model if not already done.
-        The generated ``qpc`` can be found under ``efficient-transformers/qeff_models/{self.model_card_name}/qpc``.
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        The generated ``qpc`` can be found under the directory ``efficient-transformers/qeff_models/{self.model_card_name}/qpc``.
 
         Args:
             :num_cores (int): Number of cores used to compile the model.
@@ -252,9 +252,9 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
     def generate(self, prompts: List[str], runtime: str = "AI_100", **kwargs):
         """
-        Generates output till ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
-        This is sequential execution based on ``batch_size`` of the compiled model and number of prompts passed.
-        If number of prompts couldn't be divided by ``batch_size``, we will drop the last unfulfilled batch.
+        This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
+        If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
 
         Args:
             :prompts (List[str]): List of prompts to run the execution.

@@ -23,17 +23,16 @@ from QEfficient.utils.logging_utils import logger
 @dataclass
 class CloudAI100ExecInfo:
     """
-    holds all the information about Cloud AI 100 execution
-    --------
-
-    :batch_size: `int` – Batch size of the QPC compilation.
-    :generated_texts: `Union[List[List[str]], List[str]]` – Generated text(s).
-    :generated_ids: `Union[List[np.ndarray], np.ndarray]` – Generated IDs.
-    :prefill_time: `float` – Time for prefilling.
-    :decode_perf: `float` – Decoding performance.
-    :total_perf: `float` – Total performance.
-    :total_time: `float` – Total time.
-
+    Holds all the information about Cloud AI 100 execution
+    
+    Args:
+        :batch_size (int): Batch size of the QPC compilation.
+        :generated_texts (Union[List[List[str]], List[str]]): Generated text(s).
+        :generated_ids (Union[List[np.ndarray], np.ndarray]): Generated IDs.
+        :prefill_time (float): Time for prefilling.
+        :decode_perf (float): Decoding performance.
+        :total_perf (float): Total performance.
+        :total_time (float): Total time.
     """
 
     batch_size: int
@@ -104,13 +103,13 @@ def latency_stats_bertstyle(
 ):
     """
     Function to execute Bertstyle ONNX model on Cloud AI 100.
-    ---------
-
-    :model_name: str. Hugging Face Model Card name, Example: gpt2.
-    :qpc_path: str.  Path to save generated binary file after compilation.
-    :seq_len: int. Sequence length.
-    :prompt: str. Sample prompt for the model text generation.
-    :device_id: List[int]. Device Ids to be used for compilation. if devices > 1, it enables multiple card setup.
+    
+    Args:
+        :model_name (str): Hugging Face Model Card name, Example: gpt2.
+        :qpc_path (str): Path to save generated binary file after compilation.
+        :seq_len (int): Sequence length.
+        :prompt (str): Sample prompt for the model text generation.
+        :device_id (List[int]): Device Ids to be used for compilation. If devices > 1, it enables multiple card setup.
     """
     session = QAICInferenceSession(qpc_path, device_id)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
@@ -203,20 +202,19 @@ def cloud_ai_100_exec_kv_helper(
     write_io_dir: Optional[str] = None,
 ):
     """
-    Helper function to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.
-    ---------
-
-    :tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` – Model tokenizer.
-    :qpc_path: `str` – Path to the saved generated binary file after compilation.
-    :prompt: `str` – Sample prompt for the model text generation.
-    :ctx_len: `int` – Input length of the prompt to determine the number of chunks to execute on Cloud AI 100.
-    :generation_len: `int` – Maximum context length for the model during compilation.
-    :device_id: `List[int]` – Device IDs to be used for compilation. If len(device_id) > 1, it enables multiple card setup.
-    :enable_debug_logs: `bool` – If True, it enables debugging logs.
-    :stream: `bool` – If True, enable streamer, which returns tokens one by one as the model generates them.
-    :Write_io_dir: `str` – Path to write the input and output files.
-    :automation: `bool` – If true, it prints input, output, and performance stats.
-
+    Helper function to execute QEfficient transformed ONNX model on ``Cloud AI 100`` using compiled QPC file.
+    
+    Args:
+        :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
+        :qpc_path (str): Path to the saved generated binary file after compilation.
+        :prompt (str): Sample prompt for the model text generation.
+        :ctx_len (int): Input length of the prompt to determine the number of chunks to execute on ``Cloud AI 100``.
+        :generation_len (int): Maximum context length for the model during compilation.
+        :device_id (List[int]): Device IDs to be used for compilation. If ``len(device_id) > 1``, it enables multiple card setup.
+        :enable_debug_logs (bool): If True, it enables debugging logs.
+        :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them.
+        :Write_io_dir (str): Path to write the input and output files.
+        :automation (bool): If true, it prints input, output, and performance stats.
     """
 
     if tokenizer.padding_side != "right":
@@ -352,23 +350,26 @@ def cloud_ai_100_exec_kv(
     automation=False,
 ):
     """
-    Generates output till ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
-    This is sequential execution based on ``batch_size`` of the compiled model and number of prompts passed.
-    If number of prompts couldn't be divided by ``batch_size``, we will drop the last unfulfilled batch.
+    This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+    This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
+    If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
 
-    :batch_size: `int` – Batch size of the QPC compilation.
-    :tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` – Model tokenizer.
-    :qpc_path: `str` – Path to the saved generated binary file after compilation.
-    :prompt: `str` – Sample prompt for the model text generation.
-    :ctx_len: `int` – Input length of the prompt to determine the number of chunks to execute on Cloud AI 100.
-    :generation_len: `int` – Maximum context length for the model during compilation.
-    :device_id: `List[int]` – Device IDs to be used for compilation. If len(device_id) > 1, it enables multiple card setup.
-    :enable_debug_logs: `bool` – If True, it enables debugging logs.
-    :stream: `bool` – If True, enable streamer, which returns tokens one by one as the model generates them.
-    :Write_io_dir: `str` – Path to write the input and output files.
-    :automation: `bool` – If true, it prints input, output, and performance stats.
 
-    :Returns (CloudAI100ExecInfo): Object holding execution output and performance details.
+    Args:
+        :batch_size (int): Batch size of the ``qpc`` compilation.
+        :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
+        :qpc_path (str): Path to the saved generated binary file after compilation.
+        :prompt (str): Sample prompt for the model text generation.
+        :ctx_len (int): Input length of the prompt to determine the number of chunks to execute on ``Cloud AI 100``.
+        :generation_len (int): Maximum context length for the model during compilation.
+        :device_id (List[int]): Device IDs to be used for compilation. If ``len(device_id) > 1``, it enables multiple card setup.
+        :enable_debug_logs (bool): If True, it enables debugging logs.
+        :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them.
+        :Write_io_dir (str): Path to write the input and output files.
+        :automation (bool): If true, it prints input, output, and performance stats.
+
+    Returns:
+        :CloudAI100ExecInfo: Object holding execution output and performance details.
 
     .. code-block:: python
 

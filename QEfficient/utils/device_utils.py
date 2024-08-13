@@ -17,7 +17,7 @@ def get_available_device_id():
     API to check available device id.
 
     Return:
-        Return available device id.
+        :int: Available device id.
     """
 
     device_id = 0

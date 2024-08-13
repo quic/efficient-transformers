@@ -35,8 +35,7 @@ You can also pass path of txt file with input prompts when you want to run infer
 
 ```bash
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompts_txt_file_path examples/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first  
- ```
-
+```
 
 ### QEfficient.cloud.execute
 You can first run `infer` API and then use `execute` to run the pre-compiled model on Cloud AI 100 cards.

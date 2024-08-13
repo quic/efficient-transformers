@@ -118,20 +118,22 @@ def compile(
 
     This function will be deprecated soon and will be replaced by ``QEFFAutoModelForCausalLM.compile``.
 
-    :onnx_path: `str` - Generated Onnx Model Path.
-    :qpc_path: `str` – Path for saving compiled qpc binaries.
-    :num_cores: `int` – Number of cores to compile the model on.
-    :device_group: `List[int]` – Used for finding the number of devices to compile for.
-    :aic_enable_depth_first: `bool` – Enables DFS with default memory size (disabled by default).
-    :mos: `int` – Effort level to reduce the on-chip memory.
-    :batch_size: `int` – Batch size to compile the model for.
-    :prompt_len: `int` – Prompt length for the model to compile.
-    :ctx_len: `int` – Maximum context length to compile the model.
-    :mxfp6: `bool` – Enable compilation for MXFP6 precision.
-    :mxint8: `bool` – Compress Present/Past KV to MXINT8 using CustomIO config (default is False).
-    :custom_io_file_path: `str` – Path to custom IO file (formatted as a string).
+    Args:
+        :onnx_path (str): Generated ``ONNX`` Model Path.
+        :qpc_path (str): Path for saving compiled qpc binaries.
+        :num_cores (int): Number of cores to compile the model on.
+        :device_group (List[int]): Used for finding the number of devices to compile for.
+        :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size (disabled by default).
+        :mos (int): Effort level to reduce the on-chip memory.
+        :batch_size (int): Batch size to compile the model for.
+        :prompt_len (int): Prompt length for the model to compile.
+        :ctx_len (int): Maximum context length to compile the model.
+        :mxfp6 (bool): Enable compilation for ``MXFP6`` precision.
+        :mxint8 (bool): Compress Present/Past KV to ``MXINT8`` using ``CustomIO`` config (default is False).
+        :custom_io_file_path (str): Path to ``customIO`` file (formatted as a string).
 
-    :Returns (str): Path to compiled ``qpc`` package.
+    Returns:
+        :str: Path to compiled ``qpc`` package.
     
     .. code-block:: python
 
