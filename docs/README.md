@@ -14,12 +14,12 @@ And then, change directory to docs folder to make the docs.
 
 ```sh
 cd docs/
-sphinx-build -M html . ./build
+sphinx-build -M html . build
 ```
 ## Preview the docs locally
  
 ```bash
-cd build
+cd build/html
 python -m http.server
 ```
 You can visit the page with your web browser with url `http://localhost:8080`.
