@@ -6,6 +6,7 @@
 # ----------------------------------------------------------------------------
 
 import os
+import shutil
 import warnings
 from typing import Dict, List, Optional
 
@@ -36,9 +37,10 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         self.transform()
 
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, card_name: Optional[str] = None, **kwargs):
+    def from_pretrained(cls, pretrained_name_or_path: str, **kwargs):
         # Base class
-        if kwargs.get("use_cache") is False:
+        card_name = kwargs.pop("card_name", None)
+        if not kwargs.get("use_cache"):
             warnings.warn("Overriding to use_cache=True")
         kwargs["use_cache"] = True
         model = cls._hf_auto_class.from_pretrained(pretrained_name_or_path, **kwargs)
@@ -51,15 +53,15 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     def transform(self, **kwargs):
         # Base class
         for transform in self.pytorch_transforms:
-            self.model = transform.apply(self.model)
+            self.model, transformed = transform.apply(self.model)
 
     @property
     def sample_inputs(self) -> Dict[str, torch.Tensor]:
-        kv_cache_shape = get_padding_shape_from_config(self.model.config)
+        kv_cache_shape = get_padding_shape_from_config(self.model.config, 1, 32)
         num_layers = get_num_layers_from_config(self.model.config)
         inputs = {
             "input_ids": torch.zeros((1, 32), dtype=torch.int64),
-            "position_ids": torch.arange(32, dtype=torch.int64),
+            "position_ids": torch.arange(32, dtype=torch.int64).view((1, 32)),
             "past_key_values": [
                 (
                     torch.zeros(kv_cache_shape, dtype=torch.float32),
@@ -79,35 +81,60 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         }
         for i in range(num_layers):
             dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
-            dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
+            dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
         return dynamic_axes
+
+    @property
+    def input_names(self) -> List[str]:
+        return list(self.dynamic_axes.keys())
+
+    @property
+    def output_names(self) -> List[str]:
+        num_layers = get_num_layers_from_config(self.model.config)
+        outputs = ["logits"]
+        for i in range(num_layers):
+            outputs.append(f"past_key.{i}_RetainedState")
+            outputs.append(f"past_value.{i}_RetainedState")
+        return outputs
 
     def export(self, export_dir: Optional[str] = None) -> str:
         # Base class
+        model_name = self.card_name.replace("/", "_")
         if export_dir is None:
-            export_dir = os.path.join(QEFF_HOME, self.card_name.replace("/", "_"))
-        tmp_dir_path = os.path.join(export_dir, "onnx_tmp")
-        os.makedirs(tmp_dir_path, exist_ok=True)
-        tmp_onnx_path = os.path.join(tmp_dir_path, f"{self.card_name}.onnx")
+            export_dir = os.path.join(QEFF_HOME, model_name)
+        self.onnx_path = os.path.join(export_dir, f"{model_name}.onnx")
+        tmp_onnx_dir = os.path.join(export_dir, "onnx_tmp")
+        tmp_onnx_path = os.path.join(tmp_onnx_dir, f"{model_name}.onnx")
+        os.makedirs(tmp_onnx_dir, exist_ok=True)
         torch.onnx.export(
             self.model,
             (self.sample_inputs,),
             tmp_onnx_path,
+            input_names=self.input_names,
+            output_names=self.output_names,
             dynamic_axes=self.dynamic_axes,
         )
 
-        model = onnx.load(tmp_onnx_path)
+        model = onnx.load(tmp_onnx_path, load_external_data=False)
+        transform_kwargs = {
+            "onnx_base_dir": tmp_onnx_dir,
+            "model_name": model_name,
+            "adapter_name": self.model.active_adapter,
+        }
         for transform in self.onnx_transforms:
-            model, transformed = transform.apply(model, onnx_base_dir=tmp_dir_path)
-        onnx.save(model)
+            model, transformed = transform.apply(model, **transform_kwargs)
+        onnx.save(model, self.onnx_path)
+
+        shutil.rmtree(tmp_onnx_dir)
+        return self.onnx_path
 
     def compile(self, **kwargs) -> str:
         # Base class
         pass
 
-    def run_pytorch(self, inputs):
+    def run_pytorch(self, inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # Base class
-        pass
+        return dict(self.model(inputs))
 
     def run_ort(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         # Base class
