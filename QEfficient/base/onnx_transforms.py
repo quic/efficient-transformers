@@ -53,8 +53,35 @@ class FP16ClipTransform(OnnxTransform):
         return model, transformed
 
 
-class SplitWeights(OnnxTransform):
-    pass
+class SplitTensorsTransform(OnnxTransform):
+    """
+    Split external tensors file
+    """
+
+    @classmethod
+    def apply(
+        cls,
+        model: ModelProto,
+        *,
+        model_name: str,
+        onnx_base_dir: Optional[str] = None,
+        file_chunk_size: int = 10 * 2**30,  # 10 GiB
+        size_threshold: int = 1024,
+        **kwargs,
+    ) -> Tuple[ModelProto, bool]:
+        file_num = 0
+        current_file_size = 0
+        transformed = False
+        external_data_helper.load_external_data_for_model(model, onnx_base_dir)
+        for tensor in external_data_helper._get_all_tensors(model):
+            if tensor.HasField("raw_data") and ((tsize := len(tensor.raw_data)) > size_threshold):
+                transformed = True
+                current_file_size += tsize
+                if current_file_size > file_chunk_size:
+                    file_num += 1
+                    current_file_size = tsize
+                external_data_helper.set_external_data(tensor, f"{model_name}_{file_num}.onnx.data")
+        return model, transformed
 
 
 class LoraAdapters(OnnxTransform):
