@@ -37,15 +37,15 @@ def convert_to_cloud_bertstyle(
             1. No Prefill/Decode separably compiled.
             2. No KV retention logic.
             3. KV is every time computed for all the tokens until EOS/max_length.
-        
+
     ---------
-    
+
     :model_name: `str` - Hugging Face Model Card name, Example: `gpt2`.
     :qeff_model: `QEFFAutoModelForCausalLM` – Transformed KV torch model to be used.
     :tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` – Model tokenizer.
     :onnx_dir_path: `str` – Path to save exported ONNX file.
     :seq_len: `int` – The length of the sequence.
-    
+
     Return:
         Path of exported ONNX file.
     """
@@ -157,7 +157,7 @@ def convert_to_cloud_kvstyle(
         2. where sequence generation involves processing one token at a time.
         3. And contextual information from earlier tokens is crucial for predicting the next token.
         4. The inclusion of a kV cache enhances the efficiency of the decoding process, making it more computationally efficient.
-        
+
     ---------
 
     :model_name: `str` - Hugging Face Model Card name, Example: `gpt2`.
@@ -378,9 +378,9 @@ def qualcomm_efficient_converter(
 ) -> Tuple[str, str]:
     """
     API to convert torch Bert style and KV style model to ONNX.
-    
+
     ---------
-    
+
     :model_name: `str` – The name of the model to be used.
     :model_kv: `torch.nn.Module` – Transformed KV torch model to be used.
     :local_model_dir: `str` – Path of local model.
