@@ -352,8 +352,9 @@ def cloud_ai_100_exec_kv(
     automation=False,
 ):
     """
-    Helper function to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.
-    ---------
+    Generates output till ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+    This is sequential execution based on ``batch_size`` of the compiled model and number of prompts passed.
+    If number of prompts couldn't be divided by ``batch_size``, we will drop the last unfulfilled batch.
 
     :batch_size: `int` – Batch size of the QPC compilation.
     :tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` – Model tokenizer.
@@ -366,6 +367,18 @@ def cloud_ai_100_exec_kv(
     :stream: `bool` – If True, enable streamer, which returns tokens one by one as the model generates them.
     :Write_io_dir: `str` – Path to write the input and output files.
     :automation: `bool` – If true, it prints input, output, and performance stats.
+
+    :Returns (CloudAI100ExecInfo): Object holding execution output and performance details.
+
+    .. code-block:: python
+
+        import transformers
+        import QEfficient
+        base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
+        qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0])
+        tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
+        execinfo = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_id=[0])
+       
     """
     batch_size, ctx_len = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)

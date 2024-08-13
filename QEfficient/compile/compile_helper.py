@@ -113,8 +113,10 @@ def compile(
     **kwargs,
 ) -> str:
     """
-    Helper function used by compile CLI app for compiling the Onnx Model on Cloud AI 100 Platform with given config.
-    ---------
+    Compiles the given ``ONNX`` model using Cloud AI 100 platform SDK compiler and saves the compiled ``qpc`` package at ``qpc_path``.
+    Generates tensor-slicing configuration if multiple devices are passed in ``device_group``.
+
+    This function will be deprecated soon and will be replaced by ``QEFFAutoModelForCausalLM.compile``.
 
     :onnx_path: `str` - Generated Onnx Model Path.
     :qpc_path: `str` – Path for saving compiled qpc binaries.
@@ -128,6 +130,14 @@ def compile(
     :mxfp6: `bool` – Enable compilation for MXFP6 precision.
     :mxint8: `bool` – Compress Present/Past KV to MXINT8 using CustomIO config (default is False).
     :custom_io_file_path: `str` – Path to custom IO file (formatted as a string).
+
+    :Returns (str): Path to compiled ``qpc`` package.
+    
+    .. code-block:: python
+
+        import QEfficient
+        base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
+        qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0])
 
     """
     os.makedirs(qpc_path, exist_ok=True)

@@ -377,9 +377,14 @@ def qualcomm_efficient_converter(
     form_factor: str = "cloud",
 ) -> Tuple[str, str]:
     """
-    API to convert torch Bert style and KV style model to ONNX.
+    This method is an alias for ``QEfficient.export``.
 
-    ---------
+    Usage 1: This method can be used by passing ``model_name`` and ``local_model_dir`` or ``cache_dir`` if required for loading from local dir.
+    This will download the model from ``HuggingFace`` and export it to ``ONNX`` graph and returns generated files path check below.
+
+    Usage 2: You can pass ``model_name`` and ``model_kv`` as an object of ``QEfficient.QEFFAutoModelForCausalLM``, In this case will directly export the ``model_kv.model` to ``ONNX``
+
+    We will be deprecating this function and it will be replaced by ``QEffAutoModelForCausalLM.export``.
 
     :model_name: `str` – The name of the model to be used.
     :model_kv: `torch.nn.Module` – Transformed KV torch model to be used.
@@ -387,14 +392,19 @@ def qualcomm_efficient_converter(
     :tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` – Model tokenizer.
     :cache_dir: `str` – Path of the cache directory.
     :onnx_dir_path: `str` – Path to store ONNX file.
-    :hf_token: `str` – Huggingface token to access gated models. Default is None.
+    :hf_token: `str` – ``Huggingface`` token to access gated models. Default is None.
     :seq_len: `int` – The length of the sequence. Default is 128.
     :kv: `bool` – If false, it will export to Bert style. Default is true.
     :form_factor: `str` – Form factor of the hardware, currently only "cloud" is accepted.
 
+    :Returns (Tuple[str, str]): Path to Base ``ONNX`` dir and path to generated ``ONNX`` model
 
-    Returns:
-       Path of exported ONNX file.
+        
+    .. code-block:: python
+
+        import QEfficient
+        base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
+       
     """
     warnings.warn(
         "\033[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m",

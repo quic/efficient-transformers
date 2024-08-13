@@ -4,10 +4,10 @@
 
 ## `QEFFAutoModelForCausalLM`
 ```{eval-rst}
-.. automodule:: QEfficient.QEFFAutoModelForCausalLM 
-   :members:
-   :show-inheritance:
-   :exclude-members: QEffAutoModel,QEFFTransformersBase
+.. automodule:: QEfficient.transformers.models.modeling_auto
+   :inherited-members:
+   :undoc-members: 
+   :exclude-members: QEffAutoModel,QEFFTransformersBase, run_ort, run_pytorch, get_tokenizer, run_cloud_ai_100, execute
 ``` 
 ## `export`
 ```{eval-rst}
@@ -22,10 +22,10 @@
    :members:
    :show-inheritance:
 ```
-## `cloud_ai_100_exec_kv`
+## `Execute`
 ```{eval-rst}
 .. automodule:: QEfficient.generation.text_generation_inference
    :members:
    :show-inheritance: 
-   :exclude-members:  latency_stats_bertstyle,CloudAI100ExecInfo,cloud_ai_100_exec_kv_helper
+   :exclude-members:  latency_stats_bertstyle,cloud_ai_100_exec_kv_helper
 ```
