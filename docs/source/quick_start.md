@@ -7,8 +7,10 @@ To achieve this, we have 2 levels of APIs, with different levels of abstraction.
 1. Command line interface abstracts away complex details, offering a simpler interface. They're ideal for quick development and prototyping. If you're new to a technology or want to minimize coding effort.
 
 2. Python high level APIs offer more granular control, ideal for when customization is necessary.
- 
+
 ## Command Line Interface
+
+> **_NOTE:_** Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group``should be in single quotes e.g.  ``'--device_group [0]'``
 
 ### QEfficient.cloud.infer
 

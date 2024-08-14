@@ -17,7 +17,7 @@ Welcome to Efficient-Transformers Documentation!
 :maxdepth: 4
  
 source/introduction
-source/Validate
+source/validate
 ```
 
 

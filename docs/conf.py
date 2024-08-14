@@ -29,7 +29,7 @@ project = "Efficient-Transformers"
 copyright = "2024, Qualcomm"
 
 # The full version, including alpha/beta/rc tags
-release = "1.16"
+release = "main"
 
 
 # -- General configuration ---------------------------------------------------

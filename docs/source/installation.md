@@ -4,9 +4,6 @@ System Requirements:
 2. [Pre-requisites installed](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Pre-requisites/pre-requisites/)
 3. [Cloud AI 100 Platform and Apps SDK installed](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/)  
 4. [Multi-device support enabled for model sharding](https://github.com/quic/cloud-ai-sdk/tree/1.12/utils/multi-device)
- 
-* **Use bash terminal**
-* **If using ZSH terminal then "device_group" should be in single quotes e.g.  "--device_group [0]"**
 
 # Linux Installation 
 There are two different way to install efficient-transformers.
@@ -20,6 +17,7 @@ There are two different way to install efficient-transformers.
 # Install using Apps SDK
 
 bash install.sh —enable-qeff
+source /opt/qeff-env/bin/activate
 
 ```
 ## Using GitHub Repository
