@@ -54,7 +54,7 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Model,
 )
 
-from QEfficient.base.pytorch_transforms import ModuleMappingTransform
+from QEfficient.base.pytorch_transforms import InitMappingTransform, ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.codegen.modeling_codegen import (
@@ -140,7 +140,6 @@ class KVCacheTransform(ModuleMappingTransform):
         GPTJModel: QEffGPTJModel,
         GPTJForCausalLM: QEffGPTJForCausalLM,
         # Llama
-        LlamaAttention: QEffLlamaAttention,
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
         # Mistral
@@ -173,6 +172,13 @@ class KVCacheTransform(ModuleMappingTransform):
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2Model: QEffStarcoder2Model,
         Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
+    }
+
+
+class InitTransform(InitMappingTransform):
+    _init_mapping = {
+        # map init along with class module.
+        LlamaAttention: QEffLlamaAttention
     }
 
     @classmethod
