@@ -459,8 +459,6 @@ class TextGeneration:
 
         return decode_inputs
 
-
-
     def _update_decode_input(self, outputs, position_ids, generation_len, decode_batch_id=None):
         """
         Updates the decode input with the generated values.
@@ -690,7 +688,7 @@ class TextGeneration:
 
         execution_batch_size = self.full_batch_size if self.full_batch_size is not None else self.batch_size
 
-        # Create a prompt queue. 
+        # Create a prompt queue.
         prompt_queue = deque(prompt)
 
         # initialize np arrays for storing the prefill output for all the decode batch size.
@@ -737,7 +735,9 @@ class TextGeneration:
 
         # Calculate total generated tokens in case of continuos batching or regular execution.
         total_decode_tokens = (
-            sum([np.sum(self.generated_ids[i] != self.tokenizer.pad_token_id) - 1 for i in range(len(prompt))]) if self.full_batch_size else num_token
+            sum([np.sum(self.generated_ids[i] != self.tokenizer.pad_token_id) - 1 for i in range(len(prompt))])
+            if self.full_batch_size
+            else num_token
         )
 
         prefill_time, decode_perf, total_perf, total_time = self.calculate_latency(
