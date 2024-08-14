@@ -44,7 +44,7 @@ def convert_to_cloud_bertstyle(
         :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
         :onnx_dir_path (str): Path to save exported ONNX file.
         :seq_len (int): The length of the sequence.
-        
+
     Returns:
          :str: Path of exported ``ONNX`` file.
     """
@@ -399,12 +399,12 @@ def qualcomm_efficient_converter(
     Returns:
         :Tuple[str, str]: Path to Base ``ONNX`` dir and path to generated ``ONNX`` model
 
-        
+
     .. code-block:: python
 
         import QEfficient
         base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
-       
+
     """
     warnings.warn(
         "\033[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m",

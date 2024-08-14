@@ -29,14 +29,14 @@ def export_onnx(
 ) -> str:
     """
     API for export PyTorch model to ONNX.
-    
+
     Args:
         :pt_model (torch.nn.Module): PyTorch model that will be exported to ``ONNX`` format.
         :inputs (Dict[str, torch.Tensor]): Processed torch input for the model.
         :output_names (List[str]): Output of pytorch model inference.
         :gen_models_path (str): Path of generated ``ONNX`` model.
     :model_base_name (str): Base name for the exported ``ONNX`` file.
-    
+
     Return:
         :str: Updated base name of exported ``ONNX`` model.
     """
@@ -139,7 +139,7 @@ def export_onnx(
 def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_base_name: str) -> str:
     """
     API to save ONNX model and it's data separately if size of ``ONNX`` model is greater than 2GB.
- 
+
     Args:
         :model (Union[onnx.ModelProto, str]): Pass ``ONNX`` model or path of the model.
         :gen_models_path (str): Path of generated ``ONNX`` model.
@@ -268,7 +268,7 @@ def generate_input_files(
 ):
     """
     API to generate input files, required for Cloud AI 100 execution.
-    
+
     Args:
         :input_files_path (str): Path to save input files.
         :input_names (List[str]): Names of inputs to be saved.
@@ -302,7 +302,7 @@ def run_model_on_ort(
 ) -> Tuple[List[str], List[np.ndarray]]:
     """
     API to run ONNX model on ONNX runtime
-    
+
     Args:
         :onnx_path (str): Path of ONNX model.
         :inputs (Dict[str, torch.Tensor]): Processed torch input for the model.

@@ -24,7 +24,7 @@ from QEfficient.utils.logging_utils import logger
 class CloudAI100ExecInfo:
     """
     Holds all the information about Cloud AI 100 execution
-    
+
     Args:
         :batch_size (int): Batch size of the QPC compilation.
         :generated_texts (Union[List[List[str]], List[str]]): Generated text(s).
@@ -103,7 +103,7 @@ def latency_stats_bertstyle(
 ):
     """
     Function to execute Bertstyle ONNX model on Cloud AI 100.
-    
+
     Args:
         :model_name (str): Hugging Face Model Card name, Example: gpt2.
         :qpc_path (str): Path to save generated binary file after compilation.
@@ -203,7 +203,7 @@ def cloud_ai_100_exec_kv_helper(
 ):
     """
     Helper function to execute QEfficient transformed ONNX model on ``Cloud AI 100`` using compiled QPC file.
-    
+
     Args:
         :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
         :qpc_path (str): Path to the saved generated binary file after compilation.
@@ -379,7 +379,7 @@ def cloud_ai_100_exec_kv(
         qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0])
         tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
         execinfo = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_id=[0])
-       
+
     """
     batch_size, ctx_len = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)

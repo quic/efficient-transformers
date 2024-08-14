@@ -15,7 +15,7 @@ class InputHandler:
     def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len):
         """
         Initialization
-        
+
         Args:
             :batch_size (int): Number of prompts to run in one batch.
             :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Pass model tokenizer.
@@ -79,7 +79,7 @@ class InputHandler:
     def update_pytorch_inputs(self, inputs, pt_outputs):
         """
         Function responsible for updating Prefill stage inputs to create decode stage inputs for PyTorch model.
-        
+
         Args:
             :inputs (Dict): Pytorch inputs from previous iteration
             :pt_outputs (Dict): Pytorch outputs from previous iteration
@@ -98,7 +98,7 @@ class InputHandler:
     def prepare_ort_inputs(self):
         """
         Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.
- 
+
         Return:
             :Dict: input_ids, position_ids, past_key_values
         """

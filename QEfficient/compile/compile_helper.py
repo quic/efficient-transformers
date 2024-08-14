@@ -134,7 +134,7 @@ def compile(
 
     Returns:
         :str: Path to compiled ``qpc`` package.
-    
+
     .. code-block:: python
 
         import QEfficient

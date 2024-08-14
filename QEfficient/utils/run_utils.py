@@ -129,7 +129,7 @@ class ApiRunner:
     def run_kv_model_on_ort(self, model_path):
         """
         Function responsible for running ``ONNX`` model on onnxruntime and return the output tokens
-        
+
         Args:
             :model_path (str): Path to the Onnx model.
 
@@ -176,7 +176,7 @@ class ApiRunner:
     def run_kv_model_on_cloud_ai_100(self, qpc_path, device_group):
         """
         Function responsible for running ``ONNX`` model on Cloud AI 100 and return the output tokens
-       
+
         Args:
             :qpc_path (str): path to qpc generated after compilation
             :device_group (List[int]): Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
