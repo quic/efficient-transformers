@@ -38,13 +38,10 @@ def hf_download(
     allow_patterns: Optional[List[str]] = None,
     ignore_patterns: Optional[List[str]] = None,
 ):
-    # Setup cache and local dir
-    local_dir = None
+    # Setup cache_dir
     if cache_dir is not None:
-        cache_dir = f"{cache_dir}"
-        local_dir = f"{cache_dir}/{repo_id}"
+        os.makedirs(cache_dir, exist_ok=True)
 
-    os.makedirs(f"{cache_dir}/{repo_id}", exist_ok=True)
     max_retries = 5
     retry_count = 0
     while retry_count < max_retries:
@@ -52,8 +49,6 @@ def hf_download(
             model_path = snapshot_download(
                 repo_id,
                 cache_dir=cache_dir,
-                local_dir=local_dir,
-                local_dir_use_symlinks=True,
                 revision="main",
                 resume_download=True,
                 token=hf_token,
