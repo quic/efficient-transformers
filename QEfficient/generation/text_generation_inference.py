@@ -204,17 +204,17 @@ def cloud_ai_100_exec_kv_helper(
     """
     Helper function to execute QEfficient transformed ONNX model on ``Cloud AI 100`` using compiled QPC file.
 
-    Args:
+    ``Mandatory`` Args:
         :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
         :qpc_path (str): Path to the saved generated binary file after compilation.
         :prompt (str): Sample prompt for the model text generation.
         :ctx_len (int): Input length of the prompt to determine the number of chunks to execute on ``Cloud AI 100``.
-        :generation_len (int): Maximum context length for the model during compilation.
-        :device_id (List[int]): Device IDs to be used for compilation. If ``len(device_id) > 1``, it enables multiple card setup.
-        :enable_debug_logs (bool): If True, it enables debugging logs.
-        :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them.
-        :Write_io_dir (str): Path to write the input and output files.
-        :automation (bool): If true, it prints input, output, and performance stats.
+    ``Optional`` Args:
+        :generation_len (int): Maximum context length for the model during compilation. ``Defaults to None``.
+        :device_id (List[int]): Device IDs to be used for compilation. If ``len(device_id) > 1``, it enables multiple card setup. ``Defaults to [0]``.
+        :enable_debug_logs (bool): If True, it enables debugging logs. ``Defaults to False``.
+        :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them.``Defaults to True``.
+        :Write_io_dir (str): Path to write the input and output files.``Defaults to None``.
     """
 
     if tokenizer.padding_side != "right":
@@ -354,19 +354,19 @@ def cloud_ai_100_exec_kv(
     This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
     If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
 
-
-    Args:
-        :batch_size (int): Batch size of the ``qpc`` compilation.
+    ``Mandatory`` Args:
         :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
         :qpc_path (str): Path to the saved generated binary file after compilation.
-        :prompt (str): Sample prompt for the model text generation.
-        :ctx_len (int): Input length of the prompt to determine the number of chunks to execute on ``Cloud AI 100``.
-        :generation_len (int): Maximum context length for the model during compilation.
-        :device_id (List[int]): Device IDs to be used for compilation. If ``len(device_id) > 1``, it enables multiple card setup.
-        :enable_debug_logs (bool): If True, it enables debugging logs.
-        :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them.
-        :Write_io_dir (str): Path to write the input and output files.
-        :automation (bool): If true, it prints input, output, and performance stats.
+
+    ``Optional`` Args:
+        :prompt (str): Sample prompt for the model text generation. ``Defaults to None``.
+        :prompts_txt_file_path (str): Path of the prompt text file. ``Defaults to None``.
+        :generation_len (int): Maximum context length for the model during compilation. ``Defaults to None``.
+        :device_id (List[int]): Device IDs to be used for compilation. If ``len(device_id) > 1``, it enables multiple card setup. ``Defaults to [0]``.
+        :enable_debug_logs (bool): If True, it enables debugging logs. ``Defaults to False``.
+        :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them. ``Defaults to True``.
+        :Write_io_dir (str): Path to write the input and output files. ``Defaults to None``.
+        :automation (bool): If true, it prints input, output, and performance stats. ``Defaults to False``.
 
     Returns:
         :CloudAI100ExecInfo: Object holding execution output and performance details.

@@ -16,7 +16,7 @@ class InputHandler:
         """
         Initialization
 
-        Args:
+        ``Manadatory`` Args:
             :batch_size (int): Number of prompts to run in one batch.
             :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Pass model tokenizer.
             :config (AutoConfig): From pretrained model.
@@ -80,7 +80,7 @@ class InputHandler:
         """
         Function responsible for updating Prefill stage inputs to create decode stage inputs for PyTorch model.
 
-        Args:
+        ``Manadatory`` Args:
             :inputs (Dict): Pytorch inputs from previous iteration
             :pt_outputs (Dict): Pytorch outputs from previous iteration
 
@@ -131,7 +131,7 @@ class InputHandler:
         """
         Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
 
-        Args:
+        ``Manadatory`` Args:
             :inputs (Dict): NumPy inputs of Onnx model from previous iteration
             :ort_outputs (Dict): Numpy outputs of Onnx model from previous iteration
 
@@ -152,7 +152,7 @@ class InputHandler:
         """
         Function responsible for updating ONNXRT session outputs.
 
-        Args:
+        ``Manadatory`` Args:
             :ort_outputs (Dict): Numpy outputs of Onnx model from current iteration
 
         Return:

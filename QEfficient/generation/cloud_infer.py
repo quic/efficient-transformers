@@ -115,9 +115,9 @@ class QAICInferenceSession:
     def set_buffers(self, buffers: Dict[str, np.ndarray]):
         """
         Provide buffer mapping for input and output
-        ---------
 
-        :buffer: Dict[str, np.ndarray]. Parameter for buffer mapping.
+        Args:
+            :buffer (Dict[str, np.ndarray]): Parameter for buffer mapping.
         """
 
         for buffer_name, buffer in buffers.items():
@@ -134,9 +134,9 @@ class QAICInferenceSession:
     def skip_buffers(self, skipped_buffer_names: List[str]):
         """
         skip buffer mapping for given list of buffer names
-        ---------
 
-        :skipped_buffer_name: List[str]. List of buffer name to be skipped.
+        Args:
+            :skipped_buffer_name: List[str]. List of buffer name to be skipped.
         """
 
         self.set_buffers({k: np.array([]) for k in skipped_buffer_names})
@@ -144,9 +144,12 @@ class QAICInferenceSession:
     def run(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         """
         Execute on cloud AI 100
-        ---------
 
-        :inputs: Dict[str, np.ndarray]). Processed numpy inputs for the model.
+        Args:
+            :inputs (Dict[str, np.ndarray]): Processed numpy inputs for the model.
+
+        Return:
+            :Dict[str, np.ndarray]:
         """
         # Set inputs
         self.set_buffers(inputs)

@@ -38,7 +38,7 @@ def convert_to_cloud_bertstyle(
             2. No KV retention logic.
             3. KV is every time computed for all the tokens until EOS/max_length.
 
-    Args:
+    ``Manadatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: `gpt2`.
         :qeff_model (QEFFAutoModelForCausalLM): Transformed KV torch model to be used.
         :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
@@ -157,7 +157,7 @@ def convert_to_cloud_kvstyle(
         3. And contextual information from earlier tokens is crucial for predicting the next token.
         4. The inclusion of a kV cache enhances the efficiency of the decoding process, making it more computationally efficient.
 
-    Args:
+    ``Manadatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: `gpt2`.
         :qeff_model (QEFFAutoModelForCausalLM): Transformed KV torch model to be used.
         :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
@@ -384,21 +384,21 @@ def qualcomm_efficient_converter(
 
     We will be deprecating this function and it will be replaced by ``QEffAutoModelForCausalLM.export``.
 
-    Args:
+    ``Mandatory`` Args:
         :model_name (str): The name of the model to be used.
-        :model_kv (torch.nn.Module): Transformed ``KV torch model`` to be used.
-        :local_model_dir (str): Path of local model.
-        :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
-        :cache_dir (str): Path of the ``cache`` directory.
-        :onnx_dir_path (str): Path to store ``ONNX`` file.
-        :hf_token (str): Huggingface token to access gated models. Default is ``None``.
-        :seq_len (int): The length of the sequence. Default is ``128``.
-        :kv (bool): If false, it will export to Bert style. Default is ``true``.
-        :form_factor (str): Form factor of the hardware, currently only ``cloud`` is accepted.
+    ``Optional`` Args:
+        :model_kv (torch.nn.Module): Transformed ``KV torch model`` to be used. ``Defaults to None``.
+        :local_model_dir (str): Path of local model. ``Defaults to None``.
+        :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer. ``Defaults to None``.
+        :cache_dir (str): Path of the ``cache`` directory. ``Defaults to None``.
+        :onnx_dir_path (str): Path to store ``ONNX`` file. ``Defaults to None``.
+        :hf_token (str): Huggingface token to access gated models. ``Defaults is None``.
+        :seq_len (int): The length of the sequence. ``Defaults is 128``.
+        :kv (bool): If false, it will export to Bert style. ``Defaults is True``.
+        :form_factor (str): Form factor of the hardware, currently only ``cloud`` is accepted. ``Defaults to cloud``.
 
     Returns:
         :Tuple[str, str]: Path to Base ``ONNX`` dir and path to generated ``ONNX`` model
-
 
     .. code-block:: python
 

@@ -20,8 +20,9 @@ from QEfficient.utils.logging_utils import logger
 def replace_module_with_qeff_layers(model: nn.Module) -> None:
     """
     Replaces the transformers nn.Module classes with optmized QEff classes in place.
-    ----------
-    :param model: `torch.nn.Module` - Base PyTorch model.
+
+    Args:
+        :model (torch.nn.Module) Base PyTorch model.
     """
     # Replace if module class is registed in TransformersToQEffModulesDict
     target_module = TransformersToQEffModulesDict.get(model.__class__)
@@ -36,9 +37,12 @@ def replace_module_with_qeff_layers(model: nn.Module) -> None:
 def get_params_hash(model: nn.Module) -> str:
     """
     Creates a Hash of all the parameters values i.e. weights using SHA256 algo.
-    --------
-    :param model: `torch.nn.Module` - Base PyTorch model.
-    :returns: `str` - Hash string
+
+    Args:
+        model (torch.nn.Module): Base PyTorch model.
+
+    Returns:
+        :str: Hash string
     """
     hasher = hashlib.sha256()
     for _, params in model.named_parameters():
@@ -50,12 +54,12 @@ def get_params_hash(model: nn.Module) -> str:
 def transform_lm(model: nn.Module) -> nn.Module:
     """
     Replaces some Transformers torch.nn.Module layers for equivalent optimized modules for Cloud AI 100.
-    ---------
 
-    :model: `torch.nn.Module` - PyTorch model.
+    Args:
+        model (torch.nn.Module): PyTorch model.
 
     Returns:
-        PyTorch Module with replaced QEff layers.
+        :torch.nn.Module: PyTorch Module with replaced QEff layers.
     """
 
     # Introducnig qeff_transformed attribue in model to check status of transform
@@ -87,8 +91,8 @@ def transform(model: QEFFBaseModel, form_factor="cloud"):
     This function serves for optimizing any kind of model (i.e. LLM, SD, AWQ etc.) for Cloud AI 100.
     Will replace the torch.nn.Module layers of passed QEffModel with optimized implementation of the same.
 
-    model: `torch.nn.Module` - object of any instance of class that is child of `QEFFBaseAutoModelFactory`
-    form_factor: `str` - form factor configuration for optmizing the model, available options=["cloud", "edge"].
+    model (torch.nn.Module): object of any instance of class that is child of `QEFFBaseAutoModelFactory`
+    form_factor (str): form factor configuration for optmizing the model, available options=["cloud", "edge"].
     """
     assert form_factor == "cloud", "Only form_factor='cloud' is supported as of now!"
     # FIXME: move this to class and use model.transform()

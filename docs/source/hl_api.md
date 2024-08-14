@@ -21,6 +21,10 @@
 .. automodule:: QEfficient.compile.compile_helper
    :members:
    :show-inheritance:
+.. code-block:: bash
+   import QEfficient
+   base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
+   qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0])
 ```
 ## `Execute`
 ```{eval-rst}

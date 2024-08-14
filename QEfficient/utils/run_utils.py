@@ -54,7 +54,7 @@ class ApiRunner:
         """
         Function responsible for running HuggingFace ``PyTorch`` model and return the output tokens
 
-        Args:
+        ``Manadatory`` Args:
             :model_hf (torch.nn.module): Original ``PyTorch`` model
 
         Return:
@@ -81,7 +81,7 @@ class ApiRunner:
         """
         Function responsible for running KV ``PyTorch`` model and return the output tokens
 
-        Args:
+        ``Manadatory`` Args:
         :model (torch.nn.module): Transformed ``PyTorch`` model
 
         Return:
@@ -109,7 +109,7 @@ class ApiRunner:
         """
         Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
 
-        Args:
+        ``Manadatory`` Args:
             :inputs (Dict):
             :session (onnxruntime.capi.onnxruntime_inference_collection.InferenceSession):
 
@@ -130,7 +130,7 @@ class ApiRunner:
         """
         Function responsible for running ``ONNX`` model on onnxruntime and return the output tokens
 
-        Args:
+        ``Manadatory`` Args:
             :model_path (str): Path to the Onnx model.
 
         Return:
@@ -177,7 +177,7 @@ class ApiRunner:
         """
         Function responsible for running ``ONNX`` model on Cloud AI 100 and return the output tokens
 
-        Args:
+        ``Manadatory`` Args:
             :qpc_path (str): path to qpc generated after compilation
             :device_group (List[int]): Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
 

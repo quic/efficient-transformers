@@ -16,8 +16,8 @@ There are two different way to install efficient-transformers.
 ```bash
 # Install using Apps SDK
 
-bash install.sh —enable-qeff
-source /opt/qeff-env/bin/activate
+bash install.sh --enable-qeff
+source  /opt/qti-aic/dev/python/qeff/bin/activate
 
 ```
 ## Using GitHub Repository

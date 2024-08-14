@@ -75,7 +75,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
     Please note that the QEFF class is also a part of the ``QEfficient`` module.
 
-    Args:
+    ``Manadatory`` Args:
         :model (nn.Module):  PyTorch model
         :pretrained_model_name_or_path (str): We recommend passing name of the model as input here, as you are not using `from_pretrained` method. This name will be used for deciding path of the ``ONNX/qpc`` files generated during ``export``, ``compilation`` stages.
 
@@ -107,16 +107,17 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         """
-        This method is the easiest entry-point into using QEfficient. We have kept the interface similar to ``transformers.AutoModelForCausalLM``
-        Once the model is initialized you can use other method like ``export``, ``compile``, ``generate`` on the same object.
+        This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
+        Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
 
         Accepts All the parameters that are acceptable by ``transformers.AutoModelForCausalLM``
         There are few additional parameters that this method can take.
 
-        :transform (bool): Whether to optimize model for KV retention; default is ``True``. Pass ``False`` to get BertStyle model.
-        :model_card_name (str): ``HuggingFace`` model card name or name of the model if custom, used for deciding directory name while saving ``ONNX/qpc`` files.
+        ``Manadatory`` Args:
+            :transform (bool): Whether to optimize model for KV retention; default is ``True``. Pass ``False`` to get BertStyle model.
+            :model_card_name (str): ``HuggingFace`` model card name or name of the model if custom, used for deciding directory name while saving ``ONNX/qpc`` files.
 
-        Example usage:
+            Example usage:
 
         .. code-block:: python
 
@@ -151,13 +152,14 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         )
 
     def export(self, model_card_name: Optional[str] = None) -> str:
-        """Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+        """
+        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
         The model should already be transformed i.e. ``self.is_transformed`` should be ``True``.
         Otherwise, this will raise an ``AssertionError``.
         We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
 
-        Args:
-            :model_card_name (Optional[str]): Name of the model card. Mandatory when model is initialized with path for ``pretrained_model_name_or_path`` argument during initialization. Defaults to None.
+        ``Optional`` Args:
+            :model_card_name (Optional[str]): Name of the model card. Mandatory when model is initialized with path for ``pretrained_model_name_or_path`` argument during initialization. ``Defaults to None.``
 
         Raises:
             :AttributeError: If ``pretrained_model_name_or_path`` is a path, this function needs model card name of the model so that it can distinguish between directories while saving the ``ONNX`` files generated. So, user needs to pass ``model_card_name`` as a valid ``string`` in that case, Otherwise this will raise the error.
@@ -197,17 +199,18 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         If the model has not been exported yet, this method will handle the export process.
         The generated ``qpc`` can be found under the directory ``efficient-transformers/qeff_models/{self.model_card_name}/qpc``.
 
-        Args:
+        ``Mandatory`` Args:
             :num_cores (int): Number of cores used to compile the model.
             :device_group (List[int]): If this is a list of more that one integers, tensor-slicing is invoked.
-            :model_card_name (Optional[str], optional): Name of the model, Mandatory if ``self.pretrained_model_name_or_path`` is a path. Defaults to None.
-            :batch_size (int, optional): Batch size. Defaults to 1.
-            :prompt_len (int, optional): The length of the Prefill prompt should be less that ``prompt_len``. Defaults to 32.
-            :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. Defaults to 128.
-            :mxfp6 (bool, optional): Whether to use ``mxfp6`` compression for weights. Defaults to True.
-            :mxint8 (bool, optional): Whether to use ``mxint8`` compression for KV cache. Defaults to False.
-            :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort.
-            :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. Defaults to False.
+        ``Optional`` Args:
+            :model_card_name (Optional[str], optional): Name of the model, Mandatory if ``self.pretrained_model_name_or_path`` is a path. ``Defaults to None``.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :prompt_len (int, optional): The length of the Prefill prompt should be less that ``prompt_len``. ``Defaults to 32``.
+            :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
+            :mxfp6 (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
+            :mxint8 (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
+            :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
+            :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
 
         Returns:
             :str: Path of the compiled ``qpc`` package.
@@ -255,10 +258,10 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
         If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
 
-        Args:
+        ``Mandatory`` Args:
             :prompts (List[str]): List of prompts to run the execution.
+        ``optional`` Args:
             :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to "AI_100".
-            :generation_len (int, optional): Maximum generation len, if not passed model will generated till ``eos`` or ``ctx_len- [length_of_prompt]``
         """
         assert Runtime(runtime) == Runtime.AI_100, "Only AI_100 runtime is supported right now via generate API"
         self.run_cloud_ai_100(prompts=prompts, **kwargs)
