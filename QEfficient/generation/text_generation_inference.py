@@ -369,15 +369,6 @@ class TextGeneration:
 
         return prefill_time, decode_perf, total_perf, total_time
 
-    def get_compilation_batch_size(self, qpc_path: str):
-        qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
-        specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
-        logger.info(f"specialization_file_path : {specialization_file_path}")
-        with open(specialization_file_path, "r") as file:
-            data = json.load(file)
-        compilation_batch_size = int(data["specializations"][0]["batch_size"])
-        return compilation_batch_size
-
     def _fetch_full_batch_size(
         self,
     ):
@@ -468,22 +459,7 @@ class TextGeneration:
 
         return decode_inputs
 
-    def prepare_prompt(self, prompt, batch_size):
-        """
-        Prepares the prompt for a given batch size.
 
-        Args:
-            prompt: The initial prompt.
-            batch_size: The batch size for which the prompt needs to be prepared.
-
-        Returns:
-            prompt: The prepared prompt. If the initial prompt was shorter than the batch size, the prompt is repeated to match the batch size. The returned prompt is then cut off at the batch size.
-        """
-        if len(prompt) < batch_size:
-            print(f"Repeating prompt {batch_size} times")
-            prompt = prompt * -(batch_size // -len(prompt))  # Repeat prompt to required size
-            prompt = prompt[:batch_size]
-        return prompt
 
     def _update_decode_input(self, outputs, position_ids, generation_len, decode_batch_id=None):
         """
@@ -581,7 +557,7 @@ class TextGeneration:
                 :, i * self.prefill_seq_len : (i + 1) * self.prefill_seq_len
             ]
             outputs = self.session.run(chunk_inputs)
-            if self.write_io_dir:
+            if self.write_io_dir is not None:
                 write_io_files(inputs, outputs, self.write_io_dir, "prefill", "aic_batch_io", True, False)
         return outputs, position_ids, generation_len
 
@@ -676,7 +652,7 @@ class TextGeneration:
         num_token = 0
         for num_token in range(1, generation_len):
             outputs = self.session.run(decode_inputs)
-            if self.write_io_dir:
+            if self.write_io_dir is not None:
                 write_io_files(decode_inputs, outputs, self.write_io_dir, "decode", "aic_batch_io", True, False)
                 self.write_io_dir = None
 
@@ -714,8 +690,7 @@ class TextGeneration:
 
         execution_batch_size = self.full_batch_size if self.full_batch_size is not None else self.batch_size
 
-        # Truncate prompts to required size
-        prompt = self.prepare_prompt(prompt, execution_batch_size)
+        # Create a prompt queue. 
         prompt_queue = deque(prompt)
 
         # initialize np arrays for storing the prefill output for all the decode batch size.
@@ -762,7 +737,7 @@ class TextGeneration:
 
         # Calculate total generated tokens in case of continuos batching or regular execution.
         total_decode_tokens = (
-            sum([(len(self.generated_ids[i]) - 1) for i in range(len(prompt))]) if self.full_batch_size else num_token
+            sum([np.sum(self.generated_ids[i] != self.tokenizer.pad_token_id) - 1 for i in range(len(prompt))]) if self.full_batch_size else num_token
         )
 
         prefill_time, decode_perf, total_perf, total_time = self.calculate_latency(
