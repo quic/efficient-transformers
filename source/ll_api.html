@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Low Level API &mdash; efficient-transformers main documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
+      <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=547657ed" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js?v=d01aebe5"></script>
+        <script src="../_static/doctools.js?v=888ff710"></script>
+        <script src="../_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Train anywhere, Infer on Qualcomm Cloud AI 100" href="blogs.html" />
+    <link rel="prev" title="High Level API" href="hl_api.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            efficient-transformers
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="validate.html#models-coming-soon">Models Coming Soon</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Installation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Pre-requisites</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html#sanity-check">Sanity Check</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Command Line Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html#python-api">Python API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="hl_api.html">High Level API</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Low Level API</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_kvstyle</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_kvstyle"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_kvstyle()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_bertstyle</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_bertstyle"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_bertstyle()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.utils.device_utils"><code class="docutils literal notranslate"><span class="pre">utils</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.utils.device_utils.get_available_device_id"><code class="docutils literal notranslate"><span class="pre">get_available_device_id()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.utils.generate_inputs.InputHandler"><code class="docutils literal notranslate"><span class="pre">InputHandler</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs"><code class="docutils literal notranslate"><span class="pre">InputHandler.prepare_ort_inputs()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs"><code class="docutils literal notranslate"><span class="pre">InputHandler.prepare_pytorch_inputs()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs"><code class="docutils literal notranslate"><span class="pre">InputHandler.update_ort_inputs()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.generate_inputs.InputHandler.update_ort_outputs"><code class="docutils literal notranslate"><span class="pre">InputHandler.update_ort_outputs()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.generate_inputs.InputHandler.update_pytorch_inputs"><code class="docutils literal notranslate"><span class="pre">InputHandler.update_pytorch_inputs()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner"><code class="docutils literal notranslate"><span class="pre">ApiRunner</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_hf_model_on_pytorch()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_kv_model_on_cloud_ai_100()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_kv_model_on_ort()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_kv_model_on_pytorch()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner.run_ort_session"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_ort_session()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="reference.html">Qualcomm Cloud AI home</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference.html#qualcomm-cloud-ai-sdk-download">Qualcomm Cloud AI SDK download</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference.html#qualcomm-cloud-ai-api-reference">Qualcomm Cloud AI API reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference.html#user-guide">User Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference.html#ocp-microscaling-formats-mx-specification">OCP Microscaling Formats (MX) Specification</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">efficient-transformers</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Low Level API</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/source/ll_api.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="low-level-api">
+<h1>Low Level API<a class="headerlink" href="#low-level-api" title="Permalink to this heading"></a></h1>
+<section id="module-QEfficient.exporter.export_hf_to_cloud_ai_100">
+<span id="convert-to-cloud-kvstyle"></span><h2><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_kvstyle</span></code><a class="headerlink" href="#module-QEfficient.exporter.export_hf_to_cloud_ai_100" title="Permalink to this heading"></a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_kvstyle">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.exporter.export_hf_to_cloud_ai_100.</span></span><span class="sig-name descname"><span class="pre">convert_to_cloud_kvstyle</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qeff_model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="hl_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM" title="QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM"><span class="pre">QEFFAutoModelForCausalLM</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PreTrainedTokenizer</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">PreTrainedTokenizerFast</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">onnx_dir_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">seq_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/exporter/export_hf_to_cloud_ai_100.html#convert_to_cloud_kvstyle"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_kvstyle" title="Permalink to this definition"></a></dt>
+<dd><p>API to convert model with kv retention and export to ONNX.
+KV Style Approach-</p>
+<blockquote>
+<div><ol class="arabic simple">
+<li><p>This architecture is particularly suitable for auto-regressive tasks.</p></li>
+<li><p>where sequence generation involves processing one token at a time.</p></li>
+<li><p>And contextual information from earlier tokens is crucial for predicting the next token.</p></li>
+<li><p>The inclusion of a kV cache enhances the efficiency of the decoding process, making it more computationally efficient.</p></li>
+</ol>
+</div></blockquote>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">model_name (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Hugging Face Model Card name, Example: <cite>gpt2</cite>.</p>
+</dd>
+<dt class="field-even">qeff_model (QEFFAutoModelForCausalLM)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Transformed KV torch model to be used.</p>
+</dd>
+<dt class="field-odd">tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast])<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Model tokenizer.</p>
+</dd>
+<dt class="field-even">onnx_dir_path (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path to save exported ONNX file.</p>
+</dd>
+<dt class="field-odd">seq_len (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The length of the sequence.</p>
+</dd>
+</dl>
+</dd>
+<dt>Returns:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">str<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path of exported <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> file.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="module-QEfficient.exporter.export_hf_to_cloud_ai_100">
+<span id="convert-to-cloud-bertstyle"></span><h2><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_bertstyle</span></code><a class="headerlink" href="#module-QEfficient.exporter.export_hf_to_cloud_ai_100" title="Permalink to this heading"></a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_bertstyle">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.exporter.export_hf_to_cloud_ai_100.</span></span><span class="sig-name descname"><span class="pre">convert_to_cloud_bertstyle</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qeff_model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="hl_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM" title="QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM"><span class="pre">QEFFAutoModelForCausalLM</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PreTrainedTokenizer</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">PreTrainedTokenizerFast</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">onnx_dir_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">seq_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/exporter/export_hf_to_cloud_ai_100.html#convert_to_cloud_bertstyle"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_bertstyle" title="Permalink to this definition"></a></dt>
+<dd><p>API to convert model to Bertstyle approach.
+Bertstyle Approach:</p>
+<blockquote>
+<div><ol class="arabic simple">
+<li><p>No Prefill/Decode separably compiled.</p></li>
+<li><p>No KV retention logic.</p></li>
+<li><p>KV is every time computed for all the tokens until EOS/max_length.</p></li>
+</ol>
+</div></blockquote>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">model_name (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Hugging Face Model Card name, Example: <cite>gpt2</cite>.</p>
+</dd>
+<dt class="field-even">qeff_model (QEFFAutoModelForCausalLM)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Transformed KV torch model to be used.</p>
+</dd>
+<dt class="field-odd">tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast])<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Model tokenizer.</p>
+</dd>
+<dt class="field-even">onnx_dir_path (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path to save exported ONNX file.</p>
+</dd>
+<dt class="field-odd">seq_len (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The length of the sequence.</p>
+</dd>
+</dl>
+</dd>
+<dt>Returns:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">str<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path of exported <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> file.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="module-QEfficient.utils.device_utils">
+<span id="utils"></span><h2><code class="docutils literal notranslate"><span class="pre">utils</span></code><a class="headerlink" href="#module-QEfficient.utils.device_utils" title="Permalink to this heading"></a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.utils.device_utils.get_available_device_id">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.utils.device_utils.</span></span><span class="sig-name descname"><span class="pre">get_available_device_id</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/device_utils.html#get_available_device_id"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.device_utils.get_available_device_id" title="Permalink to this definition"></a></dt>
+<dd><p>API to check available device id.</p>
+<dl class="simple">
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">int<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Available device id.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<span class="target" id="module-QEfficient.utils.generate_inputs"></span><dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.generate_inputs.</span></span><span class="sig-name descname"><span class="pre">InputHandler</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler" title="Permalink to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs">
+<span class="sig-name descname"><span class="pre">prepare_ort_inputs</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler.prepare_ort_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.</p>
+<dl class="simple">
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">Dict<span class="colon">:</span></dt>
+<dd class="field-odd"><p>input_ids, position_ids, past_key_values</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs">
+<span class="sig-name descname"><span class="pre">prepare_pytorch_inputs</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler.prepare_pytorch_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for creating Prefill stage tensor inputs for PyTorch model.</p>
+<dl class="simple">
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">Dict<span class="colon">:</span></dt>
+<dd class="field-odd"><p>input_ids, position_ids, past_key_values</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs">
+<span class="sig-name descname"><span class="pre">update_ort_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ort_outputs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler.update_ort_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">inputs (Dict)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>NumPy inputs of Onnx model from previous iteration</p>
+</dd>
+<dt class="field-even">ort_outputs (Dict)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Numpy outputs of Onnx model from previous iteration</p>
+</dd>
+</dl>
+</dd>
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">Dict<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Updated input_ids, position_ids and past_key_values</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.update_ort_outputs">
+<span class="sig-name descname"><span class="pre">update_ort_outputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ort_outputs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler.update_ort_outputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.update_ort_outputs" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for updating ONNXRT session outputs.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">ort_outputs (Dict)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Numpy outputs of Onnx model from current iteration</p>
+</dd>
+</dl>
+</dd>
+<dt>Return:</dt><dd><p>updated_outputs (Dict): Updated past_key_values, logits</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.update_pytorch_inputs">
+<span class="sig-name descname"><span class="pre">update_pytorch_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pt_outputs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler.update_pytorch_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler.update_pytorch_inputs" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for updating Prefill stage inputs to create decode stage inputs for PyTorch model.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">inputs (Dict)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Pytorch inputs from previous iteration</p>
+</dd>
+<dt class="field-even">pt_outputs (Dict)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Pytorch outputs from previous iteration</p>
+</dd>
+</dl>
+</dd>
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">Dict<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Updated input_ids, position_ids and past_key_values</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<span class="target" id="module-QEfficient.utils.run_utils"></span><dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.run_utils.</span></span><span class="sig-name descname"><span class="pre">ApiRunner</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner" title="Permalink to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<section id="apirunner-class-is-responsible-for-running">
+<h3>ApiRunner class is responsible for running:<a class="headerlink" href="#apirunner-class-is-responsible-for-running" title="Permalink to this heading"></a></h3>
+<ol class="arabic simple">
+<li><p>HuggingFace <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> model</p></li>
+<li><p>Transformed KV Pytorch Model</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model on ONNXRT</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model on Cloud AI 100</p></li>
+</ol>
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch">
+<span class="sig-name descname"><span class="pre">run_hf_model_on_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_hf</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_hf_model_on_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for running HuggingFace <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> model and return the output tokens</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">model_hf (torch.nn.module)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Original <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> model</p>
+</dd>
+</dl>
+</dd>
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">numpy.ndarray<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Generated output tokens</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100">
+<span class="sig-name descname"><span class="pre">run_kv_model_on_cloud_ai_100</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">qpc_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_group</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_cloud_ai_100"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for running <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model on Cloud AI 100 and return the output tokens</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">qpc_path (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>path to qpc generated after compilation</p>
+</dd>
+<dt class="field-even">device_group (List[int])<span class="colon">:</span></dt>
+<dd class="field-even"><p>Device Ids to be used for compilation. if len(device_group) &gt; 1. Multiple Card setup is enabled.</p>
+</dd>
+</dl>
+</dd>
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">numpy.ndarray<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Generated output tokens</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort">
+<span class="sig-name descname"><span class="pre">run_kv_model_on_ort</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_ort"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for running <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model on onnxruntime and return the output tokens</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">model_path (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path to the Onnx model.</p>
+</dd>
+</dl>
+</dd>
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">numpy.ndarray<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Generated output tokens</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch">
+<span class="sig-name descname"><span class="pre">run_kv_model_on_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for running KV <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> model and return the output tokens</p>
+<p><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:
+:model (torch.nn.module): Transformed <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> model</p>
+<dl class="simple">
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">numpy.ndarray<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Generated output tokens</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_ort_session">
+<span class="sig-name descname"><span class="pre">run_ort_session</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">session</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">dict</span></span></span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_ort_session"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_ort_session" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">inputs (Dict)<span class="colon">:</span></dt>
+<dd class="field-odd"><p></p></dd>
+<dt class="field-even">session (onnxruntime.capi.onnxruntime_inference_collection.InferenceSession)<span class="colon">:</span></dt>
+<dd class="field-even"><p></p></dd>
+</dl>
+</dd>
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">Dict<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Numpy outputs of Onnx model</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+</dd></dl>
+
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="hl_api.html" class="btn btn-neutral float-left" title="High Level API" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="blogs.html" class="btn btn-neutral float-right" title="Train anywhere, Infer on Qualcomm Cloud AI 100" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, Qualcomm.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

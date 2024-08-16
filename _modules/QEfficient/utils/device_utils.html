@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>QEfficient.utils.device_utils &mdash; Efficient-Transformers 1.16 documentation</title>
+  <title>QEfficient.utils.device_utils &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=19f00094" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/my_theme.css?v=547657ed" />
 
   
   <!--[if lt IE 9]>
@@ -14,7 +15,7 @@
   
         <script src="../../../_static/jquery.js?v=5d32c60e"></script>
         <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-        <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js?v=a9e34a36"></script>
+        <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js?v=d01aebe5"></script>
         <script src="../../../_static/doctools.js?v=888ff710"></script>
         <script src="../../../_static/sphinx_highlight.js?v=4825356b"></script>
     <script src="../../../_static/js/theme.js"></script>
@@ -31,7 +32,7 @@
           
           
           <a href="../../../index.html" class="icon icon-home">
-            Efficient-Transformers
+            efficient-transformers
           </a>
 <div role="search">
   <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
@@ -43,27 +44,32 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Introduction.html">Introduciton Qualcomm Efficient-Transformers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Validate.html">Validated Models</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Validate.html#models-coming-soon">Models Coming Soon</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html">Pre-requisites</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#sanity-check">Sanity Check</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Quick Start Guide</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#using-high-level-api">Using High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#using-low-level-api">Using Low Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Command Line Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#python-api">Python API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/high_level_api.html">High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/low_level_api.html">Low level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/other_api.html">Utilities</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/hl_api.html">High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/ll_api.html">Low Level API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -88,7 +94,7 @@
 
     <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
           <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
-          <a href="../../../index.html">Efficient-Transformers</a>
+          <a href="../../../index.html">efficient-transformers</a>
       </nav>
 
       <div class="wy-nav-content">
@@ -121,12 +127,12 @@
 <span class="kn">from</span> <span class="nn">QEfficient.utils.logging_utils</span> <span class="kn">import</span> <span class="n">logger</span>
 
 
-<div class="viewcode-block" id="get_available_device_id"><a class="viewcode-back" href="../../../source/other_api.html#QEfficient.utils.device_utils.get_available_device_id">[docs]</a><span class="k">def</span> <span class="nf">get_available_device_id</span><span class="p">():</span>
+<div class="viewcode-block" id="get_available_device_id"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.device_utils.get_available_device_id">[docs]</a><span class="k">def</span> <span class="nf">get_available_device_id</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    API to check available device id.</span>
 
 <span class="sd">    Return:</span>
-<span class="sd">        Return available device id.</span>
+<span class="sd">        :int: Available device id.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">device_id</span> <span class="o">=</span> <span class="mi">0</span>

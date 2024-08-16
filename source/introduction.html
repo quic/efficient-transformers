@@ -4,7 +4,7 @@
   <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Train anywhere, Infer on Qualcomm Cloud AI 100 &mdash; efficient-transformers main documentation</title>
+  <title>Introduction Qualcomm efficient-transformers library &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
       <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=547657ed" />
@@ -22,8 +22,8 @@
     <script src="../_static/js/theme.js"></script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Qualcomm Cloud AI home" href="reference.html" />
-    <link rel="prev" title="Low Level API" href="ll_api.html" /> 
+    <link rel="next" title="Validated Models" href="validate.html" />
+    <link rel="prev" title="Welcome to Efficient-Transformers Documentation!" href="../index.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -46,8 +46,8 @@
 </div>
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="validate.html">Validated Models</a></li>
 <li class="toctree-l1"><a class="reference internal" href="validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
@@ -75,12 +75,12 @@
 <li class="toctree-l1"><a class="reference internal" href="ll_api.html">Low Level API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
-<ul class="current">
-<li class="toctree-l1 current"><a class="current reference internal" href="#">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
-<li class="toctree-l1"><a class="reference internal" href="#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
-<li class="toctree-l1"><a class="reference internal" href="#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
-<li class="toctree-l1"><a class="reference internal" href="#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
-<li class="toctree-l1"><a class="reference internal" href="#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities</a></li>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
 <ul>
@@ -105,9 +105,9 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Train anywhere, Infer on Qualcomm Cloud AI 100</li>
+      <li class="breadcrumb-item active">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</li>
       <li class="wy-breadcrumbs-aside">
-            <a href="../_sources/source/blogs.md.txt" rel="nofollow"> View page source</a>
+            <a href="../_sources/source/introduction.md.txt" rel="nofollow"> View page source</a>
       </li>
   </ul>
   <hr/>
@@ -115,33 +115,48 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="train-anywhere-infer-on-qualcomm-cloud-ai-100">
-<h1>Train anywhere, Infer on Qualcomm Cloud AI 100<a class="headerlink" href="#train-anywhere-infer-on-qualcomm-cloud-ai-100" title="Permalink to this heading"></a></h1>
-<p><a class="reference external" href="https://www.qualcomm.com/developer/blog/2024/01/train-anywhere-infer-qualcomm-cloud-ai-100">Click here</a></p>
-</section>
-<section id="how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">
-<h1>How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100<a class="headerlink" href="#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100" title="Permalink to this heading"></a></h1>
-<p><a class="reference external" href="https://statics.teams.cdn.office.net/evergreen-assets/safelinks/1/atp-safelinks.html">Click here</a></p>
-</section>
-<section id="power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">
-<h1>Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK<a class="headerlink" href="#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk" title="Permalink to this heading"></a></h1>
-<p><a class="reference external" href="https://www.qualcomm.com/developer/blog/2023/11/power-efficient-acceleration-large-language-models-qualcomm-cloud-ai-sdk">Click here</a></p>
-</section>
-<section id="qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">
-<h1>Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats<a class="headerlink" href="#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats" title="Permalink to this heading"></a></h1>
-<p><a class="reference external" href="https://www.qualcomm.com/developer/blog/2024/01/qualcomm-cloud-ai-100-accelerates-large-language-model-inference-2x-using-microscaling-mx">click here</a></p>
-</section>
-<section id="qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">
-<h1>Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities<a class="headerlink" href="#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities" title="Permalink to this heading"></a></h1>
-<p><a class="reference external" href="https://www.qualcomm.com/developer/blog/2024/05/qualcomm-cloud-ai-introduces-efficient-transformers--one-api--in">click here</a></p>
+  <p><img alt="alt text" src="../_images/Cloud_AI_100.png" /></p>
+<section id="introduction-qualcomm-efficient-transformers-library">
+<h1>Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library<a class="headerlink" href="#introduction-qualcomm-efficient-transformers-library" title="Permalink to this heading"></a></h1>
+<p><strong>Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain</strong></p>
+<p>This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AI 100.
+We support wide range of <a class="reference internal" href="validate.html#validated-models"><span class="std std-ref">models</span></a> architectures, for easy efficient deployment on Cloud AI 100 cards. Users only need to provide model card from HuggingFace or Path to the local model and the library will take care of transforming model to it’s efficient implementation for Cloud AI 100.</p>
+<p>For other models, there is comprehensive documentation to inspire upon the changes needed and How-To(s).</p>
+<p><strong>Typically for LLMs, the library provides:</strong></p>
+<ol class="arabic simple">
+<li><p>Reimplemented blocks from Transformers which enable efficient on-device retention of intermediate states. read more <a class="reference internal" href="#kv_cache"><span class="xref myst">here</span></a></p></li>
+<li><p>Graph transformations to enable execution of key operations in lower precision</p></li>
+<li><p>Graph transformations to replace some operations to other mathematically equivalent operations that are efficient/supported on HW backend</p></li>
+<li><p>Handling for underflow and overflows in lower precision</p></li>
+<li><p>Patcher modules to map weights of original model’s operations to updated model’s operations</p></li>
+<li><p>Exporter module to export the model source into a <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> Graph.</p></li>
+<li><p>Sample example applications and demo notebooks</p></li>
+<li><p>Unit test templates.</p></li>
+</ol>
+<p><em><strong>Latest news</strong></em> : <br></p>
+<ul class="simple">
+<li><p>[coming soon] Support for more popular <a class="reference internal" href="validate.html#coming-soon-models"><span class="std std-ref">models</span></a> and inference optimization techniques like continuous batching and speculative decoding <br></p></li>
+</ul>
+<ul class="simple">
+<li><p>[06/2024] Added support for <a class="reference external" href="https://huggingface.co/EleutherAI/gpt-j-6b">GPT-J-6B</a></p></li>
+</ul>
+<ul class="simple">
+<li><p>[06/2024] Added support for <a class="reference external" href="https://huggingface.co/Qwen/Qwen2-1.5B-Instruct">Qwen2-1.5B-Instruct</a></p></li>
+<li><p>[06/2024] Added support for <a class="reference external" href="https://huggingface.co/bigcode/starcoder2-15b">StarCoder2-15B</a></p></li>
+<li><p>[06/2024] Added support for <a class="reference external" href="https://huggingface.co/microsoft/Phi-3-mini-4k-instruct">Phi3-Mini-4K-Instruct</a></p></li>
+<li><p>[06/2024] Added support for <a class="reference external" href="https://huggingface.co/mistralai/Codestral-22B-v0.1">Codestral-22B-v0.1</a></p></li>
+<li><p>[06/2024] Added support for <a class="reference external" href="https://huggingface.co/lmsys/vicuna-13b-v1.5">Vicuna-v1.5</a></p></li>
+<li><p>[05/2024] Added support for <a class="reference external" href="https://huggingface.co/mistralai/Mixtral-8x7B-v0.1">Mixtral-8x7B</a> &amp; <a class="reference external" href="https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1">Mistral-7B-Instruct-v0.1</a>.</p></li>
+<li><p>[04/2024] Initial release of <a class="reference external" href="https://github.com/quic/efficient-transformers">efficient transformers</a> for seamless inference on pre-trained LLMs.</p></li>
+</ul>
 </section>
 
 
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="ll_api.html" class="btn btn-neutral float-left" title="Low Level API" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="reference.html" class="btn btn-neutral float-right" title="Qualcomm Cloud AI home" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="../index.html" class="btn btn-neutral float-left" title="Welcome to Efficient-Transformers Documentation!" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="validate.html" class="btn btn-neutral float-right" title="Validated Models" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>

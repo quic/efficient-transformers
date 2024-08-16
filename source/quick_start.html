@@ -4,9 +4,10 @@
   <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Quick Start Guide &mdash; Efficient-Transformers 1.16 documentation</title>
+  <title>Command Line Interface &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
+      <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=547657ed" />
 
   
   <!--[if lt IE 9]>
@@ -15,14 +16,14 @@
   
         <script src="../_static/jquery.js?v=5d32c60e"></script>
         <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-        <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js?v=a9e34a36"></script>
+        <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js?v=d01aebe5"></script>
         <script src="../_static/doctools.js?v=888ff710"></script>
         <script src="../_static/sphinx_highlight.js?v=4825356b"></script>
     <script src="../_static/js/theme.js"></script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Details on KV Cache Optimization for Cloud AI 100" href="kv_change.html" />
-    <link rel="prev" title="Requirements" href="Linux_installation.html" /> 
+    <link rel="next" title="QEfficient.cloud.infer" href="cli_api.html" />
+    <link rel="prev" title="Pre-requisites" href="installation.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -34,7 +35,7 @@
           
           
           <a href="../index.html" class="icon icon-home">
-            Efficient-Transformers
+            efficient-transformers
           </a>
 <div role="search">
   <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
@@ -46,37 +47,42 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="Introduction.html">Introduciton Qualcomm Efficient-Transformers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="Validate.html">Validated Models</a></li>
-<li class="toctree-l1"><a class="reference internal" href="Validate.html#models-coming-soon">Models Coming Soon</a></li>
+<li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="Linux_installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Pre-requisites</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html#sanity-check">Sanity Check</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul class="current">
-<li class="toctree-l1 current"><a class="current reference internal" href="#">Quick Start Guide</a></li>
-<li class="toctree-l1"><a class="reference internal" href="#using-high-level-api">Using High Level API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="#use-qefficient-cloud-infer">1. Use QEfficient.cloud.infer</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#use-of-qefficient-cloud-execute">2. Use of QEfficient.cloud.execute</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Command Line Interface</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#qefficient-cloud-infer">QEfficient.cloud.infer</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#qefficient-cloud-execute">QEfficient.cloud.execute</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#multi-qranium-inference">Multi-Qranium Inference</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="#using-low-level-api">Using Low Level API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="#model-download-and-transform">1.  Model download and transform</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#onnx-export-of-transformed-model">2. ONNX export of transformed model</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#compile-on-cloud-ai-100">3. Compile on Cloud AI 100</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#run-benchmark">4. Run Benchmark</a></li>
+<li class="toctree-l1"><a class="reference internal" href="#python-api">Python API</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#model-download-and-optimize-for-cloud-ai-100">1.  Model download and Optimize for Cloud AI 100</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#export-and-compile-with-one-api">2. Export and Compile with one API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#execute">3. Execute</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="high_level_api.html">High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="low_level_api.html">Low level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="other_api.html">Utilities</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hl_api.html">High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ll_api.html">Low Level API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -101,7 +107,7 @@
 
     <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
           <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
-          <a href="../index.html">Efficient-Transformers</a>
+          <a href="../index.html">efficient-transformers</a>
       </nav>
 
       <div class="wy-nav-content">
@@ -109,7 +115,7 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Quick Start Guide</li>
+      <li class="breadcrumb-item active">Command Line Interface</li>
       <li class="wy-breadcrumbs-aside">
             <a href="../_sources/source/quick_start.md.txt" rel="nofollow"> View page source</a>
       </li>
@@ -119,72 +125,74 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="quick-start-guide">
-<h1>Quick Start Guide<a class="headerlink" href="#quick-start-guide" title="Permalink to this heading"></a></h1>
-<p>QEfficient Library was designed with one goal:</p>
+  <p>QEfficient Library was designed with one goal:</p>
 <p><strong>To make onboarding of models inference straightforward for any Transformer architecture, while leveraging the complete power of Cloud AI platform</strong></p>
 <p>To achieve this, we have 2 levels of APIs, with different levels of abstraction.</p>
 <ol class="arabic simple">
-<li><p>High-level APIs abstract away complex details, offering a simpler interface. They’re ideal for quick development and prototyping. If you’re new to a technology or want to minimize coding effort, high-level APIs are more user-friendly.</p></li>
-<li><p>Low-level APIs offer more granular control, ideal for when customization is necessary. These are particularly useful for users who are trying their own models, not hosted on HF but are implemented based on Transformers.</p></li>
+<li><p>Command line interface abstracts away complex details, offering a simpler interface. They’re ideal for quick development and prototyping. If you’re new to a technology or want to minimize coding effort.</p></li>
+<li><p>Python high level APIs offer more granular control, ideal for when customization is necessary.</p></li>
 </ol>
-<p>In summary:</p>
+<section id="command-line-interface">
+<h1>Command Line Interface<a class="headerlink" href="#command-line-interface" title="Permalink to this heading"></a></h1>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Use <code class="docutils literal notranslate"><span class="pre">bash</span> <span class="pre">terminal</span></code>, else if using <code class="docutils literal notranslate"><span class="pre">ZSH</span> <span class="pre">terminal</span></code> then <code class="docutils literal notranslate"><span class="pre">device_group</span></code>should be in single quotes e.g.  <code class="docutils literal notranslate"><span class="pre">'--device_group</span> <span class="pre">[0]'</span></code></p>
+</div>
+<section id="qefficient-cloud-infer">
+<h2>QEfficient.cloud.infer<a class="headerlink" href="#qefficient-cloud-infer" title="Permalink to this heading"></a></h2>
+<p>This is the single e2e CLI API, which takes <code class="docutils literal notranslate"><span class="pre">model_card</span></code> name as input along with other compilation arguments. Check <a class="reference internal" href="cli_api.html#infer-api"><span class="std std-ref">Infer API doc</span></a> for more details.</p>
 <ul class="simple">
-<li><p>Choose high-level APIs for quick development, simplicity, and ease of use.</p></li>
-<li><p>Opt for low-level APIs when you need fine-tuned control, optimization, or advanced customization.</p></li>
+<li><p>HuggingFace model files Download → Optimize for Cloud AI 100 → Export to <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> → Compile on Cloud AI 100 → <a class="reference internal" href="#qefficientcloudexecute"><span class="xref myst">Execute</span></a></p></li>
+<li><p>It skips the export/compile stage based if <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> or <code class="docutils literal notranslate"><span class="pre">qpc</span></code> files are found. If you use infer second time with different compilation arguments, it will automatically skip <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model creation and directly jump to compile stage.</p></li>
 </ul>
-</section>
-<section id="using-high-level-api">
-<h1>Using High Level API<a class="headerlink" href="#using-high-level-api" title="Permalink to this heading"></a></h1>
-<section id="use-qefficient-cloud-infer">
-<h2>1. Use QEfficient.cloud.infer<a class="headerlink" href="#use-qefficient-cloud-infer" title="Permalink to this heading"></a></h2>
-<p>This is the single e2e python api in the library, which takes model_card name as input along with other compile args if necessary and does everything in one go.</p>
-<ul class="simple">
-<li><p>Torch Download → Optimize for Cloud AI 100 → Export to ONNX → Verify (CPU) → Compile on Cloud AI 100 → <a class="reference internal" href="#2-use-of-qefficientcloudexecute"><span class="xref myst">Execute</span></a></p></li>
-<li><p>It skips the ONNX export/compile stage if ONNX file or qpc is found on given path.</p></li>
-</ul>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Check out the options using the help menu</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Check out the options using the help</span>
 python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--help
 python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>gpt2<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--mxfp6<span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;My name is&quot;</span><span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first<span class="w">  </span>
-
-<span class="c1"># If executing for batch size&gt;1,</span>
-
-<span class="c1"># Either pass input prompts in single string but seperate with pipe (|) symbol&quot;. Example below</span>
-
-python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>gpt2<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">3</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;My name is|The flat earth </span>
+</pre></div>
+</div>
+<p>If executing for batch size&gt;1,
+You can pass input prompts in single string but separate with pipe (|) symbol”. Example below</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>gpt2<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">3</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;My name is|The flat earth </span>
 <span class="s2">theory is the belief that|The sun rises from&quot;</span><span class="w"> </span>--mxfp6<span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first
-
-<span class="c1"># Or pass path of txt file with input prompts, Example below, sample txt file(prompts.txt) is present in examples folder .</span>
-
-python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>gpt2<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">3</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w"> </span>--prompts_txt_file_path<span class="w"> </span>examples/prompts.txt<span class="w"> </span>--mxfp6<span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first<span class="w">  </span>
+</pre></div>
+</div>
+<p>You can also pass path of txt file with input prompts when you want to run inference on lot of prompts, Example below, sample txt file(prompts.txt) is present in examples folder.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>gpt2<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">3</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w"> </span>--prompts_txt_file_path<span class="w"> </span>examples/prompts.txt<span class="w"> </span>--mxfp6<span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first<span class="w">  </span>
 </pre></div>
 </div>
 </section>
-<section id="use-of-qefficient-cloud-execute">
-<h2>2. Use of QEfficient.cloud.execute<a class="headerlink" href="#use-of-qefficient-cloud-execute" title="Permalink to this heading"></a></h2>
-<p>Once we have compiled the QPC, we can now use the precompiled QPC in execute API to run for different prompts, like below:</p>
+<section id="qefficient-cloud-execute">
+<h2>QEfficient.cloud.execute<a class="headerlink" href="#qefficient-cloud-execute" title="Permalink to this heading"></a></h2>
+<p>You can first run <code class="docutils literal notranslate"><span class="pre">infer</span></code> API and then use <code class="docutils literal notranslate"><span class="pre">execute</span></code> to run the pre-compiled model on Cloud AI 100 cards.
+Once we have compiled the QPC, we can now use the precompiled QPC in execute API to run for different prompts. Make sure to pass same <code class="docutils literal notranslate"><span class="pre">--device_group</span></code> as used during infer. Refer <a class="reference internal" href="#execute_api"><span class="xref myst">Execute API doc</span></a> for more details.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.execute<span class="w"> </span>--model_name<span class="w"> </span>gpt2<span class="w"> </span>--qpc_path<span class="w"> </span>qeff_models/gpt2/qpc_16cores_1BS_32PL_128CL_1devices_mxfp6/qpcs<span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;Once upon a time in&quot;</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w">  </span>
 </pre></div>
 </div>
-<p>We can also enable MQ, just based on the number of devices. Based on the “–device_group” as input it will create TS config on the fly. If “–device_group [0,1]” it will create TS config for 2 devices and use it for compilation, if “–device_group [0]” then TS compilation is skipped and single soc execution is enabled.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>Salesforce/codegen-2B-mono<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--mxfp6<span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device-group<span class="w"> </span><span class="o">[</span><span class="m">0</span>,1<span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;def fibonacci(n):&quot;</span><span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first<span class="w">  </span>
-<span class="w"> </span>
-<span class="c1"># Once qpc is saved, you can use the execute API to run for different prompts</span>
-python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.execute<span class="w"> </span>--model_name<span class="w"> </span>Salesforce/codegen-2B-mono<span class="w"> </span>--qpc-path<span class="w"> </span>qeff_models/Salesforce/codegen-2B-mono/qpc_16cores_1BS_32PL_128CL_2devices_mxfp6/qpcs<span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;def binary_search(array: np.array, k: int):&quot;</span><span class="w"> </span>--device-group<span class="w"> </span><span class="o">[</span><span class="m">0</span>,1<span class="o">]</span><span class="w"> </span>
-<span class="w"> </span>
-<span class="c1"># To disable MQ, just pass single soc like below:</span>
-python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>gpt2<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--mxfp6<span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device-group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;My name is&quot;</span><span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first
+</section>
+<section id="multi-qranium-inference">
+<h2>Multi-Qranium Inference<a class="headerlink" href="#multi-qranium-inference" title="Permalink to this heading"></a></h2>
+<p>You can also enable MQ, just based on the number of devices. Based on the <code class="docutils literal notranslate"><span class="pre">--device-group</span></code> as input it will create TS config on the fly. If <code class="docutils literal notranslate"><span class="pre">--device-group</span> <span class="pre">[0,1]</span></code> it will create TS config for 2 devices and use it for compilation, if <code class="docutils literal notranslate"><span class="pre">--device-group</span> <span class="pre">[0]</span></code> then TS compilation is skipped and single soc execution is enabled.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>Salesforce/codegen-2B-mono<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--mxfp6<span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device-group<span class="w"> </span><span class="o">[</span><span class="m">0</span>,1<span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;def fibonacci(n):&quot;</span><span class="w"> </span>--mos<span class="w"> </span><span class="m">2</span><span class="w"> </span>--aic_enable_depth_first<span class="w">  </span>
+</pre></div>
+</div>
+<p>Above step will save the <code class="docutils literal notranslate"><span class="pre">qpc</span></code> files under <code class="docutils literal notranslate"><span class="pre">efficient-transformers/qeff_models/{model_card_name}</span></code>, you can use the execute API to run for different prompts. This will automatically pick the pre-compiled <code class="docutils literal notranslate"><span class="pre">qpc</span></code> files.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.execute<span class="w"> </span>--model_name<span class="w"> </span>Salesforce/codegen-2B-mono<span class="w"> </span>--qpc-path<span class="w"> </span>qeff_models/Salesforce/codegen-2B-mono/qpc_16cores_1BS_32PL_128CL_2devices_mxfp6/qpcs<span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;def binary_search(array: np.array, k: int):&quot;</span><span class="w"> </span>--device-group<span class="w"> </span><span class="o">[</span><span class="m">0</span>,1<span class="o">]</span><span class="w"> </span>
+</pre></div>
+</div>
+<p>To disable MQ, just pass single soc like below, below step will compile the model again and reuse the <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> file as only compilation argument are different from above commands.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>gpt2<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--mxfp6<span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device-group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;My name is&quot;</span><span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first
 </pre></div>
 </div>
 </section>
 </section>
-<section id="using-low-level-api">
-<h1>Using Low Level API<a class="headerlink" href="#using-low-level-api" title="Permalink to this heading"></a></h1>
-<section id="model-download-and-transform">
-<h2>1.  Model download and transform<a class="headerlink" href="#model-download-and-transform" title="Permalink to this heading"></a></h2>
-<p>Initialize QEfficient and transform the models, Check the list of supported architectures in the repo.</p>
-<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Initiate the Orignal Transformer model</span>
-<span class="kn">import</span> <span class="nn">os</span>
+<section id="python-api">
+<h1>Python API<a class="headerlink" href="#python-api" title="Permalink to this heading"></a></h1>
+<section id="model-download-and-optimize-for-cloud-ai-100">
+<h2>1.  Model download and Optimize for Cloud AI 100<a class="headerlink" href="#model-download-and-optimize-for-cloud-ai-100" title="Permalink to this heading"></a></h2>
+<p>If your models falls into the model architectures that are <a class="reference internal" href="validate.html#validated-models"><span class="std std-ref">already supported</span></a>, Below steps should work fine.
+Please raise an <a class="reference external" href="https://github.com/quic/efficient-transformers/issues">issue</a>, in case of trouble.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Initiate the Original Transformer model</span>
+<span class="c1"># import os</span>
 
 <span class="kn">from</span> <span class="nn">QEfficient</span> <span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span> <span class="k">as</span> <span class="n">AutoModelForCausalLM</span>
 
@@ -194,67 +202,46 @@ python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<s
 <span class="c1"># ROOT_DIR = os.path.dirname(os.path.abspath(&quot;&quot;))</span>
 <span class="c1"># CACHE_DIR = os.path.join(ROOT_DIR, &quot;tmp&quot;) #, you can use a different location for just one model by passing this param as cache_dir in below API.</span>
 
-<span class="c1"># Model-Card name to be onboarded (This is HF Model Card name) : https://huggingface.co/gpt2-xl</span>
+<span class="c1"># Model-Card name (This is HF Model Card name) : https://huggingface.co/gpt2-xl</span>
 <span class="n">model_name</span> <span class="o">=</span> <span class="s2">&quot;gpt2&quot;</span>  <span class="c1"># Similar, we can change model name and generate corresponding models, if we have added the support in the lib.</span>
 
 <span class="n">qeff_model</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2"> optmized for AI 100 </span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">qeff_model</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2"> optimized for AI 100 </span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">qeff_model</span><span class="p">)</span>
 </pre></div>
 </div>
 </section>
-<section id="onnx-export-of-transformed-model">
-<h2>2. ONNX export of transformed model<a class="headerlink" href="#onnx-export-of-transformed-model" title="Permalink to this heading"></a></h2>
-<p>use the qualcomm_efficient_converter API to export the KV transformed Model to ONNX and Verify on Torch.</p>
-<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">QEfficient</span>
-<span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">load_hf_tokenizer</span>
-<span class="c1"># We can now export the modified models to Onnx framework</span>
-<span class="c1"># This will generate single Onnx Model for both Prefill and Decode Variations which are optimized for</span>
+<section id="export-and-compile-with-one-api">
+<h2>2. Export and Compile with one API<a class="headerlink" href="#export-and-compile-with-one-api" title="Permalink to this heading"></a></h2>
+<p>Use the qualcomm_efficient_converter API to export the KV transformed Model to ONNX and Verify on Torch.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># We can now export the modified models to ONNX framework</span>
+<span class="c1"># This will generate single ONNX Model for both Prefill and Decode Variations which are optimized for</span>
 <span class="c1"># Cloud AI 100 Platform.</span>
 
-<span class="c1"># This will generate Onnx model, clip the overflow constants to fp16</span>
-<span class="c1"># Verify the model on Onnxruntime vs Pytorch</span>
+<span class="c1"># While generating the ONNX model, this will clip the overflow constants to fp16</span>
+<span class="c1"># Verify the model on ONNXRuntime vs Pytorch</span>
+
 <span class="c1"># Then generate inputs and customio yaml file required for compilation.</span>
+<span class="c1"># Compile the model for provided compilation arguments</span>
+<span class="c1"># Please use platform SDk to Check num_cores for your card.</span>
 
-<span class="c1"># We can generate the KV Style models with the flag &quot;kv&quot;</span>
-<span class="c1"># Bertstyle models do not have any optimization w.r.t KV cache changes and are unoptimized version.</span>
-<span class="c1"># It is recommended to use kv=True for better performance.</span>
-<span class="n">tokenizer</span> <span class="o">=</span> <span class="n">load_hf_tokenizer</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">use_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<span class="n">base_path</span><span class="p">,</span> <span class="n">onnx_path</span> <span class="o">=</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">export</span><span class="p">(</span>
-    <span class="n">model_name</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span>
-    <span class="n">model_kv</span><span class="o">=</span><span class="n">qeff_model</span><span class="p">,</span>
-    <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
-    <span class="n">kv</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-    <span class="n">form_factor</span><span class="o">=</span><span class="s2">&quot;cloud&quot;</span><span class="p">,</span>
-<span class="p">)</span>
-</pre></div>
-</div>
-</section>
-<section id="compile-on-cloud-ai-100">
-<h2>3. Compile on Cloud AI 100<a class="headerlink" href="#compile-on-cloud-ai-100" title="Permalink to this heading"></a></h2>
-<p>Once, the model is exported, Compile the model on Cloud AI 100 and generate QPC.</p>
-<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Please use platform SDk to Check num_cores for your card.</span>
-
-<span class="n">generated_qpc_path</span> <span class="o">=</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
-    <span class="n">onnx_path</span><span class="o">=</span><span class="n">onnx_path</span><span class="p">,</span>
-    <span class="n">num_cores</span><span class="o">=</span><span class="mi">14</span><span class="p">,</span>  <span class="c1"># You can use `/opt/qti-aic/tools/qaic-util | grep &quot;Nsp Total&quot;` from Apps SDK for this. </span>
-    <span class="n">qpc_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">base_path</span><span class="p">),</span>
-    <span class="n">mxfp6</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="n">generated_qpc_path</span> <span class="o">=</span> <span class="n">qeff_model</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+    <span class="n">num_cores</span><span class="o">=</span><span class="mi">14</span><span class="p">,</span>
+    <span class="n">mxfp6</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="n">device_group</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
 <span class="p">)</span>
 </pre></div>
 </div>
 </section>
-<section id="run-benchmark">
-<h2>4. Run Benchmark<a class="headerlink" href="#run-benchmark" title="Permalink to this heading"></a></h2>
+<section id="execute">
+<h2>3. Execute<a class="headerlink" href="#execute" title="Permalink to this heading"></a></h2>
 <p>Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/sec</p>
-<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">QEfficient.generation.text_generation_inference</span> <span class="kn">import</span> <span class="n">get_compilation_dims</span>
-
-<span class="c1"># post compilation, we can print the latency stats for the kv models, We provide API to print token and Latency stats on AI 100</span>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># post compilation, we can print the latency stats for the kv models, We provide API to print token and Latency stats on AI 100</span>
 <span class="c1"># We need the compiled prefill and decode qpc to compute the token generated, This is based on Greedy Sampling Approach</span>
-<span class="n">batch_size</span><span class="p">,</span> <span class="n">ctx_len</span> <span class="o">=</span> <span class="n">get_compilation_dims</span><span class="p">(</span><span class="n">generated_qpc_path</span><span class="p">)</span>
-<span class="n">QEfficient</span><span class="o">.</span><span class="n">cloud_ai_100_exec_kv</span><span class="p">(</span><span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span> <span class="n">qpc_path</span><span class="o">=</span><span class="n">generated_qpc_path</span><span class="p">,</span> <span class="n">device_id</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">prompt</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;My name is&quot;</span><span class="p">],</span> <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">)</span>
+
+<span class="n">qeff_model</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompts</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;My name is&quot;</span><span class="p">])</span>
 </pre></div>
 </div>
+<p>End to End demo examples for various models are available in <strong>notebooks</strong> directory. Please check them out.</p>
 </section>
 </section>
 
@@ -262,8 +249,8 @@ python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<s
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="Linux_installation.html" class="btn btn-neutral float-left" title="Requirements" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="kv_change.html" class="btn btn-neutral float-right" title="Details on KV Cache Optimization for Cloud AI 100" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="installation.html" class="btn btn-neutral float-left" title="Pre-requisites" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="cli_api.html" class="btn btn-neutral float-right" title="QEfficient.cloud.infer" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>

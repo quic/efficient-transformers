@@ -1,29 +1,25 @@
 # Docs
 
-This directory contains the stuff for building static html documentations based on [sphinx](https://www.sphinx-doc.org/en/master/).
+This directory contains the instructions for building static html documentations based on [sphinx](https://www.sphinx-doc.org/en/master/).
 
 
 ## Build the docs
-Firstly, install the packages:
+Install the packages required for building documentation:
 
 ```sh
-python3 -m pip install -r ./requirements.txt
+ pip install -r docs/requirements.txt
 ```
 
-
-And then, make the docs:
+And then, change directory to docs folder to build the docs.
 
 ```sh
-make html
+cd docs/
+sphinx-build -M html . build
 ```
 ## Preview the docs locally
-
-The basic way to preview the docs is using the `http.server`:
-
-```sh
+ 
+```bash
 cd build/html
-
-python3 -m http.server 8080
+python -m http.server
 ```
-
-And you can visit the page with your web browser with url `http://localhost:8080`.
+You can visit the page with your web browser with url `http://localhost:8080`.

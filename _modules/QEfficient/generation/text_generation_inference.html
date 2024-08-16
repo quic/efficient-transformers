@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>QEfficient.generation.text_generation_inference &mdash; Efficient-Transformers 1.16 documentation</title>
+  <title>QEfficient.generation.text_generation_inference &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=19f00094" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/my_theme.css?v=547657ed" />
 
   
   <!--[if lt IE 9]>
@@ -14,7 +15,7 @@
   
         <script src="../../../_static/jquery.js?v=5d32c60e"></script>
         <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-        <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js?v=a9e34a36"></script>
+        <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js?v=d01aebe5"></script>
         <script src="../../../_static/doctools.js?v=888ff710"></script>
         <script src="../../../_static/sphinx_highlight.js?v=4825356b"></script>
     <script src="../../../_static/js/theme.js"></script>
@@ -31,7 +32,7 @@
           
           
           <a href="../../../index.html" class="icon icon-home">
-            Efficient-Transformers
+            efficient-transformers
           </a>
 <div role="search">
   <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
@@ -43,27 +44,32 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Introduction.html">Introduciton Qualcomm Efficient-Transformers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Validate.html">Validated Models</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Validate.html#models-coming-soon">Models Coming Soon</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/Linux_installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html">Pre-requisites</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#sanity-check">Sanity Check</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Quick Start Guide</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#using-high-level-api">Using High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#using-low-level-api">Using Low Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Command Line Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#python-api">Python API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/high_level_api.html">High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/low_level_api.html">Low level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/other_api.html">Utilities</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/hl_api.html">High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/ll_api.html">Low Level API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -88,7 +94,7 @@
 
     <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
           <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
-          <a href="../../../index.html">Efficient-Transformers</a>
+          <a href="../../../index.html">efficient-transformers</a>
       </nav>
 
       <div class="wy-nav-content">
@@ -116,6 +122,7 @@
 
 <span class="kn">import</span> <span class="nn">json</span>
 <span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span>
 <span class="kn">from</span> <span class="nn">time</span> <span class="kn">import</span> <span class="n">perf_counter</span>
 <span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Union</span>
 
@@ -126,6 +133,37 @@
 <span class="kn">from</span> <span class="nn">QEfficient.generation.cloud_infer</span> <span class="kn">import</span> <span class="n">QAICInferenceSession</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">padding_check_and_fix</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.logging_utils</span> <span class="kn">import</span> <span class="n">logger</span>
+
+
+<div class="viewcode-block" id="CloudAI100ExecInfo"><a class="viewcode-back" href="../../../source/hl_api.html#QEfficient.generation.text_generation_inference.CloudAI100ExecInfo">[docs]</a><span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">CloudAI100ExecInfo</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Holds all the information about Cloud AI 100 execution</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        :batch_size (int): Batch size of the QPC compilation.</span>
+<span class="sd">        :generated_texts (Union[List[List[str]], List[str]]): Generated text(s).</span>
+<span class="sd">        :generated_ids (Union[List[np.ndarray], np.ndarray]): Generated IDs.</span>
+<span class="sd">        :prefill_time (float): Time for prefilling.</span>
+<span class="sd">        :decode_perf (float): Decoding performance.</span>
+<span class="sd">        :total_perf (float): Total performance.</span>
+<span class="sd">        :total_time (float): Total time.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">generated_texts</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]]</span>
+    <span class="n">generated_ids</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span>
+    <span class="n">prefill_time</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">decode_perf</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">total_perf</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">total_time</span><span class="p">:</span> <span class="nb">float</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Prefill time a.k.a TTFT is= </span><span class="si">{</span><span class="nb">round</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">prefill_time</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="si">}</span><span class="se">\</span>
+<span class="s2">        </span><span class="se">\n</span><span class="s2">Decode token/sec is= </span><span class="si">{</span><span class="nb">round</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">decode_perf</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="bp">self</span><span class="o">.</span><span class="n">batch_size</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="si">}</span><span class="se">\</span>
+<span class="s2">        </span><span class="se">\n</span><span class="s2">Total token/sec is= </span><span class="si">{</span><span class="nb">round</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">total_perf</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="bp">self</span><span class="o">.</span><span class="n">batch_size</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="si">}</span><span class="se">\</span>
+<span class="s2">        </span><span class="se">\n</span><span class="s2">Total (E2E) inference time is= </span><span class="si">{</span><span class="nb">round</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">total_time</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span></div>
+
 
 <span class="n">io_files</span> <span class="o">=</span> <span class="p">[]</span>
 
@@ -171,24 +209,24 @@
         <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">({</span><span class="s2">&quot;IO-files&quot;</span><span class="p">:</span> <span class="n">io_files</span><span class="p">},</span> <span class="n">fp</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 
 
-<div class="viewcode-block" id="latency_stats_bertstyle"><a class="viewcode-back" href="../../../source/low_level_api.html#QEfficient.generation.text_generation_inference.latency_stats_bertstyle">[docs]</a><span class="k">def</span> <span class="nf">latency_stats_bertstyle</span><span class="p">(</span>
+<span class="k">def</span> <span class="nf">latency_stats_bertstyle</span><span class="p">(</span>
     <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-    <span class="n">qpc</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
     <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">device_id</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    API to execute Bertstyle ONNX model on Cloud AI 100.</span>
-<span class="sd">    ---------</span>
+<span class="sd">    Function to execute Bertstyle ONNX model on Cloud AI 100.</span>
 
-<span class="sd">    :model_name: str. Hugging Face Model Card name, Example: gpt2.</span>
-<span class="sd">    :qpc: str.  Path to save generated binary file after compilation.</span>
-<span class="sd">    :seq_len: int. Sequence length.</span>
-<span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
-<span class="sd">    :device_id: List[int]. Device Ids to be used for compilation. if devices &gt; 1, it enables multiple card setup.</span>
+<span class="sd">    Args:</span>
+<span class="sd">        :model_name (str): Hugging Face Model Card name, Example: gpt2.</span>
+<span class="sd">        :qpc_path (str): Path to save generated binary file after compilation.</span>
+<span class="sd">        :seq_len (int): Sequence length.</span>
+<span class="sd">        :prompt (str): Sample prompt for the model text generation.</span>
+<span class="sd">        :device_id (List[int]): Device Ids to be used for compilation. If devices &gt; 1, it enables multiple card setup.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">session</span> <span class="o">=</span> <span class="n">QAICInferenceSession</span><span class="p">(</span><span class="n">qpc</span><span class="p">,</span> <span class="n">device_id</span><span class="p">)</span>
+    <span class="n">session</span> <span class="o">=</span> <span class="n">QAICInferenceSession</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">,</span> <span class="n">device_id</span><span class="p">)</span>
     <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">transformers</span><span class="o">.</span><span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">padding_side</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">)</span>
     <span class="n">padding_check_and_fix</span><span class="p">(</span><span class="n">tokenizer</span><span class="p">)</span>  <span class="c1"># Check and fix tokenizer viability</span>
     <span class="n">inputs</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;np&quot;</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="n">seq_len</span><span class="p">,</span> <span class="n">padding</span><span class="o">=</span><span class="s2">&quot;max_length&quot;</span><span class="p">)</span>
@@ -213,36 +251,49 @@
         <span class="n">cur_len</span> <span class="o">+=</span> <span class="mi">1</span>
     <span class="n">end</span> <span class="o">=</span> <span class="n">perf_counter</span><span class="p">()</span>
     <span class="nb">print</span><span class="p">()</span>
-    <span class="nb">print</span><span class="p">(</span><span class="nb">round</span><span class="p">((</span><span class="n">cur_len</span> <span class="o">-</span> <span class="n">init_len</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">end</span> <span class="o">-</span> <span class="n">start</span><span class="p">),</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;tok/s&quot;</span><span class="p">)</span></div>
+    <span class="nb">print</span><span class="p">(</span><span class="nb">round</span><span class="p">((</span><span class="n">cur_len</span> <span class="o">-</span> <span class="n">init_len</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">end</span> <span class="o">-</span> <span class="n">start</span><span class="p">),</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;tok/s&quot;</span><span class="p">)</span>
 
 
 <span class="k">def</span> <span class="nf">get_compilation_dims</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
     <span class="n">qpc_base_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">normpath</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">))</span>
     <span class="n">specialization_file_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">qpc_base_path</span><span class="p">,</span> <span class="s2">&quot;specializations.json&quot;</span><span class="p">)</span>
     <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;specialization_file_path : </span><span class="si">{</span><span class="n">specialization_file_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">specialization_file_path</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
-        <span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">file</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">specialization_file_path</span><span class="p">):</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">specialization_file_path</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">file</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;expected specializations.json file at path, </span><span class="si">{</span><span class="n">qpc_base_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
     <span class="n">compilation_batch_size</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;batch_size&quot;</span><span class="p">])</span>
     <span class="n">compilation_ctx_len</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;ctx_len&quot;</span><span class="p">])</span>
     <span class="k">return</span> <span class="n">compilation_batch_size</span><span class="p">,</span> <span class="n">compilation_ctx_len</span>
 
 
-<span class="k">def</span> <span class="nf">check_batch_size_and_num_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="k">def</span> <span class="nf">get_input_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
     <span class="k">assert</span> <span class="p">(</span>
         <span class="n">prompt</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">prompts_txt_file_path</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
-    <span class="p">),</span> <span class="s2">&quot;Please pass atleast one argument either using --prompt or --prompts_txt_file_path&quot;</span>
+    <span class="p">),</span> <span class="s2">&quot;Please pass at least one argument either using --prompt or --prompts_txt_file_path&quot;</span>
     <span class="k">if</span> <span class="n">prompts_txt_file_path</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">prompt</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Found inputs passed using txt file as well as CLI, taking inputs from given txt file&quot;</span><span class="p">)</span>
         <span class="n">prompt</span> <span class="o">=</span> <span class="n">read_prompts_txt_file</span><span class="p">(</span><span class="n">prompts_txt_file_path</span><span class="p">)</span>
     <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
         <span class="n">prompt</span> <span class="o">=</span> <span class="p">[</span><span class="n">prompt</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">prompt</span>
 
-    <span class="n">num_prompts</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">batch_size</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
-        <span class="k">assert</span> <span class="p">(</span>
-            <span class="n">batch_size</span> <span class="o">==</span> <span class="n">num_prompts</span>
-        <span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;Mismatch between number of prompts </span><span class="si">{</span><span class="n">num_prompts</span><span class="si">}</span><span class="s2"> and batch size </span><span class="si">{</span><span class="n">batch_size</span><span class="si">}</span><span class="s2">; please pass correct input argument&quot;</span>
+
+<span class="k">def</span> <span class="nf">fix_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">batch_size</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Number of prompts are less than batch size, repeating to required batch size&quot;</span><span class="p">)</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="n">prompt</span> <span class="o">*</span> <span class="o">-</span><span class="p">(</span><span class="n">batch_size</span> <span class="o">//</span> <span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">))</span>  <span class="c1"># Repeat prompt to required size</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="n">prompt</span><span class="p">[:</span><span class="n">batch_size</span><span class="p">]</span>  <span class="c1"># Truncate prompts to required size</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span> <span class="o">%</span> <span class="n">batch_size</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">&quot;Number of prompts are not multiple of batch size, dropping last incomplete batch from given input prompts&quot;</span>
+            <span class="p">)</span>
+            <span class="n">prompt</span> <span class="o">=</span> <span class="n">prompt</span><span class="p">[:</span> <span class="n">batch_size</span> <span class="o">*</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span> <span class="o">//</span> <span class="n">batch_size</span><span class="p">)]</span>
     <span class="k">return</span> <span class="n">prompt</span>
 
 
@@ -256,9 +307,9 @@
 
 <span class="k">def</span> <span class="nf">cloud_ai_100_exec_kv_helper</span><span class="p">(</span>
     <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">],</span>
-    <span class="n">qpc</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
-    <span class="n">ctx_len</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ctx_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
     <span class="n">generation_len</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">device_id</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span>
     <span class="n">enable_debug_logs</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
@@ -266,19 +317,19 @@
     <span class="n">write_io_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.</span>
-<span class="sd">    ---------</span>
+<span class="sd">    Helper function to execute QEfficient transformed ONNX model on ``Cloud AI 100`` using compiled QPC file.</span>
 
-<span class="sd">    :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. model tokenizer.</span>
-<span class="sd">    :qpc: str.  Path to the save generated binary file after compilation.</span>
-<span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
-<span class="sd">    :ctx_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.</span>
-<span class="sd">    :generation_len: int. Maximum context length for the model to compile.</span>
-<span class="sd">    :device_id: List[int]. Device Ids to be used for compilation. if len(device_id) &gt; 1, it enable multiple card setup.</span>
-<span class="sd">    :enable_debug_logs: bool. If True, it enables debugging logs.</span>
-<span class="sd">    :stream: bool. If True enable streamer, which returns tokens one by one as the model generates them.</span>
-<span class="sd">    :Write_io_dir: Path to write the input and output files.</span>
-<span class="sd">    :automation: bool. If true, it print input, output and performance stats.</span>
+<span class="sd">    ``Mandatory`` Args:</span>
+<span class="sd">        :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.</span>
+<span class="sd">        :qpc_path (str): Path to the saved generated binary file after compilation.</span>
+<span class="sd">        :prompt (str): Sample prompt for the model text generation.</span>
+<span class="sd">        :ctx_len (int): Input length of the prompt to determine the number of chunks to execute on ``Cloud AI 100``.</span>
+<span class="sd">    ``Optional`` Args:</span>
+<span class="sd">        :generation_len (int): Maximum context length for the model during compilation. ``Defaults to None``.</span>
+<span class="sd">        :device_id (List[int]): Device IDs to be used for compilation. If ``len(device_id) &gt; 1``, it enables multiple card setup. ``Defaults to [0]``.</span>
+<span class="sd">        :enable_debug_logs (bool): If True, it enables debugging logs. ``Defaults to False``.</span>
+<span class="sd">        :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them.``Defaults to True``.</span>
+<span class="sd">        :Write_io_dir (str): Path to write the input and output files.``Defaults to None``.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="k">if</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">padding_side</span> <span class="o">!=</span> <span class="s2">&quot;right&quot;</span><span class="p">:</span>
@@ -288,7 +339,7 @@
         <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">eos_token_id</span>
 
     <span class="c1"># Load QPC</span>
-    <span class="n">session</span> <span class="o">=</span> <span class="n">QAICInferenceSession</span><span class="p">(</span><span class="n">qpc</span><span class="p">,</span> <span class="n">device_id</span><span class="p">,</span> <span class="n">enable_debug_logs</span><span class="o">=</span><span class="n">enable_debug_logs</span><span class="p">)</span>
+    <span class="n">session</span> <span class="o">=</span> <span class="n">QAICInferenceSession</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">,</span> <span class="n">device_id</span><span class="p">,</span> <span class="n">enable_debug_logs</span><span class="o">=</span><span class="n">enable_debug_logs</span><span class="p">)</span>
 
     <span class="c1"># Skip inputs/outputs</span>
     <span class="n">session</span><span class="o">.</span><span class="n">skip_buffers</span><span class="p">([</span><span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">session</span><span class="o">.</span><span class="n">input_names</span> <span class="o">+</span> <span class="n">session</span><span class="o">.</span><span class="n">output_names</span> <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;past_&quot;</span><span class="p">)])</span>
@@ -300,11 +351,8 @@
     <span class="k">else</span><span class="p">:</span>
         <span class="n">batch_size</span><span class="p">,</span> <span class="n">prefill_seq_len</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">bindings</span><span class="p">[</span><span class="n">session</span><span class="o">.</span><span class="n">binding_index_map</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]]</span><span class="o">.</span><span class="n">dims</span>
 
-    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">batch_size</span><span class="p">:</span>
-        <span class="n">prompt</span> <span class="o">=</span> <span class="n">prompt</span> <span class="o">*</span> <span class="o">-</span><span class="p">(</span><span class="n">batch_size</span> <span class="o">//</span> <span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">))</span>  <span class="c1"># Repeat prompt to required size</span>
-    <span class="n">prompt</span> <span class="o">=</span> <span class="n">prompt</span><span class="p">[:</span><span class="n">batch_size</span><span class="p">]</span>  <span class="c1"># Truncate prompts to required size</span>
-
     <span class="n">inputs</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;np&quot;</span><span class="p">,</span> <span class="n">padding</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
     <span class="n">position_ids_update</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">padded_len</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
     <span class="n">num_chunks</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">padded_len</span> <span class="o">//</span> <span class="o">-</span><span class="n">prefill_seq_len</span><span class="p">)</span>  <span class="c1"># ceil divide without float</span>
@@ -320,11 +368,10 @@
             <span class="s2">&quot;Make sure this model supports sliding window, such as Mistral&quot;</span>
         <span class="p">)</span>
     <span class="k">assert</span> <span class="n">generation_len</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;generation length should be greater than zero&quot;</span>
-    <span class="n">generated_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">generation_len</span> <span class="o">+</span> <span class="mi">1</span><span class="p">),</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span><span class="p">)</span>
-
+    <span class="n">generated_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">generation_len</span><span class="p">),</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">stream</span><span class="p">:</span>
         <span class="n">streamer</span> <span class="o">=</span> <span class="n">transformers</span><span class="o">.</span><span class="n">TextStreamer</span><span class="p">(</span><span class="n">tokenizer</span><span class="p">)</span>
-        <span class="n">streamer</span><span class="o">.</span><span class="n">on_finalized_text</span><span class="p">(</span><span class="n">prompt</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot; &quot;</span><span class="p">)</span>
+        <span class="n">streamer</span><span class="o">.</span><span class="n">on_finalized_text</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Prompt : &quot;</span> <span class="o">+</span> <span class="n">prompt</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Completion :&quot;</span><span class="p">)</span>
 
     <span class="c1"># Prepare inputs for prefill/first iteration</span>
     <span class="n">start</span> <span class="o">=</span> <span class="n">perf_counter</span><span class="p">()</span>
@@ -371,55 +418,46 @@
     <span class="n">end</span> <span class="o">=</span> <span class="n">perf_counter</span><span class="p">()</span>
     <span class="n">generated_texts</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">batch_decode</span><span class="p">(</span><span class="n">generated_ids</span><span class="p">,</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 
-    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span> <span class="k">if</span> <span class="n">stream</span> <span class="k">else</span> <span class="mi">0</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">):</span>
-        <span class="nb">print</span><span class="p">()</span>
-        <span class="nb">print</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">prompt</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">generated_texts</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+    <span class="k">if</span> <span class="n">stream</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">):</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">Prompt : &quot;</span><span class="p">,</span> <span class="n">prompt</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Completion :&quot;</span><span class="p">,</span> <span class="n">generated_texts</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
 
     <span class="n">prefill_time</span> <span class="o">=</span> <span class="n">loop_start</span> <span class="o">-</span> <span class="n">start</span>
     <span class="n">decode_perf</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_token</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">end</span> <span class="o">-</span> <span class="n">loop_start</span><span class="p">)</span>
     <span class="n">total_perf</span> <span class="o">=</span> <span class="n">num_token</span> <span class="o">/</span> <span class="p">(</span><span class="n">end</span> <span class="o">-</span> <span class="n">start</span><span class="p">)</span>
     <span class="n">total_time</span> <span class="o">=</span> <span class="n">end</span> <span class="o">-</span> <span class="n">start</span>
-    <span class="nb">print</span><span class="p">()</span>
 
-    <span class="n">latency_stats</span> <span class="o">=</span> <span class="p">(</span><span class="n">generated_texts</span><span class="p">,</span> <span class="n">prefill_time</span><span class="p">,</span> <span class="n">decode_perf</span><span class="p">,</span> <span class="n">total_perf</span><span class="p">,</span> <span class="n">total_time</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">latency_stats</span>
+    <span class="k">return</span> <span class="n">CloudAI100ExecInfo</span><span class="p">(</span>
+        <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+        <span class="n">generated_texts</span><span class="o">=</span><span class="n">generated_texts</span><span class="p">,</span>
+        <span class="n">generated_ids</span><span class="o">=</span><span class="n">generated_ids</span><span class="p">,</span>
+        <span class="n">prefill_time</span><span class="o">=</span><span class="n">prefill_time</span><span class="p">,</span>
+        <span class="n">decode_perf</span><span class="o">=</span><span class="n">decode_perf</span><span class="p">,</span>
+        <span class="n">total_perf</span><span class="o">=</span><span class="n">total_perf</span><span class="p">,</span>
+        <span class="n">total_time</span><span class="o">=</span><span class="n">total_time</span><span class="p">,</span>
+    <span class="p">)</span>
 
 
-<span class="k">def</span> <span class="nf">print_latency_stats_kv</span><span class="p">(</span>
-    <span class="n">prompt</span><span class="p">,</span> <span class="n">generated_texts</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">prefill_time</span><span class="p">,</span> <span class="n">decode_perf</span><span class="p">,</span> <span class="n">total_perf</span><span class="p">,</span> <span class="n">total_time</span><span class="p">,</span> <span class="n">automation</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
-<span class="p">):</span>
+<span class="k">def</span> <span class="nf">print_latency_stats_kv</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">execinfo</span><span class="p">,</span> <span class="n">automation</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">):</span>
     <span class="k">if</span> <span class="n">automation</span><span class="p">:</span>
-        <span class="nb">print</span><span class="p">()</span>
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;input=&quot;</span><span class="p">,</span> <span class="n">prompt</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;output=&quot;</span><span class="p">,</span> <span class="n">generated_texts</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Prefill time a.k.a TTFT is=&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">prefill_time</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Decode token/sec is=&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">decode_perf</span> <span class="o">*</span> <span class="n">batch_size</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Total token/sec is=&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">total_perf</span> <span class="o">*</span> <span class="n">batch_size</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Total (E2E) inference time is=&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">total_time</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;output=&quot;</span><span class="p">,</span> <span class="n">execinfo</span><span class="o">.</span><span class="n">generated_texts</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">execinfo</span><span class="p">)</span>
         <span class="k">return</span>
-    <span class="nb">print</span><span class="p">()</span>
-
-    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;===================== Performance Stats =====================&quot;</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">batch_size</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Prefill time a.k.a TTFT (batch) is :&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">prefill_time</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;s&quot;</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Decode (batch):&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">decode_perf</span> <span class="o">*</span> <span class="n">batch_size</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;tok/s&quot;</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;E2E (batch):&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">total_perf</span> <span class="o">*</span> <span class="n">batch_size</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;tok/s&quot;</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Total (E2E) inference time (batch) is=&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">total_time</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;s&quot;</span><span class="p">)</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Prefill time a.k.a TTFT is=&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">prefill_time</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;s&quot;</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Decode:&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">decode_perf</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;tok/s&quot;</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;E2E:&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">total_perf</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;tok/s&quot;</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Total (E2E) inference time is=&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">total_time</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;s&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=============================================================&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;========================= Performance Stats =========================&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">execinfo</span><span class="o">.</span><span class="n">batch_size</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Batch Performance : </span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">execinfo</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=====================================================================&quot;</span><span class="p">)</span>
 
 
-<div class="viewcode-block" id="cloud_ai_100_exec_kv"><a class="viewcode-back" href="../../../source/low_level_api.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv">[docs]</a><span class="k">def</span> <span class="nf">cloud_ai_100_exec_kv</span><span class="p">(</span>
-    <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<div class="viewcode-block" id="cloud_ai_100_exec_kv"><a class="viewcode-back" href="../../../source/hl_api.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv">[docs]</a><span class="k">def</span> <span class="nf">cloud_ai_100_exec_kv</span><span class="p">(</span>
     <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">],</span>
     <span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-    <span class="n">prompt</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">prompts_txt_file_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">device_id</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span>
-    <span class="n">ctx_len</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">generation_len</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">enable_debug_logs</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
@@ -427,55 +465,54 @@
     <span class="n">automation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    API to execute QEfficient transformed ONNX model on Cloud AI 100 using compiled QPC file.</span>
-<span class="sd">    ---------</span>
+<span class="sd">    This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.</span>
+<span class="sd">    This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.</span>
+<span class="sd">    If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.</span>
 
-<span class="sd">    :batch_size: int. Batch size of which qpc is compiled.</span>
-<span class="sd">    :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. model tokenizer.</span>
-<span class="sd">    :qpc_path: str.  Path to the save generated binary file after compilation.</span>
-<span class="sd">    :prompt: str. Sample prompt for the model text generation.</span>
-<span class="sd">    :ctx_len: int. input length of prompt to get number of chunks to execute on Cloud AI 100.</span>
-<span class="sd">    :generation_len: int. Maximum context length for the model to compile.</span>
-<span class="sd">    :device_id: List[int]. Device Ids to be used for compilation. if len(device_id) &gt; 1, it enable multiple card setup.</span>
-<span class="sd">    :enable_debug_logs: bool. If True, it enables debugging logs.</span>
-<span class="sd">    :stream: bool. If True enable streamer, which returns tokens one by one as the model generates them.</span>
-<span class="sd">    :Write_io_dir: Path to write the input and output files.</span>
-<span class="sd">    :automation: bool. If true, it print input, output and performance stats.</span>
+<span class="sd">    ``Mandatory`` Args:</span>
+<span class="sd">        :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.</span>
+<span class="sd">        :qpc_path (str): Path to the saved generated binary file after compilation.</span>
+
+<span class="sd">    ``Optional`` Args:</span>
+<span class="sd">        :prompt (str): Sample prompt for the model text generation. ``Defaults to None``.</span>
+<span class="sd">        :prompts_txt_file_path (str): Path of the prompt text file. ``Defaults to None``.</span>
+<span class="sd">        :generation_len (int): Maximum context length for the model during compilation. ``Defaults to None``.</span>
+<span class="sd">        :device_id (List[int]): Device IDs to be used for compilation. If ``len(device_id) &gt; 1``, it enables multiple card setup. ``Defaults to [0]``.</span>
+<span class="sd">        :enable_debug_logs (bool): If True, it enables debugging logs. ``Defaults to False``.</span>
+<span class="sd">        :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them. ``Defaults to True``.</span>
+<span class="sd">        :Write_io_dir (str): Path to write the input and output files. ``Defaults to None``.</span>
+<span class="sd">        :automation (bool): If true, it prints input, output, and performance stats. ``Defaults to False``.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        :CloudAI100ExecInfo: Object holding execution output and performance details.</span>
+
+<span class="sd">    .. code-block:: python</span>
+
+<span class="sd">        import transformers</span>
+<span class="sd">        import QEfficient</span>
+<span class="sd">        base_path, onnx_model_path = QEfficient.export(model_name=&quot;gpt2&quot;)</span>
+<span class="sd">        qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, &quot;qpc&quot;), num_cores=14, device_group=[0])</span>
+<span class="sd">        tokenizer = transformers.AutoTokenizer.from_pretrained(&quot;gpt2&quot;)</span>
+<span class="sd">        execinfo = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt=&quot;Hi there!!&quot;, device_id=[0])</span>
+
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">if</span> <span class="n">batch_size</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
-        <span class="n">prefill_time</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="n">decode_perf</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="n">total_perf</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="n">total_time</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="n">generated_texts</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)):</span>
-            <span class="n">latency_stats</span> <span class="o">=</span> <span class="n">cloud_ai_100_exec_kv_helper</span><span class="p">(</span>
-                <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
-                <span class="n">prompt</span><span class="o">=</span><span class="p">[</span><span class="n">prompt</span><span class="p">[</span><span class="n">i</span><span class="p">]],</span>
-                <span class="n">qpc</span><span class="o">=</span><span class="n">qpc_path</span><span class="p">,</span>
-                <span class="n">device_id</span><span class="o">=</span><span class="n">device_id</span><span class="p">,</span>
-                <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
-                <span class="n">generation_len</span><span class="o">=</span><span class="n">generation_len</span><span class="p">,</span>
-                <span class="n">enable_debug_logs</span><span class="o">=</span><span class="n">enable_debug_logs</span><span class="p">,</span>
-                <span class="n">stream</span><span class="o">=</span><span class="n">stream</span><span class="p">,</span>
-                <span class="n">write_io_dir</span><span class="o">=</span><span class="n">write_io_dir</span><span class="p">,</span>
-            <span class="p">)</span>
-            <span class="n">generated_texts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">latency_stats</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
-            <span class="n">prefill_time</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">latency_stats</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
-            <span class="n">decode_perf</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">latency_stats</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
-            <span class="n">total_perf</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">latency_stats</span><span class="p">[</span><span class="mi">3</span><span class="p">])</span>
-            <span class="n">total_time</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">latency_stats</span><span class="p">[</span><span class="mi">4</span><span class="p">])</span>
+    <span class="n">batch_size</span><span class="p">,</span> <span class="n">ctx_len</span> <span class="o">=</span> <span class="n">get_compilation_dims</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">)</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">get_input_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">)</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="n">fix_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">)</span>
 
-        <span class="n">prefill_time</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">average</span><span class="p">(</span><span class="n">prefill_time</span><span class="p">)</span>
-        <span class="n">decode_perf</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">average</span><span class="p">(</span><span class="n">decode_perf</span><span class="p">)</span>
-        <span class="n">total_perf</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">average</span><span class="p">(</span><span class="n">total_perf</span><span class="p">)</span>
-        <span class="n">total_time</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">average</span><span class="p">(</span><span class="n">total_time</span><span class="p">)</span>
+    <span class="n">prefill_time</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">decode_perf</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">total_perf</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">total_time</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">generated_texts</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">generated_ids</span> <span class="o">=</span> <span class="p">[]</span>
 
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">latency_stats</span> <span class="o">=</span> <span class="n">cloud_ai_100_exec_kv_helper</span><span class="p">(</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">),</span> <span class="n">batch_size</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Inference iteration =&quot;</span><span class="p">,</span> <span class="n">i</span> <span class="o">//</span> <span class="n">batch_size</span><span class="p">)</span>
+        <span class="n">execinfo</span> <span class="o">=</span> <span class="n">cloud_ai_100_exec_kv_helper</span><span class="p">(</span>
             <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
-            <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span>
-            <span class="n">qpc</span><span class="o">=</span><span class="n">qpc_path</span><span class="p">,</span>
+            <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">[</span><span class="n">i</span> <span class="p">:</span> <span class="n">i</span> <span class="o">+</span> <span class="n">batch_size</span><span class="p">],</span>
+            <span class="n">qpc_path</span><span class="o">=</span><span class="n">qpc_path</span><span class="p">,</span>
             <span class="n">device_id</span><span class="o">=</span><span class="n">device_id</span><span class="p">,</span>
             <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
             <span class="n">generation_len</span><span class="o">=</span><span class="n">generation_len</span><span class="p">,</span>
@@ -483,18 +520,33 @@
             <span class="n">stream</span><span class="o">=</span><span class="n">stream</span><span class="p">,</span>
             <span class="n">write_io_dir</span><span class="o">=</span><span class="n">write_io_dir</span><span class="p">,</span>
         <span class="p">)</span>
-        <span class="n">generated_texts</span><span class="p">,</span> <span class="n">prefill_time</span><span class="p">,</span> <span class="n">decode_perf</span><span class="p">,</span> <span class="n">total_perf</span><span class="p">,</span> <span class="n">total_time</span> <span class="o">=</span> <span class="n">latency_stats</span>
+        <span class="n">generated_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">execinfo</span><span class="o">.</span><span class="n">generated_ids</span><span class="p">)</span>
+        <span class="n">generated_texts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">execinfo</span><span class="o">.</span><span class="n">generated_texts</span><span class="p">)</span>
+        <span class="n">prefill_time</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">execinfo</span><span class="o">.</span><span class="n">prefill_time</span><span class="p">)</span>
+        <span class="n">decode_perf</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">execinfo</span><span class="o">.</span><span class="n">decode_perf</span><span class="p">)</span>
+        <span class="n">total_perf</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">execinfo</span><span class="o">.</span><span class="n">total_perf</span><span class="p">)</span>
+        <span class="n">total_time</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">execinfo</span><span class="o">.</span><span class="n">total_time</span><span class="p">)</span>
 
+    <span class="n">prefill_time</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">average</span><span class="p">(</span><span class="n">prefill_time</span><span class="p">)</span>
+    <span class="n">decode_perf</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">average</span><span class="p">(</span><span class="n">decode_perf</span><span class="p">)</span>
+    <span class="n">total_perf</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">average</span><span class="p">(</span><span class="n">total_perf</span><span class="p">)</span>
+    <span class="n">total_time</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">average</span><span class="p">(</span><span class="n">total_time</span><span class="p">)</span>
+
+    <span class="n">execinfo</span> <span class="o">=</span> <span class="n">CloudAI100ExecInfo</span><span class="p">(</span>
+        <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+        <span class="n">generated_texts</span><span class="o">=</span><span class="n">generated_texts</span><span class="p">,</span>
+        <span class="n">generated_ids</span><span class="o">=</span><span class="n">generated_ids</span><span class="p">,</span>
+        <span class="n">prefill_time</span><span class="o">=</span><span class="n">prefill_time</span><span class="p">,</span>
+        <span class="n">decode_perf</span><span class="o">=</span><span class="n">decode_perf</span><span class="p">,</span>
+        <span class="n">total_perf</span><span class="o">=</span><span class="n">total_perf</span><span class="p">,</span>
+        <span class="n">total_time</span><span class="o">=</span><span class="n">total_time</span><span class="p">,</span>
+    <span class="p">)</span>
     <span class="n">print_latency_stats_kv</span><span class="p">(</span>
         <span class="n">prompt</span><span class="p">,</span>
-        <span class="n">generated_texts</span><span class="p">,</span>
-        <span class="n">batch_size</span><span class="p">,</span>
-        <span class="n">prefill_time</span><span class="p">,</span>
-        <span class="n">decode_perf</span><span class="p">,</span>
-        <span class="n">total_perf</span><span class="p">,</span>
-        <span class="n">total_time</span><span class="p">,</span>
+        <span class="n">execinfo</span><span class="o">=</span><span class="n">execinfo</span><span class="p">,</span>
         <span class="n">automation</span><span class="o">=</span><span class="n">automation</span><span class="p">,</span>
-    <span class="p">)</span></div>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">execinfo</span></div>
 </pre></div>
 
            </div>

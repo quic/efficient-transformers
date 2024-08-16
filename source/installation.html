@@ -4,7 +4,7 @@
   <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Train anywhere, Infer on Qualcomm Cloud AI 100 &mdash; efficient-transformers main documentation</title>
+  <title>Pre-requisites &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
       <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=547657ed" />
@@ -22,8 +22,8 @@
     <script src="../_static/js/theme.js"></script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Qualcomm Cloud AI home" href="reference.html" />
-    <link rel="prev" title="Low Level API" href="ll_api.html" /> 
+    <link rel="next" title="Command Line Interface" href="quick_start.html" />
+    <link rel="prev" title="Validated Models" href="validate.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -52,10 +52,14 @@
 <li class="toctree-l1"><a class="reference internal" href="validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="installation.html">Pre-requisites</a></li>
-<li class="toctree-l1"><a class="reference internal" href="installation.html#linux-installation">Linux Installation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="installation.html#sanity-check">Sanity Check</a></li>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Pre-requisites</a></li>
+<li class="toctree-l1"><a class="reference internal" href="#linux-installation">Linux Installation</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#using-sdk">Using SDK</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#using-github-repository">Using GitHub Repository</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="#sanity-check">Sanity Check</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -75,12 +79,12 @@
 <li class="toctree-l1"><a class="reference internal" href="ll_api.html">Low Level API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
-<ul class="current">
-<li class="toctree-l1 current"><a class="current reference internal" href="#">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
-<li class="toctree-l1"><a class="reference internal" href="#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
-<li class="toctree-l1"><a class="reference internal" href="#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
-<li class="toctree-l1"><a class="reference internal" href="#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
-<li class="toctree-l1"><a class="reference internal" href="#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities</a></li>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
 <ul>
@@ -105,9 +109,9 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Train anywhere, Infer on Qualcomm Cloud AI 100</li>
+      <li class="breadcrumb-item active">Pre-requisites</li>
       <li class="wy-breadcrumbs-aside">
-            <a href="../_sources/source/blogs.md.txt" rel="nofollow"> View page source</a>
+            <a href="../_sources/source/installation.md.txt" rel="nofollow"> View page source</a>
       </li>
   </ul>
   <hr/>
@@ -115,33 +119,60 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="train-anywhere-infer-on-qualcomm-cloud-ai-100">
-<h1>Train anywhere, Infer on Qualcomm Cloud AI 100<a class="headerlink" href="#train-anywhere-infer-on-qualcomm-cloud-ai-100" title="Permalink to this heading"></a></h1>
-<p><a class="reference external" href="https://www.qualcomm.com/developer/blog/2024/01/train-anywhere-infer-qualcomm-cloud-ai-100">Click here</a></p>
+  <section id="pre-requisites">
+<h1>Pre-requisites<a class="headerlink" href="#pre-requisites" title="Permalink to this heading"></a></h1>
+<p>System Requirements:</p>
+<ol class="arabic simple">
+<li><p><a class="reference external" href="https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/#operating-systems">Supported Linux OS</a> - Ubuntu, RHEL and AWS Linux</p></li>
+<li><p><a class="reference external" href="https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/">Cloud AI 100 Platform and Apps SDK installed</a></p></li>
+<li><p><a class="reference external" href="https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Pre-requisites/pre-requisites/">SDK Pre-requisites</a></p></li>
+<li><p><a class="reference external" href="https://github.com/quic/cloud-ai-sdk/tree/1.12/utils/multi-device">Multi-device support enabled for model sharding</a></p></li>
+</ol>
 </section>
-<section id="how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">
-<h1>How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100<a class="headerlink" href="#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100" title="Permalink to this heading"></a></h1>
-<p><a class="reference external" href="https://statics.teams.cdn.office.net/evergreen-assets/safelinks/1/atp-safelinks.html">Click here</a></p>
+<section id="linux-installation">
+<h1>Linux Installation<a class="headerlink" href="#linux-installation" title="Permalink to this heading"></a></h1>
+<p>There are two different way to install efficient-transformers.</p>
+<section id="using-sdk">
+<h2>Using SDK<a class="headerlink" href="#using-sdk" title="Permalink to this heading"></a></h2>
+<ul class="simple">
+<li><p>Download Apps SDK: <a class="reference external" href="https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/">Cloud AI 100 Platform and Apps SDK install</a></p></li>
+</ul>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Install using Apps SDK</span>
+
+bash<span class="w"> </span>install.sh<span class="w"> </span>--enable-qeff
+<span class="nb">source</span><span class="w">  </span>/opt/qti-aic/dev/python/qeff/bin/activate
+</pre></div>
+</div>
 </section>
-<section id="power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">
-<h1>Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK<a class="headerlink" href="#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk" title="Permalink to this heading"></a></h1>
-<p><a class="reference external" href="https://www.qualcomm.com/developer/blog/2023/11/power-efficient-acceleration-large-language-models-qualcomm-cloud-ai-sdk">Click here</a></p>
+<section id="using-github-repository">
+<h2>Using GitHub Repository<a class="headerlink" href="#using-github-repository" title="Permalink to this heading"></a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Create Python virtual env and activate it. (Required Python 3.8)</span>
+
+python3.8<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>qeff_env
+<span class="nb">source</span><span class="w"> </span>qeff_env/bin/activate
+pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>pip
+
+<span class="c1"># Clone and Install the QEfficient Repo.</span>
+pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/quic/efficient-transformers
+</pre></div>
+</div>
 </section>
-<section id="qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">
-<h1>Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats<a class="headerlink" href="#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats" title="Permalink to this heading"></a></h1>
-<p><a class="reference external" href="https://www.qualcomm.com/developer/blog/2024/01/qualcomm-cloud-ai-100-accelerates-large-language-model-inference-2x-using-microscaling-mx">click here</a></p>
 </section>
-<section id="qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">
-<h1>Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities<a class="headerlink" href="#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities" title="Permalink to this heading"></a></h1>
-<p><a class="reference external" href="https://www.qualcomm.com/developer/blog/2024/05/qualcomm-cloud-ai-introduces-efficient-transformers--one-api--in">click here</a></p>
+<section id="sanity-check">
+<h1>Sanity Check<a class="headerlink" href="#sanity-check" title="Permalink to this heading"></a></h1>
+<p>After any of the above installation methods, you can check if <code class="docutils literal notranslate"><span class="pre">QEfficient</span></code> is installed correctly by using</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import QEfficient; print(QEfficient.__version__)&quot;</span>
+</pre></div>
+</div>
+<p>If the above line executes successfully, you are good to go ahead and start deploying models on <code class="docutils literal notranslate"><span class="pre">Cloud</span> <span class="pre">AI</span> <span class="pre">100</span></code> cards using <code class="docutils literal notranslate"><span class="pre">QEfficient</span></code> library.</p>
 </section>
 
 
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="ll_api.html" class="btn btn-neutral float-left" title="Low Level API" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="reference.html" class="btn btn-neutral float-right" title="Qualcomm Cloud AI home" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="validate.html" class="btn btn-neutral float-left" title="Validated Models" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="quick_start.html" class="btn btn-neutral float-right" title="Command Line Interface" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>

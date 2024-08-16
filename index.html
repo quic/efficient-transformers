@@ -4,9 +4,10 @@
   <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Welcome to Efficient-Transformers Documentation! &mdash; Efficient-Transformers 1.16 documentation</title>
+  <title>Welcome to Efficient-Transformers Documentation! &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
+      <link rel="stylesheet" type="text/css" href="_static/my_theme.css?v=547657ed" />
 
   
   <!--[if lt IE 9]>
@@ -15,13 +16,13 @@
   
         <script src="_static/jquery.js?v=5d32c60e"></script>
         <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-        <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=a9e34a36"></script>
+        <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=d01aebe5"></script>
         <script src="_static/doctools.js?v=888ff710"></script>
         <script src="_static/sphinx_highlight.js?v=4825356b"></script>
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="Introduciton Qualcomm Efficient-Transformers" href="source/Introduction.html" /> 
+    <link rel="next" title="Introduction Qualcomm efficient-transformers library" href="source/introduction.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -33,7 +34,7 @@
           
           
           <a href="#" class="icon icon-home">
-            Efficient-Transformers
+            efficient-transformers
           </a>
 <div role="search">
   <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
@@ -45,27 +46,32 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="source/Introduction.html">Introduciton Qualcomm Efficient-Transformers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/Validate.html">Validated Models</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/Validate.html#models-coming-soon">Models Coming Soon</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="source/Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/Linux_installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/installation.html">Pre-requisites</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/installation.html#sanity-check">Sanity Check</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html">Quick Start Guide</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#using-high-level-api">Using High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#using-low-level-api">Using Low Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html">Command Line Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#python-api">Python API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="source/high_level_api.html">High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/low_level_api.html">Low level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/other_api.html">Utilities</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/hl_api.html">High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/ll_api.html">Low Level API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -90,7 +96,7 @@
 
     <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
           <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
-          <a href="#">Efficient-Transformers</a>
+          <a href="#">efficient-transformers</a>
       </nav>
 
       <div class="wy-nav-content">
@@ -116,74 +122,67 @@
 <div class="toctree-wrapper compound">
 <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="source/Introduction.html">Introduciton Qualcomm Efficient-Transformers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/Validate.html">Validated Models</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/Validate.html#models-coming-soon">Models Coming Soon</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
 </div>
 <div class="toctree-wrapper compound">
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="source/Linux_installation.html">Requirements</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/Linux_installation.html#linux-installation">Linux Installation</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="source/Linux_installation.html#using-sdk">Using SDK</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/Linux_installation.html#using-github-repository">Using GitHub Repository</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/installation.html">Pre-requisites</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/installation.html#linux-installation">Linux Installation</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="source/installation.html#using-sdk">Using SDK</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/installation.html#using-github-repository">Using GitHub Repository</a></li>
 </ul>
 </li>
+<li class="toctree-l1"><a class="reference internal" href="source/installation.html#sanity-check">Sanity Check</a></li>
 </ul>
 </div>
 <div class="toctree-wrapper compound">
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html">Quick Start Guide</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#using-high-level-api">Using High Level API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#use-qefficient-cloud-infer">1. Use QEfficient.cloud.infer</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#use-of-qefficient-cloud-execute">2. Use of QEfficient.cloud.execute</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html">Command Line Interface</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#qefficient-cloud-infer">QEfficient.cloud.infer</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#qefficient-cloud-execute">QEfficient.cloud.execute</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#multi-qranium-inference">Multi-Qranium Inference</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#using-low-level-api">Using Low Level API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#model-download-and-transform">1.  Model download and transform</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#onnx-export-of-transformed-model">2. ONNX export of transformed model</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#compile-on-cloud-ai-100">3. Compile on Cloud AI 100</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#run-benchmark">4. Run Benchmark</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#python-api">Python API</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#model-download-and-optimize-for-cloud-ai-100">1.  Model download and Optimize for Cloud AI 100</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#export-and-compile-with-one-api">2. Export and Compile with one API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#execute">3. Execute</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="source/kv_change.html">Details on KV Cache Optimization for Cloud AI 100</a></li>
+</ul>
+</div>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
 </ul>
 </div>
 <div class="toctree-wrapper compound">
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="source/high_level_api.html">High Level API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="source/high_level_api.html#module-QEfficient.cloud.infer">QEfficient.cloud.infer</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/high_level_api.html#module-QEfficient.cloud.execute">QEfficient.cloud.execute</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/hl_api.html">High Level API</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#module-QEfficient.transformers.models.modeling_auto"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">export</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#module-QEfficient.compile.compile_helper"><code class="docutils literal notranslate"><span class="pre">compile</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#module-QEfficient.generation.text_generation_inference"><code class="docutils literal notranslate"><span class="pre">Execute</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="source/low_level_api.html">Low level API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="source/low_level_api.html#module-QEfficient.src._transformers.auto">QEfficient.src._transformers.auto.QEFFAutoModelForCausalLM</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/low_level_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100">QEfficient.exporter.export_hf_to_cloud_ai_100 module</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/low_level_api.html#module-QEfficient.compile.compile_helper">QEfficient.compile</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/low_level_api.html#module-QEfficient.generation.text_generation_inference">QEfficient.generation.text_generation_inference module</a></li>
-</ul>
-</li>
-<li class="toctree-l1"><a class="reference internal" href="source/other_api.html">Utilities</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="source/other_api.html#module-QEfficient.utils.device_utils">QEfficient.utils.device_utils module</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/other_api.html#module-QEfficient.utils.generate_inputs">QEfficient.utils.generate_inputs module</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/other_api.html#module-QEfficient.utils.run_utils">QEfficient.utils.run_utils module</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/other_api.html#module-QEfficient.transformers.modeling_attn_mask_utils">QEfficient.transformers.modeling_attn_mask_utils module</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/other_api.html#module-QEfficient.transformers.modeling_outputs">QEfficient.transformers.modeling_outputs module</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/other_api.html#module-QEfficient.transformers.modeling_utils">QEfficient.transformers.modeling_utils module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/ll_api.html">Low Level API</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="source/ll_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_kvstyle</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/ll_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_bertstyle</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/ll_api.html#module-QEfficient.utils.device_utils"><code class="docutils literal notranslate"><span class="pre">utils</span></code></a></li>
 </ul>
 </li>
 </ul>
 </div>
-<!-- ```{toctree}
-:caption: 'Performance'
-:maxdepth: 2
-
-source/performance
-
-``` -->
 <div class="toctree-wrapper compound">
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -204,22 +203,13 @@ source/performance
 <li class="toctree-l1"><a class="reference internal" href="source/reference.html#ocp-microscaling-formats-mx-specification">OCP Microscaling Formats (MX) Specification</a></li>
 </ul>
 </div>
-<!-- 
-
-# Indices and tables
-
- 
-
-- {ref}`genindex`
-- {ref}`modindex`
-- {ref}`search` -->
 </section>
 
 
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="source/Introduction.html" class="btn btn-neutral float-right" title="Introduciton Qualcomm Efficient-Transformers" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="source/introduction.html" class="btn btn-neutral float-right" title="Introduction Qualcomm efficient-transformers library" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>
