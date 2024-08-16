@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import hashlib
 import json
 import logging
 import os
@@ -42,25 +43,33 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         # Base class
         return [x.__name__ for x in cls.pytorch_transforms + cls.onnx_transforms]
 
-    def __init__(self, model: nn.Module, card_name: Optional[str] = None):
+    def __init__(self, model: nn.Module):
+        if model.active_peft_config.peft_type != "LORA":
+            raise NotImplementedError("Only LoRA models are supported")
+
+        base_model = model.get_base_model()
+        self.model_name = type(base_model).__name__ + "-lora"
+
+        # Compute the hash with: model_config, peft_config, transforms
+        model_hash = hashlib.sha256()
+        model_hash.update(str(base_model.config.to_diff_dict()).encode())
+        model_hash.update(str(model.active_peft_config.to_dict()).encode())
+        model_hash.update(str(self.transform_names()).encode())
+        self.model_hash = model_hash.hexdigest()[:16]
+        self.model_dir = self.model_name + "-" + self.model_hash
+
+        self.num_layers = model.config.num_hidden_layers
         super().__init__(model)
-        self.card_name = card_name
-        self.num_layers = self.model.config.num_hidden_layers
         self.transform()
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, **kwargs):
         # Base class
-        card_name = kwargs.pop("card_name", None)
         if kwargs.get("use_cache") is False:
             warnings.warn("Overriding to use_cache=True")
         kwargs["use_cache"] = True
         model = cls._hf_auto_class.from_pretrained(pretrained_name_or_path, **kwargs)
-
-        if card_name is None and (not os.path.exists(pretrained_name_or_path)):
-            card_name = pretrained_name_or_path
-
-        return cls(model, card_name)
+        return cls(model)
 
     def transform(self, **kwargs):
         # Base class
@@ -117,11 +126,14 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     def export(self, export_dir: Optional[str] = None) -> str:
         # Base class
-        model_name = self.card_name.replace("/", "_")
-        export_dir = export_dir or os.path.join(QEFF_HOME, model_name)
-        self.onnx_path = os.path.join(export_dir, f"{model_name}.onnx")
+        export_dir = export_dir or os.path.join(QEFF_HOME, self.model_dir)
+        onnx_path = os.path.join(export_dir, f"{self.model_name}.onnx")
+        if os.path.isfile(self.onnx_path):
+            self.onnx_path = onnx_path
+            return onnx_path
+
         tmp_onnx_dir = os.path.join(export_dir, "onnx_tmp")
-        tmp_onnx_path = os.path.join(tmp_onnx_dir, f"{model_name}.onnx")
+        tmp_onnx_path = os.path.join(tmp_onnx_dir, f"{self.model_name}.onnx")
         os.makedirs(tmp_onnx_dir, exist_ok=True)
         torch.onnx.export(
             self.model,
@@ -148,11 +160,12 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         )
         logger.info("ONNX transforms applied")
 
-        onnx.save(model, self.onnx_path)
+        onnx.save(model, onnx_path)
         shutil.rmtree(tmp_onnx_dir)
         logger.info("Transformed onnx saved")
 
-        return self.onnx_path
+        self.onnx_path = onnx_path
+        return onnx_path
 
     def _compile(self, onnx_path, **kwargs):
         # Base class
