@@ -7,14 +7,15 @@
 
 import json
 import os
+from pathlib import Path
 
-QEFF_HOME = None
+QEFF_HOME: Path = None
 if "QEFF_HOME" in os.environ:
-    QEFF_HOME = os.environ["QEFF_HOME"]
+    QEFF_HOME = Path(os.environ["QEFF_HOME"])
 elif "XDG_CACHE_HOME" in os.environ:
-    QEFF_HOME = os.path.join(os.environ["XDG_CACHE_HOME"], "qeff_models")
+    QEFF_HOME = Path(os.environ["XDG_CACHE_HOME"]) / "qeff_models"
 else:
-    QEFF_HOME = os.path.expanduser("~/.cache/qeff_models")
+    QEFF_HOME = Path("~/.cache/qeff_models").expanduser()
 
 
 def json_serializable(obj):

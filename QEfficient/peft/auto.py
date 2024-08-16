@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import warnings
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -126,15 +127,15 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     def export(self, export_dir: Optional[str] = None) -> str:
         # Base class
-        export_dir = export_dir or os.path.join(QEFF_HOME, self.model_dir)
-        onnx_path = os.path.join(export_dir, f"{self.model_name}.onnx")
-        if os.path.isfile(self.onnx_path):
+        export_dir = Path(export_dir or (QEFF_HOME / self.model_dir))
+        onnx_path = export_dir / f"{self.model_name}.onnx"
+        if onnx_path.is_file():
             self.onnx_path = onnx_path
             return onnx_path
 
-        tmp_onnx_dir = os.path.join(export_dir, "onnx_tmp")
-        tmp_onnx_path = os.path.join(tmp_onnx_dir, f"{self.model_name}.onnx")
-        os.makedirs(tmp_onnx_dir, exist_ok=True)
+        tmp_onnx_dir = export_dir / "onnx_tmp"
+        tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
+        tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
         torch.onnx.export(
             self.model,
             (self.sample_inputs,),
