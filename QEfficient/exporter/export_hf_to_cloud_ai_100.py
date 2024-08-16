@@ -38,7 +38,7 @@ def convert_to_cloud_bertstyle(
             2. No KV retention logic.
             3. KV is every time computed for all the tokens until EOS/max_length.
 
-    ``Manadatory`` Args:
+    ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: `gpt2`.
         :qeff_model (QEFFAutoModelForCausalLM): Transformed KV torch model to be used.
         :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
@@ -152,12 +152,12 @@ def convert_to_cloud_kvstyle(
     """
     API to convert model with kv retention and export to ONNX.
     KV Style Approach-
-        1. This architecture is particularly suitable for autoregressive tasks.
+        1. This architecture is particularly suitable for auto-regressive tasks.
         2. where sequence generation involves processing one token at a time.
         3. And contextual information from earlier tokens is crucial for predicting the next token.
         4. The inclusion of a kV cache enhances the efficiency of the decoding process, making it more computationally efficient.
 
-    ``Manadatory`` Args:
+    ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: `gpt2`.
         :qeff_model (QEFFAutoModelForCausalLM): Transformed KV torch model to be used.
         :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
@@ -392,7 +392,7 @@ def qualcomm_efficient_converter(
         :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer. ``Defaults to None``.
         :cache_dir (str): Path of the ``cache`` directory. ``Defaults to None``.
         :onnx_dir_path (str): Path to store ``ONNX`` file. ``Defaults to None``.
-        :hf_token (str): Huggingface token to access gated models. ``Defaults is None``.
+        :hf_token (str): HuggingFace token to access gated models. ``Defaults is None``.
         :seq_len (int): The length of the sequence. ``Defaults is 128``.
         :kv (bool): If false, it will export to Bert style. ``Defaults is True``.
         :form_factor (str): Form factor of the hardware, currently only ``cloud`` is accepted. ``Defaults to cloud``.

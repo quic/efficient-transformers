@@ -143,7 +143,7 @@ def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_ba
     Args:
         :model (Union[onnx.ModelProto, str]): Pass ``ONNX`` model or path of the model.
         :gen_models_path (str): Path of generated ``ONNX`` model.
-        :model_base_name (str): Base name of the Huggingface model.
+        :model_base_name (str): Base name of the HuggingFace model.
 
     Return:
         :str: Base name of ``ONNX`` exported model.

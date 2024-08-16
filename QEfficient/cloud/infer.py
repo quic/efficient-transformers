@@ -36,7 +36,7 @@ def main(
     hf_token: Optional[str] = None,
 ) -> None:
     """
-    ``Manadatory`` Args:
+    ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
         :num_cores (int): Number of cores to compile model on.
         :device_group (List[int]): Device Ids to be used for compilation. If ``len(device_group) > 1``, multiple Card setup is enabled.

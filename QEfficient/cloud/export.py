@@ -29,7 +29,7 @@ def get_onnx_model_path(
     """
     exports the model to onnx if pre-exported file is not found and returns onnx_model_path
 
-    ``Manadatory`` Args:
+    ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``.
     ``Optional`` Args:
         :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to None.``
@@ -69,7 +69,7 @@ def main(
     """
     Helper function used by export CLI app for exporting to ONNX Model.
 
-    ``Manadatory`` Args:
+    ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``.
 
     ``Optional`` Args:

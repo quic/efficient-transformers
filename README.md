@@ -30,9 +30,9 @@ For other models, there is comprehensive documentation to inspire upon the chang
 1. Reimplemented blocks from Transformers <link> which enable efficient on-device retention of intermediate states.
 2. Graph transformations to enable execution of key operations in lower precision
 3. Graph transformations to replace some operations to other mathematically equivalent operations
-4. Handling for underflows and overflows in lower precision
+4. Handling for under-flows and overflows in lower precision
 5. Patcher modules to map weights of original model's operations to updated model's operations
-6. Exporter module to export the model source into a ONNX Graph.
+6. Exporter module to export the model source into a `ONNX` Graph.
 7. Sample example applications and demo notebooks
 8. Unit test templates. 
 
@@ -41,21 +41,35 @@ For other models, there is comprehensive documentation to inspire upon the chang
 2. If the PR modifies any common utilities, tests need to be included to execute tests of all models included in the library.
 
 
-## Getting Started 
+## Quick Installation
+```bash
 
-To get started with efficient-transformers, visit our documentation
+# Create Python virtual env and activate it. (Required Python 3.8)
 
+python3.8 -m venv qeff_env
+source qeff_env/bin/activate
+pip install -U pip
+
+# Clone and Install the QEfficient Repo.
+pip install git+https://github.com/quic/efficient-transformers
+
+``` 
+
+For more details about using ``QEfficient`` via Cloud AI 100 Apps SDK, visit [Linux Installation Guide](https://quic.github.io/efficient-transformers/source/Linux_installation.html)
+
+
+## Documentation
+
+* [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html#)
+* [Python API](https://quic.github.io/efficient-transformers/source/high_level_api.html)
 * [Validated Models](https://quic.github.io/efficient-transformers/source/Validate.html)
 * [Models coming soon](https://quic.github.io/efficient-transformers/source/Validate.html#models-coming-soon)
-* [Linux Installation Guide](https://quic.github.io/efficient-transformers/source/Linux_installation.html)
-* [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html#)
-* [Python API](https://quic.github.io/efficient-transformers/source/high_level_api.html) 
 
-Note: More details are here: https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Model-Architecture-Support/Large-Language-Models/llm/
+> Note: More details are here: https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Model-Architecture-Support/Large-Language-Models/llm/
 
 ## Acknowledgements
 Thanks to:
-* Huggingface transformers for work in LLM GenAI modeling implementation
+* HuggingFace transformers for work in LLM GenAI modeling implementation
 *  ONNX, Pytorch,  ONNXruntime community.
 
 ## Support

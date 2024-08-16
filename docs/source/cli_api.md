@@ -1,3 +1,8 @@
+
+```{NOTE}
+Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group``should be in single quotes e.g.  ``'--device_group [0]'``
+```
+
 (infer_api)=
 # `QEfficient.cloud.infer`
 ```{eval-rst}

@@ -1,8 +1,8 @@
 # Pre-requisites
 System Requirements:
-1. [Supported Linux OS](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/#operating-systems) - Ubuntu, RHEL and AWS Linux 
-2. [Pre-requisites installed](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Pre-requisites/pre-requisites/)
-3. [Cloud AI 100 Platform and Apps SDK installed](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/)  
+1. [Supported Linux OS](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/#operating-systems) - Ubuntu, RHEL and AWS Linux
+2. [Cloud AI 100 Platform and Apps SDK installed](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/) 
+3. [SDK Pre-requisites](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Pre-requisites/pre-requisites/) 
 4. [Multi-device support enabled for model sharding](https://github.com/quic/cloud-ai-sdk/tree/1.12/utils/multi-device)
 
 # Linux Installation 
@@ -10,7 +10,7 @@ There are two different way to install efficient-transformers.
 
 ## Using SDK
 
-* Donwload Apps SDK: [Cloud AI 100 Platform and Apps SDK install](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/)  
+* Download Apps SDK: [Cloud AI 100 Platform and Apps SDK install](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/)  
 
 
 ```bash
@@ -34,3 +34,11 @@ pip install -U pip
 pip install git+https://github.com/quic/efficient-transformers
 
 ``` 
+
+# Sanity Check
+
+After any of the above installation methods, you can check if ``QEfficient`` is installed correctly by using
+```bash
+python -c "import QEfficient; print(QEfficient.__version__)"
+```
+If the above line executes successfully, you are good to go ahead and start deploying models on ``Cloud AI 100`` cards using ``QEfficient`` library.

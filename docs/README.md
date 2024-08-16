@@ -1,16 +1,16 @@
 # Docs
 
-This directory contains the stuff for building static html documentations based on [sphinx](https://www.sphinx-doc.org/en/master/).
+This directory contains the instructions for building static html documentations based on [sphinx](https://www.sphinx-doc.org/en/master/).
 
 
 ## Build the docs
-Firstly, install the packages if QEfficient Repo is not installed else skip:
+Install the packages required for building documentation:
 
 ```sh
  pip install -r docs/requirements.txt
 ```
 
-And then, change directory to docs folder to make the docs.
+And then, change directory to docs folder to build the docs.
 
 ```sh
 cd docs/

@@ -19,7 +19,7 @@ from QEfficient.utils.logging_utils import logger
 
 def replace_module_with_qeff_layers(model: nn.Module) -> None:
     """
-    Replaces the transformers nn.Module classes with optmized QEff classes in place.
+    Replaces the transformers nn.Module classes with optimized QEff classes in place.
 
     Args:
         :model (torch.nn.Module) Base PyTorch model.
@@ -92,7 +92,7 @@ def transform(model: QEFFBaseModel, form_factor="cloud"):
     Will replace the torch.nn.Module layers of passed QEffModel with optimized implementation of the same.
 
     model (torch.nn.Module): object of any instance of class that is child of `QEFFBaseAutoModelFactory`
-    form_factor (str): form factor configuration for optmizing the model, available options=["cloud", "edge"].
+    form_factor (str): form factor configuration for optimizing the model, available options=["cloud", "edge"].
     """
     assert form_factor == "cloud", "Only form_factor='cloud' is supported as of now!"
     # FIXME: move this to class and use model.transform()

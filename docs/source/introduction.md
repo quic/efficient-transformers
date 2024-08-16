@@ -1,7 +1,7 @@
 ![alt text](image/Cloud_AI_100.png)
 
 
-# Introduction Qualcomm Efficient-Transformers
+# Introduction Qualcomm ``efficient-transformers`` library
  
 **Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain**
 

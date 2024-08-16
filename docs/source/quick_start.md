@@ -10,7 +10,9 @@ To achieve this, we have 2 levels of APIs, with different levels of abstraction.
 
 ## Command Line Interface
 
-> **_NOTE:_** Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group``should be in single quotes e.g.  ``'--device_group [0]'``
+```{NOTE}
+Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group``should be in single quotes e.g.  ``'--device_group [0]'``
+```
 
 ### QEfficient.cloud.infer
 
@@ -83,11 +85,11 @@ from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 # ROOT_DIR = os.path.dirname(os.path.abspath(""))
 # CACHE_DIR = os.path.join(ROOT_DIR, "tmp") #, you can use a different location for just one model by passing this param as cache_dir in below API.
 
-# Model-Card name to be onboarded (This is HF Model Card name) : https://huggingface.co/gpt2-xl
+# Model-Card name (This is HF Model Card name) : https://huggingface.co/gpt2-xl
 model_name = "gpt2"  # Similar, we can change model name and generate corresponding models, if we have added the support in the lib.
 
 qeff_model = AutoModelForCausalLM.from_pretrained(model_name)
-print(f"{model_name} optmized for AI 100 \n", qeff_model)
+print(f"{model_name} optimized for AI 100 \n", qeff_model)
 ```
 
 ### 2. Export and Compile with one API
@@ -95,12 +97,12 @@ print(f"{model_name} optmized for AI 100 \n", qeff_model)
 Use the qualcomm_efficient_converter API to export the KV transformed Model to ONNX and Verify on Torch.
 
 ```Python
-# We can now export the modified models to Onnx framework
-# This will generate single Onnx Model for both Prefill and Decode Variations which are optimized for
+# We can now export the modified models to ONNX framework
+# This will generate single ONNX Model for both Prefill and Decode Variations which are optimized for
 # Cloud AI 100 Platform.
 
 # While generating the ONNX model, this will clip the overflow constants to fp16
-# Verify the model on Onnxruntime vs Pytorch
+# Verify the model on ONNXRuntime vs Pytorch
 
 # Then generate inputs and customio yaml file required for compilation.
 # Compile the model for provided compilation arguments

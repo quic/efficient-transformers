@@ -101,13 +101,13 @@ class QAICInferenceSession:
         return [binding.name for binding in self.bindings if binding.dir == aicapi.BUFFER_IO_TYPE_OUTPUT]
 
     def activate(self):
-        """Device Activation"""
+        """Activate qpc"""
 
         self.program.activate()
         self.execObj = qaicrt.ExecObj(self.context, self.program)
 
     def deactivate(self):
-        """Device deactivate"""
+        """Deactivate qpc"""
 
         del self.execObj
         self.program.deactivate()

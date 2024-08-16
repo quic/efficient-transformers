@@ -118,7 +118,7 @@ def compile(
 
     This function will be deprecated soon and will be replaced by ``QEFFAutoModelForCausalLM.compile``.
 
-    ``Manadatory`` Args:
+    ``Mandatory`` Args:
         :onnx_path (str): Generated ``ONNX`` Model Path.
         :qpc_path (str): Path for saving compiled qpc binaries.
         :num_cores (int): Number of cores to compile the model on.

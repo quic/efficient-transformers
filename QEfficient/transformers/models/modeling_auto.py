@@ -51,59 +51,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}\n" + self.model.__repr__()
-
-    @property
-    def tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
-        """Returns the tokenizer for given model based on ``self.pretrained_model_name_or_path``.
-        Loads the tokenizer if required.
-
-        Returns:
-            :Union[PreTrainedTokenizer, PreTrainedTokenizerFast]: Tokenizer from ``transformers`` for the given model.
-        """
-        if self._tokenizer is None:
-            self._tokenizer = self.get_tokenizer()
-        return self._tokenizer
-
-    def get_tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
-        tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=self.pretrained_model_name_or_path, **self.kwargs)
-        return tokenizer
-
-
-class QEFFAutoModelForCausalLM(QEFFTransformersBase):
-    """
-    The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
-    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
-    Please note that the QEFF class is also a part of the ``QEfficient`` module.
-
-    ``Manadatory`` Args:
-        :model (nn.Module):  PyTorch model
-        :pretrained_model_name_or_path (str): We recommend passing name of the model as input here, as you are not using `from_pretrained` method. This name will be used for deciding path of the ``ONNX/qpc`` files generated during ``export``, ``compilation`` stages.
-
-    .. code-block:: python
-
-        from QEfficient import QEFFAutoModelForCausalLM
-
-    """
-
-    _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
-
-    def transform(self):
-        """
-        This method applies all relevant optimization transforms on the model and toggles the ``self.is_transformed`` attribute to True. If the model is already transformed, the method will simply return.
-        Please note that this method does not require any input arguments."
-
-        Returns:
-            :obj: Same object with transformed ``self.model``
-        """
-        if self.is_transformed:
-            return
-        for transform in self._pytorch_transforms:
-            transform.apply(self.model)
-        self.is_transformed = True
-
-    def execute(self, *args, **kwargs):  # type: ignore
-        raise NotImplementedError("Reached too far!!")
-
+    
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         """
@@ -113,7 +61,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         Accepts All the parameters that are acceptable by ``transformers.AutoModelForCausalLM``
         There are few additional parameters that this method can take.
 
-        ``Manadatory`` Args:
+        ``Mandatory`` Args:
             :transform (bool): Whether to optimize model for KV retention; default is ``True``. Pass ``False`` to get BertStyle model.
             :model_card_name (str): ``HuggingFace`` model card name or name of the model if custom, used for deciding directory name while saving ``ONNX/qpc`` files.
 
@@ -150,6 +98,58 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             model_card_name=model_card_name,
             **kwargs,
         )
+
+    @property
+    def tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
+        """Returns the tokenizer for given model based on ``self.pretrained_model_name_or_path``.
+        Loads the tokenizer if required.
+
+        Returns:
+            :Union[PreTrainedTokenizer, PreTrainedTokenizerFast]: Tokenizer from ``transformers`` for the given model.
+        """
+        if self._tokenizer is None:
+            self._tokenizer = self.get_tokenizer()
+        return self._tokenizer
+
+    def get_tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
+        tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=self.pretrained_model_name_or_path, **self.kwargs)
+        return tokenizer
+
+
+class QEFFAutoModelForCausalLM(QEFFTransformersBase):
+    """
+    The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
+    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+    Please note that the QEFF class is also a part of the ``QEfficient`` module.
+
+    ``Mandatory`` Args:
+        :model (nn.Module):  PyTorch model
+        :pretrained_model_name_or_path (str): We recommend passing name of the model as input here, as you are not using `from_pretrained` method. This name will be used for deciding path of the ``ONNX/qpc`` files generated during ``export``, ``compilation`` stages.
+
+    .. code-block:: python
+
+        from QEfficient import QEFFAutoModelForCausalLM
+
+    """
+
+    _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
+
+    def transform(self):
+        """
+        This method applies all relevant optimization transforms on the model and toggles the ``self.is_transformed`` attribute to True. If the model is already transformed, the method will simply return.
+        Please note that this method does not require any input arguments."
+
+        Returns:
+            :obj: Same object with transformed ``self.model``
+        """
+        if self.is_transformed:
+            return
+        for transform in self._pytorch_transforms:
+            transform.apply(self.model)
+        self.is_transformed = True
+
+    def execute(self, *args, **kwargs):  # type: ignore
+        raise NotImplementedError("Reached too far!!")
 
     def export(self, model_card_name: Optional[str] = None) -> str:
         """
