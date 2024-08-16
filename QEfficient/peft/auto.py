@@ -24,7 +24,7 @@ from torch import nn
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, OnnxTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
-from QEfficient.peft.onnx_transforms import AdaptersAsInputsTransform
+from QEfficient.peft.onnx_transforms import LoraWeightsToInputsTransform
 from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils._utils import get_padding_shape_from_config
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     pytorch_transforms: List[PytorchTransform] = [CustomOpsTransform, KVCacheTransform, PeftModelInputsTransform]
-    onnx_transforms: List[OnnxTransform] = [FP16ClipTransform, AdaptersAsInputsTransform, SplitTensorsTransform]
+    onnx_transforms: List[OnnxTransform] = [FP16ClipTransform, LoraWeightsToInputsTransform, SplitTensorsTransform]
     _hf_auto_class = AutoPeftModelForCausalLM
 
     @classmethod
@@ -170,7 +170,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             raise e
 
         finally:
-            shutil.rmtree(tmp_onnx_dir)
+            shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
         self.onnx_path = onnx_path
         return onnx_path
@@ -216,8 +216,11 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         **compiler_options,
     ) -> str:
         compile_dir = Path(compile_dir or (QEFF_HOME / self.model_dir))
-        onnx_path = onnx_path or self.onnx_path
+        onnx_path = Path(onnx_path or self.onnx_path)
         aic_binary_dir = compile_dir / "qpc"
+
+        if not onnx_path.is_file():
+            raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
 
         # Specializations
         specializations_json = compile_dir / "specializations.json"
@@ -241,6 +244,9 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
                 for i in range(self.num_layers):
                     for kv in ["key", "value"]:
                         fp.write(f" - IOName: past_{kv}.{i}{suffix}\n   Precision: {kv_cache_dtype}\n\n")
+
+                for weight_name in self.adapter_weights[self.active_adapter]:
+                    fp.write(f" - IOName: {weight_name}{suffix}\n   Precision: float16\n\n")
 
         # MDP
         if num_devices > 1:
