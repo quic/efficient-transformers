@@ -28,7 +28,7 @@ from QEfficient.peft.onnx_transforms import AdaptersAsInputsTransform
 from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils._utils import get_padding_shape_from_config
-from QEfficient.utils.cache_dir import QEFF_HOME
+from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +52,9 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         # Compute the hash with: model_config, peft_config, transforms
         model_hash = hashlib.sha256()
-        model_hash.update(str(base_model.config.to_diff_dict()).encode())
-        model_hash.update(str(model.active_peft_config.to_dict()).encode())
-        model_hash.update(str(self.transform_names()).encode())
+        model_hash.update(to_hashable(base_model.config.to_diff_dict()))
+        model_hash.update(to_hashable(model.active_peft_config.to_dict()))
+        model_hash.update(to_hashable(self.transform_names()))
         self.model_hash = model_hash.hexdigest()[:16]
         self.model_dir = self.model_name + "-" + self.model_hash
 
