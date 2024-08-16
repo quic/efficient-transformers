@@ -8,7 +8,6 @@
 import hashlib
 import json
 import logging
-import os
 import shutil
 import subprocess
 import warnings
@@ -168,9 +167,10 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         self.onnx_path = onnx_path
         return onnx_path
 
-    def _compile(self, onnx_path, **kwargs):
+    def _compile(self, onnx_path, **kwargs) -> str:
         # Base class
         command = ["/opt/qti-aic/exec/qaic-exec", f"-m={onnx_path}", "-aic-hw", "-aic-hw-version=2.0"]
+        aic_binary_dir = Path(kwargs.pop("aic_binary_dir", None) or "qpc")
         for key, value in kwargs.items():
             option = "-" + key.replace("_", "-")
             if isinstance(value, bool):
@@ -178,8 +178,20 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
                     command.append(option)
                 continue
             command.append(f"{option}={value}")
-        logger.info(f"Running compiler: {command}")
+
+        # Compute hash for binary location
+        compile_hash = hashlib.sha256(to_hashable(command)).hexdigest()[:16]
+        aic_binary_dir = aic_binary_dir + "-" + compile_hash
+        if aic_binary_dir.is_dir():
+            if (aic_binary_dir / "programqpc.bin").is_file():
+                return aic_binary_dir
+            # Probably compilation failure last time, delete directory to start over
+            shutil.rmtree(aic_binary_dir)
+
+        command.append(f"-aic-binary-dir={aic_binary_dir}")
+        logger.info(f"Running compiler: {' '.join(command)}")
         subprocess.run(command).check_returncode()
+        return aic_binary_dir
 
     def compile(
         self,
@@ -188,20 +200,19 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         prefill_seq_len: int,
         ctx_len: int,
         onnx_path: Optional[str] = None,
-        binary_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
         num_devices: int = 1,
         num_cores: int = 16,
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         **compiler_options,
     ) -> str:
-        model_name = self.card_name.replace("/", "_")
-        model_dir = os.path.join(QEFF_HOME, model_name)
+        compile_dir = Path(compile_dir or (QEFF_HOME / self.model_dir))
         onnx_path = onnx_path or self.onnx_path
-        binary_path = binary_path or os.path.join(model_dir, "qpc")
+        aic_binary_dir = compile_dir / "qpc"
 
         # Specializations
-        specializations_json = os.path.join(model_dir, "specializations.json")
+        specializations_json = compile_dir / "specializations.json"
         with open(specializations_json, "w") as fp:
             json.dump(
                 {
@@ -216,7 +227,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         # Custom IO
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
-        custom_io_yaml = os.path.join(model_dir, f"custom_io_{kv_cache_dtype}.yaml")
+        custom_io_yaml = compile_dir / f"custom_io_{kv_cache_dtype}.yaml"
         with open(custom_io_yaml, "w") as fp:
             for suffix in ["", "_RetainedState"]:
                 for i in range(self.num_layers):
@@ -225,7 +236,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         # MDP
         if num_devices > 1:
-            mdp_ts_json = os.path.join(model_dir, f"mdp_ts_{num_devices}.json")
+            mdp_ts_json = compile_dir / f"mdp_ts_{num_devices}.json"
             with open(mdp_ts_json, "w") as fp:
                 json.dump(
                     {
@@ -242,11 +253,11 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
                 )
             compiler_options["mdp_load_partition_config"] = mdp_ts_json
 
-        self._run_compiler(
+        self.qpc_path = self._compile(
             onnx_path,
             network_specialization_config=specializations_json,
             compile_only=True,
-            aic_binary_dir=binary_path,
+            aic_binary_dir=aic_binary_dir,
             convert_to_fp16=True,
             mxfp6_matmul=mxfp6_matmul,
             custom_IO_list_file=custom_io_yaml,
@@ -254,8 +265,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             aic_num_cores=num_cores,
             **compiler_options,
         )
-
-        self.binary_path = binary_path
+        return self.qpc_path
 
     def run_pytorch(self, inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # Base class
