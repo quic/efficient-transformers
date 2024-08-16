@@ -36,4 +36,7 @@ class AdaptersAsInputsTransform(OnnxTransform):
             for i in sorted(removed_initializers, reverse=True):
                 model.graph.initializer.pop(i)
 
+            # Add adapter_name in metadata_props
+            model.metadata_props.append(onnx.StringStringEntryProto(key="adapter_name", value=adapter_name))
+
         return model, transformed

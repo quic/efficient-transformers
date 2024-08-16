@@ -37,6 +37,11 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     onnx_transforms: List[OnnxTransform] = [FP16ClipTransform, AdaptersAsInputsTransform, SplitTensorsTransform]
     _hf_auto_class = AutoPeftModelForCausalLM
 
+    @classmethod
+    def transform_names(cls) -> List[str]:
+        # Base class
+        return [x.__name__ for x in cls.pytorch_transforms + cls.onnx_transforms]
+
     def __init__(self, model: nn.Module, card_name: Optional[str] = None):
         super().__init__(model)
         self.card_name = card_name
@@ -102,6 +107,14 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             outputs.append(f"past_value.{i}_RetainedState")
         return outputs
 
+    @property
+    def export_kwargs(self) -> Dict[str, any]:
+        return {"do_constant_folding": False}  # To avoid merging adapter weights with base weights
+
+    @property
+    def onnx_transform_kwargs(self) -> Dict[str, any]:
+        return {"adapter_name": self.model.active_adapter}
+
     def export(self, export_dir: Optional[str] = None) -> str:
         # Base class
         model_name = self.card_name.replace("/", "_")
@@ -118,17 +131,21 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             output_names=self.output_names,
             dynamic_axes=self.dynamic_axes,
             opset_version=13,
+            **self.export_kwargs,
         )
         logger.info("Pytorch export successful")
 
         model = onnx.load(tmp_onnx_path, load_external_data=False)
-        transform_kwargs = {
+        onnx_transform_kwargs = {
             "onnx_base_dir": tmp_onnx_dir,
-            "model_name": model_name,
-            "adapter_name": self.model.active_adapter,
+            "model_name": self.model_name,
         }
+        onnx_transform_kwargs.update(self.onnx_transform_kwargs)
         for transform in self.onnx_transforms:
-            model, transformed = transform.apply(model, **transform_kwargs)
+            model, transformed = transform.apply(model, **onnx_transform_kwargs)
+        model.metadata_props.append(
+            onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self.transform_names()))
+        )
         logger.info("ONNX transforms applied")
 
         onnx.save(model, self.onnx_path)
@@ -234,7 +251,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     def run_ort(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         # Base class
-        if not getattr(self, "ort_session", None):
+        if self.ort_session is None:
             if self.onnx_path is None:
                 self.export()
             self.ort_session = ORTInferenceSession(self.onnx_path)
