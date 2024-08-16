@@ -51,7 +51,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}\n" + self.model.__repr__()
-    
+
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         """
