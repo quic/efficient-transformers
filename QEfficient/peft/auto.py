@@ -73,9 +73,9 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     def transform(self, **kwargs):
         # Base class
-        logger.info("Pytorch layers are transformed")
         for transform in self.pytorch_transforms:
             self.model, transformed = transform.apply(self.model)
+        logger.info("Pytorch transforms applied")
 
     @property
     def sample_inputs(self) -> Dict[str, torch.Tensor]:
@@ -135,34 +135,42 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         tmp_onnx_dir = export_dir / "onnx_tmp"
         tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
-        torch.onnx.export(
-            self.model,
-            (self.sample_inputs,),
-            tmp_onnx_path,
-            input_names=self.input_names,
-            output_names=self.output_names,
-            dynamic_axes=self.dynamic_axes,
-            opset_version=13,
-            **self.export_kwargs,
-        )
-        logger.info("Pytorch export successful")
 
-        model = onnx.load(tmp_onnx_path, load_external_data=False)
-        onnx_transform_kwargs = {
-            "onnx_base_dir": tmp_onnx_dir,
-            "model_name": self.model_name,
-        }
-        onnx_transform_kwargs.update(self.onnx_transform_kwargs)
-        for transform in self.onnx_transforms:
-            model, transformed = transform.apply(model, **onnx_transform_kwargs)
-        model.metadata_props.append(
-            onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self.transform_names()))
-        )
-        logger.info("ONNX transforms applied")
+        try:
+            torch.onnx.export(
+                self.model,
+                (self.sample_inputs,),
+                str(tmp_onnx_path),
+                input_names=self.input_names,
+                output_names=self.output_names,
+                dynamic_axes=self.dynamic_axes,
+                opset_version=13,
+                **self.export_kwargs,
+            )
+            logger.info("Pytorch export successful")
 
-        onnx.save(model, onnx_path)
-        shutil.rmtree(tmp_onnx_dir)
-        logger.info("Transformed onnx saved")
+            model = onnx.load(tmp_onnx_path, load_external_data=False)
+            onnx_transform_kwargs = {
+                "onnx_base_dir": str(tmp_onnx_dir),
+                "model_name": self.model_name,
+            }
+            onnx_transform_kwargs.update(self.onnx_transform_kwargs)
+            for transform in self.onnx_transforms:
+                model, transformed = transform.apply(model, **onnx_transform_kwargs)
+            model.metadata_props.append(
+                onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self.transform_names()))
+            )
+            logger.info("ONNX transforms applied")
+
+            onnx.save(model, onnx_path)
+            logger.info("Transformed onnx saved")
+
+        except Exception as e:
+            logger.error(f"ONNX export failed: {e}")
+            raise e
+
+        finally:
+            shutil.rmtree(tmp_onnx_dir)
 
         self.onnx_path = onnx_path
         return onnx_path
@@ -181,7 +189,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         # Compute hash for binary location
         compile_hash = hashlib.sha256(to_hashable(command)).hexdigest()[:16]
-        aic_binary_dir = aic_binary_dir + "-" + compile_hash
+        aic_binary_dir = aic_binary_dir.with_name(aic_binary_dir.name + "-" + compile_hash)
         if aic_binary_dir.is_dir():
             if (aic_binary_dir / "programqpc.bin").is_file():
                 return aic_binary_dir
