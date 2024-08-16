@@ -16,6 +16,7 @@ from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
 from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTransform, KVCacheTransform
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
+from QEfficient.transformers.quantizers.quantizer_awq import replace_transformers_quantizers
 
 # Dictionary that defines the interface from transformers to be used underneath the QEFF interface
 QEFFAutoModelToTransformersAutoModelMap = {
@@ -91,7 +92,12 @@ class QEFFTransformersBase(QEFFBaseModel):
         if attn_implementation != "eager":
             logger.warning(f"Updating attn_implementation to be 'eager', got {attn_implementation}")
             kwargs.update({"attn_implementation": "eager"})
-
+        
+        low_cpu_mem_usage = kwargs.get("low_cpu_mem_usage", None)
+        if low_cpu_mem_usage:
+            logger.warning(f"Updating low_cpu_mem_usage to be 'False', got {low_cpu_mem_usage}")
+        kwargs.update({"low_cpu_mem_usage": False})
+        replace_transformers_quantizers()
         model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
         )
