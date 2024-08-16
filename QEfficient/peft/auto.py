@@ -18,7 +18,7 @@ import numpy as np
 import onnx
 import torch
 from onnxruntime import InferenceSession as ORTInferenceSession
-from peft import AutoPeftModelForCausalLM
+from peft import AutoPeftModelForCausalLM, load_peft_weights
 from torch import nn
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
@@ -60,16 +60,35 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         self.num_layers = model.config.num_hidden_layers
         super().__init__(model)
+
+        self.adapter_weights = {}
         self.transform()
 
+    def load_adapter(self, model_id: str, adapter_name: str):
+        self.model.load_adapter(model_id, adapter_name)
+        self.adapter_weights[adapter_name] = load_peft_weights(model_id)
+
+    @property
+    def active_adapter(self) -> str:
+        return self.model.active_adapter
+
+    def set_adapter(self, adapter_name: str):
+        self.model.set_adapter(adapter_name)
+
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, **kwargs):
+    def _from_pretrained(cls, pretrained_name_or_path: str, **kwargs):
         # Base class
         if kwargs.get("use_cache") is False:
             warnings.warn("Overriding to use_cache=True")
         kwargs["use_cache"] = True
         model = cls._hf_auto_class.from_pretrained(pretrained_name_or_path, **kwargs)
         return cls(model)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_name_or_path: str, **kwargs):
+        obj = cls._from_pretrained(pretrained_name_or_path)
+        obj.load_adapter(pretrained_name_or_path, obj.active_adapter)
+        return obj
 
     def transform(self, **kwargs):
         # Base class
