@@ -26,7 +26,7 @@ QEFFAutoModelToTransformersAutoModelMap = {
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
-    Parent class for models QEFF provides from transformers i.e. (AutoModel, AutoModelForCausalLM, AutoModelForAudioClassification etc.) from src/transformers/models/auto/modeling_auto.py file.
+    Parent class for models QEFF provides from transformers i.e. (AutoModel, AutoModelForCausalLM, AutoModelForAudioClassification etc.) from transformers/models/modeling_auto.py file.
     """
 
     def __init__(self, model: nn.Module, pretrained_model_name_or_path: str, **kwargs) -> None:
@@ -52,20 +52,34 @@ class QEFFTransformersBase(QEFFBaseModel):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}\n" + self.model.__repr__()
 
-    @property
-    def tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
-        if self._tokenizer is None:
-            self._tokenizer = self.get_tokenizer()
-        return self._tokenizer
-
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         """
-        This method accepts All the parameters that are acceptable by transformers.AutoModelForCausalLM.
+        This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
+        Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
+
+        Accepts All the parameters that are acceptable by ``transformers.AutoModelForCausalLM``
         There are few additional parameters that this method can take.
-        ---------
-        :transform: bool. Whether to optimize model for KV retention; default is True. Pass False to get BertStyle model.
-        :model_card_name: str. HuggingFace model card name or name of the model if custom, used for deciding folder name while saving ONNX/qpc files.
+
+        ``Mandatory`` Args:
+            :transform (bool): Whether to optimize model for KV retention; default is ``True``. Pass ``False`` to get BertStyle model.
+            :model_card_name (str): ``HuggingFace`` model card name or name of the model if custom, used for deciding directory name while saving ``ONNX/qpc`` files.
+
+            Example usage:
+
+        .. code-block:: python
+
+            from QEfficient import QEFFAutoModelForCausalLM
+
+            # Initialize the model using from_pretrained similar to transformers.AutoModelForCausalLM
+            model = QEFFAutoModelForCausalLM.from_pretrained("gpt2")
+
+            # Now you can directly compile the model for Cloud AI 100
+            model.compile(num_cores=14, device_group=[0])  # Considering you have a Cloud AI 100 Standard SKU
+
+            # You can now execute the model
+            model.generate(prompts=["Hi there!!"])
+
         """
         model_card_name = kwargs.pop(
             "model_card_name", None
@@ -85,6 +99,18 @@ class QEFFTransformersBase(QEFFBaseModel):
             **kwargs,
         )
 
+    @property
+    def tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
+        """Returns the tokenizer for given model based on ``self.pretrained_model_name_or_path``.
+        Loads the tokenizer if required.
+
+        Returns:
+            :Union[PreTrainedTokenizer, PreTrainedTokenizerFast]: Tokenizer from ``transformers`` for the given model.
+        """
+        if self._tokenizer is None:
+            self._tokenizer = self.get_tokenizer()
+        return self._tokenizer
+
     def get_tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
         tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=self.pretrained_model_name_or_path, **self.kwargs)
         return tokenizer
@@ -92,12 +118,30 @@ class QEFFTransformersBase(QEFFBaseModel):
 
 class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
-    QEFF class for manipulating any causal language model from HuggingFace hub.
+    The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
+    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+    Please note that the QEFF class is also a part of the ``QEfficient`` module.
+
+    ``Mandatory`` Args:
+        :model (nn.Module):  PyTorch model
+        :pretrained_model_name_or_path (str): We recommend passing name of the model as input here, as you are not using `from_pretrained` method. This name will be used for deciding path of the ``ONNX/qpc`` files generated during ``export``, ``compilation`` stages.
+
+    .. code-block:: python
+
+        from QEfficient import QEFFAutoModelForCausalLM
+
     """
 
     _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
 
     def transform(self):
+        """
+        This method applies all relevant optimization transforms on the model and toggles the ``self.is_transformed`` attribute to True. If the model is already transformed, the method will simply return.
+        Please note that this method does not require any input arguments."
+
+        Returns:
+            :obj: Same object with transformed ``self.model``
+        """
         if self.is_transformed:
             return
         for transform in self._pytorch_transforms:
@@ -108,6 +152,21 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         raise NotImplementedError("Reached too far!!")
 
     def export(self, model_card_name: Optional[str] = None) -> str:
+        """
+        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+        The model should already be transformed i.e. ``self.is_transformed`` should be ``True``.
+        Otherwise, this will raise an ``AssertionError``.
+        We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
+
+        ``Optional`` Args:
+            :model_card_name (Optional[str]): Name of the model card. Mandatory when model is initialized with path for ``pretrained_model_name_or_path`` argument during initialization. ``Defaults to None.``
+
+        Raises:
+            :AttributeError: If ``pretrained_model_name_or_path`` is a path, this function needs model card name of the model so that it can distinguish between directories while saving the ``ONNX`` files generated. So, user needs to pass ``model_card_name`` as a valid ``string`` in that case, Otherwise this will raise the error.
+
+        Returns:
+            :str: Path of the generated ``ONNX`` graph.
+        """
         assert self.is_transformed, "Please first run transform on the QEFFAutoModelForCausalLM object"
 
         # Make sure model_card_name is available for export
@@ -135,6 +194,27 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mos: int = -1,
         aic_enable_depth_first: bool = False,
     ) -> str:
+        """
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        The generated ``qpc`` can be found under the directory ``efficient-transformers/qeff_models/{self.model_card_name}/qpc``.
+
+        ``Mandatory`` Args:
+            :num_cores (int): Number of cores used to compile the model.
+            :device_group (List[int]): If this is a list of more that one integers, tensor-slicing is invoked.
+        ``Optional`` Args:
+            :model_card_name (Optional[str], optional): Name of the model, Mandatory if ``self.pretrained_model_name_or_path`` is a path. ``Defaults to None``.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :prompt_len (int, optional): The length of the Prefill prompt should be less that ``prompt_len``. ``Defaults to 32``.
+            :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
+            :mxfp6 (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
+            :mxint8 (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
+            :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
+            :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
+        """
         # Export first if self.ort_runtime_args are not populated
         if self.onnx_path is None:
             logger.info(f"Exporting the {self.model.__class__.__name__} model to ONNX for compilation!")
@@ -173,6 +253,16 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         return self.qpc_path
 
     def generate(self, prompts: List[str], runtime: str = "AI_100", **kwargs):
+        """
+        This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
+        If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
+
+        ``Mandatory`` Args:
+            :prompts (List[str]): List of prompts to run the execution.
+        ``optional`` Args:
+            :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to "AI_100".
+        """
         assert Runtime(runtime) == Runtime.AI_100, "Only AI_100 runtime is supported right now via generate API"
         self.run_cloud_ai_100(prompts=prompts, **kwargs)
 

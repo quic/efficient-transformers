@@ -82,9 +82,12 @@ def qpc_exists(qpc_dir_path: str) -> bool:
     1. Boolean variable indicating if qpc files exist
     2. Path of the qpc dir if found.
     ---------
-    :param model_name: str. HF Model card name.
-    :param dir_path: str. Path of qpc directory.
-    :return: Union[Tuple[bool, str]]: qpc_exists and path to qpc directory
+
+    :model_name: `str` - HF Model card name.
+    :dir_path: `str` - Path of qpc directory.
+
+    Return:
+        qpc_exists and path to qpc directory
     """
 
     # Compute the boolean indicating if the QPC exists
@@ -97,8 +100,11 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
     """
     Checks if qpc files already exists, removes the directory if files have been manipulated.
     ---------
-    :param model_name: str. HF Model card name.
-    :return: Union[Tuple[bool, str, str]]: onnx_exists and path to onnx file and directory
+
+    :model_name: `str`- HF Model card name.
+
+    Return:
+        onnx_exists and path to onnx file and directory
     """
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
     os.makedirs(model_card_dir, exist_ok=True)
@@ -182,7 +188,7 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
     Checks and fixes tokenizer paddding side and pad_token_id viability.
     --------
 
-    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer to check and fix.
+    tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` - Pass model tokenizer to check and fix.
     """
     if tokenizer.padding_side != "right":
         logger.warning(f"Setting tokenizer padding_side to 'right', got {tokenizer.padding_side}")
@@ -208,7 +214,8 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
     :batch_size: int. number of input prompts used to create inputs
     :seq_len: int. sequence length to run the model for.
 
-    :return: List[int, int, int, int]
+    Return:
+        List[int, int, int, int]
     """
 
     if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
@@ -242,7 +249,8 @@ def get_num_layers_from_config(config):
 
     :config: AutoConfig from pretrained model.
 
-    :return: int: number of layers
+    Return:
+        number of layers
     """
 
     if hasattr(config, "n_layer"):  # Assuming n_layer is a key in the config (GPTs/CodeGen)

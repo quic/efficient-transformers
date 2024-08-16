@@ -25,18 +25,23 @@ def main(
     hf_token: Optional[str] = None,
 ) -> None:
     """
-    Helper function used by execute CLI app to run the Model on Cloud AI 100 Platform.
-    ---------
+    Helper function used by execute CLI app to run the Model on ``Cloud AI 100`` Platform.
 
-    :model_name: str. Hugging Face Model Card name, Example: "gpt2"
-    :qpc_path: str.  Path to the generated binary after compilation.
-    :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
-    :local_model_dir: str. Path to custom model weights and config files.
-    :prompt: str. Sample prompt for the model text generation
-    :prompts_txt_file_path: str. Path to txt file for multiple input prompts
-    :generation_len: int. Number of tokens to be generated.
-    :cache_dir: str. Cache dir where downloaded HuggingFace files are stored.
-    :hf_token: str. HuggingFace login token to access private repos.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``.
+        :qpc_path (str): Path to the generated binary after compilation.
+        :device_group (List[int]): Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
+    ``Optional`` Args:
+        :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
+        :prompt (str): Sample prompt for the model text generation. ``Defaults to None.``
+        :prompts_txt_file_path (str): Path to txt file for multiple input prompts. ``Defaults to None.``
+        :generation_len (int): Number of tokens to be generated. ``Defaults to None.``
+        :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to Constants.CACHE_DIR.``
+        :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
+
+    .. code-block:: bash
+
+        python -m QEfficient.cloud.execute OPTIONS
     """
     tokenizer = load_hf_tokenizer(
         pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
