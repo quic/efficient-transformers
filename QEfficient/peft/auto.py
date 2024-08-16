@@ -289,12 +289,32 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     def run_ort(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         # Base class
+
+        # Initialize session
         if self.ort_session is None:
             if self.onnx_path is None:
                 self.export()
             self.ort_session = ORTInferenceSession(self.onnx_path)
+            self._retained_state = {}
+
+        # Prepare inputs by adding retained state
+        inputs = inputs.copy()
+        for inp in self.ort_session.get_inputs():
+            if inp.name not in inputs and inp.name in self._retained_state:
+                inputs[inp.name] = self._retained_state[inp.name]
+
+        # Run session
         outputs = self.ort_session.run(None, inputs)
-        return dict(zip(self.output_names, outputs))
+        outputs = dict(zip(self.output_names, outputs))
+
+        # Save retained state outputs
+        for output_name, output in outputs.items():
+            if output_name.endswith("_RetainedState"):
+                self._retained_state[output_name[: -len("_RetainedState")]] = output
+
+        # Remove retained state outputs
+        outputs = {k: v for k, v in outputs if not k.endswith("_RetainedState")}
+        return outputs
 
     def run_cloud_ai_100(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         # Base class
