@@ -97,7 +97,10 @@ class ModelSetup:
         return str(os.path.join(self.model_card_dir(), "onnx"))
 
     def onnx_model_path(self):
-        return str(os.path.join(self.onnx_dir_path(), self.model_name.replace("/", "_") + "_kv_clipped_fp16.onnx"))
+        return [
+            str(os.path.join(self.onnx_dir_path(), self.model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")),
+            str(os.path.join(self.onnx_dir_path(), self.model_name.replace("/", "_") + "_kv.onnx")),
+        ]
 
     def model_hf_path(self):
         return str(os.path.join(self.cache_dir, self.model_name))

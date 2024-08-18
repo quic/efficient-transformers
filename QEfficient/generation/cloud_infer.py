@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c)  2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -48,6 +48,15 @@ class QAICInferenceSession:
         activate: bool = True,
         enable_debug_logs: bool = False,
     ):
+        """
+        Initialise for QAIC inference Session
+        ---------
+
+        :qpc_path: str. Path to the save generated binary file after compilation.
+        :device_ids: List[int]. Device Ids to be used for compilation. if devices > 1, it enables multiple card setup.
+        :activate: bool. If false, activation will be disabled. Default=True.
+        :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
+        """
         # Load QPC
         devices = qaicrt.QIDList(device_ids)
         self.context = qaicrt.Context(devices)
@@ -92,14 +101,25 @@ class QAICInferenceSession:
         return [binding.name for binding in self.bindings if binding.dir == aicapi.BUFFER_IO_TYPE_OUTPUT]
 
     def activate(self):
+        """Activate qpc"""
+
         self.program.activate()
         self.execObj = qaicrt.ExecObj(self.context, self.program)
 
     def deactivate(self):
+        """Deactivate qpc"""
+
         del self.execObj
         self.program.deactivate()
 
     def set_buffers(self, buffers: Dict[str, np.ndarray]):
+        """
+        Provide buffer mapping for input and output
+
+        Args:
+            :buffer (Dict[str, np.ndarray]): Parameter for buffer mapping.
+        """
+
         for buffer_name, buffer in buffers.items():
             if buffer_name not in self.binding_index_map:
                 warn(f'Buffer: "{buffer_name}" not found')
@@ -112,9 +132,25 @@ class QAICInferenceSession:
             )
 
     def skip_buffers(self, skipped_buffer_names: List[str]):
+        """
+        skip buffer mapping for given list of buffer names
+
+        Args:
+            :skipped_buffer_name: List[str]. List of buffer name to be skipped.
+        """
+
         self.set_buffers({k: np.array([]) for k in skipped_buffer_names})
 
     def run(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        """
+        Execute on cloud AI 100
+
+        Args:
+            :inputs (Dict[str, np.ndarray]): Processed numpy inputs for the model.
+
+        Return:
+            :Dict[str, np.ndarray]:
+        """
         # Set inputs
         self.set_buffers(inputs)
         assert self.execObj.setData(self.qbuffers, self.buf_dims) == qaicrt.QStatus.QS_SUCCESS, "Failed to setData"

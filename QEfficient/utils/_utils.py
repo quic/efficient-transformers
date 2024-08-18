@@ -85,9 +85,12 @@ def qpc_exists(qpc_dir_path: str) -> bool:
     1. Boolean variable indicating if qpc files exist
     2. Path of the qpc dir if found.
     ---------
-    :param model_name: str. HF Model card name.
-    :param dir_path: str. Path of qpc directory.
-    :return: Union[Tuple[bool, str]]: qpc_exists and path to qpc directory
+
+    :model_name: `str` - HF Model card name.
+    :dir_path: `str` - Path of qpc directory.
+
+    Return:
+        qpc_exists and path to qpc directory
     """
 
     # Compute the boolean indicating if the QPC exists
@@ -100,19 +103,29 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
     """
     Checks if qpc files already exists, removes the directory if files have been manipulated.
     ---------
-    :param model_name: str. HF Model card name.
-    :return: Union[Tuple[bool, str, str]]: onnx_exists and path to onnx file and directory
+
+    :model_name: `str`- HF Model card name.
+
+    Return:
+        onnx_exists and path to onnx file and directory
     """
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
     os.makedirs(model_card_dir, exist_ok=True)
 
     onnx_dir_path = os.path.join(model_card_dir, "onnx")
-    onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
+    clipped_onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
+    unclipped_onnx_model_path = clipped_onnx_model_path.replace("_clipped_fp16.onnx", ".onnx")
 
     # Compute the boolean indicating if the ONNX model exists
-    onnx_exists_bool = os.path.isfile(onnx_model_path) and os.path.isfile(
-        os.path.join(os.path.dirname(onnx_model_path), "custom_io_fp16.yaml")
-    )
+    onnx_exists_bool = False
+    onnx_model_path = None
+    if os.path.isfile(os.path.join(onnx_dir_path, "custom_io_fp16.yaml")):
+        if os.path.isfile(clipped_onnx_model_path):
+            onnx_exists_bool = True
+            onnx_model_path = clipped_onnx_model_path
+        elif os.path.isfile(unclipped_onnx_model_path):
+            onnx_exists_bool = True
+            onnx_model_path = unclipped_onnx_model_path
 
     # Return the boolean, onnx_dir_path, and onnx_model_path
     return onnx_exists_bool, onnx_dir_path, onnx_model_path
@@ -178,7 +191,7 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
     Checks and fixes tokenizer paddding side and pad_token_id viability.
     --------
 
-    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer to check and fix.
+    tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` - Pass model tokenizer to check and fix.
     """
     if tokenizer.padding_side != "right":
         logger.warning(f"Setting tokenizer padding_side to 'right', got {tokenizer.padding_side}")
@@ -204,7 +217,8 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
     :batch_size: int. number of input prompts used to create inputs
     :seq_len: int. sequence length to run the model for.
 
-    :return: List[int, int, int, int]
+    Return:
+        List[int, int, int, int]
     """
 
     if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
@@ -238,7 +252,8 @@ def get_num_layers_from_config(config):
 
     :config: AutoConfig from pretrained model.
 
-    :return: int: number of layers
+    Return:
+        number of layers
     """
 
     if hasattr(config, "n_layer"):  # Assuming n_layer is a key in the config (GPTs/CodeGen)

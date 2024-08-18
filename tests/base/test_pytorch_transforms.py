@@ -9,14 +9,14 @@ import pytest
 import torch
 from torch import nn
 
-from QEfficient.base.pytorch_transforms import ModuleMapping
+from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 
 
 def test_module_mapping_transform():
     with pytest.raises(TypeError):
-        ModuleMapping()
+        ModuleMappingTransform()
 
-    class TestTransform(ModuleMapping):
+    class TestTransform(ModuleMappingTransform):
         _module_mapping = {nn.Linear: nn.Identity}
 
     class TestModel(nn.Module):
@@ -36,6 +36,7 @@ def test_module_mapping_transform():
     y1 = model(x)
     assert torch.any(y1 != x)
 
-    model = TestTransform.apply(model)
+    model, transformed = TestTransform.apply(model)
+    assert transformed
     y2 = model(x)
     assert torch.all(y2 == x)

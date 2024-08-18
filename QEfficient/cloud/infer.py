@@ -36,29 +36,29 @@ def main(
     hf_token: Optional[str] = None,
 ) -> None:
     """
-    Helper function used by infer CLI app; to export, compile and execute the model on Cloud AI 100 Platform.
-    1. Check if compiled qpc for given config already exists, if it does jump to execute, else
-    2. Check if exported ONNX file already exists, if true, jump to compilation -> execution, else
-    3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
-    4. Download HF model -> transform -> export -> compile -> execute
-    ---------
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+        :num_cores (int): Number of cores to compile model on.
+        :device_group (List[int]): Device Ids to be used for compilation. If ``len(device_group) > 1``, multiple Card setup is enabled.
+    ``Optional`` Args:
+        :prompt (str): Sample prompt for the model text generation. ``Defaults to None.``
+        :prompts_txt_file_path (str): Path to txt file for multiple input prompts. ``Defaults to None.``
+        :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
+        :mos (int): Effort level to reduce the on-chip memory. ``Defaults to -1.``
+        :batch_size (int): Batch size to compile the model for. ``Defaults to 1.``
+        :prompt_len (int): Prompt length for the model to compile. ``Defaults to 32.``
+        :ctx_len (int): Maximum context length to compile the model. ``Defaults to 128.``
+        :generation_len (int): Number of tokens to be generated. ``Defaults to False.``
+        :mxfp6 (bool): Enable compilation for MXFP6 precision. ``Defaults to False.``
+        :mxint8 (bool): Compress Present/Past KV to ``MXINT8`` using ``CustomIO`` config. ``Defaults to False.``
+        :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
+        :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to None.``
+        :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
 
-    :model_name: str. Hugging Face Model Card name, Example: "gpt2"
-    :num_cores: int. :num_cores: int. Number of cores to compile model on.
-    :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
-    :prompt: str. Sample prompt for the model text generation
-    :prompts_txt_file_path: str. Path to txt file for multiple input prompts
-    :aic_enable_depth_first: bool. Enables DFS with default memory size, disabled by default.
-    :mos: int. Effort level to reduce the on-chip memory.
-    :batch_size: int. Batch size to compile the model for.
-    :prompt_len: int. prompt length for the model to compile.
-    :ctx_len: int. Maximum context length to compile the model.
-    :generation_len: int. Number of tokens to be generated.
-    :mxfp6: bool. Enable compilation for MXFP6 precision
-    :mxint8: Compress Present/Past KV to MXINT8 using CustomIO config, default is False.
-    :local_model_dir: str. Path to custom model weights and config files.
-    :cache_dir: str. Cache dir where downloaded HuggingFace files are stored.
-    :hf_token: str. HuggingFace login token to access private repos.
+    .. code-block:: bash
+
+        python -m QEfficient.cloud.infer OPTIONS
+
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
     tokenizer = load_hf_tokenizer(
@@ -81,7 +81,7 @@ def main(
         #########
         # Compile
         #########
-        generated_qpc_path = QEfficient.compile(
+        _ = QEfficient.compile(
             onnx_path=onnx_model_path,
             qpc_path=os.path.dirname(
                 qpc_dir_path
@@ -96,9 +96,6 @@ def main(
             mos=mos,
             device_group=device_group,
         )
-        assert (
-            generated_qpc_path == qpc_dir_path
-        ), f"QPC files were generated at an unusual location, expected {qpc_dir_path}; got {generated_qpc_path}"
 
     #########
     # Execute

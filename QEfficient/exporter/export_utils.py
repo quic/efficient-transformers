@@ -15,7 +15,9 @@ import numpy as np
 import onnx
 import onnxruntime
 import torch
-from onnx import external_data_helper, numpy_helper
+from onnx import external_data_helper
+
+from QEfficient.base.onnx_transforms import FP16Clip
 
 
 def export_onnx(
@@ -25,6 +27,19 @@ def export_onnx(
     gen_models_path: str,
     model_base_name: str,
 ) -> str:
+    """
+    API for export PyTorch model to ONNX.
+
+    Args:
+        :pt_model (torch.nn.Module): PyTorch model that will be exported to ``ONNX`` format.
+        :inputs (Dict[str, torch.Tensor]): Processed torch input for the model.
+        :output_names (List[str]): Output of pytorch model inference.
+        :gen_models_path (str): Path of generated ``ONNX`` model.
+    :model_base_name (str): Base name for the exported ``ONNX`` file.
+
+    Return:
+        :str: Updated base name of exported ``ONNX`` model.
+    """
     # Inspect the model's forward method arguments
     pt_model_code = pt_model.forward.__code__
     pt_input_names = pt_model_code.co_varnames[1 : pt_model_code.co_argcount]
@@ -122,6 +137,17 @@ def export_onnx(
 
 
 def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_base_name: str) -> str:
+    """
+    API to save ONNX model and it's data separately if size of ``ONNX`` model is greater than 2GB.
+
+    Args:
+        :model (Union[onnx.ModelProto, str]): Pass ``ONNX`` model or path of the model.
+        :gen_models_path (str): Path of generated ``ONNX`` model.
+        :model_base_name (str): Base name of the HuggingFace model.
+
+    Return:
+        :str: Base name of ``ONNX`` exported model.
+    """
     if isinstance(model, str):
         model = onnx.load(f"{gen_models_path}/{model}.onnx")
 
@@ -147,20 +173,21 @@ def save_onnx(model: Union[onnx.ModelProto, str], gen_models_path: str, model_ba
     return model_base_name
 
 
-def remove_temp_file(file_path_model, file_path_weights):
+def remove_temp_file(model_file_path: str, weights_file_path: str):
     """
-    Function to remove a temporary file
+    API to remove a temporary file
 
-    :param str file_path: Path to the file to be deleted
-    :file_path_weights: Path to the weights file
+    Args:
+        :model_file_path (str); Path to the file to be deleted
+        :weights_file_path (str): Path to the weights file
     """
     try:
-        os.remove(file_path_model)
-        os.remove(file_path_weights)
+        os.remove(model_file_path)
+        os.remove(weights_file_path)
     except FileNotFoundError:
-        print(f"File '{file_path_model}' does not exist.")
+        print(f"File '{model_file_path}' does not exist.")
     except Exception as e:
-        print(f"Error deleting file '{file_path_model}': {e}")
+        print(f"Error deleting file '{model_file_path}': {e}")
 
 
 def fix_onnx_fp16(
@@ -171,43 +198,24 @@ def fix_onnx_fp16(
     model_base_name: str,
     pt_outputs: Dict[str, torch.Tensor],
 ) -> str:
-    finfo = np.finfo(np.float16)
-    fp16_max = finfo.max
-    fp16_min = finfo.min
-    abs_max_val = np.finfo(np.float16).max
+    """
+    API to clip model weights in fp16 range and save updated clipped ``ONNX`` model.
 
+    Args:
+        :inputs (Dict[str, torch.Tensor]): Processed torch input for the model.
+        :output_names (List[str]): Output names of pytorch model inference.
+        :ort_outputs (List[np.ndarray]): Output of onnxruntime.
+        :gen_models_path (str): Path of generated ``ONNX`` model.
+        :model_base_name (str): Base name for the exported ONNX model.
+        :pt_outputs (Dict[str, torch.Tensor]): Output of PyTorch model inference.
+
+    Return:
+        :str: Updated base name of exported ONNX model.
+    """
     model = onnx.load(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
-
-    fp16_fix = False
-    for tensor in external_data_helper._get_all_tensors(model):
-        nptensor = numpy_helper.to_array(tensor, gen_models_path)
-        if nptensor.dtype == np.float32 and (np.any(nptensor > fp16_max) or np.any(nptensor < fp16_min)):
-            nptensor = np.clip(nptensor, fp16_min, fp16_max)
-            new_tensor = numpy_helper.from_array(nptensor, tensor.name)
-            tensor.CopyFrom(new_tensor)
-            fp16_fix = True
-
-    for idx, node in enumerate(model.graph.node):
-        if node.op_type == "Constant":
-            curr_data = numpy_helper.to_array(node.attribute[0].t)
-            if np.any(np.abs(curr_data) > abs_max_val):
-                updated_data = np.clip(curr_data, -abs_max_val, abs_max_val).astype(curr_data.dtype)
-                updated_tensor = numpy_helper.from_array(updated_data)
-                node.attribute[0].t.CopyFrom(updated_tensor)
-                fp16_fix = True
-
-    for node in model.graph.initializer:
-        curr_data = numpy_helper.to_array(node)
-        if np.any(np.abs(curr_data) > abs_max_val):
-            updated_data = np.clip(curr_data, -abs_max_val, abs_max_val).astype(curr_data.dtype)
-            updated_tensor = numpy_helper.from_array(updated_data)
-            updated_tensor.name = node.name
-            node.CopyFrom(updated_tensor)
-            fp16_fix = True
-
-    # TODO: Check this, variable "fp16_same_as_fp32" is not being used.
-    # fp16_same_as_fp32 = True
-    ort_outputs_fixed = []
+    # TODO: Remove this `fix_onnx_fp16` function and replace with this transform
+    # as we're not utilizing the validations done in this function
+    model, fp16_fix = FP16Clip.apply(model, gen_models_path)
 
     if fp16_fix:
         # Save FP16 model
@@ -246,15 +254,8 @@ def fix_onnx_fp16(
                 # TODO: need to the debug this
                 # info(oname, fix_diff)
                 close_outputs.append(fix_diff < 1e-5)
-        else:
-            print(
-                f"Failed to run the onnx {model_base_name} model in onnx runtime:%s",
-                ort_outputs,
-            )
-        # Commenting the below line
-        # fp16_same_as_fp32 = all(close_outputs)
     else:
-        info("No constants out of FP16 range .. ")
+        info("No constants out of FP16 range")
 
     return model_base_name
 
@@ -265,6 +266,15 @@ def generate_input_files(
     inputs: Dict[str, torch.Tensor],
     input_list_file: str,
 ):
+    """
+    API to generate input files, required for Cloud AI 100 execution.
+
+    Args:
+        :input_files_path (str): Path to save input files.
+        :input_names (List[str]): Names of inputs to be saved.
+        :inputs (dict[str, torch.tensor]): Input tensors to be saved in raw format.
+        :input_list_file (str): File name to save the names of inputs in order. Example - "input_list.txt"
+    """
     # inputFiles
     os.makedirs(input_files_path, exist_ok=True)
     filenames = []
@@ -290,6 +300,19 @@ def run_model_on_ort(
     pt_outputs: Dict[str, torch.Tensor],
     dtype: bool = True,
 ) -> Tuple[List[str], List[np.ndarray]]:
+    """
+    API to run ONNX model on ONNX runtime
+
+    Args:
+        :onnx_path (str): Path of ONNX model.
+        :inputs (Dict[str, torch.Tensor]): Processed torch input for the model.
+        :output_names (List[str]): Output from pytorch inference.
+        :pt_outputs (Dict[str, torch.Tensor]): Output of PyTorch model inference.
+        :dtype (bool): If False it will consider you are passing clipped version of ``ONNX`` model.
+
+    Return:
+        :Tuple[List[str], List[np.ndarray]]: input_names
+    """
     try:
         if dtype:
             info_string = "fp32"

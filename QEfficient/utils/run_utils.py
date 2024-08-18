@@ -14,28 +14,29 @@ from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.utils.generate_inputs import InputHandler
 
 
+# TODO: Deprecate this class and encourage the use of `QeffAutoModel...` classes
 class ApiRunner:
     """
     ApiRunner class is responsible for running:
     ---------
 
-    1. HuggingFace PyTorch model
+    1. HuggingFace ``PyTorch`` model
     2. Transformed KV Pytorch Model
-    3. ONNX model on ONNXRT
-    4. ONNX model on Cloud AI 100
+    3. ``ONNX`` model on ONNXRT
+    4. ``ONNX`` model on Cloud AI 100
     """
 
     def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len):
         """
         Initialization
-        --------
 
-        :batch_size: int. Number of prompts to run in one batch.
-        :tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]. Pass model tokenizer.
-        :config: AutoConfig from pretrained model.
-        :prompt: List[str]. input prompt for running the model.
-        :prompt_len: int. prompt length to compile the model.
-        :ctx_len: int. Maximum context length to compile the model.
+        Args:
+            :batch_size (int): Number of prompts to run in one batch.
+            :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Pass model tokenizer.
+            :config (AutoConfig): From pretrained model.
+            :prompt (List[str]): Input prompt for running the model.
+            :prompt_len (int): Prompt length to compile the model.
+            :ctx_len (int): Maximum context length to compile the model.
         """
         self.input_handler = InputHandler(
             batch_size=batch_size,
@@ -51,12 +52,13 @@ class ApiRunner:
     @torch.no_grad()
     def run_hf_model_on_pytorch(self, model_hf):
         """
-        Function responsible for running HuggingFace PyTorch model and return the output tokens
-        --------
+        Function responsible for running HuggingFace ``PyTorch`` model and return the output tokens
 
-        :model_hf: torch.nn.module. Original PyTorch model
+        ``Mandatory`` Args:
+            :model_hf (torch.nn.module): Original ``PyTorch`` model
 
-        :return generated_ids: numpy.ndarray. Generated output tokens
+        Return:
+            :numpy.ndarray: Generated output tokens
         """
         input_ids = self.input_handler.tokenizer.encode(self.input_handler.prompt[0], return_tensors="pt")
 
@@ -77,12 +79,13 @@ class ApiRunner:
 
     def run_kv_model_on_pytorch(self, model):
         """
-        Function responsible for running KV PyTorch model and return the output tokens
-        --------
+        Function responsible for running KV ``PyTorch`` model and return the output tokens
 
-        :model: torch.nn.module. Transformed PyTorch model
+        ``Mandatory`` Args:
+        :model (torch.nn.module): Transformed ``PyTorch`` model
 
-        :return generated_ids: numpy.ndarray. Generated output tokens
+        Return:
+            :numpy.ndarray: Generated output tokens
         """
 
         generated_ids = []
@@ -102,16 +105,16 @@ class ApiRunner:
         print("Completion:", repr(predicted_string))
         return generated_ids
 
-    def run_ort_session(self, inputs, session):
+    def run_ort_session(self, inputs, session) -> dict:
         """
-        Function responsible for running onnxrt session with given inputs and
-        passing retained state outputs to be used for next iteration inputs
-        --------
+        Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
 
-        :inputs: Dict. Numpy inputs of Onnx model
-        :session: 'onnxruntime.capi.onnxruntime_inference_collection.InferenceSession'.
+        ``Mandatory`` Args:
+            :inputs (Dict):
+            :session (onnxruntime.capi.onnxruntime_inference_collection.InferenceSession):
 
-        :return outputs: Dict. Numpy outputs of Onnx model
+        Return:
+            :Dict: Numpy outputs of Onnx model
         """
         output_names = [x.name for x in session.get_outputs()]
         session_input_names = [x.name for x in session.get_inputs()]
@@ -125,27 +128,31 @@ class ApiRunner:
 
     def run_kv_model_on_ort(self, model_path):
         """
-        Function responsible for running ONNX model on onnxruntime and return the output tokens
-        --------
+        Function responsible for running ``ONNX`` model on onnxruntime and return the output tokens
 
-        :model_path: str. Path to the Onnx model.
+        ``Mandatory`` Args:
+            :model_path (str): Path to the Onnx model.
 
-        :return generated_ids: numpy.ndarray. Generated output tokens
+        Return:
+            :numpy.ndarray: Generated output tokens
         """
 
-        # todo:vbaddi; find a better version to do this changes
-        # Currently the gathernd invalid index is set to INT MAX(FP16) and hence fails in OnnxRuntime
-        # Changing the constant value from INT MAX to -1. Fixes the issue.
+        # Replace invalid index value for INT32 max to 0 using add_initializer
         m = onnx.load(model_path, load_external_data=False)
+        # NOTE: OrtValue objects should be kept around until the session is run, hence this dict is required
+        added_initializers = {}
         for node in m.graph.node:
             if node.op_type == "Constant":
                 np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t)
-                if len(np_tensor.shape) == 0 and np_tensor.item() == 65504:
-                    node.attribute[0].t.raw_data = np.array(-1).tobytes()
+                if len(np_tensor.shape) == 0 and np_tensor.item() == 2147483647:
+                    added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(
+                        np.array(0, np_tensor.dtype)
+                    )
 
-        onnxruntime_model = model_path[:-5] + "_ort.onnx"
-        onnx.save(m, onnxruntime_model)
-        session = onnxruntime.InferenceSession(onnxruntime_model)
+        session_options = onnxruntime.SessionOptions()
+        for name, value in added_initializers.items():
+            session_options.add_initializer(name, value)
+        session = onnxruntime.InferenceSession(model_path, session_options)
 
         generated_ids = []
         inputs = self.input_handler.prepare_ort_inputs()
@@ -168,13 +175,14 @@ class ApiRunner:
 
     def run_kv_model_on_cloud_ai_100(self, qpc_path, device_group):
         """
-        Function responsible for running ONNX model on Cloud AI 100 and return the output tokens
-        --------
+        Function responsible for running ``ONNX`` model on Cloud AI 100 and return the output tokens
 
-        :qpc_path: str. path to qpc generated after compilation
-        :device_group: List[int]. Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
+        ``Mandatory`` Args:
+            :qpc_path (str): path to qpc generated after compilation
+            :device_group (List[int]): Device Ids to be used for compilation. if len(device_group) > 1. Multiple Card setup is enabled.
 
-        :return generated_ids: numpy.ndarray. Generated output tokens
+        Return:
+            :numpy.ndarray: Generated output tokens
         """
         execinfo = cloud_ai_100_exec_kv_helper(
             tokenizer=self.input_handler.tokenizer,
