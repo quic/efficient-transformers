@@ -221,7 +221,19 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             command.append(f"{option}={value}")
 
         # Compute hash for binary location
-        compile_hash = hashlib.sha256(to_hashable(command)).hexdigest()[:16]
+        compile_hash = hashlib.sha256(to_hashable(command))
+        for option in command:
+            # Hash config file contents
+            if (
+                option.startswith("-network-specialization-config=")
+                or option.startswith("-custom-IO-list-file=")
+                or option.startswith("-mdp-load-partition-config=")
+            ):
+                with open(option.split("=")[1], "rb") as fp:
+                    compile_hash.update(fp.read())
+        compile_hash = compile_hash.hexdigest()[:16]
+
+        # Check if already compiled
         aic_binary_dir = aic_binary_dir.with_name(aic_binary_dir.name + "-" + compile_hash)
         if aic_binary_dir.is_dir():
             if (aic_binary_dir / "programqpc.bin").is_file():
