@@ -20,11 +20,11 @@ class OnnxTransform:
         raise TypeError("Transform classes are not to be instantiated. Directly use the `apply` method.")
 
     @classmethod
-    def apply(cls, model: ModelProto, onnx_base_dir: Optional[str] = None) -> Tuple[ModelProto, bool]:
+    def apply(cls, model: ModelProto, **kwargs) -> Tuple[ModelProto, bool]:
         """
         Override this class to apply a transformation.
         :param model: The model's ONNX graph to transform
-        :param onnx_base_dir: Directory where the model and external files are present
+        :param kwargs: Parameters needed for specific transforms. All transforms should take **kwargs to ignore unneeded kwargs.
 
         :returns: ONNX graph after applying the transform
         :returns: Boolean indicating whether transform was applied
@@ -38,7 +38,7 @@ class FP16ClipTransform(OnnxTransform):
     """
 
     @classmethod
-    def apply(cls, model: ModelProto, onnx_base_dir: Optional[str] = None) -> Tuple[ModelProto, bool]:
+    def apply(cls, model: ModelProto, *, onnx_base_dir: Optional[str] = None, **kwargs) -> Tuple[ModelProto, bool]:
         finfo = np.finfo(np.float16)
         fp16_max = finfo.max
         fp16_min = finfo.min
