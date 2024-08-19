@@ -148,7 +148,7 @@ class KVCacheTransform(ModuleMappingTransform):
         MistralAttention: QEffMistralAttention,
         MistralModel: QEffMistralModel,
         MistralForCausalLM: QEffMistralForCausalLM,
-        MistralDecoderLayer: QeffMixtralDecoderLayer,
+        MistralDecoderLayer: QEffMistralDecoderLayer,
         # Mixtral
         MixtralAttention: QEffMixtralAttention,
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
