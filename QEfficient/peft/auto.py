@@ -20,10 +20,13 @@ import torch
 from onnxruntime import InferenceSession as ORTInferenceSession
 from peft import AutoPeftModelForCausalLM, load_peft_weights
 from torch import nn
+from transformers import GenerationConfig
+from transformers.generation.streamers import BaseStreamer
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, OnnxTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
+from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.peft.onnx_transforms import LoraWeightsToInputsTransform
 from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
@@ -347,9 +350,88 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         outputs = {k: v for k, v in outputs if not k.endswith("_RetainedState")}
         return outputs
 
-    def run_cloud_ai_100(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-        # Base class
-        pass
+    def generate(
+        self,
+        inputs: Dict[str, np.ndarray],
+        generation_config: Optional[GenerationConfig] = None,
+        streamer: Optional[BaseStreamer] = None,
+    ) -> np.ndarray:
+        # Initialize session
+        if self.qpc_session is None:
+            if self.qpc_path is None:
+                raise ValueError("Please compile the model with `model.compile(...)`")
+            self.qpc_session = QAICInferenceSession(str(self.qpc_path))
 
-    def generate(self, inputs: Dict[str, np.ndarray], streamer) -> np.ndarray:
-        pass
+            # Skip buffers
+            retained_buffers = [x for x in self.qpc_session.output_names if x.endswith("_RetainedState")]
+            self.qpc_session.skip_buffers([x[: -len("_RetainedState")] for x in retained_buffers])
+            self.qpc_session.skip_buffers(retained_buffers)
+
+        generation_config = generation_config or self.model.generation_config
+        if generation_config.do_sample:
+            raise NotImplementedError("do_sample=True not supported currently")
+        if generation_config.num_beams > 1:
+            raise NotImplementedError("num_beams>1 not supported currently")
+        if generation_config.max_new_tokens is None or generation_config.max_new_tokens <= 0:
+            raise ValueError("Required max_new_tokens>0 value in generation_config")
+
+        batch_size = max(
+            [x[self.qpc_session.binding_index_map["input_ids"]][1][0] for x in self.qpc_session.allowed_shapes]
+            + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[0]]
+        )
+        inputs = inputs.copy()
+        passed_batch_size = inputs["input_ids"].shape[0]
+        if passed_batch_size != batch_size:
+            raise ValueError(f"Model compiled for batch_size: {batch_size}, but passed batch_size: {passed_batch_size}")
+
+        prefill_seq_len = max(
+            [x[self.qpc_session.binding_index_map["input_ids"]][1][1] for x in self.qpc_session.allowed_shapes]
+            + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[1]]
+        )
+
+        input_len = inputs["input_ids"].shape[1]
+        num_chunks = -(input_len // -prefill_seq_len)  # Ceil divide without float
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+        inputs["input_ids"] = np.concatenate(
+            [inputs["input_ids"], np.zeros((batch_size, padded_len - input_len), dtype=inputs["input_ids"].dtype)], 1
+        )
+        next_position_ids = inputs.pop("attention_mask").sum(1, keepdims=True)
+        inputs["position_ids"] = np.arange(padded_len).reshape(1, -1)
+        inputs["position_ids"] = np.where(inputs["position_ids"] < next_position_ids, inputs["position_ids"], -1)
+        generated_ids = np.zeros((batch_size, generation_config.max_new_tokens), dtype="int64")
+        if streamer:
+            streamer.put(inputs["input_ids"][:, :input_len])
+
+        # Set adapter weights
+        self.qpc_session.set_buffers(self.adapter_weights[self.active_adapter])
+
+        # Run prefill
+        for i in range(num_chunks):
+            chunk_inputs = inputs.copy()
+            chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            outputs = self.qpc_session.run(chunk_inputs)
+
+        # Get first token
+        inputs["input_ids"] = outputs["logits"].argmax(2)
+        inputs["position_ids"] = next_position_ids
+        generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
+        if streamer:
+            streamer.put(inputs["input_ids"])
+
+        # Skip adapter weights
+        self.qpc_session.skip_buffers(list(self.adapter_weights[self.active_adapter]))
+
+        # Decode loop
+        for num_token in range(1, generation_config.max_new_tokens):
+            outputs = self.qpc_session.run(inputs)
+
+            # Prepare inputs for next iteration
+            inputs["input_ids"] = outputs["logits"].argmax(2)
+            inputs["position_ids"] += 1
+            generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
+            if streamer:
+                streamer.put(inputs["input_ids"])
+
+        streamer.end()
+        return generated_ids
