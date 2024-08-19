@@ -12,7 +12,7 @@ import numpy as np
 import onnx
 import pytest
 
-from QEfficient.base.onnx_transforms import FP16Clip
+from QEfficient.base.onnx_transforms import FP16ClipTransform
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ def test_fp16clip_transform():
     }
     """)
     onnx.checker.check_model(test_onnx, True, True, True)
-    transformed_onnx, transformed = FP16Clip.apply(test_onnx)
+    transformed_onnx, transformed = FP16ClipTransform.apply(test_onnx)
     assert transformed
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[0]) == 65504.0
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[1]) == 2147483647
@@ -77,6 +77,6 @@ def test_fp16clip_transform_external(external_path):
     np.array(-1e10, dtype="float32").tofile(os.path.join(external_path, external_weight_file))
 
     onnx.checker.check_model(onnx_path, True, True, True)
-    transformed_onnx, transformed = FP16Clip.apply(test_onnx, external_path)
+    transformed_onnx, transformed = FP16ClipTransform.apply(test_onnx, external_path)
     assert transformed
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[0]) == -65504.0

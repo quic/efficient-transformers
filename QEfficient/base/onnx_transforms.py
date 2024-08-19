@@ -32,7 +32,7 @@ class OnnxTransform:
         raise NotImplementedError("Use subclasses for ONNX transform")
 
 
-class FP16Clip(OnnxTransform):
+class FP16ClipTransform(OnnxTransform):
     """
     Clips the tensor values to be in FP16 range.
     """
