@@ -7,9 +7,9 @@
 
 from peft import PeftModelForCausalLM
 
-from QEfficient.base.pytorch_transforms import ModuleMapping
+from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.peft.peft_model import QEffPeftModelForCausalLM
 
 
-class PeftModelInputsTransform(ModuleMapping):
+class PeftModelInputsTransform(ModuleMappingTransform):
     _module_mapping = {PeftModelForCausalLM: QEffPeftModelForCausalLM}

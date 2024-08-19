@@ -16,18 +16,18 @@ from peft import AutoPeftModelForCausalLM
 from torch import nn
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import FP16Clip, OnnxTransform
+from QEfficient.base.onnx_transforms import FP16ClipTransform, OnnxTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.peft.onnx_transforms import AdaptersAsInputsTransform
 from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
-from QEfficient.transformers.transforms import CustomOps, KVCache
+from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils._utils import get_num_layers_from_config, get_padding_shape_from_config
 from QEfficient.utils.cache_dir import QEFF_HOME
 
 
 class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
-    pytorch_transforms: List[PytorchTransform] = [CustomOps, KVCache, PeftModelInputsTransform]
-    onnx_transforms: List[OnnxTransform] = [FP16Clip, AdaptersAsInputsTransform]
+    pytorch_transforms: List[PytorchTransform] = [CustomOpsTransform, KVCacheTransform, PeftModelInputsTransform]
+    onnx_transforms: List[OnnxTransform] = [FP16ClipTransform, AdaptersAsInputsTransform, SplitTensorsTransform]
     _hf_auto_class = AutoPeftModelForCausalLM
 
     def __init__(self, model: nn.Module, card_name: Optional[str] = None):
