@@ -63,8 +63,9 @@ class ModuleMutatorTransform:
     Raises:
         NotImplementedError: Not supposed to use directly, Create a subclass and implement mutate method and _match_class variable.
     """
+
     _match_class: nn.Module
-    
+
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         for name, module in model.named_children():
@@ -72,8 +73,7 @@ class ModuleMutatorTransform:
                 setattr(model, name, cls.mutate(module, model))
             else:
                 cls.apply(module)
-                
-                
+
     @classmethod
     def mutate(cls, original_module: nn.Module, parent_module: nn.Module):
-        raise NotImplementedError("")
+        raise NotImplementedError("Please implement your own method by inheriting this class")

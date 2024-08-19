@@ -1,14 +1,11 @@
-from dataclasses import dataclass
-
 import torch
-from transformers.quantizers.quantizer_awq import AwqQuantizer
-from transformers.utils.quantization_config import AWQLinearVersion, AwqBackendPackingMethod, AwqConfig
 from transformers.integrations import replace_quantization_scales
 from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
+from transformers.quantizers.quantizer_awq import AwqQuantizer
+from transformers.utils.quantization_config import AwqBackendPackingMethod, AwqConfig, AWQLinearVersion
 
-
+from QEfficient.transformers.quantizers.awq import get_keys_to_not_convert, replace_linear_layer_with_awq_gemm
 from QEfficient.utils.logging_utils import logger
-from QEfficient.transformers.quantizers.awq import replace_linear_layer_with_awq_gemm, get_keys_to_not_convert
 
 
 class QEffAwqConfig(AwqConfig):
@@ -42,13 +39,13 @@ class QEffAwqQuantizer(AwqQuantizer):
     def validate_environment(self, device_map, **kwargs):
         # No need to validate as we will always use pytorch CPU version.
         return True
-    
+
     @property
     def is_trainable(self):
         return False
-    
+
     def update_torch_dtype(self, torch_dtype):
-        if torch_dtype not in  [None, torch.float32]:
+        if torch_dtype not in [None, torch.float32]:
             logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to None")
         return None
 
