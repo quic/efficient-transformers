@@ -5,7 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Optional, Tuple
+from typing import Tuple
 
 import onnx
 
@@ -14,9 +14,7 @@ from QEfficient.base.onnx_transforms import OnnxTransform
 
 class AdaptersAsInputsTransform(OnnxTransform):
     @classmethod
-    def apply(
-        cls, model: onnx.ModelProto, adapter_name: str, onnx_base_dir: Optional[str] = None
-    ) -> Tuple[onnx.ModelProto, bool]:
+    def apply(cls, model: onnx.ModelProto, *, adapter_name: str, **kwargs) -> Tuple[onnx.ModelProto, bool]:
         transformed = False
         removed_initializers = []
         for i, weight in enumerate(model.graph.initializer):
