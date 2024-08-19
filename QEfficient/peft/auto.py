@@ -19,7 +19,7 @@ import onnx
 import torch
 from peft import AutoPeftModelForCausalLM, load_peft_weights
 from torch import nn
-from transformers import GenerationConfig
+from transformers import GenerationConfig, StoppingCriteria, StoppingCriteriaList
 from transformers.generation.streamers import BaseStreamer
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
@@ -334,6 +334,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         self,
         inputs: Dict[str, np.ndarray],
         generation_config: Optional[GenerationConfig] = None,
+        stopping_criteria: Optional[StoppingCriteria] = None,
         streamer: Optional[BaseStreamer] = None,
     ) -> np.ndarray:
         # Initialize session
@@ -354,6 +355,9 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             raise NotImplementedError("num_beams>1 not supported currently")
         if generation_config.max_new_tokens is None or generation_config.max_new_tokens <= 0:
             raise ValueError("Required max_new_tokens>0 value in generation_config")
+
+        stopping_criteria = stopping_criteria or StoppingCriteriaList()
+        stopping_criteria = self.model._get_stopping_criteria(generation_config, stopping_criteria)
 
         batch_size = max(
             [x[self.qpc_session.binding_index_map["input_ids"]][1][0] for x in self.qpc_session.allowed_shapes]
@@ -404,6 +408,9 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         # Decode loop
         for num_token in range(1, generation_config.max_new_tokens):
+            if stopping_criteria(torch.from_numpy(inputs["input_ids"]), torch.from_numpy(outputs["logits"])):
+                break
+
             outputs = self.qpc_session.run(inputs)
 
             # Prepare inputs for next iteration
