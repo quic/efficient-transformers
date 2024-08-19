@@ -54,6 +54,7 @@ def main(
         :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
         :mos (int): Effort level to reduce the on-chip memory. ``Defaults to -1.``
         :batch_size (int): Batch size to compile the model for. ``Defaults to 1.``
+        :full_batch_size (int): Enable continuous batching model by providing batch size to to execute continuous batching. ``Default to None``
         :prompt_len (int): Prompt length for the model to compile. ``Defaults to 32.``
         :ctx_len (int): Maximum context length to compile the model. ``Defaults to 128.``
         :generation_len (int): Number of tokens to be generated. ``Defaults to False.``

@@ -21,15 +21,23 @@ from transformers.models.falcon.modeling_falcon import (
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
-from transformers.models.llama.modeling_llama import LlamaAttention, LlamaForCausalLM, LlamaModel, LlamaRMSNorm
+from transformers.models.llama.modeling_llama import (
+    LlamaAttention,
+    LlamaDecoderLayer,
+    LlamaForCausalLM,
+    LlamaModel,
+    LlamaRMSNorm,
+)
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
+    MistralDecoderLayer,
     MistralForCausalLM,
     MistralModel,
     MistralRMSNorm,
 )
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
+    MixtralDecoderLayer,
     MixtralForCausalLM,
     MixtralModel,
     MixtralRMSNorm,
@@ -41,6 +49,7 @@ from transformers.models.phi3.modeling_phi3 import Phi3Attention, Phi3ForCausalL
 from transformers.models.qwen2.modeling_qwen2 import Qwen2Attention, Qwen2ForCausalLM, Qwen2Model, Qwen2RMSNorm
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
+    Starcoder2DecoderLayer,
     Starcoder2ForCausalLM,
     Starcoder2Model,
 )
@@ -67,16 +76,19 @@ from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
 from QEfficient.transformers.models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJForCausalLM, QEffGPTJModel
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
+    QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
 )
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
+    QEffMistralDecoderLayer,
     QEffMistralForCausalLM,
     QEffMistralModel,
 )
 from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralAttention,
+    QeffMixtralDecoderLayer,
     QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
@@ -92,6 +104,7 @@ from QEfficient.transformers.models.phi3.modeling_phi3 import QEffPhi3Attention,
 from QEfficient.transformers.models.qwen2.modeling_qwen2 import QEffQwen2Attention, QEffQwen2ForCausalLM, QEffQwen2Model
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
+    QEFFStarcoder2DecoderLayer,
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
 )
@@ -130,15 +143,18 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaAttention: QEffLlamaAttention,
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
+        LlamaDecoderLayer: QEffLlamaDecoderLayer,
         # Mistral
         MistralAttention: QEffMistralAttention,
         MistralModel: QEffMistralModel,
         MistralForCausalLM: QEffMistralForCausalLM,
+        MistralDecoderLayer: QeffMixtralDecoderLayer,
         # Mixtral
         MixtralAttention: QEffMixtralAttention,
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
         MixtralModel: QEffMixtralModel,
         MixtralForCausalLM: QEffMixtralForCausalLM,
+        MixtralDecoderLayer: QeffMixtralDecoderLayer,
         # Mpt
         MptAttention: QEffMptAttention,
         MptBlock: QEffMptBlock,
@@ -160,6 +176,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2Model: QEffStarcoder2Model,
         Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
+        Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
     }
 
     @classmethod

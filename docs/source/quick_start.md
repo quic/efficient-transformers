@@ -67,11 +67,26 @@ To disable MQ, just pass single soc like below, below step will compile the mode
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first
 ```
 
+
+### Continuous Batching 
+
+Users can compile a model utilizing the continuous batching feature by specifying full_batch_size <full_batch_size_value> in the infer and compiler APIs. If full_batch_size is not provided, the model will be compiled in the regular way.
+
+When enabling continuous batching, ensure the number of prompts is not less than the full_batch_size value. Do not specify the batch size when using continuous batching.
+
+Users can leverage multi-Qranium and other supported features along with continuous batching.
+
+```bash
+python -m QEfficient.cloud.infer --model_name TinyLlama/TinyLlama_v1.1 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth 
+theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first --full_batch_size 3
+```
 ## Python API
 
 ### 1.  Model download and Optimize for Cloud AI 100
 If your models falls into the model architectures that are [already supported](validated_models), Below steps should work fine.
 Please raise an [issue](https://github.com/quic/efficient-transformers/issues), in case of trouble.
+
+
 
 ```Python
 # Initiate the Original Transformer model
