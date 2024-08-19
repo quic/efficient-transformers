@@ -85,18 +85,22 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     def set_adapter(self, adapter_name: str):
         self.model.set_adapter(adapter_name)
 
+    def disable_adapter(self):
+        # TODO: Set zero tensors as adapter weights
+        raise NotImplementedError("Disabling adapters not supported currently")
+
     @classmethod
-    def _from_pretrained(cls, pretrained_name_or_path: str, **kwargs):
+    def _from_pretrained(cls, pretrained_name_or_path: str, *args, **kwargs):
         # Base class
-        model = cls._hf_auto_class.from_pretrained(pretrained_name_or_path, **kwargs)
+        model = cls._hf_auto_class.from_pretrained(pretrained_name_or_path, *args, **kwargs)
         return cls(model)
 
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, **kwargs):
+    def from_pretrained(cls, pretrained_name_or_path: str, *args, **kwargs):
         if kwargs.get("use_cache") is False:
             warnings.warn("Overriding to use_cache=True")
         kwargs["use_cache"] = True
-        obj = cls._from_pretrained(pretrained_name_or_path, **kwargs)
+        obj = cls._from_pretrained(pretrained_name_or_path, *args, **kwargs)
         obj.load_adapter(pretrained_name_or_path, obj.active_adapter)
         return obj
 
