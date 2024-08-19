@@ -66,7 +66,9 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     def load_adapter(self, model_id: str, adapter_name: str):
         self.model.load_adapter(model_id, adapter_name)
-        self.adapter_weights[adapter_name] = load_peft_weights(model_id)
+        self.adapter_weights[adapter_name] = {
+            k: v.numpy().astype("float16") for k, v in load_peft_weights(model_id).items()
+        }
 
     @property
     def active_adapter(self) -> str:
@@ -78,15 +80,15 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     @classmethod
     def _from_pretrained(cls, pretrained_name_or_path: str, **kwargs):
         # Base class
-        if kwargs.get("use_cache") is False:
-            warnings.warn("Overriding to use_cache=True")
-        kwargs["use_cache"] = True
         model = cls._hf_auto_class.from_pretrained(pretrained_name_or_path, **kwargs)
         return cls(model)
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, **kwargs):
-        obj = cls._from_pretrained(pretrained_name_or_path)
+        if kwargs.get("use_cache") is False:
+            warnings.warn("Overriding to use_cache=True")
+        kwargs["use_cache"] = True
+        obj = cls._from_pretrained(pretrained_name_or_path, **kwargs)
         obj.load_adapter(pretrained_name_or_path, obj.active_adapter)
         return obj
 
@@ -125,7 +127,11 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     @property
     def input_names(self) -> List[str]:
-        return list(self.dynamic_axes.keys())
+        inputs = ["input_ids", "position_ids"]
+        for i in range(self.num_layers):
+            inputs.append(f"past_key.{i}")
+            inputs.append(f"past_value.{i}")
+        return inputs
 
     @property
     def output_names(self) -> List[str]:
