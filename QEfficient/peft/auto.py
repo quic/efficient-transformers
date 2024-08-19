@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import warnings
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import onnx
@@ -332,10 +332,11 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     def generate(
         self,
-        inputs: Dict[str, np.ndarray],
+        inputs: Optional[Union[torch.Tensor, np.ndarray]] = None,
         generation_config: Optional[GenerationConfig] = None,
         stopping_criteria: Optional[StoppingCriteria] = None,
         streamer: Optional[BaseStreamer] = None,
+        **kwargs,
     ) -> np.ndarray:
         # Initialize session
         if self.qpc_session is None:
@@ -349,6 +350,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             self.qpc_session.skip_buffers(retained_buffers)
 
         generation_config = generation_config or self.model.generation_config
+        generation_config, model_kwargs = self.model._prepare_generation_config(generation_config, **kwargs)
         if generation_config.do_sample:
             raise NotImplementedError("do_sample=True not supported currently")
         if generation_config.num_beams > 1:
@@ -359,11 +361,17 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         stopping_criteria = stopping_criteria or StoppingCriteriaList()
         stopping_criteria = self.model._get_stopping_criteria(generation_config, stopping_criteria)
 
+        if inputs is not None:
+            inputs = {"input_ids": inputs}
+        else:
+            inputs = {}
+        inputs.update(model_kwargs)
+        inputs = {k: v.numpy() if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+
         batch_size = max(
             [x[self.qpc_session.binding_index_map["input_ids"]][1][0] for x in self.qpc_session.allowed_shapes]
             + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[0]]
         )
-        inputs = inputs.copy()
         passed_batch_size = inputs["input_ids"].shape[0]
         if passed_batch_size != batch_size:
             raise ValueError(f"Model compiled for batch_size: {batch_size}, but passed batch_size: {passed_batch_size}")
