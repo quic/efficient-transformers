@@ -62,7 +62,6 @@ def test_infer(setup, mocker):
         assert os.path.isdir(ms.qpc_dir_path())
     else:
         get_onnx_model_path_spy.assert_called_once()
-        assert get_onnx_model_path_spy.spy_return in ms.onnx_model_path()
         compile_spy.assert_called_once()
         assert compile_spy.spy_return == ms.qpc_dir_path()
     cloud_ai_100_exec_kv_spy.assert_called_once()

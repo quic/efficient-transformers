@@ -231,6 +231,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxfp6=mxfp6,
             mxint8=mxint8,
             device_group=device_group,
+            full_batch_size=None,
         )
 
         # Compile

@@ -12,7 +12,7 @@ import shutil
 import pytest
 
 from QEfficient.transformers.modeling_utils import get_lists_of_cb_qeff_models
-from QEfficient.utils import get_qpc_dir_path
+from QEfficient.utils import get_onnx_dir_name
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
 
@@ -108,7 +108,7 @@ class ModelSetup:
         return str(os.path.join(self.qpc_base_dir_path(), "qpcs"))
 
     def onnx_dir_name(self):
-        return get_qpc_dir_path(self.model_name, self.full_batch_size is not None)
+        return get_onnx_dir_name(self.model_name, self.full_batch_size is not None)
 
     def onnx_dir_path(self):
         return str(os.path.join(self.model_card_dir(), self.onnx_dir_name()))

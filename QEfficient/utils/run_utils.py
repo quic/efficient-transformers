@@ -45,6 +45,7 @@ class ApiRunner:
             prompt=prompt,
             prompt_len=prompt_len,
             ctx_len=ctx_len,
+            full_batch_size=None,
         )
 
         self.gen_len = self.input_handler.ctx_len - self.input_handler.prompt_len
