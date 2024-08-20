@@ -1,10 +1,20 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 import torch
-from transformers.integrations import replace_quantization_scales
 from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 from transformers.quantizers.quantizer_awq import AwqQuantizer
 from transformers.utils.quantization_config import AwqBackendPackingMethod, AwqConfig, AWQLinearVersion
 
-from QEfficient.transformers.quantizers.awq import get_keys_to_not_convert, replace_linear_layer_with_awq_gemm
+from QEfficient.transformers.quantizers.awq import (
+    get_keys_to_not_convert,
+    replace_linear_layer_with_awq_gemm,
+    replace_quantization_scales,
+)
 from QEfficient.utils.logging_utils import logger
 
 
