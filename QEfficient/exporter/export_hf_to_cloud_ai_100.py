@@ -215,7 +215,7 @@ def export_kvstyle_transformed_model_to_onnx(
 
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
-
+    print(output_names)
     # Raise error if expected outputs are not present
     assert "logits" in output_names, "logits not found in output"
     assert "past_key_values" in output_names, "past_key_values not found in output"
