@@ -14,7 +14,8 @@ from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, P
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
 from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTransform, KVCacheTransform
-from QEfficient.transformers.quantizers.quantizer_awq import replace_transformers_quantizers
+from QEfficient.transformers.quantizers.quant_transforms import AwqToOnnxTransform
+from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, replace_transformers_quantizers
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
@@ -154,9 +155,13 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         """
         if self.is_transformed:
             return
+
         if kwargs.get("full_batch_size", None):
             self._pytorch_transforms.remove(KVCacheTransform)
             self._pytorch_transforms.append(CBTransform)
+        if isinstance(self.model.config.quantization_config, QEffAwqConfig):
+            self._pytorch_transforms.insert(0, AwqToOnnxTransform)
+
         for transform in self._pytorch_transforms:
             transform.apply(self.model)
         self.is_transformed = True

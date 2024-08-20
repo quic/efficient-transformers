@@ -61,18 +61,26 @@ class ModuleMutatorTransform:
     replace original module with new module.
 
     Raises:
-        NotImplementedError: Not supposed to use directly, Create a subclass and implement mutate method and _match_class variable.
+        NotImplementedError: Not supposed to use directly, Create a subclass and implement mutate method and assign a valid nn.Module class to _match_class variable.
     """
 
     _match_class: nn.Module
 
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        transformed = False
         for name, module in model.named_children():
             if isinstance(module, cls._match_class):
                 setattr(model, name, cls.mutate(module, model))
+                transformed = True
             else:
                 cls.apply(module)
+
+        if isinstance(model, cls._match_class):
+            model = cls.mutate(model, None)
+            transformed = True
+
+        return model, transformed
 
     @classmethod
     def mutate(cls, original_module: nn.Module, parent_module: nn.Module):
