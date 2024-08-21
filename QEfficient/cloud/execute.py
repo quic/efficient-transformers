@@ -16,7 +16,7 @@ from QEfficient.utils.constants import Constants
 def main(
     model_name: str,
     qpc_path: str,
-    device_group: List[int],
+    device_group: Optional[List[int]] = None,
     local_model_dir: Optional[str] = None,
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
@@ -69,7 +69,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device_group",
         "--device-group",
-        required=True,
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         help="Cloud AI 100 device ids (comma-separated) e.g. [0]",
     )

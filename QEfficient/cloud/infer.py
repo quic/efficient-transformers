@@ -20,7 +20,7 @@ from QEfficient.utils.logging_utils import logger
 def main(
     model_name: str,
     num_cores: int,
-    device_group: List[int],
+    device_group: Optional[List[int]] = None,
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
@@ -147,7 +147,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device_group",
         "--device-group",
-        required=True,
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         help="Cloud AI 100 device ids (comma-separated) e.g. [0,1]  ",
     )
