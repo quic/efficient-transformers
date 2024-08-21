@@ -13,7 +13,7 @@ from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
 
@@ -194,7 +194,7 @@ def check_and_assign_cache_dir(local_model_dir, cache_dir):
                 f"Both local_model_dir ({local_model_dir}) and cache_dir ({cache_dir}) given. Using local_model_dir."
             )
         return None
-    return cache_dir if cache_dir else Constants.CACHE_DIR
+    return cache_dir if cache_dir else None
 
 
 def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]) -> None:

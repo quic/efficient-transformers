@@ -143,18 +143,15 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaAttention: QEffLlamaAttention,
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
-        LlamaDecoderLayer: QEffLlamaDecoderLayer,
         # Mistral
         MistralAttention: QEffMistralAttention,
         MistralModel: QEffMistralModel,
         MistralForCausalLM: QEffMistralForCausalLM,
-        MistralDecoderLayer: QEffMistralDecoderLayer,
         # Mixtral
         MixtralAttention: QEffMixtralAttention,
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
         MixtralModel: QEffMixtralModel,
         MixtralForCausalLM: QEffMixtralForCausalLM,
-        MixtralDecoderLayer: QeffMixtralDecoderLayer,
         # Mpt
         MptAttention: QEffMptAttention,
         MptBlock: QEffMptBlock,
@@ -176,7 +173,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2Model: QEffStarcoder2Model,
         Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
-        Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
     }
 
     @classmethod
@@ -185,3 +181,17 @@ class KVCacheTransform(ModuleMappingTransform):
         # FIXME: see if we can merge into _module_mapping dict
         transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update
         return model, transformed
+
+
+class CBTransform(KVCacheTransform):
+    _module_mapping = {
+        **KVCacheTransform._module_mapping,  # Unpack existing KV mapping
+        # Llama
+        LlamaDecoderLayer: QEffLlamaDecoderLayer,
+        # Mistral
+        MistralDecoderLayer: QEffMistralDecoderLayer,
+        # Mixtral
+        MixtralDecoderLayer: QeffMixtralDecoderLayer,
+        # Starcoder2
+        Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
+    }

@@ -61,7 +61,6 @@ class QEffDynamicCache(DynamicCache):
 
             # Scatter
             if batch_index is not None:
-                # ctx_len = self.key_cache[layer_idx].shape[2]
                 invalid_scatter_index = torch.iinfo(torch.int32).max
                 scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
 
@@ -73,8 +72,6 @@ class QEffDynamicCache(DynamicCache):
                     self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
                 )
             else:
-                # ctx_len = k_out.shape[2]
-
                 self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], position_ids, key_states)
                 self.value_cache[layer_idx] = CtxScatterFunc.apply(
                     self.value_cache[layer_idx], position_ids, value_states
@@ -93,7 +90,6 @@ class QEffDynamicCache(DynamicCache):
             else:
                 invalid_idx_value = 0
 
-            # invalid_idx_value = torch.iinfo(torch.int32).max # due to a compiler bug this is commented.
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
             if batch_index is not None:
                 k_out = CtxGatherFuncCB.apply(k_out, batch_index, ctx_indices)

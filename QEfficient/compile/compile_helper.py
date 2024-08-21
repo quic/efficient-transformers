@@ -146,9 +146,12 @@ def compile(
     Returns:
         :str: Path to compiled ``qpc`` package.
     """
+    if full_batch_size and batch_size != 1:
+        raise ValueError("Only either batch_size or full_batch_size should be greater than one")
+
     os.makedirs(qpc_path, exist_ok=True)
     specialization_json_path = os.path.join(qpc_path, "specializations.json")
-    # Dynamically create the specializations JSON
+    
     create_and_dump_specializations(
         batch_size=batch_size,
         prompt_len=prompt_len,

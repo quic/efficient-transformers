@@ -23,6 +23,7 @@ class InputHandler:
             :prompt (List[str]): String to used as input prompt for the model.
             :prompt_len (int): Prompt length for the model to compile.
             :ctx_len (int): Maximum context length to compile the model.
+            :full_batch_size (int): Continuous batching batch size
         """
         # check and fix tokenizer viability
         padding_check_and_fix(tokenizer)

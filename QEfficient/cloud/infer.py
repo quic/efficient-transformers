@@ -33,6 +33,7 @@ def main(
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     batch_size: int = 1,
+    full_batch_size: Optional[int] = None,
     prompt_len: int = 32,
     ctx_len: int = 128,
     generation_len: Optional[int] = None,
@@ -41,7 +42,6 @@ def main(
     local_model_dir: Optional[str] = None,
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
-    full_batch_size: Optional[int] = None,
 ) -> None:
     """
     ``Mandatory`` Args:

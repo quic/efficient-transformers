@@ -420,7 +420,7 @@ def qualcomm_efficient_converter(
 
     """
     warnings.warn(
-        "\033[93model_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m",
+        "\033[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m",
         DeprecationWarning,
         stacklevel=2,
     )
@@ -433,6 +433,7 @@ def qualcomm_efficient_converter(
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
             token=hf_token,
             cache_dir=cache_dir,
+            full_batch_size=full_batch_size,
         )
     )
 
