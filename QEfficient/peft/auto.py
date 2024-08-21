@@ -110,58 +110,16 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             self.model, transformed = transform.apply(self.model)
         logger.info("Pytorch transforms applied")
 
-    @property
-    def sample_inputs(self) -> Dict[str, torch.Tensor]:
-        kv_cache_shape = get_padding_shape_from_config(self.model.config, 1, 32)
-        inputs = {
-            "input_ids": torch.zeros((1, 32), dtype=torch.int64),
-            "position_ids": torch.arange(32, dtype=torch.int64).view((1, 32)),
-            "past_key_values": [
-                (
-                    torch.zeros(kv_cache_shape, dtype=torch.float32),
-                    torch.zeros(kv_cache_shape, dtype=torch.float32),
-                )
-                for _ in range(self.num_layers)
-            ],
-        }
-        return inputs
-
-    @property
-    def dynamic_axes(self) -> Dict[str, Dict[int, str]]:
-        dynamic_axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "position_ids": {0: "batch_size", 1: "seq_len"},
-        }
-        for i in range(self.num_layers):
-            dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
-            dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
-        return dynamic_axes
-
-    @property
-    def input_names(self) -> List[str]:
-        inputs = ["input_ids", "position_ids"]
-        for i in range(self.num_layers):
-            inputs.append(f"past_key.{i}")
-            inputs.append(f"past_value.{i}")
-        return inputs
-
-    @property
-    def output_names(self) -> List[str]:
-        outputs = ["logits"]
-        for i in range(self.num_layers):
-            outputs.append(f"past_key.{i}_RetainedState")
-            outputs.append(f"past_value.{i}_RetainedState")
-        return outputs
-
-    @property
-    def export_kwargs(self) -> Dict[str, any]:
-        return {"do_constant_folding": False}  # To avoid merging adapter weights with base weights
-
-    @property
-    def onnx_transform_kwargs(self) -> Dict[str, any]:
-        return {"adapter_name": self.model.active_adapter}
-
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def _export(
+        self,
+        sample_inputs: Dict[str, torch.Tensor],
+        input_names: List[str],
+        output_names: List[str],
+        dynamic_axes: Dict[str, Dict[int, str]],
+        export_kwargs: Dict[str, any] = {},
+        onnx_transform_kwargs: Dict[str, any] = {},
+        export_dir: Optional[str] = None,
+    ) -> str:
         # Base class
         export_dir = Path(export_dir or (QEFF_HOME / self.model_dir))
         onnx_path = export_dir / f"{self.model_name}.onnx"
@@ -176,13 +134,13 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         try:
             torch.onnx.export(
                 self.model,
-                (self.sample_inputs,),
+                (sample_inputs,),
                 str(tmp_onnx_path),
-                input_names=self.input_names,
-                output_names=self.output_names,
-                dynamic_axes=self.dynamic_axes,
+                input_names=input_names,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
                 opset_version=13,
-                **self.export_kwargs,
+                **export_kwargs,
             )
             logger.info("Pytorch export successful")
 
@@ -190,8 +148,8 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             onnx_transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
+                **onnx_transform_kwargs,
             }
-            onnx_transform_kwargs.update(self.onnx_transform_kwargs)
             for transform in self.onnx_transforms:
                 model, transformed = transform.apply(model, **onnx_transform_kwargs)
             model.metadata_props.append(
@@ -211,6 +169,42 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         self.onnx_path = onnx_path
         return onnx_path
+
+    def export(self, export_dir: Optional[str] = None) -> str:
+        kv_cache_shape = get_padding_shape_from_config(self.model.config, 1, 32)
+        sample_inputs = {
+            "input_ids": torch.zeros((1, 32), dtype=torch.int64),
+            "position_ids": torch.arange(32, dtype=torch.int64).view((1, 32)),
+            "past_key_values": [
+                (
+                    torch.zeros(kv_cache_shape, dtype=torch.float32),
+                    torch.zeros(kv_cache_shape, dtype=torch.float32),
+                )
+                for _ in range(self.num_layers)
+            ],
+        }
+
+        dynamic_axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+        }
+        output_names = ["logits"]
+        for i in range(self.num_layers):
+            for kv in ["key", "value"]:
+                dynamic_axes[f"past_{kv}.{i}"] = {0: "batch_size", 2: "ctx_len"}
+                output_names.append(f"past_{kv}.{i}_RetainedState")
+
+        input_names = list(dynamic_axes.keys())
+
+        return self._export(
+            sample_inputs,
+            input_names,
+            output_names,
+            dynamic_axes,
+            export_kwargs={"do_constant_folding": False},  # To avoid merging adapter weights with base weights
+            onnx_transform_kwargs={"adapter_name": self.model.active_adapter},
+            export_dir=export_dir,
+        )
 
     def _compile(self, onnx_path, **kwargs) -> str:
         # Base class
