@@ -253,7 +253,6 @@ def cloud_ai_100_exec_kv(
     batch_size, ctx_len = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
-    print(prompt)
     generate_text = TextGeneration(
         tokenizer=tokenizer,
         prompt=prompt,
@@ -685,12 +684,6 @@ class TextGeneration:
         end = perf_counter()
 
         generated_texts = self.tokenizer.batch_decode(self.generated_ids, skip_special_tokens=True)
-
-        # if self.stream:
-        #     print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Generated Prompt ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-        #     for i in range(1, len(prompt) if self.full_batch_size else self.batch_size):
-        #         print("\n\nPrompt : ", prompt[i])
-        #         print("Completion : ", generated_texts[i])
 
         total_decode_tokens = num_token
         prefill_time, decode_perf, total_perf, total_time = self.calculate_latency(

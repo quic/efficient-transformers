@@ -151,7 +151,7 @@ def compile(
 
     os.makedirs(qpc_path, exist_ok=True)
     specialization_json_path = os.path.join(qpc_path, "specializations.json")
-    
+
     create_and_dump_specializations(
         batch_size=batch_size,
         prompt_len=prompt_len,

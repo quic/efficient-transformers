@@ -13,7 +13,7 @@ from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, P
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
-from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
+from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTransform, KVCacheTransform
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
@@ -47,7 +47,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         self._tokenizer = None
         self.is_transformed = False
         if kwargs.get("transform", True):
-            self.transform()
+            self.transform(**kwargs)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}\n" + self.model.__repr__()
@@ -84,6 +84,9 @@ class QEFFTransformersBase(QEFFBaseModel):
         model_card_name = kwargs.pop(
             "model_card_name", None
         )  # Remove model_card_name from kwargs for transformers APIs
+
+        full_batch_size = kwargs.pop("full_batch_size", None)
+
         attn_implementation = kwargs.get("attn_implementation", None)
         if attn_implementation != "eager":
             logger.warning(f"Updating attn_implementation to be 'eager', got {attn_implementation}")
@@ -96,6 +99,7 @@ class QEFFTransformersBase(QEFFBaseModel):
             model,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             model_card_name=model_card_name,
+            full_batch_size=full_batch_size,
             **kwargs,
         )
 
@@ -133,8 +137,9 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
 
     _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
+    cb_transform = CBTransform
 
-    def transform(self):
+    def transform(self, **kwargs):
         """
         This method applies all relevant optimization transforms on the model and toggles the ``self.is_transformed`` attribute to True. If the model is already transformed, the method will simply return.
         Please note that this method does not require any input arguments."
@@ -144,6 +149,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         """
         if self.is_transformed:
             return
+        if kwargs.get("full_batch_size", None):
+            self._pytorch_transforms.append(self.cb_transform)
         for transform in self._pytorch_transforms:
             transform.apply(self.model)
         self.is_transformed = True
