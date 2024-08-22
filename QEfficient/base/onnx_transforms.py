@@ -82,7 +82,3 @@ class SplitTensorsTransform(OnnxTransform):
                     current_file_size = tsize
                 external_data_helper.set_external_data(tensor, f"{model_name}_{file_num}.onnx.data")
         return model, transformed
-
-
-class LoraAdapters(OnnxTransform):
-    pass
