@@ -10,6 +10,7 @@ from typing import List, Optional, Tuple, Union
 
 import requests
 from huggingface_hub import login, snapshot_download
+from huggingface_hub.utils import GatedRepoError
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
@@ -61,6 +62,10 @@ def hf_download(
                 ignore_patterns=ignore_patterns,
             )
             break
+        except GatedRepoError as e:
+            raise RuntimeError(
+                f"Looks like you are trying to access gated model from HuggingFace, please make sure you have access and pass hf_token\n{e}"
+            )
         except requests.ReadTimeout as e:
             logger.info(f"Read timeout: {e}")
             retry_count += 1
