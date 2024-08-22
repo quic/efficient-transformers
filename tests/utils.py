@@ -78,7 +78,7 @@ def export_onnx(model_kv, tokenizer, model_name):
     return base_path, onnx_model_path
 
 
-def set_up(model_config, device_group=[0]):
+def set_up(model_config, device_group=None):
     """
     Set up function to set up the test environment for TestQEfficientModel class
     """

@@ -27,7 +27,6 @@ def test_execute(setup, mocker):
     execute(
         model_name=ms.model_name,
         qpc_path=ms.qpc_dir_path(),
-        device_group=ms.device_group,
         prompt=ms.prompt,
         prompts_txt_file_path=ms.prompts_txt_file_path,
         hf_token=ms.hf_token,
