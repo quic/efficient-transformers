@@ -124,7 +124,8 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         export_dir: Optional[str] = None,
     ) -> str:
         # Base class
-        export_dir = Path(export_dir or (QEFF_HOME / self.model_dir))
+        export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
+        export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
         onnx_path = export_dir / f"{self.model_name}.onnx"
         if onnx_path.is_file():
             self.onnx_path = onnx_path
@@ -178,15 +179,8 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         sample_inputs = {
             "input_ids": torch.zeros((1, 32), dtype=torch.int64),
             "position_ids": torch.arange(32, dtype=torch.int64).view((1, 32)),
-            "past_key_values": [
-                (
-                    torch.zeros(kv_cache_shape, dtype=torch.float32),
-                    torch.zeros(kv_cache_shape, dtype=torch.float32),
-                )
-                for _ in range(self.num_layers)
-            ],
+            "past_key_values": [[] for _ in range(self.num_layers)],
         }
-
         dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
@@ -194,6 +188,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         output_names = ["logits"]
         for i in range(self.num_layers):
             for kv in ["key", "value"]:
+                sample_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
                 dynamic_axes[f"past_{kv}.{i}"] = {0: "batch_size", 2: "ctx_len"}
                 output_names.append(f"past_{kv}.{i}_RetainedState")
 
