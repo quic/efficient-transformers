@@ -69,13 +69,14 @@ def hf_download(
         except requests.ReadTimeout as e:
             logger.info(f"Read timeout: {e}")
             retry_count += 1
-
         except HTTPError as e:
             retry_count = max_retries
             if e.response.status_code == 401:
                 logger.info("You need to pass a valid `--hf_token=...` to download private checkpoints.")
             else:
                 raise e
+        except Exception as e:
+            raise e
 
     return model_path
 
