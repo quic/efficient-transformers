@@ -10,7 +10,6 @@ from typing import List, Optional
 
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.utils import load_hf_tokenizer
-from QEfficient.utils.constants import Constants
 
 
 def main(
@@ -21,7 +20,7 @@ def main(
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
     generation_len: Optional[int] = None,
-    cache_dir: Optional[str] = Constants.CACHE_DIR,
+    cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
     full_batch_size: Optional[int] = None,
 ):
@@ -93,7 +92,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cache-dir",
         "--cache_dir",
-        default=Constants.CACHE_DIR,
+        default=None,
         required=False,
         help="Cache dir to store HF Downloads",
     )

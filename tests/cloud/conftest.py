@@ -13,7 +13,7 @@ import pytest
 
 from QEfficient.transformers.modeling_utils import get_lists_of_cb_qeff_models
 from QEfficient.utils import get_onnx_dir_name
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
 
@@ -203,7 +203,7 @@ def pytest_generate_tests(metafunc):
         "aic_enable_depth_first", json_data["aic_enable_depth_first"], ids=lambda x: "aic_enable_depth_first=" + str(x)
     )
     metafunc.parametrize("mos", json_data["mos"], ids=lambda x: "mos=" + str(x))
-    metafunc.parametrize("cache_dir", [Constants.CACHE_DIR], ids=lambda x: "cache_dir=" + str(x))
+    metafunc.parametrize("cache_dir", [None], ids=lambda x: "cache_dir=" + str(x))
     metafunc.parametrize("hf_token", json_data["hf_token"], ids=lambda x: "hf_token=" + str(x))
     metafunc.parametrize("batch_size", json_data["batch_size"], ids=lambda x: "batch_size=" + str(x))
     metafunc.parametrize("prompt_len", json_data["prompt_len"], ids=lambda x: "prompt_len=" + str(x))
@@ -299,9 +299,10 @@ def pytest_collection_modifyitems(config, items):
 
 
 def cache_clean_up():
-    if os.path.exists(Constants.CACHE_DIR):
-        shutil.rmtree(Constants.CACHE_DIR)
-        logger.info(f"\n.............Cleaned up {Constants.CACHE_DIR}")
+    pass
+    # if os.path.exists(Constants.QEFF_MODELS_DIR):
+    #     shutil.rmtree(Constants.CACHE_DIR)
+    #     logger.info(f"\n.............Cleaned up {Constants.CACHE_DIR}")
 
 
 def qeff_models_clean_up():
