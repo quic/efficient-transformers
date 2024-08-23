@@ -49,28 +49,31 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         if model.active_peft_config.peft_type != "LORA":
             raise NotImplementedError("Only LoRA models are supported")
 
-        base_model = model.get_base_model()
-        self.model_name = type(base_model).__name__ + "-lora"
+        super().__init__(model)
 
+        self.num_layers = model.config.num_hidden_layers
+        self.adapter_weights = {}
+        self.transform()
+
+    @property
+    def model_name(self) -> str:
+        return self.model.get_base_model().__class__.__name__ + "-lora"
+
+    @property
+    def model_hash(self) -> str:
         # NOTE: model_config.to_diff_dict() has "_name_or_path" attribute which is the model card name or path.
         # Using same card name will result in same hash. But, using a relative path for one run and
         # absolute path for another run will result in different hash.
         # The added complexity to resolve different paths to same location is not worth pursuing.
-        # Instead, advise the user to always provide absolute paths for local models.
+        # Instead, advise the user to always provide same relative paths or absolute paths for local models.
 
         # Compute the hash with: model_config, peft_config, transforms
-        model_hash = hashlib.sha256()
-        model_hash.update(to_hashable(base_model.config.to_diff_dict()))
-        model_hash.update(to_hashable(model.active_peft_config.to_dict()))
-        model_hash.update(to_hashable(self.transform_names()))
-        self.model_hash = model_hash.hexdigest()[:16]
-        self.model_dir = self.model_name + "-" + self.model_hash
-
-        self.num_layers = model.config.num_hidden_layers
-        super().__init__(model)
-
-        self.adapter_weights = {}
-        self.transform()
+        mhash = hashlib.sha256()
+        mhash.update(to_hashable(self.model.get_base_model().config.to_diff_dict()))
+        mhash.update(to_hashable(self.model.active_peft_config.to_dict()))
+        mhash.update(to_hashable(self.transform_names()))
+        mhash = mhash.hexdigest()[:16]
+        return mhash
 
     def load_adapter(self, model_id: str, adapter_name: str):
         self.model.load_adapter(model_id, adapter_name)
