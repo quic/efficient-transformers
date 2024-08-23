@@ -204,123 +204,135 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             export_dir=export_dir,
         )
 
-    def _compile(self, onnx_path, **kwargs) -> str:
+    def _compile(
+        self,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        specializations: Optional[List[Dict[str, int]]] = None,
+        custom_io: Optional[Dict[str, str]] = None,
+        mdp_ts_num_devices: int = 1,
+        **compiler_options,
+    ) -> str:
         # Base class
+        onnx_path = Path(onnx_path or self.onnx_path)
+        compile_dir = Path(compile_dir or onnx_path.parent)
+        qpc_path = compile_dir / "qpc"
+        if not onnx_path.is_file():
+            raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
+
         command = ["/opt/qti-aic/exec/qaic-exec", f"-m={onnx_path}", "-aic-hw", "-aic-hw-version=2.0"]
-        aic_binary_dir = Path(kwargs.pop("aic_binary_dir", None) or "qpc")
-        for key, value in kwargs.items():
+        for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
             if isinstance(value, bool):
                 if value:
                     command.append(option)
                 continue
             command.append(f"{option}={value}")
-
-        # Compute hash for binary location
         compile_hash = hashlib.sha256(to_hashable(command))
-        for option in command:
-            # Hash config file contents
-            if (
-                option.startswith("-network-specialization-config=")
-                or option.startswith("-custom-IO-list-file=")
-                or option.startswith("-mdp-load-partition-config=")
-            ):
-                with open(option.split("=")[1], "rb") as fp:
-                    compile_hash.update(fp.read())
-        compile_hash = compile_hash.hexdigest()[:16]
 
-        # Check if already compiled
-        aic_binary_dir = aic_binary_dir.with_name(aic_binary_dir.name + "-" + compile_hash)
-        if aic_binary_dir.is_dir():
-            if (aic_binary_dir / "programqpc.bin").is_file():
-                return aic_binary_dir
-            # Probably compilation failure last time, delete directory to start over
-            shutil.rmtree(aic_binary_dir)
+        # Write specializations.json file
+        if specializations is not None:
+            specializations_json = compile_dir / "specializations.json"
+            with open(specializations_json, "w") as fp:
+                json.dump(
+                    {"specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]},
+                    fp,
+                    indent=4,
+                )
+            command.append(f"-network-specialization-config={specializations_json}")
+            compile_hash.update(to_hashable(specializations))
 
-        command.append(f"-aic-binary-dir={aic_binary_dir}")
-        logger.info(f"Running compiler: {' '.join(command)}")
-        subprocess.run(command).check_returncode()
-        return aic_binary_dir
+        # Write custom_io.yaml file
+        if custom_io:
+            custom_io_yaml = compile_dir / "custom_io.yaml"
+            with open(custom_io_yaml, "w") as fp:
+                for io_name, dtype in custom_io.items():
+                    fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
+            command.append(f"-custom-IO-list-file={custom_io_yaml}")
+            compile_hash.update(to_hashable(custom_io))
 
-    def compile(
-        self,
-        *,
-        batch_size: int = 1,
-        prefill_seq_len: int,
-        ctx_len: int,
-        onnx_path: Optional[str] = None,
-        compile_dir: Optional[str] = None,
-        num_devices: int = 1,
-        num_cores: int = 16,
-        mxfp6_matmul: bool = False,
-        mxint8_kv_cache: bool = False,
-        **compiler_options,
-    ) -> str:
-        compile_dir = Path(compile_dir or (QEFF_HOME / self.model_dir))
-        onnx_path = Path(onnx_path or self.onnx_path)
-        aic_binary_dir = compile_dir / "qpc"
-
-        if not onnx_path.is_file():
-            raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
-
-        # Specializations
-        specializations_json = compile_dir / "specializations.json"
-        with open(specializations_json, "w") as fp:
-            json.dump(
-                {
-                    "specializations": [
-                        {"batch_size": str(batch_size), "seq_len": str(prefill_seq_len), "ctx_len": str(ctx_len)},
-                        {"batch_size": str(batch_size), "seq_len": "1", "ctx_len": str(ctx_len)},
-                    ]
-                },
-                fp,
-                indent=4,
-            )
-
-        # Custom IO
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
-        custom_io_yaml = compile_dir / f"custom_io_{kv_cache_dtype}.yaml"
-        with open(custom_io_yaml, "w") as fp:
-            for suffix in ["", "_RetainedState"]:
-                for i in range(self.num_layers):
-                    for kv in ["key", "value"]:
-                        fp.write(f" - IOName: past_{kv}.{i}{suffix}\n   Precision: {kv_cache_dtype}\n\n")
-
-                for weight_name in self.adapter_weights[self.active_adapter]:
-                    fp.write(f" - IOName: {weight_name}{suffix}\n   Precision: float16\n\n")
-
-        # MDP
-        if num_devices > 1:
-            mdp_ts_json = compile_dir / f"mdp_ts_{num_devices}.json"
+        # Write mdp_config.json file
+        if mdp_ts_num_devices > 1:
+            num_cores = compiler_options.get("aic_num_cores", 16)
+            mdp_ts_json = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
             with open(mdp_ts_json, "w") as fp:
                 json.dump(
                     {
-                        "connections": [{"devices": list(range(num_devices)), "type": "p2p"}],
+                        "connections": [{"devices": list(range(mdp_ts_num_devices)), "type": "p2p"}],
                         "partitions": [
                             {
                                 "name": "Partition0",
-                                "devices": [{"deviceId": d, "numCores": num_cores} for d in range(num_devices)],
+                                "devices": [{"deviceId": d, "numCores": num_cores} for d in range(mdp_ts_num_devices)],
                             }
                         ],
                     },
                     fp,
                     indent=4,
                 )
-            compiler_options["mdp_load_partition_config"] = mdp_ts_json
+            command.append(f"-mdp-load-partition-config={mdp_ts_json}")
+            compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
 
-        self.qpc_path = self._compile(
+        # Check if already compiled
+        compile_hash = compile_hash.hexdigest()[:16]
+        qpc_path = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
+        if qpc_path.is_dir():
+            if (qpc_path / "programqpc.bin").is_file():
+                self.qpc_path = qpc_path
+                return qpc_path
+            # Probably compilation failure last time, delete directory to start over
+            shutil.rmtree(qpc_path)
+
+        command.append(f"-aic-binary-dir={qpc_path}")
+        logger.info(f"Running compiler: {' '.join(command)}")
+        subprocess.run(command).check_returncode()
+
+        self.qpc_path = qpc_path
+        return qpc_path
+
+    def compile(
+        self,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        batch_size: int = 1,
+        prefill_seq_len: int,
+        ctx_len: int,
+        num_devices: int = 1,
+        num_cores: int = 16,
+        mxfp6_matmul: bool = False,
+        mxint8_kv_cache: bool = False,
+        **compiler_options,
+    ) -> str:
+        # Specializations
+        specializations = [
+            {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
+            {"batch_size": batch_size, "seq_len": 1, "ctx_len": ctx_len},
+        ]
+
+        # Custom IO
+        custom_io = {}
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        for suffix in ["", "_RetainedState"]:
+            for i in range(self.num_layers):
+                for kv in ["key", "value"]:
+                    custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+            for weight_name in self.adapter_weights[self.active_adapter]:
+                custom_io[f"{weight_name}{suffix}"] = "float16"
+
+        return self._compile(
             onnx_path,
-            network_specialization_config=specializations_json,
+            compile_dir,
             compile_only=True,
-            aic_binary_dir=aic_binary_dir,
+            retained_state=True,
+            specializations=specializations,
             convert_to_fp16=True,
             mxfp6_matmul=mxfp6_matmul,
-            custom_IO_list_file=custom_io_yaml,
-            retained_state=True,
+            custom_io=custom_io,
+            mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             **compiler_options,
         )
-        return self.qpc_path
 
     def generate(
         self,
