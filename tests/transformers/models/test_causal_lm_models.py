@@ -36,6 +36,7 @@ class TestQEfficientModels:
         """
         cls.setup_infos = {model_name: set_up({"model_name": model_name}) for model_name in test_models}
 
+    @pytest.mark.xdist_group(name="causal_lm_group")
     def test_qefficient_model_torch(self, model_name):
         """
         Test function to validate the model before and after KV changes on Pytorch
@@ -45,6 +46,7 @@ class TestQEfficientModels:
             self.setup_infos[model_name]["pytorch_hf_tokens"] == self.setup_infos[model_name]["pytorch_kv_tokens"]
         ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
+    @pytest.mark.xdist_group(name="causal_lm_group")
     def test_qefficient_model_onnx(self, model_name):
         """
         Test function to validate the model before and after KV changes on ONNXRT
@@ -54,6 +56,7 @@ class TestQEfficientModels:
             self.setup_infos[model_name]["pytorch_kv_tokens"] == self.setup_infos[model_name]["ort_tokens"]
         ).all(), "Tokens don't match for ONNXRT output and PyTorch output."
 
+    @pytest.mark.xdist_group(name="causal_lm_group")
     @pytest.mark.skipif(not get_available_device_id, reason="No available devices to run model on Cloud AI 100")
     def test_qefficient_model_cloud_ai_100(self, model_name):
         """
