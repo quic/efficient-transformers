@@ -39,8 +39,8 @@ def main(
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
         :num_cores (int): Number of cores to compile model on.
-        :device_group (List[int]): Device Ids to be used for compilation. If ``len(device_group) > 1``, multiple Card setup is enabled.
     ``Optional`` Args:
+        :device_group (List[int]): Device Ids to be used for compilation. If ``len(device_group) > 1``, multiple Card setup is enabled. ``Defaults to None.``
         :prompt (str): Sample prompt for the model text generation. ``Defaults to None.``
         :prompts_txt_file_path (str): Path to txt file for multiple input prompts. ``Defaults to None.``
         :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
