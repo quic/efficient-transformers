@@ -173,7 +173,7 @@ class ApiRunner:
         print("Completion:", repr(predicted_string))
         return generated_ids
 
-    def run_kv_model_on_cloud_ai_100(self, qpc_path, device_group):
+    def run_kv_model_on_cloud_ai_100(self, qpc_path, device_group=None):
         """
         Function responsible for running ``ONNX`` model on Cloud AI 100 and return the output tokens
 
