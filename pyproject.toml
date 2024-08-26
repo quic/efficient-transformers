@@ -56,4 +56,5 @@ line-length = 120
 lint.extend-select = ["I"]
 
 [tool.pytest.ini_options]
+junit_logging = all
 doctest_optionflags = "NUMBER NORMALIZE_WHITESPACE ELLIPSIS"
