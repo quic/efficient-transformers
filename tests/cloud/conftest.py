@@ -287,6 +287,8 @@ def pytest_sessionstart(session):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    cache_clean_up()
-    qeff_models_clean_up()
-    logger.info("...PYTEST Session Ended.")
+    inside_worker = getattr(session.config, "workerinput", None)
+    if inside_worker is None:
+        cache_clean_up()
+        qeff_models_clean_up()
+        logger.info("...PYTEST Session Ended.")
