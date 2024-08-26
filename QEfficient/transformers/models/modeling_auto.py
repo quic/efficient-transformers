@@ -137,7 +137,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
 
     _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
-    cb_transform = CBTransform
 
     def transform(self, **kwargs):
         """
@@ -150,7 +149,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         if self.is_transformed:
             return
         if kwargs.get("full_batch_size", None):
-            self._pytorch_transforms.append(self.cb_transform)
+            self._pytorch_transforms.remove(KVCacheTransform)
+            self._pytorch_transforms.append(CBTransform)
         for transform in self._pytorch_transforms:
             transform.apply(self.model)
         self.is_transformed = True
