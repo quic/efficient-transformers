@@ -35,9 +35,9 @@ pipeline
                     sh '''
                     . preflight_qeff/bin/activate
                     export TOKENIZERS_PARALLELISM=false
-                    pytest -W ignore -s -v tests -m "not ai100 and not causal_lm" -n 8 -o junit_logging=all --junitxml=tests/tests_log.xml
+                    pytest -W ignore -s -v tests -m "not causal_lm" --ignore tests/cloud -n 8 -o junit_logging=all --junitxml=tests/tests_log.xml
                     pytest -W ignore -s -v tests -m "causal_lm" -o junit_logging=all -n 4 --junitxml=tests/tests_log.xml
-                    pytest -W ignore -s -v tests -m "ai100" -n 4 -o junit_logging=all --junitxml=tests/tests_log.xml
+                    pytest -W ignore -s -v tests/cloud -o junit_logging=all --junitxml=tests/tests_log.xml
                     deactivate
                     exit
                     '''     

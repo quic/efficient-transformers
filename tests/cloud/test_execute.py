@@ -5,14 +5,11 @@
 #
 # -----------------------------------------------------------------------------
 
-import pytest
-
 import QEfficient
 import QEfficient.cloud.execute
 from QEfficient.cloud.execute import main as execute
 
 
-@pytest.mark.ai100
 def test_execute(setup, mocker):
     """
     test_execute is a HL execute api testing function,
