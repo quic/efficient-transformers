@@ -15,6 +15,7 @@ from QEfficient.cloud.infer import main as infer
 
 
 @pytest.mark.usefixtures("clean_up_after_test")
+@pytest.mark.ai100
 def test_infer(setup, mocker):
     """
     test_infer is a HL infer api testing function,

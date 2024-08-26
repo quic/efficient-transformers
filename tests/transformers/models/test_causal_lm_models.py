@@ -26,6 +26,7 @@ test_models = [
 ]
 
 
+@pytest.mark.causal_lm
 @pytest.mark.parametrize("model_name", test_models)
 class TestQEfficientModels:
     def setup_class(cls):
