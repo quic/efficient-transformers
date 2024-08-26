@@ -7,12 +7,15 @@
 
 import os
 
+import pytest
+
 import QEfficient
 import QEfficient.cloud.export
 from QEfficient.cloud.export import main as export
 from QEfficient.utils.constants import Constants
 
 
+@pytest.mark.cli
 def test_export(setup, mocker):
     """
     test_export is a HL export api testing function,

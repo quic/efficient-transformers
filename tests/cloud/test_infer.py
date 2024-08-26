@@ -14,6 +14,7 @@ import QEfficient.cloud.infer
 from QEfficient.cloud.infer import main as infer
 
 
+@pytest.mark.cli
 @pytest.mark.usefixtures("clean_up_after_test")
 def test_infer(setup, mocker):
     """

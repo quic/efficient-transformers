@@ -35,7 +35,7 @@ test_models = [
 
 @pytest.mark.causal_lm
 @pytest.mark.parametrize("model_name", test_models)
-def test_qefficient_model_torch(model_name):
+def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
     Test function to validate the model before and after KV changes on Pytorch
     :param model_name: Name of model.

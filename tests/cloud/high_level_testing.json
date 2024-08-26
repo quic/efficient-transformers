@@ -13,5 +13,5 @@
     "ctx_len" : [128],
     "mxfp6" : [1],
     "mxint8" : [1],
-    "device_group" : [[0]]
+    "device_group" : [null]
 }
