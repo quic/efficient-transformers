@@ -20,6 +20,7 @@ pipeline
                     . preflight_qeff/bin/activate
                     pip install --upgrade pip setuptools
                     pip install .[test]
+                    pip install junitparser pyteset-xdist // Used for pytests
                     rm -rf QEfficient
                 '''
             }
@@ -35,8 +36,9 @@ pipeline
                     sh '''
                     . preflight_qeff/bin/activate
                     export TOKENIZERS_PARALLELISM=false
-                    pytest -W ignore -s -v tests --ignore tests/cloud -n 4 -o junit_logging=all --junitxml=tests/tests_log.xml
-                    pytest -W ignore -s -v tests/cloud -o junit_logging=all --junitxml=tests/tests_log.xml
+                    pytest -W ignore -s -v tests --ignore tests/cloud -n 4 -o junit_logging=all --junitxml=tests/tests_log1.xml
+                    pytest -W ignore -s -v tests/cloud -o junit_logging=all --junitxml=tests/tests_log2.xml
+                    junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log.xml
                     deactivate
                     exit
                     '''     
