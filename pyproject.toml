@@ -57,5 +57,5 @@ lint.extend-select = ["I"]
 
 [tool.pytest.ini_options]
 addopts = "-W ignore -s -v"
-junit_logging = all
+junit_logging = "all"
 doctest_optionflags = "NUMBER NORMALIZE_WHITESPACE ELLIPSIS"
