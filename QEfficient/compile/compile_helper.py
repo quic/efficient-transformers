@@ -40,7 +40,7 @@ def compile_kv_model_on_cloud_ai_100(
     custom_io_path: str,
     aic_enable_depth_first: bool,
     mos: int = -1,
-    device_group: List[int] = [0],
+    device_group: Optional[List[int]] = None,
     **kwargs,
 ) -> Tuple[bool, str]:
     if kwargs:
@@ -74,7 +74,7 @@ def compile_kv_model_on_cloud_ai_100(
         command.append(f"-mos={mos}")
     if aic_enable_depth_first:
         command.append("-aic-enable-depth-first")
-    if len(device_group) > 1:
+    if device_group is not None and len(device_group) > 1:
         mdp_ts_config = {
             "connections": [{"devices": list(range(len(device_group))), "type": "p2p"}],
             "partitions": [
@@ -101,7 +101,7 @@ def compile(
     onnx_path: str,
     qpc_path: str,
     num_cores: int,
-    device_group: List[int],  #  FIXME: use num_devices instead
+    device_group: Optional[List[int]] = None,  #  FIXME: use num_devices instead
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     batch_size: int = 1,
@@ -122,8 +122,8 @@ def compile(
         :onnx_path (str): Generated ``ONNX`` Model Path.
         :qpc_path (str): Path for saving compiled qpc binaries.
         :num_cores (int): Number of cores to compile the model on.
-        :device_group (List[int]): Used for finding the number of devices to compile for.
     ``Optional`` Args:
+        :device_group (List[int]): Used for finding the number of devices to compile for. ``Defaults to None.``
         :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
         :mos (int): Effort level to reduce the on-chip memory. ``Defaults to -1.``
         :batch_size (int): Batch size to compile the model for. ``Defaults to 1.``

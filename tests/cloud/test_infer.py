@@ -14,6 +14,7 @@ import QEfficient.cloud.infer
 from QEfficient.cloud.infer import main as infer
 
 
+@pytest.mark.cli
 @pytest.mark.usefixtures("clean_up_after_test")
 def test_infer(setup, mocker):
     """
@@ -46,7 +47,6 @@ def test_infer(setup, mocker):
         ctx_len=ms.ctx_len,
         mxfp6=ms.mxfp6,
         mxint8=ms.mxint8,
-        device_group=ms.device_group,
     )
     # tokenizer check
     load_hf_tokenizer_spy.assert_called_once()

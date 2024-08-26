@@ -99,7 +99,7 @@ def latency_stats_bertstyle(
     qpc_path: str,
     seq_len: int,
     prompt: str,
-    device_id: List[int] = [0],
+    device_id: Optional[List[int]] = None,
 ):
     """
     Function to execute Bertstyle ONNX model on Cloud AI 100.
@@ -196,7 +196,7 @@ def cloud_ai_100_exec_kv_helper(
     prompt: List[str],
     ctx_len: int,
     generation_len: Optional[int] = None,
-    device_id: List[int] = [0],
+    device_id: Optional[List[int]] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
     write_io_dir: Optional[str] = None,
@@ -342,7 +342,7 @@ def cloud_ai_100_exec_kv(
     qpc_path: str,
     prompt: Optional[str] = None,
     prompts_txt_file_path: Optional[str] = None,
-    device_id: List[int] = [0],
+    device_id: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
@@ -362,7 +362,7 @@ def cloud_ai_100_exec_kv(
         :prompt (str): Sample prompt for the model text generation. ``Defaults to None``.
         :prompts_txt_file_path (str): Path of the prompt text file. ``Defaults to None``.
         :generation_len (int): Maximum context length for the model during compilation. ``Defaults to None``.
-        :device_id (List[int]): Device IDs to be used for compilation. If ``len(device_id) > 1``, it enables multiple card setup. ``Defaults to [0]``.
+        :device_id (List[int]): Device IDs to be used for execution. If ``len(device_id) > 1``, it enables multiple card setup. If ``None``, auto-device-picker will be used. ``Defaults to None``.
         :enable_debug_logs (bool): If True, it enables debugging logs. ``Defaults to False``.
         :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them. ``Defaults to True``.
         :Write_io_dir (str): Path to write the input and output files. ``Defaults to None``.

@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 from warnings import warn
 
 import numpy as np
@@ -44,7 +44,7 @@ class QAICInferenceSession:
     def __init__(
         self,
         qpc_path: str,
-        device_ids: List[int] = [0],
+        device_ids: Optional[List[int]] = None,
         activate: bool = True,
         enable_debug_logs: bool = False,
     ):
@@ -58,9 +58,13 @@ class QAICInferenceSession:
         :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
         """
         # Load QPC
-        devices = qaicrt.QIDList(device_ids)
-        self.context = qaicrt.Context(devices)
-        self.queue = qaicrt.Queue(self.context, device_ids[0])  # Async API
+        if device_ids is not None:
+            devices = qaicrt.QIDList(device_ids)
+            self.context = qaicrt.Context(devices)
+            self.queue = qaicrt.Queue(self.context, device_ids[0])
+        else:
+            self.context = qaicrt.Context()
+            self.queue = qaicrt.Queue(self.context, 0)  # Async API
         if enable_debug_logs:
             assert (
                 self.context.setLogLevel(qaicrt.QLogLevel.QL_DEBUG) == qaicrt.QStatus.QS_SUCCESS
@@ -80,7 +84,7 @@ class QAICInferenceSession:
         # Create and load Program
         prog_properties = qaicrt.QAicProgramProperties()
         prog_properties.SubmitRetryTimeoutMs = 60_000
-        if len(device_ids) > 1:
+        if device_ids and len(device_ids) > 1:
             prog_properties.devMapping = ":".join(map(str, device_ids))
         self.program = qaicrt.Program(self.context, None, qpc, prog_properties)
         assert self.program.load() == qaicrt.QStatus.QS_SUCCESS, "Failed to load program"
@@ -170,14 +174,14 @@ class QAICInferenceSession:
                     for binding, (elemsize, shape), (_, passed_shape) in zip(
                         self.bindings, allowed_shape, self.buf_dims
                     ):
-                        if passed_shape[0] == 0:
+                        if passed_shape == [0]:
                             if not binding.is_partial_buf_allowed:
                                 warn(f"Partial buffer not allowed for: {binding.name}")
                             continue
                         error_message += f"{binding.name}:\t{elemsize}\t{shape}\n"
                 error_message += "\n\nPassed shapes:\n"
                 for binding, (elemsize, shape) in zip(self.bindings, self.buf_dims):
-                    if shape[0] == 0:
+                    if shape == [0]:
                         continue
                     error_message += f"{binding.name}:\t{elemsize}\t{shape}\n"
             raise ValueError(error_message)
@@ -188,7 +192,7 @@ class QAICInferenceSession:
         outputs = {}
         for output_name in self.output_names:
             buffer_index = self.binding_index_map[output_name]
-            if self.buf_dims[buffer_index][1][0] == 0:
+            if self.qbuffers[buffer_index].size == 0:
                 continue
             outputs[output_name] = np.frombuffer(
                 bytes(output_qbuffers[buffer_index]),

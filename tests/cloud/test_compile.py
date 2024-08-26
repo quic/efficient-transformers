@@ -7,10 +7,13 @@
 
 import os
 
+import pytest
+
 import QEfficient
 import QEfficient.cloud.compile
 
 
+@pytest.mark.cli
 def test_compile(setup, mocker):
     """
     test_compile is a HL compile api testing function,

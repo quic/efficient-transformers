@@ -20,7 +20,7 @@ from QEfficient.utils.logging_utils import logger
 def main(
     model_name: str,
     num_cores: int,
-    device_group: List[int],
+    device_group: Optional[List[int]] = None,
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
@@ -39,8 +39,8 @@ def main(
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
         :num_cores (int): Number of cores to compile model on.
-        :device_group (List[int]): Device Ids to be used for compilation. If ``len(device_group) > 1``, multiple Card setup is enabled.
     ``Optional`` Args:
+        :device_group (List[int]): Device Ids to be used for compilation. If ``len(device_group) > 1``, multiple Card setup is enabled. ``Defaults to None.``
         :prompt (str): Sample prompt for the model text generation. ``Defaults to None.``
         :prompts_txt_file_path (str): Path to txt file for multiple input prompts. ``Defaults to None.``
         :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
@@ -147,7 +147,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device_group",
         "--device-group",
-        required=True,
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         help="Cloud AI 100 device ids (comma-separated) e.g. [0,1]  ",
     )
