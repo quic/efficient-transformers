@@ -122,8 +122,8 @@ def compile(
         :onnx_path (str): Generated ``ONNX`` Model Path.
         :qpc_path (str): Path for saving compiled qpc binaries.
         :num_cores (int): Number of cores to compile the model on.
-        :device_group (List[int]): Used for finding the number of devices to compile for.
     ``Optional`` Args:
+        :device_group (List[int]): Used for finding the number of devices to compile for. ``Defaults to None.``
         :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
         :mos (int): Effort level to reduce the on-chip memory. ``Defaults to -1.``
         :batch_size (int): Batch size to compile the model for. ``Defaults to 1.``
