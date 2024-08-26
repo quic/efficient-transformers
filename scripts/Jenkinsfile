@@ -20,7 +20,7 @@ pipeline
                     . preflight_qeff/bin/activate
                     pip install --upgrade pip setuptools
                     pip install .[test]
-                    pip install junitparser pyteset-xdist
+                    pip install junitparser pytest-xdist
                     rm -rf QEfficient
                 '''
             }
