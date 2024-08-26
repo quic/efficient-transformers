@@ -39,6 +39,9 @@ class FP16ClipTransform(OnnxTransform):
 
     @classmethod
     def apply(cls, model: ModelProto, *, onnx_base_dir: Optional[str] = None, **kwargs) -> Tuple[ModelProto, bool]:
+        """
+        :param onnx_base_dir: Base directory to load tensors (if not already loaded).
+        """
         finfo = np.finfo(np.float16)
         fp16_max = finfo.max
         fp16_min = finfo.min
@@ -69,6 +72,12 @@ class SplitTensorsTransform(OnnxTransform):
         size_threshold: int = 1024,
         **kwargs,
     ) -> Tuple[ModelProto, bool]:
+        """
+        :param model_name: Used for naming external files. i.e. {model_name}_0.onnx.data
+        :param onnx_base_dir: Base directory to load tensors (if not already loaded).
+        :param file_chunk_size: Chunk size to split external files into.
+        :param size_threshold: Only tensors greater than this threshold (in bytes) will be saved externally.
+        """
         file_num = 0
         current_file_size = 0
         transformed = False
