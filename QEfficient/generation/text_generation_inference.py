@@ -591,6 +591,8 @@ class TextGeneration:
             next_token_id = logits.argmax(2)
 
             for decode_batch_id in range(self.full_batch_size):
+                if self.stream:
+                    self.streamer.put(decode_inputs["input_ids"][0])
                 if (
                     next_token_id[decode_batch_id] == self.tokenizer.eos_token_id
                     or generated_id_current_index[decode_batch_id] >= self.generation_len[decode_batch_id]
