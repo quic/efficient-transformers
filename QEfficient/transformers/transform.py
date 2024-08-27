@@ -14,6 +14,7 @@ from QEfficient.src.base import QEFFBaseModel
 from QEfficient.src.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
+from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaRotaryEmbedding
 from QEfficient.utils.logging_utils import logger
 
 
@@ -24,20 +25,22 @@ def replace_module_with_qeff_layers(model: nn.Module) -> None:
     :param model: torch.nn.Module. Base PyTorch model.
     """
 
-    # Todo: vbaddi, Check if we can do it in better way
-    # Handling the special case of updating _init_ for LlamaAttention to pick the RotaryEmbedding changes
-    for name, module in model.named_children():
-        target_module_class = TransformersToQEffModulesDict.get(type(module))
-        if target_module_class is not None:
-            if isinstance(module, transformers.models.llama.modeling_llama.LlamaAttention):
-                # Special handling for LlamaAttention
-                new_module = target_module_class(module.config, module.layer_idx)
-                new_module.load_state_dict(module.state_dict())
-                setattr(model, name, new_module)
-
     target_module = TransformersToQEffModulesDict.get(model.__class__)
     if target_module is not None:
         model.__class__ = target_module
+
+    if isinstance(model, transformers.models.llama.modeling_llama.LlamaAttention):
+        # Special handling for LlamaAttention
+
+        if not isinstance(
+            getattr(model, "rotary_emb", None), transformers.models.llama.modeling_llama.LlamaRotaryEmbedding
+        ):
+            raise TypeError("Expected LlamaAttention.rotary_emb to be of type LlamaRotaryEmbedding")
+
+        qeff_rotary_emb = QEffLlamaRotaryEmbedding(
+            model.head_dim, max_position_embeddings=model.max_position_embeddings, base=model.rope_theta
+        )
+        setattr(model, "rotary_emb", qeff_rotary_emb)
 
     # Iterate over child modules
     for _, module in model.named_children():
