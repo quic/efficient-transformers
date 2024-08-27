@@ -136,7 +136,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
     """
 
-    _pytorch_transforms = [CustomOpsTransform, KVCacheTransform, InitTransform]
+    _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
 
     def transform(self, **kwargs):
         """
