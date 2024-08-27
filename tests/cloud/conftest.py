@@ -90,7 +90,7 @@ class ModelSetup:
         base_dir_name = str(
             f"qpc_{self.num_cores}cores_{self.batch_size}bs_{self.prompt_len}pl_{self.ctx_len}cl_{self.mos}mos"
             + f"{f'_{self.full_batch_size}fbs_' if self.full_batch_size is not None else '_'}"
-            + f"{len(self.device_group)}"
+            + f"{len(self.device_group) if self.device_group is not None else 1}"
             + "devices"
             + (
                 "_mxfp6_mxint8"
