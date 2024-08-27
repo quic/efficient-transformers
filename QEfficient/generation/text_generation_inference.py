@@ -302,7 +302,7 @@ class TextGeneration:
         full_batch_size: Optional[int] = None,
         ctx_len: Optional[int] = None,
         generation_len: Optional[int] = None,
-        device_id: List[int] = [0],
+        device_id: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
         stream: bool = True,
         write_io_dir: Optional[str] = None,

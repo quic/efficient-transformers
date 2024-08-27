@@ -37,6 +37,7 @@ def get_onnx_model_path(
         :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Pass model tokenizer. ``Defaults to None.``
         :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
         :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
+        :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Defaults to None.``
     """
     onnx_path_exists, onnx_dir_path, onnx_model_path = onnx_exists(model_name, full_batch_size)
     if onnx_path_exists:
@@ -79,6 +80,7 @@ def main(
         :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to None.``
         :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
         :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
+        :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Defaults to None.``
 
     .. code-block:: bash
 
@@ -111,7 +113,11 @@ if __name__ == "__main__":
         "--hf-token", "--hf_token", default=None, type=str, required=False, help="HF token id for private HF models"
     )
     parser.add_argument(
-        "--full_batch_size", "--full-batch-size", type=int, default=None, help="Batch size for text generation"
+        "--full_batch_size",
+        "--full-batch-size",
+        type=int,
+        default=None,
+        help="Set full batch size to enable continuous batching mode, default is None",
     )
     args = parser.parse_args()
     main(**args.__dict__)
