@@ -11,8 +11,8 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 from transformers.cache_utils import DynamicCache
 
-from QEfficient.customop import CtxGatherFunc, CtxGatherFuncCB, CtxScatterFunc, CtxScatterFuncCB
-
+from QEfficient.customop import CtxGatherFunc, CtxGatherFuncCB, CtxScatterFunc, CtxScatterFuncCB, CtxGatherFunc3D, CtxScatterFunc3D
+ 
 
 class QEffDynamicCache(DynamicCache):
     """
@@ -97,6 +97,60 @@ class QEffDynamicCache(DynamicCache):
             else:
                 k_out = CtxGatherFunc.apply(k_out, ctx_indices)
                 v_out = CtxGatherFunc.apply(v_out, ctx_indices)
+            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+
+        return k_out, v_out
+
+    def update3D(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        layer_idx: int,
+        cache_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            key_states (`torch.Tensor`):
+                The new key states to cache.
+            value_states (`torch.Tensor`):
+                The new value states to cache.
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        # Update the cache
+        if len(self.key_cache) <= layer_idx:
+            self.key_cache.append(key_states)
+            self.value_cache.append(value_states)
+            k_out, v_out = key_states, value_states
+        else:
+            position_ids = cache_kwargs.get("position_ids")
+
+            # Scatter
+            self.key_cache[layer_idx] = CtxScatterFunc3D.apply(self.key_cache[layer_idx], position_ids, key_states)
+            self.value_cache[layer_idx] = CtxScatterFunc3D.apply(
+                self.value_cache[layer_idx], position_ids, value_states
+            )
+            k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+
+            # Gather
+            ctx_len = k_out.shape[1]
+            ctx_indices = torch.arange(ctx_len)[None, ...]
+            gather_limit = position_ids.max(1, keepdim=True).values
+            invalid_mask = ctx_indices > gather_limit
+            if torch.onnx.is_in_onnx_export():
+                invalid_idx_value = torch.iinfo(torch.int32).max
+            else:
+                invalid_idx_value = 0
+            ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+            k_out = CtxGatherFunc3D.apply(k_out, ctx_indices)
+            v_out = CtxGatherFunc3D.apply(v_out, ctx_indices)
             v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
 
         return k_out, v_out
