@@ -747,8 +747,10 @@ class TextGeneration:
         # Create a prompt queue.
         prompt_queue = deque(prompt)
 
+        max_gen_length = self.ctx_len if not generation_len else max(self.ctx_len, generation_len)
+
         # initialize np arrays for storing the prefill output for all the decode batch size.
-        self.generated_ids = np.full((len(prompt_queue), self.ctx_len), self.tokenizer.pad_token_id)
+        self.generated_ids = np.full((len(prompt_queue), max_gen_length), self.tokenizer.pad_token_id)
         self.decode_input_ids = np.zeros((execution_batch_size, 1), np.int64)
         self.decode_pos_ids = np.zeros((execution_batch_size, 1), np.int64)
         self.generation_len = np.zeros((execution_batch_size, 1), np.int64)
