@@ -26,7 +26,7 @@ from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, OnnxTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.peft.onnx_transforms import LoraWeightsToInputsTransform
+from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
 from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils._utils import get_padding_shape_from_config
@@ -36,14 +36,14 @@ logger = logging.getLogger(__name__)
 
 
 class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
-    pytorch_transforms: List[PytorchTransform] = [CustomOpsTransform, KVCacheTransform, PeftModelInputsTransform]
-    onnx_transforms: List[OnnxTransform] = [FP16ClipTransform, LoraWeightsToInputsTransform, SplitTensorsTransform]
+    _pytorch_transforms: List[PytorchTransform] = [CustomOpsTransform, KVCacheTransform, PeftModelInputsTransform]
+    _onnx_transforms: List[OnnxTransform] = [FP16ClipTransform, AdapterWeightsToInputsTransform, SplitTensorsTransform]
     _hf_auto_class = AutoPeftModelForCausalLM
 
     @classmethod
     def transform_names(cls) -> List[str]:
         # Base class
-        return [x.__name__ for x in cls.pytorch_transforms + cls.onnx_transforms]
+        return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
     def __init__(self, model: nn.Module):
         if model.active_peft_config.peft_type != "LORA":
@@ -109,7 +109,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     def transform(self, **kwargs):
         # Base class
-        for transform in self.pytorch_transforms:
+        for transform in self._pytorch_transforms:
             self.model, transformed = transform.apply(self.model)
         logger.info("Pytorch transforms applied")
 
@@ -154,7 +154,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
                 "model_name": self.model_name,
                 **onnx_transform_kwargs,
             }
-            for transform in self.onnx_transforms:
+            for transform in self._onnx_transforms:
                 model, transformed = transform.apply(model, **onnx_transform_kwargs)
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self.transform_names()))

@@ -12,7 +12,7 @@ import onnx
 from QEfficient.base.onnx_transforms import OnnxTransform
 
 
-class LoraWeightsToInputsTransform(OnnxTransform):
+class AdapterWeightsToInputsTransform(OnnxTransform):
     @classmethod
     def apply(cls, model: onnx.ModelProto, *, adapter_name: str, **kwargs) -> Tuple[onnx.ModelProto, bool]:
         transformed = False
