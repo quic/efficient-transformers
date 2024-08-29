@@ -34,4 +34,4 @@ def test_to_hashable_set():
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
 def test_to_hashable_float_nan(value):
     with pytest.raises(ValueError):
-        to_hashable(float("nan"))
+        to_hashable(value)
