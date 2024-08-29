@@ -751,8 +751,6 @@ class TextGeneration:
         self.decode_pos_ids = np.zeros((execution_batch_size, 1), np.int64)
         self.generation_len = np.zeros((execution_batch_size, 1), np.int64)
 
-        
-
         if self.full_batch_size is not None:
             logger.warning("Streamer is currently unavailable for continuous batch execution.")
             prefill_time, decode_perf, total_perf, total_time, generated_texts = self.continuous_batching_execution(
