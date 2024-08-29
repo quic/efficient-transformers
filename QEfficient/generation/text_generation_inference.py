@@ -575,13 +575,11 @@ class TextGeneration:
         # Generate a batch ID map for mapping the batch ID if input > full_batch_size.
         # This ID map will be used for storing all generated tokens
         batch_id_map = {i: i for i in range(self.full_batch_size)}
-        decode_count = 0
         decode_pause_time = 0
         # Prepare decode inputs inputs.
         decode_inputs = self.prepare_decode_inputs()
 
         while prompt_queue or current_decode_ongoing.any():
-            decode_count += 1
             outputs = self.session.run(decode_inputs)
 
             # Prepare inputs for next iteration
@@ -591,8 +589,6 @@ class TextGeneration:
             next_token_id = logits.argmax(2)
 
             for decode_batch_id in range(self.full_batch_size):
-                if self.stream:
-                    self.streamer.put(decode_inputs["input_ids"][0])
                 if (
                     next_token_id[decode_batch_id] == self.tokenizer.eos_token_id
                     or generated_id_current_index[decode_batch_id] >= self.generation_len[decode_batch_id]
@@ -755,14 +751,16 @@ class TextGeneration:
         self.decode_pos_ids = np.zeros((execution_batch_size, 1), np.int64)
         self.generation_len = np.zeros((execution_batch_size, 1), np.int64)
 
-        if self.stream:
-            self.streamer.on_finalized_text("\nPrompt : " + prompt[0] + "\nCompletion :")
+        
 
         if self.full_batch_size is not None:
+            logger.warning("Streamer is currently unavailable for continuous batch execution.")
             prefill_time, decode_perf, total_perf, total_time, generated_texts = self.continuous_batching_execution(
                 prompt, prompt_queue, generation_len
             )
         else:
+            if self.stream:
+                self.streamer.on_finalized_text("\nPrompt : " + prompt[0] + "\nCompletion :")
             prefill_time, decode_perf, total_perf, total_time, generated_texts = self.regular_model_execution(
                 prompt, generation_len
             )
