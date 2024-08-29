@@ -21,6 +21,9 @@ def pytest_addoption(parser):
     parser.addoption("--all", action="store_true", default=False, help="Run all test without skipping any test")
 
 
+model_class_dict = {"gpt2": "GPT2LMHeadModel", "lu-vae/llama-68m-fft": "LlamaForCausalLM"}
+
+
 class ModelSetup:
     """
     ModelSetup is a set up class for all the High Level testing script,
@@ -214,13 +217,6 @@ def pytest_generate_tests(metafunc):
     metafunc.parametrize("device_group", json_data["device_group"], ids=lambda x: "device_group=" + str(x))
 
 
-def find_model_class(model_name, json_data):
-    for model in json_data["models"]:
-        if model["model_name"] == model_name:
-            return model["model_class"]
-    return None
-
-
 def pytest_collection_modifyitems(config, items):
     """
     pytest_collection_modifyitems is pytest a hook,
@@ -232,10 +228,6 @@ def pytest_collection_modifyitems(config, items):
     ----------
     Ref: https://docs.pytest.org/en/4.6.x/reference.html#collection-hooks
     """
-    json_file = "tests/config.json"
-    with open(json_file, "r") as file:
-        config_data = json.load(file)
-
     run_first = ["test_export", "test_compile", "test_execute", "test_infer"]
     modules_name = {item.module.__name__ for item in items}
     cloud_modules = []
@@ -276,7 +268,7 @@ def pytest_collection_modifyitems(config, items):
             if item.module.__name__ in ["test_export", "test_compile", "test_execute", "test_infer"]:
                 if hasattr(item, "callspec"):
                     params = item.callspec.params
-                    model_class = find_model_class(params["model_name"], config_data)
+                    model_class = model_class_dict[params["model_name"]]
                     if (
                         params["full_batch_size"] is not None
                         and model_class not in get_lists_of_cb_qeff_models.architectures
