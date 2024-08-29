@@ -198,7 +198,7 @@ def print_latency_stats_kv(prompt, exec_info, automation: bool = False):
         print("output=", exec_info.generated_texts)
         print(exec_info)
         return
-    print("========================= Performance Stats =========================")
+    print("\n========================= Performance Stats =========================")
     if exec_info.batch_size > 1:
         print("Batch Performance : \n")
     print(exec_info)
@@ -764,8 +764,9 @@ class TextGeneration:
             )
 
         if self.stream:
-            print("\n\n========================= Generated Output =========================")
-            for i in range(0, len(prompt) if self.full_batch_size else self.batch_size):
+            stream_start = 0 if self.full_batch_size else 1
+            stream_end = len(prompt) if self.full_batch_size else self.batch_size
+            for i in range(stream_start, stream_end):
                 print("Prompt : ", prompt[i])
                 print("Completion : ", generated_texts[i])
 
