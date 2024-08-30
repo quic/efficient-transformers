@@ -43,7 +43,6 @@ def test_infer(setup, mocker):
         prompts_txt_file_path=ms.prompts_txt_file_path,
         aic_enable_depth_first=ms.aic_enable_depth_first,
         mos=ms.mos,
-        # cache_dir = ms.cache_dir,
         hf_token=ms.hf_token,
         batch_size=ms.batch_size,
         prompt_len=ms.prompt_len,
@@ -52,7 +51,6 @@ def test_infer(setup, mocker):
         mxfp6=ms.mxfp6,
         mxint8=ms.mxint8,
         full_batch_size=ms.full_batch_size,
-        # device_group=ms.device_group,
     )
     # tokenizer check
     load_hf_tokenizer_spy.assert_called_once()

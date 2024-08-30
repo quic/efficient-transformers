@@ -32,7 +32,6 @@ def test_execute(setup, mocker):
         prompt=ms.prompt,
         prompts_txt_file_path=ms.prompts_txt_file_path,
         generation_len=ms.generation_len,
-        # cache_dir=ms.cache_dir,
         hf_token=ms.hf_token,
         full_batch_size=ms.full_batch_size,
     )

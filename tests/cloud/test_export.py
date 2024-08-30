@@ -30,7 +30,6 @@ def test_export(setup, mocker):
 
     export(
         model_name=ms.model_name,
-        # cache_dir=ms.cache_dir,
         hf_token=ms.hf_token,
         local_model_dir=ms.local_model_dir,
         full_batch_size=ms.full_batch_size,
