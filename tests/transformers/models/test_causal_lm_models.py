@@ -95,5 +95,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     )
 
     cloud_ai_100_tokens = api_runner.run_kv_model_on_cloud_ai_100(test_qpcs_path)
-
-    assert (ort_tokens == cloud_ai_100_tokens).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."
+    gen_len = ort_tokens.shape[-1]
+    assert (
+        ort_tokens == cloud_ai_100_tokens[:, :gen_len]
+    ).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."

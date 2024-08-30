@@ -10,7 +10,7 @@ import onnx
 import onnxruntime
 import torch
 
-from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv_helper
+from QEfficient.generation.text_generation_inference import TextGeneration
 from QEfficient.utils.generate_inputs import InputHandler
 
 
@@ -45,6 +45,7 @@ class ApiRunner:
             prompt=prompt,
             prompt_len=prompt_len,
             ctx_len=ctx_len,
+            full_batch_size=None,
         )
 
         self.gen_len = self.input_handler.ctx_len - self.input_handler.prompt_len
@@ -184,15 +185,20 @@ class ApiRunner:
         Return:
             :numpy.ndarray: Generated output tokens
         """
-        execinfo = cloud_ai_100_exec_kv_helper(
+        execinfo = TextGeneration(
             tokenizer=self.input_handler.tokenizer,
+            prompt=self.input_handler.prompt,
             qpc_path=qpc_path,
             device_id=device_group,
             ctx_len=self.input_handler.ctx_len,
             generation_len=self.gen_len,
-            prompt=self.input_handler.prompt,
             stream=False,
+            full_batch_size=None,
+        ).cloud_ai_100_exec_kv_helper(
+            prompt=self.input_handler.prompt,
+            generation_len=self.gen_len,
         )
+
         predicted_string = self.input_handler.tokenizer.batch_decode(execinfo.generated_ids, skip_special_tokens=True)
         print("QEff Transformed Model Outputs (Cloud AI 100): \n")
         print("Prompt:", repr(self.input_handler.prompt))

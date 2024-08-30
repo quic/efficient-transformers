@@ -11,13 +11,17 @@ import shutil
 
 import pytest
 
-from QEfficient.utils import get_qpc_dir_path
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.transformers.modeling_utils import get_lists_of_cb_qeff_models
+from QEfficient.utils import get_onnx_dir_name
+from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
 
 def pytest_addoption(parser):
     parser.addoption("--all", action="store_true", default=False, help="Run all test without skipping any test")
+
+
+model_class_dict = {"gpt2": "GPT2LMHeadModel", "lu-vae/llama-68m-fft": "LlamaForCausalLM"}
 
 
 class ModelSetup:
@@ -42,6 +46,7 @@ class ModelSetup:
         ctx_len,
         mxfp6,
         mxint8,
+        full_batch_size,
         device_group,
     ):
         """
@@ -60,11 +65,13 @@ class ModelSetup:
         param: ctx_len: int
         param: mxfp6: bool
         param: mxint8: bool
+        param: full_batch_size: int
         param: device_group: List[int]
         """
         self.model_name = model_name
         self.num_cores = num_cores
         self.prompt = prompt
+        self.local_model_dir = None
         self.prompts_txt_file_path = prompts_txt_file_path if prompts_txt_file_path is not None else None
         self.aic_enable_depth_first = aic_enable_depth_first
         self.mos = mos
@@ -73,28 +80,41 @@ class ModelSetup:
         self.batch_size = batch_size
         self.prompt_len = prompt_len
         self.ctx_len = ctx_len
+        self.generation_len = None
         self.mxfp6 = mxfp6
         self.mxint8 = mxint8
+        self.full_batch_size = full_batch_size
         self.device_group = device_group
 
     def model_card_dir(self):
         return str(os.path.join(QEFF_MODELS_DIR, str(self.model_name)))
 
-    def qpc_dir_path(self):
-        return get_qpc_dir_path(
-            model_card_name=self.model_name,
-            num_cores=self.num_cores,
-            mos=self.mos,
-            batch_size=self.batch_size,
-            prompt_len=self.prompt_len,
-            ctx_len=self.ctx_len,
-            mxfp6=self.mxfp6,
-            mxint8=self.mxint8,
-            device_group=self.device_group,
+    def qpc_base_dir_path(self):
+        base_dir_name = str(
+            f"qpc_{self.num_cores}cores_{self.batch_size}bs_{self.prompt_len}pl_{self.ctx_len}cl_{self.mos}mos"
+            + f"{f'_{self.full_batch_size}fbs_' if self.full_batch_size is not None else '_'}"
+            + f"{len(self.device_group) if self.device_group is not None else 1}"
+            + "devices"
+            + (
+                "_mxfp6_mxint8"
+                if (self.mxfp6 and self.mxint8)
+                else "_mxfp6"
+                if self.mxfp6
+                else "_fp16_mxint8"
+                if self.mxint8
+                else "_fp16"
+            )
         )
+        return str(os.path.join(self.model_card_dir(), base_dir_name))
+
+    def qpc_dir_path(self):
+        return str(os.path.join(self.qpc_base_dir_path(), "qpcs"))
+
+    def onnx_dir_name(self):
+        return get_onnx_dir_name(self.model_name, self.full_batch_size is not None)
 
     def onnx_dir_path(self):
-        return str(os.path.join(self.model_card_dir(), "onnx"))
+        return str(os.path.join(self.model_card_dir(), self.onnx_dir_name()))
 
     def onnx_model_path(self):
         return [
@@ -111,7 +131,7 @@ class ModelSetup:
         )
 
     def specialization_json_path(self):
-        return os.path.join(os.path.dirname(self.qpc_dir_path()), "specializations.json")
+        return str(os.path.join(self.qpc_base_dir_path(), "specializations.json"))
 
     def custom_io_file_path(self):
         if self.mxint8:
@@ -135,6 +155,7 @@ def setup(
     ctx_len,
     mxfp6,
     mxint8,
+    full_batch_size,
     device_group,
 ):
     """
@@ -158,6 +179,7 @@ def setup(
         ctx_len,
         bool(mxfp6),
         bool(mxint8),
+        full_batch_size,
         device_group,
     )
 
@@ -184,13 +206,14 @@ def pytest_generate_tests(metafunc):
         "aic_enable_depth_first", json_data["aic_enable_depth_first"], ids=lambda x: "aic_enable_depth_first=" + str(x)
     )
     metafunc.parametrize("mos", json_data["mos"], ids=lambda x: "mos=" + str(x))
-    metafunc.parametrize("cache_dir", [Constants.CACHE_DIR], ids=lambda x: "cache_dir=" + str(x))
+    metafunc.parametrize("cache_dir", [None], ids=lambda x: "cache_dir=" + str(x))
     metafunc.parametrize("hf_token", json_data["hf_token"], ids=lambda x: "hf_token=" + str(x))
     metafunc.parametrize("batch_size", json_data["batch_size"], ids=lambda x: "batch_size=" + str(x))
     metafunc.parametrize("prompt_len", json_data["prompt_len"], ids=lambda x: "prompt_len=" + str(x))
     metafunc.parametrize("ctx_len", json_data["ctx_len"], ids=lambda x: "ctx_len=" + str(x))
     metafunc.parametrize("mxfp6", json_data["mxfp6"], ids=lambda x: "mxfp6=" + str(x))
     metafunc.parametrize("mxint8", json_data["mxint8"], ids=lambda x: "mxint8=" + str(x))
+    metafunc.parametrize("full_batch_size", json_data["full_batch_size"], ids=lambda x: "full_batch_size=" + str(x))
     metafunc.parametrize("device_group", json_data["device_group"], ids=lambda x: "device_group=" + str(x))
 
 
@@ -242,30 +265,29 @@ def pytest_collection_modifyitems(config, items):
         first_model = items[0].callspec.params["model_name"] if hasattr(items[0], "callspec") else None
 
         for item in items:
+            if item.module.__name__ in ["test_export", "test_compile", "test_execute", "test_infer"]:
+                if hasattr(item, "callspec"):
+                    params = item.callspec.params
+                    model_class = model_class_dict[params["model_name"]]
+                    if (
+                        params["full_batch_size"] is not None
+                        and model_class not in get_lists_of_cb_qeff_models.architectures
+                    ):
+                        item.add_marker(pytest.mark.skip(reason="Skipping because FULL BATCH SIZE does not support..."))
+
             if item.module.__name__ in ["test_export", "test_compile", "test_execute"]:
                 if hasattr(item, "callspec"):
                     params = item.callspec.params
-                    if "model_name" in params and params["model_name"] != first_model:
+                    if params["model_name"] != first_model:
                         item.add_marker(pytest.mark.skip(reason="Skipping because not needed now..."))
-                    if "prompt_len" in params and params["prompt_len"] == 2:
+                    if params["prompt_len"] == 2:
                         item.add_marker(pytest.mark.skip(reason="Skipping because not needed now..."))
 
             if item.module.__name__ in ["test_infer"]:
                 if hasattr(item, "callspec"):
                     params = item.callspec.params
-                    if (
-                        "prompt_len" in params
-                        and params["prompt_len"] == 2
-                        and "model_name" in params
-                        and params["model_name"] != first_model
-                    ):
+                    if params["prompt_len"] == 2 and params["model_name"] != first_model:
                         item.add_marker(pytest.mark.skip(reason="Skipping because not needed now..."))
-
-
-def cache_clean_up():
-    if os.path.exists(Constants.CACHE_DIR):
-        shutil.rmtree(Constants.CACHE_DIR)
-        logger.info(f"\n.............Cleaned up {Constants.CACHE_DIR}")
 
 
 def qeff_models_clean_up():
@@ -282,13 +304,11 @@ def clean_up_after_test():
 
 def pytest_sessionstart(session):
     logger.info("PYTEST Session Starting ...")
-    cache_clean_up()
     qeff_models_clean_up()
 
 
 def pytest_sessionfinish(session, exitstatus):
     inside_worker = getattr(session.config, "workerinput", None)
     if inside_worker is None:
-        cache_clean_up()
         qeff_models_clean_up()
         logger.info("...PYTEST Session Ended.")

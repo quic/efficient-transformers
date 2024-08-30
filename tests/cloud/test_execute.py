@@ -31,7 +31,9 @@ def test_execute(setup, mocker):
         qpc_path=ms.qpc_dir_path(),
         prompt=ms.prompt,
         prompts_txt_file_path=ms.prompts_txt_file_path,
+        generation_len=ms.generation_len,
         hf_token=ms.hf_token,
+        full_batch_size=ms.full_batch_size,
     )
 
     load_hf_tokenizer_spy.assert_called_once()

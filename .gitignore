@@ -88,3 +88,4 @@ cython_debug/
 # Local Files
 cache_dir
 qeff_models
+.vscode/*

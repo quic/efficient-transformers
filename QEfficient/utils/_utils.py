@@ -13,7 +13,7 @@ from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
 
@@ -91,7 +91,18 @@ def qpc_exists(qpc_dir_path: str) -> bool:
     return qpc_exists_bool
 
 
-def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
+def get_onnx_dir_name(model_name, has_fbs):
+    # Create a unique directory name for the ONNX model
+    # Clearly indicate whether it's with or without FBS
+    # Replace all hyphens with underscores
+    model_name_safe = model_name.replace("/", "_").replace("-", "_")
+    if has_fbs:
+        return f"onnx_{model_name_safe}_with_fbs"
+    else:
+        return f"onnx_{model_name_safe}_without_fbs"
+
+
+def onnx_exists(model_name: str, full_batch_size: int) -> Tuple[bool, str, str]:
     """
     Checks if qpc files already exists, removes the directory if files have been manipulated.
     ---------
@@ -104,7 +115,13 @@ def onnx_exists(model_name: str) -> Tuple[bool, str, str]:
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
     os.makedirs(model_card_dir, exist_ok=True)
 
-    onnx_dir_path = os.path.join(model_card_dir, "onnx")
+    # Determine if we're using full_batch_size
+    has_fbs = full_batch_size is not None
+
+    # ONNX handling
+    onnx_dir_name = get_onnx_dir_name(model_name, has_fbs)
+    onnx_dir_path = os.path.join(model_card_dir, onnx_dir_name)
+    os.makedirs(onnx_dir_path, exist_ok=True)
     clipped_onnx_model_path = os.path.join(onnx_dir_path, model_name.replace("/", "_") + "_kv_clipped_fp16.onnx")
     unclipped_onnx_model_path = clipped_onnx_model_path.replace("_clipped_fp16.onnx", ".onnx")
 
@@ -153,10 +170,12 @@ def load_hf_tokenizer(
 
 
 def get_qpc_dir_path(
-    model_card_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
-) -> str:
+    model_card_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
+):
+    # Create a unique directory name for the QPC model based on all parameters
     qpc_base_dir_name = (
-        f"qpc_{num_cores}cores_{batch_size}BS_{prompt_len}PL_{ctx_len}CL_{mos}MOS_"
+        f"qpc_{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos"
+        + f"{f'_{full_batch_size}fbs_' if full_batch_size is not None else '_'}"
         + f"{len(device_group) if device_group is not None else 1}"
         + "devices"
         + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
@@ -175,7 +194,7 @@ def check_and_assign_cache_dir(local_model_dir, cache_dir):
                 f"Both local_model_dir ({local_model_dir}) and cache_dir ({cache_dir}) given. Using local_model_dir."
             )
         return None
-    return cache_dir if cache_dir else Constants.CACHE_DIR
+    return cache_dir if cache_dir else None
 
 
 def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]) -> None:

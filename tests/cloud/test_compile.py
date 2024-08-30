@@ -41,9 +41,9 @@ def test_compile(setup, mocker):
         ctx_len=ms.ctx_len,
         mxfp6=ms.mxfp6,
         mxint8=ms.mxint8,
+        full_batch_size=ms.full_batch_size,
     )
 
     assert os.path.isdir(ms.qpc_dir_path())
     assert os.path.isfile(ms.specialization_json_path())
     assert os.path.isfile(ms.custom_io_file_path())
-    assert os.path.isdir(ms.qpc_dir_path())

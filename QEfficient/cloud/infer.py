@@ -26,6 +26,7 @@ def main(
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     batch_size: int = 1,
+    full_batch_size: Optional[int] = None,
     prompt_len: int = 32,
     ctx_len: int = 128,
     generation_len: Optional[int] = None,
@@ -36,6 +37,10 @@ def main(
     hf_token: Optional[str] = None,
 ) -> None:
     """
+    1. Check if compiled qpc for given config already exists, if it does jump to execute, else
+    2. Check if exported ONNX file already exists, if true, jump to compilation -> execution, else
+    3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
+    4. Download HF model -> transform -> export -> compile -> execute
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
         :num_cores (int): Number of cores to compile model on.
@@ -46,6 +51,7 @@ def main(
         :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
         :mos (int): Effort level to reduce the on-chip memory. ``Defaults to -1.``
         :batch_size (int): Batch size to compile the model for. ``Defaults to 1.``
+        :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Default to None``
         :prompt_len (int): Prompt length for the model to compile. ``Defaults to 32.``
         :ctx_len (int): Maximum context length to compile the model. ``Defaults to 128.``
         :generation_len (int): Number of tokens to be generated. ``Defaults to False.``
@@ -68,7 +74,7 @@ def main(
     )
 
     qpc_dir_path = get_qpc_dir_path(
-        model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group
+        model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
     )
 
     # Handle qpc generation
@@ -76,7 +82,9 @@ def main(
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
-        onnx_model_path = get_onnx_model_path(model_name, cache_dir, tokenizer, hf_token, local_model_dir)
+        onnx_model_path = get_onnx_model_path(
+            model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size
+        )  # , base_dir_name)
 
         #########
         # Compile
@@ -95,6 +103,7 @@ def main(
             aic_enable_depth_first=aic_enable_depth_first,
             mos=mos,
             device_group=device_group,
+            full_batch_size=full_batch_size,
         )
 
     #########
@@ -107,6 +116,7 @@ def main(
         prompt=prompt,
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
+        full_batch_size=full_batch_size,
     )
 
 
@@ -180,6 +190,13 @@ if __name__ == "__main__":
         "-v",
         action="store_true",
         help="pass to print info logs",
+    )
+    parser.add_argument(
+        "--full_batch_size",
+        "--full_batch_size",
+        type=int,
+        default=None,
+        help="Set full batch size to enable continuous batching mode, default is None",
     )
 
     args = parser.parse_args()

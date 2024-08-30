@@ -69,7 +69,13 @@ if __name__ == "__main__":
         default=-1,
         help=" Effort level to reduce the on-chip memory",
     )
-
+    parser.add_argument(
+        "--full_batch_size",
+        "--full-batch-size",
+        type=int,
+        default=None,
+        help="Set full batch size to enable continuous batching mode, default is None",
+    )
     # FIXME(ochougul): Allow extra compilation arguments
     args = parser.parse_args()
     QEfficient.compile(**vars(args))
