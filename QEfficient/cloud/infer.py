@@ -16,13 +16,6 @@ from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.logging_utils import logger
 
-"""
-1. Check if compiled qpc for given config already exists, if it does jump to execute, else
-2. Check if exported ONNX file already exists, if true, jump to compilation -> execution, else
-3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
-4. Download HF model -> transform -> export -> compile -> execute
-"""
-
 
 def main(
     model_name: str,
@@ -44,6 +37,10 @@ def main(
     hf_token: Optional[str] = None,
 ) -> None:
     """
+    1. Check if compiled qpc for given config already exists, if it does jump to execute, else
+    2. Check if exported ONNX file already exists, if true, jump to compilation -> execution, else
+    3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
+    4. Download HF model -> transform -> export -> compile -> execute
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
         :num_cores (int): Number of cores to compile model on.
