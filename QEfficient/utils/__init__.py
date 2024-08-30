@@ -7,6 +7,7 @@
 
 from QEfficient.utils._utils import (  # noqa: F401
     check_and_assign_cache_dir,
+    generate_sha256_hash,
     get_qpc_dir_name_infer,
     hf_download,
     load_hf_tokenizer,
