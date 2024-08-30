@@ -767,7 +767,8 @@ class TextGeneration:
             stream_start = 0 if self.full_batch_size else 1
             stream_end = len(prompt) if self.full_batch_size else self.batch_size
             for i in range(stream_start, stream_end):
-                print("Prompt : ", prompt[i])
+                print("\n" + "-" * 20)
+                print("\nPrompt : ", prompt[i])
                 print("Completion : ", generated_texts[i])
 
         latency_stats = CloudAI100ExecInfo(
