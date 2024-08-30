@@ -290,13 +290,6 @@ def pytest_collection_modifyitems(config, items):
                         item.add_marker(pytest.mark.skip(reason="Skipping because not needed now..."))
 
 
-def cache_clean_up():
-    pass
-    # if os.path.exists(Constants.QEFF_MODELS_DIR):
-    #     shutil.rmtree(Constants.CACHE_DIR)
-    #     logger.info(f"\n.............Cleaned up {Constants.CACHE_DIR}")
-
-
 def qeff_models_clean_up():
     if os.path.exists(QEFF_MODELS_DIR):
         shutil.rmtree(QEFF_MODELS_DIR)
@@ -311,13 +304,11 @@ def clean_up_after_test():
 
 def pytest_sessionstart(session):
     logger.info("PYTEST Session Starting ...")
-    cache_clean_up()
     qeff_models_clean_up()
 
 
 def pytest_sessionfinish(session, exitstatus):
     inside_worker = getattr(session.config, "workerinput", None)
     if inside_worker is None:
-        cache_clean_up()
         qeff_models_clean_up()
         logger.info("...PYTEST Session Ended.")
