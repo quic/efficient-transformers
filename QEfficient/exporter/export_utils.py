@@ -43,7 +43,6 @@ def export_onnx(
     # Inspect the model's forward method arguments
     pt_model_code = pt_model.forward.__code__
     pt_input_names = pt_model_code.co_varnames[1 : pt_model_code.co_argcount]
-    starcoder1_inputs = False
     # Arrange the inputs in proper order to make tracing work properly
     pt_inputs = []
     input_names = []
