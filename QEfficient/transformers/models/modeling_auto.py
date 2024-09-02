@@ -200,6 +200,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mxint8: bool = False,
         mos: int = -1,
         aic_enable_depth_first: bool = False,
+        enable_qnn: Optional[bool] = False,
+        qnn_config: Optional[str] = None,
     ) -> str:
         """
         This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
@@ -218,6 +220,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :mxint8 (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
             :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+            :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
+            :qnn_config (str): QNN Config parameters file (if provided).
 
         Returns:
             :str: Path of the compiled ``qpc`` package.
@@ -239,6 +243,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxint8=mxint8,
             device_group=device_group,
             full_batch_size=None,
+            enable_qnn=enable_qnn,
         )
 
         # Compile
@@ -254,6 +259,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             ctx_len=ctx_len,
             mxfp6=mxfp6,
             mxint8=mxint8,
+            enable_qnn=enable_qnn,
+            qnn_config=qnn_config,
         )
         self.qpc_path = qpc_dir_path
         self.device_id = device_group
