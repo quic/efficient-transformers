@@ -175,6 +175,7 @@ def test_kv_cache_transform(
         num_attention_heads=num_attention_heads,
         hidden_size=hidden_size,
         use_cache=True,
+        cache_position=None,
     )
     hf_model = AutoModelForCausalLM.from_config(config=config, attn_implementation="eager")
 
