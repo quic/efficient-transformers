@@ -20,6 +20,7 @@ from transformers.modeling_outputs import (
 )
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
+    LlamaConfig,
     LlamaDecoderLayer,
     LlamaForCausalLM,
     LlamaModel,
@@ -113,6 +114,11 @@ class QEffLlamaAttention(LlamaAttention):
 
     def __init__(self, config: LlamaConfig, layer_idx: Optional[int] = None):
         super().__init__(config, layer_idx)
+        # Define the general __qeff_init__() for any changes in the init calls
+        # Set the init in the module mapping pytorch transforms
+        self.__qeff_init__()
+
+    def __qeff_init__(self):
         self.rotary_emb = QEffLlamaRotaryEmbedding(
             self.head_dim,
             max_position_embeddings=self.max_position_embeddings,

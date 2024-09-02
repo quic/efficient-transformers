@@ -6,10 +6,7 @@
 # ----------------------------------------------------------------------------
 from typing import Dict, Tuple, Type
 
-import transformers
 from torch import nn
-
-from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaRotaryEmbedding
 
 
 class PytorchTransform:
@@ -44,19 +41,10 @@ class ModuleMappingTransform(PytorchTransform):
         transformed = False
         for module in model.modules():
             if repl_module := cls._module_mapping.get(type(module)):
-                if isinstance(module, transformers.models.llama.modeling_llama.LlamaAttention):
-                    # Special handling for LlamaAttention
-                    if not isinstance(
-                        getattr(module, "rotary_emb", None),
-                        transformers.models.llama.modeling_llama.LlamaRotaryEmbedding,
-                    ):
-                        raise TypeError("Expected LlamaAttention.rotary_emb to be of type LlamaRotaryEmbedding")
-
-                    qeff_rotary_emb = QEffLlamaRotaryEmbedding(
-                        module.head_dim, max_position_embeddings=module.max_position_embeddings, base=module.rope_theta
-                    )
-                    setattr(module, "rotary_emb", qeff_rotary_emb)
                 module.__class__ = repl_module
+                # Handling the __init__ calls in the models
+                if hasattr(module, "__qeff_init__"):
+                    module.__qeff_init__()
                 transformed = True
         return model, transformed
 
@@ -67,4 +55,3 @@ class ModuleMappingTransform(PytorchTransform):
             FlashAttention.register(LLamaAttention, LlamaFlashAttention)
         """
         cls._module_mapping[from_module] = to_module
-        cls._init_mapping[from_module] = to_module
