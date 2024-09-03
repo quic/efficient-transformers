@@ -55,7 +55,7 @@ class ModuleMappingTransform(PytorchTransform):
         cls._module_mapping[from_module] = to_module
 
 
-class ModuleMutatorTransform:
+class ModuleMutatorTransform(PytorchTransform):
     """Serves as base class for any transform that mutates pytorch module in any way.
     Mutate here mean, we initialize a new pytorch module object using info from original module and
     replace original module with new module.

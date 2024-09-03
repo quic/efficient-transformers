@@ -13,7 +13,7 @@ from QEfficient.customop.matmulnbits import QuantLinearORT
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM, unpack_awq_weights
 
 
-class AwqToOnnxTransform(ModuleMutatorTransform):
+class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
     _match_class = WQLinear_GEMM
 
     @staticmethod

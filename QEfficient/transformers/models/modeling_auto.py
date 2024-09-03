@@ -14,8 +14,9 @@ from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, P
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
 from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTransform, KVCacheTransform
-from QEfficient.transformers.quantizers.quant_transforms import AwqToOnnxTransform
-from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, replace_transformers_quantizers
+from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
+from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform
+from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
@@ -32,6 +33,11 @@ class QEFFTransformersBase(QEFFBaseModel):
     """
 
     def __init__(self, model: nn.Module, pretrained_model_name_or_path: str, **kwargs) -> None:
+        if hasattr(model.config, "quantization_config") and not isinstance(
+            model.config.quantization_config, QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.keys()
+        ):
+            raise AssertionError("Please use `from_pretrained` method to load quantized models")
+
         super().__init__(model)
         self.model.config.use_cache = (
             True  # Always pass use_cache = True, to get KV values as output during ONNX export
@@ -55,6 +61,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         return f"{self.__class__.__name__}\n" + self.model.__repr__()
 
     @classmethod
+    @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
@@ -97,8 +104,6 @@ class QEFFTransformersBase(QEFFBaseModel):
         if low_cpu_mem_usage := kwargs.get("low_cpu_mem_usage", None):
             logger.warning(f"Updating low_cpu_mem_usage to be 'False', got {low_cpu_mem_usage}")
         kwargs.update({"low_cpu_mem_usage": False})
-
-        replace_transformers_quantizers()
 
         model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
@@ -163,7 +168,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
         # Update list of pytorch transforms if the model falls in AWQ/GPTQ category
         if isinstance(self.model.config.quantization_config, QEffAwqConfig):
-            self._pytorch_transforms.insert(0, AwqToOnnxTransform)
+            self._pytorch_transforms.insert(0, AwqToMatmulNbitsTransform)
 
         for transform in self._pytorch_transforms:
             transform.apply(self.model)

@@ -9,7 +9,10 @@ import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM
 
+from QEfficient.customop.matmulnbits import QuantLinearORT
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
+from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
+from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform
 from QEfficient.utils._utils import get_padding_shape_from_config
 from QEfficient.utils.logging_utils import logger
 
@@ -188,3 +191,25 @@ def test_kv_cache_transform(
         input_len=8,
         logits_tolerance=logits_tolerance,
     )
+
+
+@pytest.mark.parametrize("in_features", [2048, 4096])
+@pytest.mark.parametrize("out_features", [2048, 4096])
+def test_awq_to_matmulnbits_transform(in_features, out_features):
+    wqlinear = WQLinear_GEMM(w_bit=4, group_size=128, in_features=in_features, out_features=out_features, bias=False)
+
+    wqlinear.qweight = torch.randint(
+        low=-(2**31), high=2**31 - 1, size=(in_features, out_features // 8), dtype=torch.int32
+    )
+    wqlinear.qzeros = torch.randint(
+        low=-(2**31), high=2**31 - 1, size=(in_features // wqlinear.group_size, out_features // 8), dtype=torch.int32
+    )
+    wqlinear.scales = torch.rand(in_features // wqlinear.group_size, out_features, dtype=torch.float32)
+
+    rand_data = torch.rand(4, in_features)
+    old_out = wqlinear(rand_data)
+    new_module, transformed = AwqToMatmulNbitsTransform.apply(wqlinear)
+    assert transformed
+    new_out = new_module(rand_data)
+    assert isinstance(new_module, QuantLinearORT)
+    compare_original_vs_kv_model_pt_outputs(old_out, new_out, tolerance=1e-8)

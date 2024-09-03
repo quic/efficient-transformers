@@ -10,7 +10,6 @@ import copy
 import torch
 import torch.nn as nn
 from transformers.integrations.awq import AWQ_SCALES_MAPPINGS
-from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 from transformers.quantizers.quantizer_awq import AwqQuantizer
 from transformers.utils.quantization_config import AwqBackendPackingMethod, AwqConfig, AWQLinearVersion
 
@@ -126,7 +125,6 @@ def replace_linear_layer_with_awq_gemm(
                     in_features=module.in_features,
                     out_features=module.out_features,
                     bias=module.bias is not None,
-                    dev=module.weight.device,
                 )
                 has_been_replaced = True
 
@@ -176,11 +174,6 @@ def get_keys_to_not_convert(model):
         filtered_module_names.append(name)
 
     return filtered_module_names
-
-
-def replace_transformers_quantizers():
-    AUTO_QUANTIZER_MAPPING.update({"awq": QEffAwqQuantizer})
-    AUTO_QUANTIZATION_CONFIG_MAPPING.update({"awq": QEffAwqConfig})
 
 
 def find_tied_parameters(model: nn.Module, named_parameters=None, prefix="", result={}):
