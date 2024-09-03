@@ -211,7 +211,7 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
         if layer_past is not None:
             cache_kwargs = {"position_ids": position_ids}
             key, value = layer_past.update3D(key, value, self.layer_idx, cache_kwargs)
-        present = (key, value) if use_cache else None
+        present = (layer_past.key_cache[self.layer_idx], layer_past.value_cache[self.layer_idx])
 
         attn_output, attn_weights = self._attn(query, key.transpose(-1, -2), value, attention_mask, head_mask)
 
