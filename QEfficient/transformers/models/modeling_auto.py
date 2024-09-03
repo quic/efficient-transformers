@@ -211,7 +211,14 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         Returns:
             :str: Path of the generated ``ONNX`` graph.
         """
-        assert self.is_transformed, "Please first run transform on the QEFFAutoModelForCausalLM object"
+        if not self.is_transformed:
+            raise Exception("Please first run transform on the QEFFAutoModelForCausalLM object")
+        # Make sure model_card_name is available for export
+        if self.model_card_name is None and model_card_name is None:
+            raise AttributeError("Please pass model_card_name as valid string input")
+        elif model_card_name is not None:
+            self.model_card_name = model_card_name
+
         # Export
         _, onnx_model_path = QEfficient.export(
             model_name=self.model_card_name,
@@ -366,11 +373,15 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         ``optional`` Args:
             :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to "AI_100".
         """
-        assert Runtime(runtime) == Runtime.AI_100, "Only AI_100 runtime is supported right now via generate API"
+        if Runtime(runtime) != Runtime.AI_100:
+            raise RuntimeError("Only AI_100 runtime is supported right now via generate API")
         self.run_cloud_ai_100(prompts=prompts, device_id=device_id, **kwargs)
 
-    def run_cloud_ai_100(self, prompts: List[str], device_id: List[int] = None, **kwargs):
-        assert isinstance(self.qpc_path, str), "Please run compile API first!"
+    def run_cloud_ai_100(self, prompts: List[str], **kwargs):
+        if not isinstance(self.qpc_path, str):
+            raise Exception("Please run compile API first!")
+        if isinstance(self.device_id, type(None)):
+            raise ValueError("please pass valid device_id as input argument")
         generation_len = kwargs.pop("generation_len", None)
         return QEfficient.cloud_ai_100_exec_kv(
             self.tokenizer,
