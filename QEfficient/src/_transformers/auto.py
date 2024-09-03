@@ -70,7 +70,10 @@ class QEFFTransformersBase(QEFFBaseModel):
     def get_model_card_name(self) -> str:
         # FIXME: use getter
         if self.model_card_name is None:
-            self.model_card_name = generate_sha256_hash(self.pretrained_model_name_or_path)
+            if os.path.isdir(self.pretrained_model_name_or_path):
+                self.model_card_name = generate_sha256_hash(self.pretrained_model_name_or_path)
+            else:
+                self.model_card_name = self.pretrained_model_name_or_path
 
         return self.model_card_name
 
