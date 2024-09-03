@@ -34,7 +34,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __init__(self, model: nn.Module, pretrained_model_name_or_path: str, **kwargs) -> None:
         if hasattr(model.config, "quantization_config") and not isinstance(
-            model.config.quantization_config, QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.keys()
+            model.config.quantization_config, tuple(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values())
         ):
             raise AssertionError("Please use `from_pretrained` method to load quantized models")
 

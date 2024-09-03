@@ -56,15 +56,7 @@ def get_hf_model_type(hf_model_path: str) -> QEFF_MODEL_TYPE:
     )
 
     if config.__class__ in MODEL_FOR_CAUSAL_LM_MAPPING:
-        # FIXME: Add logic to handle if quantization config is stored in separate quant_config.json outside of config, also create a separate function for this and below lines
-        quant_config = getattr(config, "quantization_config", getattr(config, "quant_config", None))
-        if quant_config is not None:
-            if quant_config.get("quant_method", None) == "awq":
-                return QEFF_MODEL_TYPE.AWQ
-            else:
-                raise NotImplementedError(f"current model type is not yet supported {type(config)}")
-        else:
-            return QEFF_MODEL_TYPE.CAUSALLM
+        return QEFF_MODEL_TYPE.CAUSALLM
     else:
         raise NotImplementedError(f"model type {type(config)} is not yet supported")
 
