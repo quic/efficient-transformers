@@ -19,14 +19,14 @@ class AwqToOnnxTransform(ModuleMutatorTransform):
     @staticmethod
     def unpack_and_dequantize_awq(qweight, qzeros, scales, bits, group_size):
         # Unpack the qweight and qzeros tensors
-        scales, iweight, izeros = unpack_awq_weights(qweight, qzeros, scales, bits, group_size)
+        scales, int_weight, int_zeros = unpack_awq_weights(qweight, qzeros, scales, bits)
+
         # fp16 weights
         scales_expand = scales.repeat_interleave(group_size, dim=0)
-        izeros_expand = izeros.repeat_interleave(group_size, dim=0)
+        int_zeros_expand = int_zeros.repeat_interleave(group_size, dim=0)
+        int_weight = (int_weight - int_zeros_expand) * scales_expand
 
-        iweight = (iweight - izeros_expand) * scales_expand
-
-        return iweight.T, scales, izeros.to(torch.int32)
+        return int_weight.T, scales, int_zeros.to(torch.int32)
 
     @classmethod
     def mutate(cls, original_module: nn.Module, parent_module: nn.Module):

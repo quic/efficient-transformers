@@ -94,11 +94,12 @@ class QEFFTransformersBase(QEFFBaseModel):
             logger.warning(f"Updating attn_implementation to be 'eager', got {attn_implementation}")
             kwargs.update({"attn_implementation": "eager"})
 
-        low_cpu_mem_usage = kwargs.get("low_cpu_mem_usage", None)
-        if low_cpu_mem_usage:
+        if low_cpu_mem_usage := kwargs.get("low_cpu_mem_usage", None):
             logger.warning(f"Updating low_cpu_mem_usage to be 'False', got {low_cpu_mem_usage}")
         kwargs.update({"low_cpu_mem_usage": False})
+
         replace_transformers_quantizers()
+
         model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
         )
@@ -159,6 +160,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         if kwargs.get("full_batch_size", None):
             self._pytorch_transforms.remove(KVCacheTransform)
             self._pytorch_transforms.append(CBTransform)
+
+        # Update list of pytorch transforms if the model falls in AWQ/GPTQ category
         if isinstance(self.model.config.quantization_config, QEffAwqConfig):
             self._pytorch_transforms.insert(0, AwqToOnnxTransform)
 
