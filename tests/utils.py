@@ -9,7 +9,9 @@ import functools
 import unittest
 
 from transformers import AutoModelForCausalLM
+from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 
+from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, QEffAwqQuantizer
 from QEfficient.utils import hf_download
 from QEfficient.utils.device_utils import is_multi_qranium_setup_available
 
@@ -48,3 +50,8 @@ def load_pytorch_model(model_config):
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
     return model_hf, params
+
+
+def replace_transformers_quantizers():
+    AUTO_QUANTIZER_MAPPING.update({"awq": QEffAwqQuantizer})
+    AUTO_QUANTIZATION_CONFIG_MAPPING.update({"awq": QEffAwqConfig})

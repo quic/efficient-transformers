@@ -53,3 +53,35 @@ class ModuleMappingTransform(PytorchTransform):
             FlashAttention.register(LLamaAttention, LlamaFlashAttention)
         """
         cls._module_mapping[from_module] = to_module
+
+
+class ModuleMutatorTransform(PytorchTransform):
+    """Serves as base class for any transform that mutates pytorch module in any way.
+    Mutate here mean, we initialize a new pytorch module object using info from original module and
+    replace original module with new module.
+
+    Raises:
+        NotImplementedError: Not supposed to use directly, Create a subclass and implement mutate method and assign a valid nn.Module class to _match_class variable.
+    """
+
+    _match_class: nn.Module
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        transformed = False
+        for name, module in model.named_children():
+            if isinstance(module, cls._match_class):
+                setattr(model, name, cls.mutate(module, model))
+                transformed = True
+            else:
+                cls.apply(module)
+
+        if isinstance(model, cls._match_class):
+            model = cls.mutate(model, None)
+            transformed = True
+
+        return model, transformed
+
+    @classmethod
+    def mutate(cls, original_module: nn.Module, parent_module: nn.Module):
+        raise NotImplementedError("Please implement your own method by inheriting this class")
