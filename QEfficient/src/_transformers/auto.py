@@ -19,7 +19,7 @@ from QEfficient.src._transformers.runtime_args import (
 )
 from QEfficient.src.base import QEFFBaseModel, Runtime
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
-from QEfficient.utils import get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
+from QEfficient.utils import generate_sha256_hash, get_qpc_dir_name_infer, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 # Dictionary that defines the interface from transformers to be used underneath the QEFF interface
@@ -70,11 +70,10 @@ class QEFFTransformersBase(QEFFBaseModel):
     def get_model_card_name(self) -> str:
         # FIXME: use getter
         if self.model_card_name is None:
-            # Handle when pretrained_model_name_or_path is a path and we don't know the model_card_name
-            assert not os.path.isdir(
-                self.pretrained_model_name_or_path
-            ), f"Please provide `model_card_name` argument as valid string, got {self.model_card_name}"
-            self.model_card_name = self.pretrained_model_name_or_path
+            if os.path.isdir(self.pretrained_model_name_or_path):
+                self.model_card_name = generate_sha256_hash(self.pretrained_model_name_or_path)
+            else:
+                self.model_card_name = self.pretrained_model_name_or_path
 
         return self.model_card_name
 
@@ -91,7 +90,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update(
             {"use_cache": True}
         )  # Always pass use_cache = True, to get KV values as output during ONNX export
-        kwargs.update({"attn_implementation" : "eager"}) # Always use eager mode for attention implementation
+        kwargs.update({"attn_implementation": "eager"})  # Always use eager mode for attention implementation
         model_card_name = kwargs.pop("model_card_name", None)
         model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs

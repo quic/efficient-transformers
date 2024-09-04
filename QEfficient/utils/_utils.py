@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import hashlib
 import os
 from typing import List, Optional, Tuple, Union
 
@@ -186,3 +187,17 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
             tokenizer.pad_token_id = tokenizer.eos_token_id
         else:
             tokenizer.pad_token_id = tokenizer.vocab_size - 1
+
+
+def generate_sha256_hash(data: str) -> str:
+    """
+    Generate a SHA-256 hash for the given data.
+
+    :param data: The input data to hash.
+    :return: The hexadecimal representation of the SHA-256 hash.
+    """
+    hash_object = hashlib.sha256()
+    hash_object.update(data.encode("utf-8"))
+    hash_hex = hash_object.hexdigest()
+
+    return hash_hex
