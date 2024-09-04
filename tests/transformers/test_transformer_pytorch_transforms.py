@@ -58,6 +58,10 @@ KVCacheTransformTestConfigs = [
     ("starcoder2", 1, 24, 192, {"num_key_value_heads": 2, "intermediate_size": 512}, 0.8),
     ("starcoder2", 3, 24, 192, {"num_key_value_heads": 24, "intermediate_size": 512}, 0.8),
     ("starcoder2", 1, 24, 192, {"num_key_value_heads": 24, "intermediate_size": 512}, 0.8),
+    ("gemma", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+    ("gemma", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+    ("gemma", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+    ("gemma", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
 ]
 
 

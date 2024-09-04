@@ -36,6 +36,13 @@ from transformers.models.llama.modeling_llama import (
     LlamaModel,
     LlamaRMSNorm,
 )
+from transformers.models.gemma.modeling_gemma import (
+    GemmaAttention,
+    GemmaDecoderLayer,
+    GemmaForCausalLM,
+    GemmaModel,
+    GemmaRMSNorm,
+)
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
     MistralDecoderLayer,
@@ -112,6 +119,12 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
+)
+from QEfficient.transformers.models.gemma.modeling_gemma import (
+    QEffGemmaAttention,
+    QEffGemmaDecoderLayer,
+    QEffGemmaForCausalLM,
+    QEffGemmaModel,
 )
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
@@ -191,6 +204,10 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaAttention: QEffLlamaAttention,
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
+        # Gemma 
+        GemmaAttention: QEffGemmaAttention,
+        GemmaModel: QEffGemmaModel,
+        GemmaForCausalLM: QEffGemmaForCausalLM,
         # Mistral
         MistralAttention: QEffMistralAttention,
         MistralModel: QEffMistralModel,
@@ -241,6 +258,8 @@ class CBTransform(KVCacheTransform):
         **KVCacheTransform._module_mapping,  # Unpack existing KV mapping
         # Llama
         LlamaDecoderLayer: QEffLlamaDecoderLayer,
+        # Gemma
+        GemmaDecoderLayer: QEffGemmaDecoderLayer,
         # Mistral
         MistralDecoderLayer: QEffMistralDecoderLayer,
         # Mixtral
