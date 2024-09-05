@@ -56,7 +56,8 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Command Line Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Transformed models and QPC storage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#command-line-interface">Command Line Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#python-api">Python API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
@@ -132,6 +133,7 @@
 <span class="kn">from</span> <span class="nn">QEfficient.base.common</span> <span class="kn">import</span> <span class="n">AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP</span><span class="p">,</span> <span class="n">QEFF_MODEL_TYPE</span><span class="p">,</span> <span class="n">QEFFCommonLoader</span>
 <span class="kn">from</span> <span class="nn">QEfficient.base.modeling_qeff</span> <span class="kn">import</span> <span class="n">QEFFBaseModel</span>
 <span class="kn">from</span> <span class="nn">QEfficient.exporter.export_utils</span> <span class="kn">import</span> <span class="n">export_onnx</span><span class="p">,</span> <span class="n">fix_onnx_fp16</span><span class="p">,</span> <span class="n">generate_input_files</span><span class="p">,</span> <span class="n">run_model_on_ort</span>
+<span class="kn">from</span> <span class="nn">QEfficient.transformers.modeling_utils</span> <span class="kn">import</span> <span class="n">get_lists_of_cb_qeff_models</span>
 <span class="kn">from</span> <span class="nn">QEfficient.transformers.models.modeling_auto</span> <span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">load_hf_tokenizer</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.constants</span> <span class="kn">import</span> <span class="n">QEFF_MODELS_DIR</span><span class="p">,</span> <span class="n">Constants</span>
@@ -308,6 +310,7 @@
     <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">],</span>
     <span class="n">onnx_dir_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">seq_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="c1"># Disabling requires_grad on all parameters</span>
     <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">transformed_model</span><span class="o">.</span><span class="n">parameters</span><span class="p">()):</span>
@@ -325,9 +328,10 @@
         <span class="n">prompt</span><span class="o">=</span><span class="n">Constants</span><span class="o">.</span><span class="n">INPUT_STR</span><span class="p">,</span>
         <span class="n">prompt_len</span><span class="o">=</span><span class="n">Constants</span><span class="o">.</span><span class="n">PROMPT_LEN</span><span class="p">,</span>
         <span class="n">ctx_len</span><span class="o">=</span><span class="n">seq_len</span><span class="p">,</span>
+        <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
     <span class="p">)</span>
-    <span class="n">inputs</span> <span class="o">=</span> <span class="n">input_handler</span><span class="o">.</span><span class="n">prepare_pytorch_inputs</span><span class="p">()</span>
 
+    <span class="n">inputs</span> <span class="o">=</span> <span class="n">input_handler</span><span class="o">.</span><span class="n">prepare_pytorch_inputs</span><span class="p">()</span>
     <span class="n">pt_outputs</span> <span class="o">=</span> <span class="n">transformed_model</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
     <span class="n">output_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">pt_outputs</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
 
@@ -338,9 +342,8 @@
     <span class="c1"># Build inputs for next iteration from outputs</span>
     <span class="c1"># Build inputs for decode</span>
     <span class="n">inputs</span> <span class="o">=</span> <span class="n">input_handler</span><span class="o">.</span><span class="n">update_pytorch_inputs</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">pt_outputs</span><span class="p">)</span>
-
     <span class="c1"># To avoid issues in onnx export</span>
-    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">seq_len</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">full_batch_size</span> <span class="k">if</span> <span class="n">full_batch_size</span> <span class="k">else</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">seq_len</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
 
     <span class="c1"># Run PyTorch inference with past</span>
     <span class="n">pt_outputs</span> <span class="o">=</span> <span class="n">transformed_model</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
@@ -430,7 +433,14 @@
     <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">],</span>
     <span class="n">onnx_dir_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">seq_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">SEQ_LEN</span><span class="p">,</span>
+    <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="c1"># Check if model architecture is supported for continuous batching.</span>
+    <span class="k">if</span> <span class="n">full_batch_size</span> <span class="ow">and</span> <span class="n">qeff_model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">architectures</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">get_lists_of_cb_qeff_models</span><span class="o">.</span><span class="n">architectures</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Continuous batching is not supported for </span><span class="si">{</span><span class="n">qeff_model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">architectures</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+
     <span class="c1"># FIXME: move all this to class instead of here, and just call qeff_model.export here.</span>
     <span class="k">if</span> <span class="n">AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">qeff_model</span><span class="o">.</span><span class="vm">__class__</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="o">==</span> <span class="n">QEFF_MODEL_TYPE</span><span class="o">.</span><span class="n">CAUSALLM</span><span class="p">:</span>  <span class="c1"># type: ignore</span>
         <span class="k">return</span> <span class="n">export_lm_model_for_cloud</span><span class="p">(</span>
@@ -439,6 +449,7 @@
             <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
             <span class="n">onnx_dir_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
             <span class="n">seq_length</span><span class="o">=</span><span class="n">seq_length</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
         <span class="p">)</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
@@ -452,6 +463,7 @@
     <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">],</span>
     <span class="n">onnx_dir_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">seq_length</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">):</span>
         <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Overriding </span><span class="si">{</span><span class="n">onnx_dir_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
@@ -464,6 +476,7 @@
             <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
             <span class="n">onnx_dir_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
             <span class="n">seq_len</span><span class="o">=</span><span class="n">seq_length</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
         <span class="p">)</span>  <span class="c1"># type: ignore</span>
 
     <span class="k">else</span><span class="p">:</span>
@@ -488,6 +501,7 @@
     <span class="n">seq_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">SEQ_LEN</span><span class="p">,</span>
     <span class="n">kv</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="n">form_factor</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cloud&quot;</span><span class="p">,</span>
+    <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    This method is an alias for ``QEfficient.export``.</span>
@@ -535,13 +549,13 @@
             <span class="n">pretrained_model_name_or_path</span><span class="o">=</span><span class="p">(</span><span class="n">local_model_dir</span> <span class="k">if</span> <span class="n">local_model_dir</span> <span class="k">else</span> <span class="n">model_name</span><span class="p">),</span>
             <span class="n">token</span><span class="o">=</span><span class="n">hf_token</span><span class="p">,</span>
             <span class="n">cache_dir</span><span class="o">=</span><span class="n">cache_dir</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
         <span class="p">)</span>
     <span class="p">)</span>
 
     <span class="c1"># Transform if required</span>
     <span class="k">if</span> <span class="n">model_kv</span><span class="o">.</span><span class="n">is_transformed</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">kv</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;Transformed model is passed while requsting to convert non-transformed model&quot;</span><span class="p">)</span>
-
+        <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;Transformed model is passed while requesting to convert non-transformed model&quot;</span><span class="p">)</span>
     <span class="n">model_kv</span> <span class="o">=</span> <span class="n">model_kv</span> <span class="k">if</span> <span class="n">model_kv</span><span class="o">.</span><span class="n">is_transformed</span> <span class="k">else</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="n">model_kv</span><span class="p">)</span> <span class="k">if</span> <span class="n">kv</span> <span class="k">else</span> <span class="n">model_kv</span>
 
     <span class="k">if</span> <span class="n">onnx_dir_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
@@ -567,6 +581,7 @@
             <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
             <span class="n">onnx_dir_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
             <span class="n">seq_length</span><span class="o">=</span><span class="n">seq_length</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
         <span class="p">)</span>
         <span class="k">return</span> <span class="n">onnx_dir_path</span><span class="p">,</span> <span class="n">generated_onnx_model_path</span>
     <span class="k">else</span><span class="p">:</span>

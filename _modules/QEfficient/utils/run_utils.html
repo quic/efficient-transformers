@@ -56,7 +56,8 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Command Line Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Transformed models and QPC storage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#command-line-interface">Command Line Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#python-api">Python API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
@@ -125,7 +126,7 @@
 <span class="kn">import</span> <span class="nn">onnxruntime</span>
 <span class="kn">import</span> <span class="nn">torch</span>
 
-<span class="kn">from</span> <span class="nn">QEfficient.generation.text_generation_inference</span> <span class="kn">import</span> <span class="n">cloud_ai_100_exec_kv_helper</span>
+<span class="kn">from</span> <span class="nn">QEfficient.generation.text_generation_inference</span> <span class="kn">import</span> <span class="n">TextGeneration</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.generate_inputs</span> <span class="kn">import</span> <span class="n">InputHandler</span>
 
 
@@ -160,6 +161,7 @@
             <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span>
             <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt_len</span><span class="p">,</span>
             <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
         <span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">ctx_len</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt_len</span>
@@ -288,7 +290,7 @@
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Completion:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">predicted_string</span><span class="p">))</span>
         <span class="k">return</span> <span class="n">generated_ids</span></div>
 
-<div class="viewcode-block" id="ApiRunner.run_kv_model_on_cloud_ai_100"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100">[docs]</a>    <span class="k">def</span> <span class="nf">run_kv_model_on_cloud_ai_100</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">qpc_path</span><span class="p">,</span> <span class="n">device_group</span><span class="p">):</span>
+<div class="viewcode-block" id="ApiRunner.run_kv_model_on_cloud_ai_100"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100">[docs]</a>    <span class="k">def</span> <span class="nf">run_kv_model_on_cloud_ai_100</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">qpc_path</span><span class="p">,</span> <span class="n">device_group</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running ``ONNX`` model on Cloud AI 100 and return the output tokens</span>
 
@@ -299,15 +301,20 @@
 <span class="sd">        Return:</span>
 <span class="sd">            :numpy.ndarray: Generated output tokens</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">execinfo</span> <span class="o">=</span> <span class="n">cloud_ai_100_exec_kv_helper</span><span class="p">(</span>
+        <span class="n">execinfo</span> <span class="o">=</span> <span class="n">TextGeneration</span><span class="p">(</span>
             <span class="n">tokenizer</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">,</span>
+            <span class="n">prompt</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span>
             <span class="n">qpc_path</span><span class="o">=</span><span class="n">qpc_path</span><span class="p">,</span>
             <span class="n">device_id</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
             <span class="n">ctx_len</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">ctx_len</span><span class="p">,</span>
             <span class="n">generation_len</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span><span class="p">,</span>
-            <span class="n">prompt</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span>
             <span class="n">stream</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">cloud_ai_100_exec_kv_helper</span><span class="p">(</span>
+            <span class="n">prompt</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span>
+            <span class="n">generation_len</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span><span class="p">,</span>
         <span class="p">)</span>
+
         <span class="n">predicted_string</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">batch_decode</span><span class="p">(</span><span class="n">execinfo</span><span class="o">.</span><span class="n">generated_ids</span><span class="p">,</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;QEff Transformed Model Outputs (Cloud AI 100): </span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Prompt:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">))</span>

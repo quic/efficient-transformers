@@ -59,7 +59,8 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Command Line Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Transformed models and QPC storage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html#command-line-interface">Command Line Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html#python-api">Python API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
@@ -117,37 +118,124 @@
              
   <section id="validated-models">
 <span id="id1"></span><h1>Validated Models<a class="headerlink" href="#validated-models" title="Permalink to this heading"></a></h1>
-<ul class="simple">
-<li><p><a class="reference external" href="https://huggingface.co/openai-community/gpt2">GPT2</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/meta-llama/Meta-Llama-3-8B">Llama-3-8b</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/meta-llama/Meta-Llama-3-70B">Llama-3-70b</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/meta-llama/Llama-2-70b-chat-hf">Llama-2-70b</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/meta-llama/Llama-2-7b-chat-hf">Llama-2-7b-chat-hf</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/meta-llama/Llama-2-13b-chat-hf">Llama-2-13b-chat-hf</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/codellama/CodeLlama-7b-hf">CodeLlama-7b-hf</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/codellama/CodeLlama-13b-hf">CodeLlama-13b-hf</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/codellama/CodeLlama-34b-hf">CodeLlama-34b-hf</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/Salesforce/codegen25-7b-mono_P">Salesforce/codegen25-7b-mono_P</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/Salesforce/xgen-7b-8k-base">Salesforce/xgen-7b-8k-base</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/mosaicml/mpt-7b">MPT-7b</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1">Mistral-7B-Instruct-v0.1</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/mistralai/Mixtral-8x7B-v0.1">Mixtral-8x7B</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/lmsys/vicuna-13b-delta-v0">Vicuna-v0</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/lmsys/vicuna-13b-v1.3">Vicuna-v1.3</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/lmsys/vicuna-13b-v1.5">Vicuna-v1.5</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/Qwen/Qwen2-1.5B-Instruct">Qwen2-1.5B-Instruct</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/bigcode/starcoder2-15b">StarCoder2-15B</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/microsoft/Phi-3-mini-4k-instruct">Phi3-Mini-4K-Instruct</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/mistralai/Codestral-22B-v0.1">Codestral-22B-v0.1</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/tiiuae/falcon-40b">Falcon-40b</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/EleutherAI/gpt-j-6b">GPT-J-6B</a></p></li>
-</ul>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Model Name</p></th>
+<th class="head"><p>Model Support</p></th>
+<th class="head"><p>Continuous Batching Support</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/openai-community/gpt2">GPT2</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/meta-llama/Meta-Llama-3-8B">Llama-3-8b</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/meta-llama/Meta-Llama-3-70B">Llama-3-70b</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/meta-llama/Llama-2-70b-chat-hf">Llama-2-70b</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/meta-llama/Llama-2-7b-chat-hf">Llama-2-7b-chat-hf</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/meta-llama/Llama-2-13b-chat-hf">Llama-2-13b-chat-hf</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/codellama/CodeLlama-7b-hf">CodeLlama-7b-hf</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/codellama/CodeLlama-13b-hf">CodeLlama-13b-hf</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/codellama/CodeLlama-34b-hf">CodeLlama-34b-hf</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/Salesforce/codegen25-7b-mono_P">Salesforce/codegen25-7b-mono_P</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/Salesforce/xgen-7b-8k-base">Salesforce/xgen-7b-8k-base</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/mosaicml/mpt-7b">MPT-7b</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1">Mistral-7B-Instruct-v0.1</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/mistralai/Mixtral-8x7B-v0.1">Mixtral-8x7B</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/lmsys/vicuna-13b-delta-v0">Vicuna-v0</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/lmsys/vicuna-13b-v1.3">Vicuna-v1.3</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/lmsys/vicuna-13b-v1.5">Vicuna-v1.5</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/Qwen/Qwen2-1.5B-Instruct">Qwen2-1.5B-Instruct</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/bigcode/starcoder2-15b">StarCoder2-15B</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/microsoft/Phi-3-mini-4k-instruct">Phi3-Mini-4K-Instruct</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/mistralai/Codestral-22B-v0.1">Codestral-22B-v0.1</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/tiiuae/falcon-40b">Falcon-40b</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/EleutherAI/gpt-j-6b">GPT-J-6B</a></p></td>
+<td><p>✔️</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/inceptionai/jais-adapted-70b">Jais-adapted-70b</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://huggingface.co/inceptionai/jais-adapted-13b-chat">Jais-adapted-13b-chat</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://huggingface.co/inceptionai/jais-adapted-7b">Jais-adapted-7b</a></p></td>
+<td><p>✔️</p></td>
+<td><p>✔️</p></td>
+</tr>
+</tbody>
+</table>
 </section>
 <section id="models-coming-soon">
 <span id="coming-soon-models"></span><h1>Models Coming Soon<a class="headerlink" href="#models-coming-soon" title="Permalink to this heading"></a></h1>
 <ul class="simple">
-<li><p><a class="reference external" href="https://huggingface.co/core42/jais-13b">Jais-13b</a></p></li>
-<li><p><a class="reference external" href="https://huggingface.co/core42/jais-30b-chat-v1">Jais-30b</a></p></li>
 <li><p><a class="reference external" href="https://huggingface.co/THUDM/chatglm2-6b">Chatglm2-6b</a></p></li>
 <li><p><a class="reference external" href="https://huggingface.co/baichuan-inc/Baichuan2-7B-Base">Baichuan2-7B-Base</a></p></li>
 </ul>

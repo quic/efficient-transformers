@@ -56,7 +56,8 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Command Line Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Transformed models and QPC storage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#command-line-interface">Command Line Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#python-api">Python API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
@@ -127,7 +128,7 @@
 
 
 <div class="viewcode-block" id="InputHandler"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler">[docs]</a><span class="k">class</span> <span class="nc">InputHandler</span><span class="p">:</span>
-    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">prompt_len</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">prompt_len</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Initialization</span>
 
@@ -138,6 +139,7 @@
 <span class="sd">            :prompt (List[str]): String to used as input prompt for the model.</span>
 <span class="sd">            :prompt_len (int): Prompt length for the model to compile.</span>
 <span class="sd">            :ctx_len (int): Maximum context length to compile the model.</span>
+<span class="sd">            :full_batch_size (int): Continuous batching batch size</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="c1"># check and fix tokenizer viability</span>
         <span class="n">padding_check_and_fix</span><span class="p">(</span><span class="n">tokenizer</span><span class="p">)</span>
@@ -145,8 +147,11 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">prompt</span> <span class="o">=</span> <span class="n">prompt</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">prompt_len</span> <span class="o">=</span> <span class="n">prompt_len</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">ctx_len</span> <span class="o">=</span> <span class="n">ctx_len</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span> <span class="o">=</span> <span class="n">full_batch_size</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">n_layer</span> <span class="o">=</span> <span class="n">get_num_layers_from_config</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">padding_shape</span> <span class="o">=</span> <span class="n">get_padding_shape_from_config</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">seq_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">padding_shape</span> <span class="o">=</span> <span class="n">get_padding_shape_from_config</span><span class="p">(</span>
+            <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="n">full_batch_size</span> <span class="k">if</span> <span class="n">full_batch_size</span> <span class="k">else</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">seq_len</span><span class="o">=</span><span class="n">ctx_len</span>
+        <span class="p">)</span>
 
 <div class="viewcode-block" id="InputHandler.prepare_pytorch_inputs"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs">[docs]</a>    <span class="k">def</span> <span class="nf">prepare_pytorch_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -181,6 +186,11 @@
             <span class="mi">1</span><span class="p">,</span>
         <span class="p">)</span>
 
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span><span class="p">:</span>
+            <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">input_ids</span>
+            <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">input_len</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">input_len</span><span class="p">)</span>
+            <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;batch_index&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
         <span class="n">past_key_values</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_layer</span><span class="p">):</span>
             <span class="n">past_key</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">padding_shape</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
@@ -203,11 +213,27 @@
 <span class="sd">            :Dict: Updated input_ids, position_ids and past_key_values</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">updated_inputs</span> <span class="o">=</span> <span class="p">{}</span>
-        <span class="n">updated_inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">pt_outputs</span><span class="p">[</span><span class="s2">&quot;logits&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-        <span class="n">updated_inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">values</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span><span class="p">:</span>
+            <span class="n">batch_index</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+            <span class="n">input_ids</span> <span class="o">=</span> <span class="n">pt_outputs</span><span class="o">.</span><span class="n">logits</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+            <span class="n">updated_inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">pad_token_id</span><span class="p">)</span>
+            <span class="n">updated_inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">][</span><span class="n">batch_index</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)]</span> <span class="o">=</span> <span class="n">input_ids</span>
+
+            <span class="n">position_ids</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">values</span> <span class="o">+</span> <span class="mi">1</span>
+            <span class="n">updated_inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="mi">0</span><span class="p">)</span>
+            <span class="n">updated_inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">][</span><span class="n">batch_index</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)]</span> <span class="o">=</span> <span class="n">position_ids</span>
+
+            <span class="n">updated_inputs</span><span class="p">[</span><span class="s2">&quot;batch_index&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">updated_inputs</span><span class="p">[</span><span class="s2">&quot;input_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">pt_outputs</span><span class="p">[</span><span class="s2">&quot;logits&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="n">updated_inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">values</span> <span class="o">+</span> <span class="mi">1</span>
+
         <span class="n">updated_inputs</span><span class="p">[</span><span class="s2">&quot;past_key_values&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span>
             <span class="p">[(</span><span class="n">key</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">value</span><span class="o">.</span><span class="n">detach</span><span class="p">())</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">pt_outputs</span><span class="p">[</span><span class="s2">&quot;past_key_values&quot;</span><span class="p">]]</span>
         <span class="p">)</span>
+
         <span class="k">return</span> <span class="n">updated_inputs</span></div>
 
 <div class="viewcode-block" id="InputHandler.prepare_ort_inputs"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs">[docs]</a>    <span class="k">def</span> <span class="nf">prepare_ort_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>

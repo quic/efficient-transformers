@@ -59,7 +59,8 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Command Line Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Transformed models and QPC storage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html#command-line-interface">Command Line Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html#python-api">Python API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
@@ -252,7 +253,7 @@ Bertstyle Approach:</p>
 
 <span class="target" id="module-QEfficient.utils.generate_inputs"></span><dl class="py class">
 <dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.generate_inputs.</span></span><span class="sig-name descname"><span class="pre">InputHandler</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler" title="Permalink to this definition"></a></dt>
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.generate_inputs.</span></span><span class="sig-name descname"><span class="pre">InputHandler</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">full_batch_size</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandler"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandler" title="Permalink to this definition"></a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
 <dl class="py method">
 <dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs">
@@ -380,7 +381,7 @@ Bertstyle Approach:</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100">
-<span class="sig-name descname"><span class="pre">run_kv_model_on_cloud_ai_100</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">qpc_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_group</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_cloud_ai_100"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100" title="Permalink to this definition"></a></dt>
+<span class="sig-name descname"><span class="pre">run_kv_model_on_cloud_ai_100</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">qpc_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_group</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_kv_model_on_cloud_ai_100"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100" title="Permalink to this definition"></a></dt>
 <dd><p>Function responsible for running <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model on Cloud AI 100 and return the output tokens</p>
 <dl class="simple">
 <dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">

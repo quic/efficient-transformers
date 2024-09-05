@@ -56,7 +56,8 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Command Line Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Transformed models and QPC storage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#command-line-interface">Command Line Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#python-api">Python API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
@@ -129,8 +130,10 @@
 <span class="kn">from</span> <span class="nn">QEfficient.utils.logging_utils</span> <span class="kn">import</span> <span class="n">logger</span>
 
 
-<span class="k">def</span> <span class="nf">create_and_dump_specializations</span><span class="p">(</span><span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">prompt_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-    <span class="c1"># Create</span>
+<span class="k">def</span> <span class="nf">create_and_dump_specializations</span><span class="p">(</span>
+    <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">prompt_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">):</span>
+    <span class="c1"># Create specialization file.</span>
     <span class="n">specializations</span> <span class="o">=</span> <span class="p">{</span>
         <span class="s2">&quot;specializations&quot;</span><span class="p">:</span> <span class="p">[</span>
             <span class="p">{</span>
@@ -141,6 +144,12 @@
             <span class="p">{</span><span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">batch_size</span><span class="p">),</span> <span class="s2">&quot;seq_len&quot;</span><span class="p">:</span> <span class="s2">&quot;1&quot;</span><span class="p">,</span> <span class="s2">&quot;ctx_len&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ctx_len</span><span class="p">)},</span>
         <span class="p">]</span>
     <span class="p">}</span>
+    <span class="c1"># If continuous batching is enabled by proving full_batch_size we need to add FBS to the specialization file and update the batch size of decoder part to FBS</span>
+    <span class="k">if</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">specializations</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">full_batch_size</span><span class="p">)</span>
+        <span class="n">specializations</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">1</span><span class="p">][</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">full_batch_size</span><span class="p">)</span>
+        <span class="n">specializations</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">1</span><span class="p">][</span><span class="s2">&quot;batch_size&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">full_batch_size</span><span class="p">)</span>
+
     <span class="c1"># Dump</span>
     <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
         <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">specializations</span><span class="p">,</span> <span class="n">file</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
@@ -155,7 +164,7 @@
     <span class="n">custom_io_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">aic_enable_depth_first</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
     <span class="n">mos</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
-    <span class="n">device_group</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+    <span class="n">device_group</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
     <span class="k">if</span> <span class="n">kwargs</span><span class="p">:</span>
@@ -189,7 +198,7 @@
         <span class="n">command</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;-mos=</span><span class="si">{</span><span class="n">mos</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">aic_enable_depth_first</span><span class="p">:</span>
         <span class="n">command</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-aic-enable-depth-first&quot;</span><span class="p">)</span>
-    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">device_group</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">device_group</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">device_group</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
         <span class="n">mdp_ts_config</span> <span class="o">=</span> <span class="p">{</span>
             <span class="s2">&quot;connections&quot;</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;devices&quot;</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">device_group</span><span class="p">))),</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;p2p&quot;</span><span class="p">}],</span>
             <span class="s2">&quot;partitions&quot;</span><span class="p">:</span> <span class="p">[</span>
@@ -216,7 +225,7 @@
     <span class="n">onnx_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">num_cores</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-    <span class="n">device_group</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>  <span class="c1">#  FIXME: use num_devices instead</span>
+    <span class="n">device_group</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>  <span class="c1">#  FIXME: use num_devices instead</span>
     <span class="n">aic_enable_depth_first</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">mos</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
     <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
@@ -225,6 +234,7 @@
     <span class="n">mxfp6</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="n">mxint8</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">custom_io_file_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
@@ -237,11 +247,12 @@
 <span class="sd">        :onnx_path (str): Generated ``ONNX`` Model Path.</span>
 <span class="sd">        :qpc_path (str): Path for saving compiled qpc binaries.</span>
 <span class="sd">        :num_cores (int): Number of cores to compile the model on.</span>
-<span class="sd">        :device_group (List[int]): Used for finding the number of devices to compile for.</span>
 <span class="sd">    ``Optional`` Args:</span>
+<span class="sd">        :device_group (List[int]): Used for finding the number of devices to compile for. ``Defaults to None.``</span>
 <span class="sd">        :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``</span>
 <span class="sd">        :mos (int): Effort level to reduce the on-chip memory. ``Defaults to -1.``</span>
 <span class="sd">        :batch_size (int): Batch size to compile the model for. ``Defaults to 1.``</span>
+<span class="sd">        :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Default to None``</span>
 <span class="sd">        :prompt_len (int): Prompt length for the model to compile. ``Defaults to 32``</span>
 <span class="sd">        :ctx_len (int): Maximum context length to compile the model. ``Defaults to 128``</span>
 <span class="sd">        :mxfp6 (bool): Enable compilation for ``MXFP6`` precision.  ``Defaults to True.``</span>
@@ -251,11 +262,18 @@
 <span class="sd">    Returns:</span>
 <span class="sd">        :str: Path to compiled ``qpc`` package.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">full_batch_size</span> <span class="ow">and</span> <span class="n">batch_size</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Only either batch_size or full_batch_size should be greater than one&quot;</span><span class="p">)</span>
+
     <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">specialization_json_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">,</span> <span class="s2">&quot;specializations.json&quot;</span><span class="p">)</span>
-    <span class="c1"># Dynamically create the specializations JSON</span>
+
     <span class="n">create_and_dump_specializations</span><span class="p">(</span>
-        <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt_len</span><span class="p">,</span> <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="n">specialization_json_path</span>
+        <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+        <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt_len</span><span class="p">,</span>
+        <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
+        <span class="n">path</span><span class="o">=</span><span class="n">specialization_json_path</span><span class="p">,</span>
+        <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
     <span class="p">)</span>
 
     <span class="c1"># Select the customIO config based on the mx flag.</span>
