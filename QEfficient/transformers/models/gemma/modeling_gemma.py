@@ -18,71 +18,17 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-
 from transformers.models.gemma.modeling_gemma import (
-    logger,
-    apply_rotary_pos_emb,
-    repeat_kv,
     GemmaAttention,
     GemmaDecoderLayer,
     GemmaModel,
     GemmaForCausalLM,
+    apply_rotary_pos_emb,
+    logger,
+    repeat_kv,
 )
 
-
-# Copied from transformers.models.llama.modeling_llama._prepare_4d_causal_attention_mask_with_cache_position
-def _prepare_4d_causal_attention_mask_with_cache_position(
-    attention_mask: torch.Tensor,
-    sequence_length: int,
-    target_length: int,
-    dtype: torch.dtype,
-    device: torch.device,
-    min_dtype: float,
-    cache_position: torch.Tensor,
-    batch_size: int,
-):
-    """
-    Creates a causal 4D mask of shape `(batch_size, 1, query_length, key_value_length)` from a 2D mask of shape
-    `(batch_size, key_value_length)`, or if the input `attention_mask` is already 4D, do nothing.
-
-    Args:
-        attention_mask (`torch.Tensor`):
-            A 2D attention mask of shape `(batch_size, key_value_length)` or a 4D attention mask of shape `(batch_size, 1, query_length, key_value_length)`.
-        sequence_length (`int`):
-            The sequence length being processed.
-        target_length (`int`):
-            The target length: when generating with static cache, the mask should be as long as the static cache, to account for the 0 padding, the part of the cache that is not filled yet.
-        dtype (`torch.dtype`):
-            The dtype to use for the 4D attention mask.
-        device (`torch.device`):
-            The device to plcae the 4D attention mask on.
-        min_dtype (`float`):
-            The minimum value representable with the dtype `dtype`.
-        cache_position (`torch.Tensor`):
-            Indices depicting the position of the input sequence tokens in the sequence.
-        batch_size (`torch.Tensor`):
-            Batch size.
-    """
-    if attention_mask is not None and attention_mask.dim() == 4:
-        # In this case we assume that the mask comes already in inverted form and requires no inversion or slicing.
-        causal_mask = attention_mask
-    else:
-        causal_mask = torch.full((sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device)
-        if sequence_length != 1:
-            causal_mask = torch.triu(causal_mask, diagonal=1)
-        causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
-        causal_mask = causal_mask[None, None, :, :].expand(batch_size, 1, -1, -1)
-        if attention_mask is not None:
-            causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
-            mask_length = attention_mask.shape[-1]
-            padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
-            padding_mask = padding_mask == 0
-            causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
-                padding_mask, min_dtype
-            )
-
-    return causal_mask
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
 class QEffGemmaAttention(GemmaAttention):
@@ -129,8 +75,6 @@ class QEffGemmaAttention(GemmaAttention):
 
         if attention_mask is not None:  # no matter the length, we just slice it
             attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
-            # causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-            # attn_weights = attn_weights + causal_mask
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
@@ -145,7 +89,7 @@ class QEffGemmaAttention(GemmaAttention):
 
         attn_output = attn_output.transpose(1, 2).contiguous()
 
-        attn_output = attn_output.view(bsz, q_len, -1)
+        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
         attn_output = self.o_proj(attn_output)
 
         if not output_attentions:
@@ -175,7 +119,6 @@ class QEffGemmaForCausalLM(GemmaForCausalLM):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        num_logits_to_keep: int = 0,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
@@ -183,11 +126,6 @@ class QEffGemmaForCausalLM(GemmaForCausalLM):
                 Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
                 config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
                 (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
-
-            num_logits_to_keep (`int`, *optional*):
-                Calculate logits for the last `num_logits_to_keep` tokens. If `0`, calculate logits for all
-                `input_ids` (special case). Only last token logits are needed for generation, and calculating them only for that
-                token can save memory, which becomes pretty significant for long sequences or large vocabulary size.
 
         Returns:
 
@@ -276,7 +214,6 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
-        **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -293,9 +230,6 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
             past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
             cache_position (`torch.LongTensor` of shape `(sequence_length)`, *optional*):
                 Indices depicting the position of the input sequence tokens in the sequence
-            kwargs (`dict`, *optional*):
-                Arbitrary kwargs to be ignored, used for FSDP and other methods that injects code
-                into the model
         """
         residual = hidden_states
 
@@ -311,7 +245,6 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
-            **kwargs,
         )
         hidden_states = residual + hidden_states
 
@@ -336,8 +269,7 @@ class QEffGemmaModel(GemmaModel):
     """
     Copied from GemmaModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma/modeling_gemma.py
     The only differences are:
-    - add new args position idx for the cache_kwargs for kv retention
-    - update causal attention mask
+    - add new args cache idx for the kv retention
     """
 
     def forward(
@@ -375,9 +307,9 @@ class QEffGemmaModel(GemmaModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        return_legacy_cache = False  # noqa: F841
-        if (use_cache and not isinstance(past_key_values, Cache) and not self.training):  # kept for BC (non `Cache` `past_key_values` inputs)
-            return_legacy_cache = True  # noqa: F841
+        return_legacy_cache = False
+        if use_cache and not isinstance(past_key_values, Cache):  # kept for BC (non `Cache` `past_key_values` inputs)
+            return_legacy_cache = True
             past_key_values = DynamicCache.from_legacy_cache(past_key_values)
 
         if cache_position is None:
@@ -400,13 +332,6 @@ class QEffGemmaModel(GemmaModel):
         # See https://github.com/huggingface/transformers/pull/29402
         normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)
         hidden_states = hidden_states * normalizer
-        if (use_cache and not isinstance(past_key_values, Cache) and not self.training):  # kept for BC (non `Cache` `past_key_values` inputs)
-            return_legacy_cache = True
-            past_key_values = DynamicCache.from_legacy_cache(past_key_values)
-            logger.warning_once(
-                "We detected that you are passing `past_key_values` as a tuple and this is deprecated and will be removed in v4.43. "
-                "Please use an appropriate `Cache` class (https://huggingface.co/docs/transformers/internal/generation_utils#transformers.Cache)"
-            )
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
