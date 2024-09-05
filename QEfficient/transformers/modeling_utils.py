@@ -19,6 +19,12 @@ from transformers.models.falcon.modeling_falcon import (
     FalconForCausalLM,
     FalconModel,
 )
+from transformers.models.gemma.modeling_gemma import (
+    GemmaAttention,
+    GemmaDecoderLayer,
+    GemmaForCausalLM,
+    GemmaModel,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
 from transformers.models.llama.modeling_llama import (
@@ -27,13 +33,6 @@ from transformers.models.llama.modeling_llama import (
     LlamaForCausalLM,
     LlamaModel,
     LlamaRMSNorm,
-)
-from transformers.models.gemma.modeling_gemma import (
-    GemmaAttention,
-    GemmaDecoderLayer,
-    GemmaForCausalLM,
-    GemmaModel,
-    GemmaRMSNorm,
 )
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
@@ -73,6 +72,7 @@ from .models.falcon.modeling_falcon import (
     QEffFalconForCausalLM,
     QEffFalconModel,
 )
+from .models.gemma.modeling_gemma import QEffGemmaAttention, QEffGemmaDecoderLayer, QEffGemmaForCausalLM, QEffGemmaModel
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
 from .models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJForCausalLM, QEffGPTJModel
 from .models.llama.modeling_llama import (
@@ -80,12 +80,6 @@ from .models.llama.modeling_llama import (
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
-)
-from .models.gemma.modeling_gemma import (
-    QEffGemmaAttention,
-    QEffGemmaDecoderLayer,
-    QEffGemmaForCausalLM,
-    QEffGemmaModel
 )
 from .models.mistral.modeling_mistral import (
     QEffMistralAttention,

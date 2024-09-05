@@ -9,7 +9,6 @@ import math
 from typing import List, Optional, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 from torch.nn import CrossEntropyLoss
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
@@ -21,8 +20,8 @@ from transformers.modeling_outputs import (
 from transformers.models.gemma.modeling_gemma import (
     GemmaAttention,
     GemmaDecoderLayer,
-    GemmaModel,
     GemmaForCausalLM,
+    GemmaModel,
     apply_rotary_pos_emb,
     logger,
     repeat_kv,
