@@ -77,7 +77,7 @@ def export_onnx(
             dynamic_axes[iname] = {0: "batch_size", 1: "decoder_seq_len"}
         elif kv_cache_3d and iname.startswith("past_"):
             # KV-cache (batch_size, ctx_len, d_head)
-            dynamic_axes[iname] = {0: "batch_size", 1: "ctx_len"}
+            dynamic_axes[iname] = {0: dynamic_axis_past_key, 1: "ctx_len"}
         elif iname.startswith("past_"):
             # KV-cache (batch_size, num_heads, past_len, embed_dim)
             dynamic_axes[iname] = {0: dynamic_axis_past_key, 2: "ctx_len"}

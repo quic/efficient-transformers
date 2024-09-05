@@ -15,9 +15,11 @@ from QEfficient.customop import (
     CtxGatherFunc,
     CtxGatherFunc3D,
     CtxGatherFuncCB,
+    CtxGatherFuncCB3D,
     CtxScatterFunc,
     CtxScatterFunc3D,
     CtxScatterFuncCB,
+    CtxScatterFuncCB3D,
 )
 
 
@@ -138,12 +140,25 @@ class QEffDynamicCache(DynamicCache):
             k_out, v_out = key_states, value_states
         else:
             position_ids = cache_kwargs.get("position_ids")
+            batch_index = cache_kwargs.get("batch_index", None)
 
-            # Scatter
-            self.key_cache[layer_idx] = CtxScatterFunc3D.apply(self.key_cache[layer_idx], position_ids, key_states)
-            self.value_cache[layer_idx] = CtxScatterFunc3D.apply(
-                self.value_cache[layer_idx], position_ids, value_states
-            )
+            if batch_index is not None:
+                invalid_scatter_index = torch.iinfo(torch.int32).max
+                scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
+
+                self.key_cache[layer_idx] = CtxScatterFuncCB3D.apply(
+                    self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
+                )
+
+                self.value_cache[layer_idx] = CtxScatterFuncCB3D.apply(
+                    self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
+                )
+
+            else:
+                self.key_cache[layer_idx] = CtxScatterFunc3D.apply(self.key_cache[layer_idx], position_ids, key_states)
+                self.value_cache[layer_idx] = CtxScatterFunc3D.apply(
+                    self.value_cache[layer_idx], position_ids, value_states
+                )
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
 
             # Gather
@@ -156,8 +171,13 @@ class QEffDynamicCache(DynamicCache):
             else:
                 invalid_idx_value = 0
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
-            k_out = CtxGatherFunc3D.apply(k_out, ctx_indices)
-            v_out = CtxGatherFunc3D.apply(v_out, ctx_indices)
+            if batch_index is not None:
+                k_out = CtxGatherFuncCB3D.apply(k_out, batch_index, ctx_indices)
+                v_out = CtxGatherFuncCB3D.apply(v_out, batch_index, ctx_indices)
+            else:
+                k_out = CtxGatherFunc3D.apply(k_out, ctx_indices)
+                v_out = CtxGatherFunc3D.apply(v_out, ctx_indices)
+
             v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
 
         return k_out, v_out

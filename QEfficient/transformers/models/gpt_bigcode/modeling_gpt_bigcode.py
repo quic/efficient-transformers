@@ -111,7 +111,6 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
         upcast = dtype != softmax_dtype
         unscale = self.layer_idx + 1 if self.scale_attention_softmax_in_fp32 and upcast else 1
         scale_factor = torch.tensor(1 / self.head_dim**0.5, dtype=torch.float32)
-
         # MQA models: (batch_size, query_length, num_heads * head_dim)
         # MHA models: (batch_size, num_heads, query_length, head_dim)
         query_shape = query.shape
@@ -176,6 +175,7 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
         layer_past: Optional[Cache] = None,
         position_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
@@ -209,7 +209,7 @@ class QEffGPTBigCodeAttention(GPTBigCodeAttention):
             )
 
         if layer_past is not None:
-            cache_kwargs = {"position_ids": position_ids}
+            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
             key, value = layer_past.update3D(key, value, self.layer_idx, cache_kwargs)
         present = (layer_past.key_cache[self.layer_idx], layer_past.value_cache[self.layer_idx])
 
@@ -236,6 +236,7 @@ class QEffGPTBigCodeBlock(GPTBigCodeBlock):
         hidden_states: Optional[Tuple[torch.Tensor]],
         layer_past: Optional[Cache] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
@@ -250,6 +251,7 @@ class QEffGPTBigCodeBlock(GPTBigCodeBlock):
             layer_past=layer_past,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            batch_index=batch_index,
             head_mask=head_mask,
             use_cache=use_cache,
             output_attentions=output_attentions,
@@ -303,6 +305,7 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
         attention_mask: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
@@ -456,6 +459,19 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
                     use_cache,
                     output_attentions,
                 )
+            elif batch_index is not None:
+                outputs = block(
+                    hidden_states,
+                    layer_past=past_key_values,
+                    position_ids=position_ids,
+                    batch_index=batch_index,
+                    attention_mask=attention_mask,
+                    head_mask=head_mask[i],
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_attention_mask=encoder_attention_mask,
+                    use_cache=use_cache,
+                    output_attentions=output_attentions,
+                )
             else:
                 outputs = block(
                     hidden_states,
@@ -509,6 +525,7 @@ class QEffGPTBigCodeForCausalLM(GPTBigCodeForCausalLM):
         attention_mask: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
@@ -533,6 +550,7 @@ class QEffGPTBigCodeForCausalLM(GPTBigCodeForCausalLM):
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
+            batch_index=batch_index,
             head_mask=head_mask,
             inputs_embeds=inputs_embeds,
             encoder_hidden_states=encoder_hidden_states,
