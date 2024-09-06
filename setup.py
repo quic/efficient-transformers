@@ -21,8 +21,9 @@ _deps = [
     "regex!=2019.12.17",
     "requests",
     "tqdm",
-    "transformers==4.41.2",
+    "transformers==4.44.2",
     "torch==2.0.0+cpu",
+    "peft==0.12.0",
     "datasets==2.7.0",
     "fsspec==2023.6.0",
     "multidict==6.0.4",
@@ -57,6 +58,7 @@ install_requires = [
     deps["tqdm"],
     deps["torch"],  # Specify CPU version
     deps["transformers"],
+    deps["peft"],
     deps["datasets"],
     deps["fsspec"],
     deps["multidict"],
