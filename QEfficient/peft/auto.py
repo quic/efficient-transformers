@@ -101,6 +101,8 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, *args, **kwargs):
+        if kwargs.get("full_batch_size"):
+            raise ValueError("Continuous batching currently not supported for PEFT models")
         if kwargs.get("use_cache") is False:
             warnings.warn("Overriding to use_cache=True")
         kwargs["use_cache"] = True
