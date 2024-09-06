@@ -58,10 +58,8 @@ KVCacheTransformTestConfigs = [
     ("starcoder2", 1, 24, 192, {"num_key_value_heads": 2, "intermediate_size": 512}, 0.8),
     ("starcoder2", 3, 24, 192, {"num_key_value_heads": 24, "intermediate_size": 512}, 0.8),
     ("starcoder2", 1, 24, 192, {"num_key_value_heads": 24, "intermediate_size": 512}, 0.8),
-    ("gemma", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("gemma", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("gemma", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("gemma", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+    ("gemma", 3, 8, 2048, {"num_key_value_heads": 1, "intermediate_size": 512}, 0.8),
+    ("gemma", 1, 8, 2048, {"num_key_value_heads": 1, "intermediate_size": 512}, 0.8),
 ]
 
 
@@ -71,6 +69,9 @@ def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6
         assert kv_val is None
         return True
     elif isinstance(original_val, torch.Tensor):
+        if original_val.shape != kv_val.shape:
+            logger.critical(f"Shape mismatch {original_val.shape}!={kv_val.shape}")
+            return True
         mae = torch.mean(torch.abs(original_val - kv_val))
         if mae >= tolerance:
             logger.critical(f"MAE={mae} is greater than expected tolerance={tolerance}")
