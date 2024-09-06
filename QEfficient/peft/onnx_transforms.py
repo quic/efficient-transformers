@@ -43,7 +43,7 @@ class AdapterWeightsToInputsTransform(OnnxTransform):
                 # Rename weight input
                 lora_weight_node = lora_weight_nodes[weight.name]
                 for j, inp in enumerate(lora_weight_node.input):
-                    if inp.endswith(weight_suffix):
+                    if inp == weight.name:
                         lora_weight_node.input[j] = new_weight_name
 
                 # Remove weight initializers
