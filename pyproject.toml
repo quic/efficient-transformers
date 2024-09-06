@@ -1,60 +1,26 @@
-[project]
-name = "QEfficient"
-dynamic = ["version"]
-description = """
-    QEfficient is the library interface for the Hugging Face Transformer \
-    models for efficient inference on Qualcomm Cloud AI 100"""
-readme = "README.md"
-license = { file = "LICENSE" }
-authors = [{ name = "Qualcomm Cloud AI ML Team" }]
-keywords = ["transformers", "Cloud AI 100", "Inference"]
-classifiers = [
-    "Programming Language :: Python :: 3", 
-    "Development Status :: 5 - Development/Unstable",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Education",
-    "Operating System :: Linux",
-    "Programming Language :: Python :: 3.8",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence for Inference Accelerator",
-]
-requires-python = "==3.8.*"
-dependencies = [
-    "transformers==4.44.2",
-    "torch==2.0.0",
-    "datasets==2.7.0",
-    "fsspec==2023.6.0",
-    "multidict==6.0.4",
-    "urllib3<2",
-    "sentencepiece==0.1.98",
-    "onnx==1.16.0",
-    "onnxruntime==1.16.3",
-    "numpy==1.23.0",
-    "protobuf==3.20.2",
-    "peft==0.12.0",
-    "onnxscript==0.1.0.dev20240327",
-    "sympy",
-]
-
-[project.optional-dependencies]
-test = ["pytest","pytest-mock"]
-docs = ["Sphinx==7.1.2","sphinx-rtd-theme==2.0.0","myst-parser==3.0.1"]
-quality = ["black", "ruff", "hf_doc_builder@git+https://github.com/huggingface/doc-builder.git"]
-
 [build-system]
 requires = ["setuptools>=62.0.0"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-include = ["QEfficient*"]
-namespaces = false
-
-[tool.setuptools.dynamic.version]
-attr = "QEfficient.__version__"
- 
 [tool.ruff]
 line-length = 120
-# Enable the isort rules.
-lint.extend-select = ["I"]
+
+[tool.ruff.lint]
+ignore = ["C901", "E501", "E741", "F402", "F823"]
+select = ["C", "E", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["E402", "F401", "F403", "F811"]
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
+known-first-party = ["QEfficient"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
 
 [tool.pytest.ini_options]
 addopts = "-W ignore -s -v"

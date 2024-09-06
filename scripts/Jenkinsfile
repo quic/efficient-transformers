@@ -19,7 +19,7 @@ pipeline
                     python3.8 -m venv preflight_qeff
                     . preflight_qeff/bin/activate
                     pip install --upgrade pip setuptools
-                    pip install .[test]
+                    pip install .[test] --extra-index-url https://download.pytorch.org/whl/cpu
                     pip install junitparser pytest-xdist
                     rm -rf QEfficient
                 '''
