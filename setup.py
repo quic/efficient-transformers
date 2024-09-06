@@ -10,7 +10,6 @@ import shutil
 from pathlib import Path
 
 from setuptools import find_packages, setup
-from setuptools.command.install import install
 
 # Remove stale QEfficient.egg-info directory to avoid issues
 stale_egg_info = Path(__file__).parent / "QEfficient.egg-info"
@@ -43,11 +42,6 @@ _deps = [
 
 deps = {b: a for a, b in (re.findall(r"^(([^!=<>~ ]+)(?:[!=<>~ ].*)?$)", x)[0] for x in _deps)}
 
-
-def deps_list(*pkgs):
-    return [deps[pkg] for pkg in pkgs]
-
-
 extras = {}
 extras["test"] = ["pytest", "pytest-mock"]
 extras["docs"] = ["Sphinx==7.1.2", "sphinx-rtd-theme==2.0.0", "myst-parser==3.0.1"]
@@ -76,13 +70,6 @@ install_requires = [
     deps["sympy"],
 ]
 
-
-class CustomInstallCommand(install):
-    def run(self):
-        self.distribution.install_requires = install_requires
-        install.run(self)
-
-
 setup(
     name="QEfficient",
     version="0.1.0",
@@ -98,9 +85,6 @@ setup(
     extras_require=extras,
     python_requires=">=3.8.0",
     install_requires=install_requires,
-    cmdclass={
-        "install": CustomInstallCommand,
-    },
     classifiers=[
         "Development Status :: 5 - Development/Unstable",
         "Intended Audience :: Developers",
