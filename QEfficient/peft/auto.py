@@ -29,6 +29,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
 from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
+from QEfficient.utils import constants
 from QEfficient.utils._utils import get_padding_shape_from_config
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
@@ -115,7 +116,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     def _export(
         self,
-        sample_inputs: Dict[str, torch.Tensor],
+        example_inputs: Dict[str, torch.Tensor],
         input_names: List[str],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
@@ -138,7 +139,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         try:
             torch.onnx.export(
                 self.model,
-                (sample_inputs,),
+                (example_inputs,),
                 str(tmp_onnx_path),
                 input_names=input_names,
                 output_names=output_names,
@@ -175,10 +176,11 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         return onnx_path
 
     def export(self, export_dir: Optional[str] = None) -> str:
-        kv_cache_shape = get_padding_shape_from_config(self.model.config, 1, 32)
-        sample_inputs = {
-            "input_ids": torch.zeros((1, 32), dtype=torch.int64),
-            "position_ids": torch.arange(32, dtype=torch.int64).view((1, 32)),
+        example_shape = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+        kv_cache_shape = get_padding_shape_from_config(self.model.config, *example_shape)
+        example_inputs = {
+            "input_ids": torch.zeros(example_shape, dtype=torch.int64),
+            "position_ids": torch.arange(example_shape[1], dtype=torch.int64).view(example_shape),
             "past_key_values": [[] for _ in range(self.num_layers)],
         }
         dynamic_axes = {
@@ -188,14 +190,14 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         output_names = ["logits"]
         for i in range(self.num_layers):
             for kv in ["key", "value"]:
-                sample_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
                 dynamic_axes[f"past_{kv}.{i}"] = {0: "batch_size", 2: "ctx_len"}
                 output_names.append(f"past_{kv}.{i}_RetainedState")
 
         input_names = list(dynamic_axes.keys())
 
         return self._export(
-            sample_inputs,
+            example_inputs,
             input_names,
             output_names,
             dynamic_axes,
