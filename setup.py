@@ -5,7 +5,6 @@ from pathlib import Path
 from setuptools import find_packages, setup
 from setuptools.command.install import install
 
-
 # Remove stale QEfficient.egg-info directory to avoid issues
 stale_egg_info = Path(__file__).parent / "QEfficient.egg-info"
 if stale_egg_info.exists():
