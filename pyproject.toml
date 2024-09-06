@@ -2,8 +2,14 @@
 requires = ["setuptools>=62.0.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+include = ["QEfficient*"]
+namespaces = false
+
 [tool.ruff]
 line-length = 120
+# Enable the isort rules.
+lint.extend-select = ["I"]
 
 [tool.ruff.lint]
 ignore = ["C901", "E501", "E741", "F402", "F823"]
