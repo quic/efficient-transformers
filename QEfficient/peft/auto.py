@@ -37,6 +37,30 @@ logger = logging.getLogger(__name__)
 
 
 class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
+    """
+    QEff class for loading models with PEFT adapters (Only LoRA is supported currently).
+    Once exported and compiled for an adapter, the same can be utilized for another adapter with same base model and adapter config.
+
+    Args:
+        :model (nn.Module): PyTorch model
+
+    .. code-block:: python
+
+        from QEfficient import QEffAutoPeftModelForCausalLM
+
+        m = QEffAutoPeftModelForCausalLM.from_pretrained("predibase/magicoder", "magicoder")
+        m.export()
+        m.compile(prefill_seq_len=32, ctx_len=1024)
+
+        inputs = ...  # A coding prompt
+        outputs = m.generate(**inputs)
+
+        inputs = ...  # A math prompt
+        m.load_adapter("predibase/gsm8k", "gsm8k")
+        m.set_adapter("gsm8k")
+        outputs = m.generate(**inputs)
+    """
+
     _pytorch_transforms: List[PytorchTransform] = [CustomOpsTransform, KVCacheTransform, PeftModelInputsTransform]
     _onnx_transforms: List[OnnxTransform] = [FP16ClipTransform, AdapterWeightsToInputsTransform, SplitTensorsTransform]
     _hf_auto_class = AutoPeftModelForCausalLM
@@ -77,6 +101,12 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         return mhash
 
     def load_adapter(self, model_id: str, adapter_name: str):
+        """Loads a new adapter from huggingface hub or local path
+
+        Args:
+            :model_id (str): Adapter model ID from huggingface hub or local path
+            :adapter_name (str): Adapter name to be used to set this adapter as current
+        """
         self.model.load_adapter(model_id, adapter_name)
         self.adapter_weights[adapter_name] = {
             k: v.numpy().astype("float16") for k, v in load_peft_weights(model_id).items()
@@ -84,9 +114,11 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     @property
     def active_adapter(self) -> str:
+        "Currently active adapter to be used for inference"
         return self.model.active_adapter
 
     def set_adapter(self, adapter_name: str):
+        "Sets active adapter from one of the loaded adapters"
         self.model.set_adapter(adapter_name)
 
     def disable_adapter(self):
@@ -101,6 +133,11 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, *args, **kwargs):
+        """
+        Args:
+            :pretrained_name_or_path (str): Model card name from huggingface or local path to model directory.
+            :*args, **kwargs: Additional arguments to pass to peft.AutoPeftModelForCausalLM.
+        """
         if kwargs.get("full_batch_size"):
             raise ValueError("Continuous batching currently not supported for PEFT models")
         if kwargs.get("use_cache") is False:
