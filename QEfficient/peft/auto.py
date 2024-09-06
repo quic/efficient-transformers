@@ -347,7 +347,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         # Initialize session
         if self.qpc_session is None:
             if self.qpc_path is None:
-                raise ValueError("Please compile the model with `model.compile(...)`")
+                raise FileNotFoundError("Please compile the model with `model.compile(...)`")
             self.qpc_session = QAICInferenceSession(str(self.qpc_path))
 
             # Skip buffers
