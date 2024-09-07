@@ -108,16 +108,6 @@ def unpack_and_reverse_weights_and_zeros(qweight: torch.Tensor, qzeros: torch.Te
     return int_weights, int_zeros
 
 
-def unpack_awq_weights(qweight, qzeros, scales, bits):
-    int_weight, int_zeros = unpack_and_reverse_weights_and_zeros(qweight, qzeros, bits)
-
-    # overflow checks
-    int_weight = torch.bitwise_and(int_weight, (2**bits) - 1)
-    int_zeros = torch.bitwise_and(int_zeros, (2**bits) - 1)
-
-    return scales, int_weight, int_zeros
-
-
 def dequantize_gemm(qweight, qzeros, scales, bits, group_size):
     # Unpack the qweight and qzeros tensors
     scales, int_weight, int_zeros = unpack_awq_weights(qweight, qzeros, scales, bits)
@@ -129,3 +119,12 @@ def dequantize_gemm(qweight, qzeros, scales, bits, group_size):
     int_weight = (int_weight - int_zeros) * scales
 
     return int_weight
+
+def unpack_awq_weights(qweight, qzeros, scales, bits):
+    int_weight, int_zeros = unpack_and_reverse_weights_and_zeros(qweight, qzeros, bits)
+
+    # overflow checks
+    int_weight = torch.bitwise_and(int_weight, (2**bits) - 1)
+    int_zeros = torch.bitwise_and(int_zeros, (2**bits) - 1)
+
+    return scales, int_weight, int_zeros

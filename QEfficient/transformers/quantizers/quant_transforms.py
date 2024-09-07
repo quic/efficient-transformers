@@ -11,6 +11,8 @@ from torch import nn
 from QEfficient.base.pytorch_transforms import ModuleMutatorTransform
 from QEfficient.customop.matmulnbits import QuantLinearORT
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM, unpack_awq_weights
+from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
+from QEfficient.transformers.quantizers.qunatizer_utils import unpack_weights1,dequantize_gptq
 
 
 class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
@@ -49,3 +51,35 @@ class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
         new_module.bias = original_module.bias if original_module.bias is not None else None
         new_module.pack(original_module, scales.T, zeros.T, original_module.g_idx)
         return new_module
+
+
+class GPTQToMatmulNbitsTransform(ModuleMutatorTransform):
+    _match_class = QuantLinearGPTQ
+
+    @staticmethod
+    def unpack_and_dequantize_awq(qweight, qzeros, scales, bits, g_idx):
+        
+        int_weight,scales, int_zeros=dequantize_gptq(qweight.T,qzeros,scales,bits,g_idx)
+        return int_weight, scales, int_zeros.to(torch.int32)
+
+    @classmethod
+    def mutate(cls, original_module: nn.Module, parent_module: nn.Module):
+        fp16_weight, scales, zeros = cls.unpack_and_dequantize_awq(
+            original_module.qweight,
+            original_module.qzeros,
+            original_module.scales,
+            original_module.bits,
+            original_module.g_idx,
+        )
+        original_module.weight = fp16_weight.T
+        new_module = QuantLinearORT(
+            original_module.bits,
+            original_module.groupsize,
+            original_module.infeatures,
+            original_module.outfeatures,
+            original_module.bias is not None,
+        )
+        new_module.bias = original_module.bias if original_module.bias is not None else None
+        new_module.pack(original_module, scales.T, zeros.T, original_module.g_idx)
+        return new_module
+
