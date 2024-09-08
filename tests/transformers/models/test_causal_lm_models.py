@@ -31,6 +31,7 @@ test_models = [
     "hakurei/gpt-j-random-tinier",
     "mistralai/Mixtral-8x7B-Instruct-v0.1",
     "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
+    "TheBloke/Llama-2-7B-Chat-GPTQ",  # GPTQ model
 ]
 
 
@@ -49,6 +50,11 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
     model_config = {"model_name": model_name}
     model_config["n_layer"] = n_layer
+
+    if model_name == "TheBloke/Llama-2-7B-Chat-GPTQ":
+        model_config["low_cpu_mem_usage"] = False
+    else:
+        model_config["low_cpu_mem_usage"] = True
 
     model_hf, _ = load_pytorch_model(model_config)
 

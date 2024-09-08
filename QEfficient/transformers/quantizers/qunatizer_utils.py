@@ -210,7 +210,6 @@ def dequantize_gemm(qweight, qzeros, scales, bits, group_size):
 
 def dequantize_gptq(qweight, qzeros, scales, bits, g_idx):
     scales, int_weight, int_zeros = unpack_weights(qweight, qzeros, scales, bits, "gptq")
-
     scales = scales.view(-1, 1, scales.size(-1))
     scales = scales.view(scales.shape[0], -1)
     scale_zeros = int_zeros * scales

@@ -7,7 +7,7 @@
 
 import torch
 import tqdm
-from transformers.quantizers.quantizer_gptq import GptqHfQuantizer
+from transformers.quantizers.quantizer_gptq import HfQuantizer
 from transformers.utils.quantization_config import GPTQConfig
 
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
@@ -26,7 +26,8 @@ class QEffGPTQConfig(GPTQConfig):
         """
         if self.bits != 4:
             raise ValueError(f"Only 4-bit quantization is supported, got bits={self.bits}")
-
+        if self.desc_act:
+            raise ValueError("Only GPTQ model without decreasing activation size supported.")
         if self.group_size != -1 and self.group_size <= 0:
             raise ValueError("group_size must be greater than 0 or equal to -1")
 
@@ -34,7 +35,7 @@ class QEffGPTQConfig(GPTQConfig):
             raise ValueError("damp_percent must between 0 and 1.")
 
 
-class QEffGPTQQuantizer(GptqHfQuantizer):
+class QEffGPTQQuantizer(HfQuantizer):
     """
     Quantizer of the GPTQ method - for GPTQ the quantizer support calibration of the model through
     `auto_gptq` package. Quantization is done under the hood for users if they load a non-prequantized model.
