@@ -1,19 +1,19 @@
-from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
-from transformers.integrations.awq import AWQ_SCALES_MAPPINGS
-from torch import nn
 import copy
+
 import torch
+from torch import nn
+from transformers.integrations.awq import AWQ_SCALES_MAPPINGS
 
-def replace_transformers_quantizers():
-    from  QEfficient.transformers.quantizers.quantizer_awq import QEffAwqQuantizer, QEffAwqConfig
-    from  QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQQuantizer, QEffGPTQConfig 
 
-    AUTO_QUANTIZER_MAPPING.update({"gptq": QEffGPTQQuantizer})
-    AUTO_QUANTIZATION_CONFIG_MAPPING.update({"gptq": QEffGPTQConfig})
-    AUTO_QUANTIZER_MAPPING.update({"awq": QEffAwqQuantizer})
-    AUTO_QUANTIZATION_CONFIG_MAPPING.update({"awq": QEffAwqConfig})
-    
-    
+def find_layers(module, layers=[nn.Conv2d, nn.Linear], name=""):  # noqa:B006
+    if type(module) in layers:
+        return {name: module}
+    res = {}
+    for name1, child in module.named_children():
+        res.update(find_layers(child, layers=layers, name=name + "." + name1 if name != "" else name1))
+    return res
+
+
 def get_keys_to_not_convert(model):
     # Create a copy of the model and tie the weights, then
     # check if it contains tied weights
@@ -53,6 +53,7 @@ def get_keys_to_not_convert(model):
 
     return filtered_module_names
 
+
 def find_tied_parameters(model: nn.Module, **kwargs):
     # Initialize result and named_parameters before recursing.
     named_parameters = kwargs.get("named_parameters", None)
@@ -90,7 +91,6 @@ def replace_linear_layer_with_target_layer(
     modules_to_not_convert=None,
     current_key_name=None,
     has_been_replaced=False,
-    
 ):
     if modules_to_not_convert is None:
         modules_to_not_convert = []
@@ -133,6 +133,7 @@ def replace_linear_layer_with_target_layer(
         current_key_name.pop(-1)
     return model, has_been_replaced
 
+
 class ScaledActivation(nn.Module):
     def __init__(self, module, scales):
         super().__init__()
@@ -158,84 +159,6 @@ def replace_quantization_scales(model, model_type):
     return model
 
 
-def dequantize_gemm1(qweight, qzeros, scales, bits, group_size , quant, g_idx):
-    # Unpack the qweight and qzeros tensors
-    iweight, scales, izeros = unpack_weights(qweight, qzeros, scales, bits, group_size,quant,g_idx)
-
-    # fp16 weights
-    if quant == "awq":
-        scales = scales.repeat_interleave(group_size, dim=0)
-        izeros = izeros.repeat_interleave(group_size, dim=0)
-        iweight = (iweight - izeros) * scales
-
-    return iweight
-
-
-def unpack_weights1(qweight, qzeros, scales, bits, group_size, quant: str,g_idx):
- 
-    iweights, izeros = unpack_weights_and_zeros1(qweight, qzeros, bits,quant)
-    # Reverse the order of the iweight and izeros tensors
-    # overflow checks
-    
-    print(iweights.shape)
-    # import ipdb; ipdb.set_trace()
-    if quant == "gptq":
-        izeros = torch.bitwise_and(izeros, (2 ** bits) - 1).view(-1, 1, izeros.size(1) * izeros.size(2))
-        izeros = izeros.view(izeros.shape[0], -1)
-        
-        iweights=iweights.permute(0,2,1)
-        
-        iweights=iweights.reshape(-1,iweights.shape[2])
-    elif quant == "awq":
-        izeros = izeros.view(izeros.shape[0], -1)
-        izeros = torch.bitwise_and(izeros, (2**bits) - 1)
-        
-        iweights = iweights.view(-1,iweights.shape[1])
-        
-    
-    # if quant =="gptq":
-    #     iweights=iweights[0].permute(0,2,1)
-    #     iweights=iweights.reshape(iweights.shape[2],iweights.shape[2])
-    # elif quant =="awq":
-    #     iweights = iweights.view(iweights.shape[0], -1)
-    
-    iweights = torch.bitwise_and(iweights, (2 ** bits) - 1)
-
-    # if quant=="gptq":
-    #     scales = scales.view(-1, 1, scales.size(-1))
-    #     scales=scales.view(scales.shape[0],-1)
-    #     scale_zeros = izeros * scales
-    #     scale_mat = scales[g_idx]
-    #     scale_zeros_mat = scale_zeros[g_idx]
-    #     qdq_weight_T = iweights * scale_mat - scale_zeros_mat.float()
-    #     qdq_weight_T=torch.transpose(qdq_weight_T,0,1)
-    
-    return iweights,scales, izeros
-
-
-def unpack_weights_and_zeros1(qweight: torch.Tensor, qzeros: torch.Tensor, bits: int, quant: str):
-    if quant=='gptq':
-        shifts = torch.arange(0, 32, bits, dtype=torch.int32, device=qweight.device)
-        # shifts = torch.arange(0, 32, bits)
-    else:
-        shifts = torch.arange(0, 32, bits)
-    # unpacking columnwise
-    if quant == 'gptq':
-        iweights = torch.bitwise_right_shift(qweight[:, :, None], shifts[None, None, :]).to(
-        torch.int32)  # smallest dtype available
-        izeros = torch.bitwise_right_shift(qzeros[:, :, None], shifts[None, None, :]).to(
-            torch.int32  # smallest dtype available
-        )
-    elif quant == 'awq':
-        iweights = torch.bitwise_right_shift(qweight[:, :, None], shifts[None, None, :]).to(
-            torch.int8  # smallest dtype available
-        )
-        izeros = torch.bitwise_right_shift(qzeros[:, :, None], shifts[None, None, :]).to(
-            torch.int8  # smallest dtype available
-        )  
-    return iweights, izeros
-
-
 def reverse_awq_order(int_weights: torch.Tensor, int_zeros: torch.Tensor, bits: int):
     reverse_order_tensor = torch.arange(
         int_weights.shape[-1],
@@ -249,6 +172,7 @@ def reverse_awq_order(int_weights: torch.Tensor, int_zeros: torch.Tensor, bits: 
     int_weights = int_weights[:, reverse_order_tensor]
 
     return int_weights, int_zeros
+
 
 def unpack_weights_and_zeros(qweight: torch.Tensor, qzeros: torch.Tensor, bits: int, quant: str):
     shifts = torch.arange(0, 32, bits)
@@ -264,17 +188,16 @@ def unpack_weights_and_zeros(qweight: torch.Tensor, qzeros: torch.Tensor, bits: 
         torch.int8  # smallest dtype available
     )
     int_zeros = int_zeros.reshape(int_zeros.shape[0], -1)
-    
-    if quant == 'awq': 
-        return reverse_awq_order(int_weights,int_zeros,bits)
-    
-    return int_weights, int_zeros
 
+    if quant == "awq":
+        return reverse_awq_order(int_weights, int_zeros, bits)
+
+    return int_weights, int_zeros
 
 
 def dequantize_gemm(qweight, qzeros, scales, bits, group_size):
     # Unpack the qweight and qzeros tensors
-    scales, int_weight, int_zeros = unpack_weights(qweight, qzeros, scales, bits, 'awq')
+    scales, int_weight, int_zeros = unpack_weights(qweight, qzeros, scales, bits, "awq")
 
     # fp16 weights
     scales = scales.repeat_interleave(group_size, dim=0)
@@ -284,19 +207,19 @@ def dequantize_gemm(qweight, qzeros, scales, bits, group_size):
 
     return int_weight
 
+
 def dequantize_gptq(qweight, qzeros, scales, bits, g_idx):
-    
-    scales, int_weight, int_zeros = unpack_weights(qweight, qzeros, scales, bits, 'gptq')
-    
+    scales, int_weight, int_zeros = unpack_weights(qweight, qzeros, scales, bits, "gptq")
+
     scales = scales.view(-1, 1, scales.size(-1))
-    scales=scales.view(scales.shape[0],-1)
+    scales = scales.view(scales.shape[0], -1)
     scale_zeros = int_zeros * scales
     scale_mat = scales[g_idx]
     scale_zeros_mat = scale_zeros[g_idx]
     int_weight = int_weight.T * scale_mat - scale_zeros_mat.float()
     # int_weight = torch.transpose(int_weight,0,1)
     return int_weight, scales, int_zeros
-    
+
 
 def unpack_weights(qweight, qzeros, scales, bits, quant):
     # import ipdb; ipdb.set_trace()

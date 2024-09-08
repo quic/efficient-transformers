@@ -12,7 +12,7 @@ from QEfficient.base.pytorch_transforms import ModuleMutatorTransform
 from QEfficient.customop.matmulnbits import QuantLinearORT
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM, unpack_awq_weights
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
-from QEfficient.transformers.quantizers.qunatizer_utils import unpack_weights1,dequantize_gptq
+from QEfficient.transformers.quantizers.qunatizer_utils import dequantize_gptq
 
 
 class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
@@ -58,8 +58,7 @@ class GPTQToMatmulNbitsTransform(ModuleMutatorTransform):
 
     @staticmethod
     def unpack_and_dequantize_awq(qweight, qzeros, scales, bits, g_idx):
-        
-        int_weight,scales, int_zeros=dequantize_gptq(qweight.T,qzeros,scales,bits,g_idx)
+        int_weight, scales, int_zeros = dequantize_gptq(qweight.T, qzeros, scales, bits, g_idx)
         return int_weight, scales, int_zeros.to(torch.int32)
 
     @classmethod
@@ -82,4 +81,3 @@ class GPTQToMatmulNbitsTransform(ModuleMutatorTransform):
         new_module.bias = original_module.bias if original_module.bias is not None else None
         new_module.pack(original_module, scales.T, zeros.T, original_module.g_idx)
         return new_module
-

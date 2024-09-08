@@ -8,6 +8,8 @@
 import torch
 import torch.nn as nn
 
+from QEfficient.transformers.quantizers.qunatizer_utils import dequantize_gemm
+
 
 class WQLinear_GEMM(nn.Module):
     def __init__(self, w_bit, group_size, in_features, out_features, bias):
@@ -77,54 +79,3 @@ class WQLinear_GEMM(nn.Module):
             out = out.reshape(out_shape)
 
         return out
-
-
-def unpack_and_reverse_weights_and_zeros(qweight: torch.Tensor, qzeros: torch.Tensor, bits: int):
-    shifts = torch.arange(0, 32, bits)
-
-    # unpacking weights column-wise
-    int_weights = torch.bitwise_right_shift(qweight[:, :, None], shifts[None, None, :]).to(
-        torch.int8  # smallest dtype available
-    )
-    int_weights = int_weights.view(int_weights.shape[0], -1)
-
-    # unpacking zeros column-wise
-    int_zeros = torch.bitwise_right_shift(qzeros[:, :, None], shifts[None, None, :]).to(
-        torch.int8  # smallest dtype available
-    )
-    int_zeros = int_zeros.view(int_zeros.shape[0], -1)
-
-    reverse_order_tensor = torch.arange(
-        int_weights.shape[-1],
-        dtype=torch.int32,
-    )
-    reverse_order_tensor = reverse_order_tensor.view(-1, 32 // bits)
-    reverse_order_tensor = reverse_order_tensor[:, [0, 4, 1, 5, 2, 6, 3, 7]]
-    reverse_order_tensor = reverse_order_tensor.view(-1)
-
-    int_zeros = int_zeros[:, reverse_order_tensor]
-    int_weights = int_weights[:, reverse_order_tensor]
-
-    return int_weights, int_zeros
-
-
-def dequantize_gemm(qweight, qzeros, scales, bits, group_size):
-    # Unpack the qweight and qzeros tensors
-    scales, int_weight, int_zeros = unpack_awq_weights(qweight, qzeros, scales, bits)
-
-    # fp16 weights
-    scales = scales.repeat_interleave(group_size, dim=0)
-    int_zeros = int_zeros.repeat_interleave(group_size, dim=0)
-
-    int_weight = (int_weight - int_zeros) * scales
-
-    return int_weight
-
-def unpack_awq_weights(qweight, qzeros, scales, bits):
-    int_weight, int_zeros = unpack_and_reverse_weights_and_zeros(qweight, qzeros, bits)
-
-    # overflow checks
-    int_weight = torch.bitwise_and(int_weight, (2**bits) - 1)
-    int_zeros = torch.bitwise_and(int_zeros, (2**bits) - 1)
-
-    return scales, int_weight, int_zeros
