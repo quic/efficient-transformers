@@ -11,8 +11,8 @@ import unittest
 from transformers import AutoModelForCausalLM
 from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 
-from  QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQQuantizer, QEffGPTQConfig
 from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, QEffAwqQuantizer
+from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig, QEffGPTQQuantizer
 from QEfficient.utils import hf_download
 from QEfficient.utils.device_utils import is_multi_qranium_setup_available
 

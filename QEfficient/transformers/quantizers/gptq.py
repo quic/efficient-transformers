@@ -12,6 +12,7 @@ BLOCK_PATTERNS = [
     "model.layers",
 ]
 
+
 class QuantLinearGPTQ(nn.Module):
     def __init__(self, bits, groupsize, infeatures, outfeatures, bias):
         super().__init__()

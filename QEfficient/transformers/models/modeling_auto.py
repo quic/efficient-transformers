@@ -17,7 +17,7 @@ from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTra
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig
-from  QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig
+from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
@@ -170,7 +170,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         # Update list of pytorch transforms if the model falls in AWQ/GPTQ category
         if isinstance(self.model.config.quantization_config, QEffAwqConfig):
             self._pytorch_transforms.insert(0, AwqToMatmulNbitsTransform)
-            
+
         if isinstance(self.model.config.quantization_config, QEffGPTQConfig):
             self._pytorch_transforms.insert(0, GPTQToMatmulNbitsTransform)
 
