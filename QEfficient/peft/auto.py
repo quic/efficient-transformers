@@ -255,6 +255,18 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         mdp_ts_num_devices: int = 1,
         **compiler_options,
     ) -> str:
+        """
+        Interface for qaic-exec compiler
+        Args:
+        :onnx_path (str): Onnx file to compile
+        :compile_dir (str): Directory path to compile the qpc. A suffix is added to the directory path to avoid reusing same qpc for different parameters.
+        :specializations (list): List of specializations to compile for
+        :custom_io (dict): Custom IO to specify the input and outputs in different formats than default
+        :mdp_ts_num_devices (int): Number of devices to paratition to use Multi-Device Partitioning with tensor-slicing.
+        :**compiler_options: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+            - aic_num_cores=16 -> -aic-num-cores=16
+            - convert_to_fp16=True -> -convert-to-fp16
+        """
         # Base class
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
