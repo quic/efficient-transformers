@@ -139,7 +139,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         """
         Args:
             :pretrained_name_or_path (str): Model card name from huggingface or local path to model directory.
-            :*args, **kwargs: Additional arguments to pass to peft.AutoPeftModelForCausalLM.
+            :args, kwargs: Additional arguments to pass to peft.AutoPeftModelForCausalLM.
         """
         if kwargs.get("full_batch_size"):
             raise ValueError("Continuous batching currently not supported for PEFT models")
@@ -166,6 +166,18 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         onnx_transform_kwargs: Dict[str, any] = {},
         export_dir: Optional[str] = None,
     ) -> str:
+        """
+        Export the pytorch model to ONNX.
+
+        Args:
+            :example_inputs (dict): Sample inputs to trace the model.
+            :input_names (list): names to assign to the input nodes of the graph, in order.
+            :output_names (list): names to assign to the output nodes of the graph, in order.
+            :dynamic_axes (dict): Same as dynamic_axes parameter to be passed to `torch.onnx.export`.
+            :export_kwargs (dict): Additional arguments to be passed to `torch.onnx.export`.
+            :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
+            :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
+        """
         # Base class
         export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
         export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
@@ -218,6 +230,12 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         return onnx_path
 
     def export(self, export_dir: Optional[str] = None) -> str:
+        """
+        Export the pytorch model to ONNX.
+
+        Args:
+            :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
+        """
         example_shape = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         kv_cache_shape = get_padding_shape_from_config(self.model.config, *example_shape)
         example_inputs = {
@@ -260,15 +278,16 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     ) -> str:
         """
         Interface for qaic-exec compiler
+
         Args:
-        :onnx_path (str): Onnx file to compile
-        :compile_dir (str): Directory path to compile the qpc. A suffix is added to the directory path to avoid reusing same qpc for different parameters.
-        :specializations (list): List of specializations to compile for
-        :custom_io (dict): Custom IO to specify the input and outputs in different formats than default
-        :mdp_ts_num_devices (int): Number of devices to paratition to use Multi-Device Partitioning with tensor-slicing.
-        :**compiler_options: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
-            - aic_num_cores=16 -> -aic-num-cores=16
-            - convert_to_fp16=True -> -convert-to-fp16
+            :onnx_path (str): Onnx file to compile
+            :compile_dir (str): Directory path to compile the qpc. A suffix is added to the directory path to avoid reusing same qpc for different parameters.
+            :specializations (list): List of specializations to compile for
+            :custom_io (dict): Custom IO to specify the input and outputs in different formats than default
+            :mdp_ts_num_devices (int): Number of devices to paratition to use Multi-Device Partitioning with tensor-slicing.
+            :compiler_options: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+                - aic_num_cores=16 -> -aic-num-cores=16
+                - convert_to_fp16=True -> -convert-to-fp16
         """
         # Base class
         onnx_path = Path(onnx_path or self.onnx_path)
@@ -360,6 +379,23 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         mxint8_kv_cache: bool = False,
         **compiler_options,
     ) -> str:
+        """
+        Compile the exported onnx to run on AI100
+
+        Args:
+            :onnx_path (str): Onnx file to compile
+            :compile_dir (str): Directory path to compile the qpc. A suffix is added to the directory path to avoid reusing same qpc for different parameters.
+            :batch_size (int): Batch size to compile for. ``Defaults to 1``.
+            :prefill_seq_len (int): Prefill sequence length to compile for. Prompt will be chunked according to this length.
+            :ctx_len (int): Context length to allocate space for KV-cache tensors.
+            :num_devices (int): Number of devices to compile for. ``Defaults to 1``.
+            :num_cores (int): Number of cores to utilize in each device ``Defaults to 16``.
+            :mxfp6_matmul (bool): Use MXFP6 to compress weights for MatMul nodes to run faster on device. ``Defaults to False``.
+            :mxint8_kv_cache (bool): Use MXINT8 to compress KV-cache on device to access and update KV-cache faster. ``Defaults to False``.
+            :compiler_options: Pass any compiler option as input. Any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
+                - aic_num_cores=16 -> -aic-num-cores=16
+                - convert_to_fp16=True -> -convert-to-fp16
+        """
         # Specializations
         specializations = [
             {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
@@ -398,6 +434,16 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         streamer: Optional[BaseStreamer] = None,
         **kwargs,
     ) -> np.ndarray:
+        """
+        Generate tokens from compiled binary. This method takes same parameters as huggingface model.generate() method.
+
+        Args:
+            :inputs: input_ids
+            :generation_config: Merge this generation_config with model-specific for the current generation.
+            :stopping_criteria: Pass custom stopping_criteria to stop at a specific point in generation.
+            :streamer: Streamer to put the generated tokens into.
+            :kwargs: Additional parameters for generation_config or to be passed to the model while generating.
+        """
         # Initialize session
         if self.qpc_session is None:
             if self.qpc_path is None:
