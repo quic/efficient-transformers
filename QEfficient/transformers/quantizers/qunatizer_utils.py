@@ -6,6 +6,17 @@ from transformers.integrations.awq import AWQ_SCALES_MAPPINGS
 
 
 def find_layers(module, layers=[nn.Conv2d, nn.Linear], name=""):  # noqa:B006
+    """
+    Recursively finds and returns layers of specified types within a given module.
+
+    Args:
+        module (nn.Module): The module to search within.
+        layers (list): A list of layer types to find (default is [nn.Conv2d, nn.Linear]).
+        name (str): The name prefix for the layers (default is an empty string).
+
+    Returns:
+        :dict: A dictionary where keys are layer names and values are the corresponding layer modules.
+    """
     if type(module) in layers:
         return {name: module}
     res = {}
@@ -15,6 +26,15 @@ def find_layers(module, layers=[nn.Conv2d, nn.Linear], name=""):  # noqa:B006
 
 
 def get_keys_to_not_convert(model):
+    """
+    Identifies and returns the names of parameters that should not be converted to a different precision.
+
+    Args:
+        model (nn.Module): The model to analyze.
+
+    Returns:
+        :list: A list of parameter names that should remain in full precision.
+    """
     # Create a copy of the model and tie the weights, then
     # check if it contains tied weights
     tied_model = copy.deepcopy(model)  # this has 0 cost since it is done inside `init_empty_weights` context manager`
@@ -55,6 +75,16 @@ def get_keys_to_not_convert(model):
 
 
 def find_tied_parameters(model: nn.Module, **kwargs):
+    """
+    Recursively finds and returns tied parameters within a given model.
+
+    Args:
+        model (nn.Module): The model to search within.
+        **kwargs: Additional keyword arguments for internal use.
+
+    Returns:
+        :list: A list of lists, where each sublist contains the names of tied parameters.
+    """
     # Initialize result and named_parameters before recursing.
     named_parameters = kwargs.get("named_parameters", None)
     prefix = kwargs.get("prefix", "")
@@ -92,6 +122,20 @@ def replace_linear_layer_with_target_layer(
     current_key_name=None,
     has_been_replaced=False,
 ):
+    """
+    Replaces all nn.Linear layers in the model with a specified target class, except for specified modules.
+
+    Args:
+        model (torch.nn.Module): The model containing the layers to be replaced.
+        target_cls (type): The target class to replace nn.Linear layers with.
+        quantization_config (object, optional): Configuration object for quantization.
+        modules_to_not_convert (list, optional): List of module names to exclude from replacement.
+        current_key_name (list, optional): List of current key names for recursion.
+        has_been_replaced (bool, optional): Flag indicating if any layer has been replaced.
+
+    Returns:
+        :tuple: The modified model and a flag indicating if any layer has been replaced.
+    """
     if modules_to_not_convert is None:
         modules_to_not_convert = []
 
@@ -135,6 +179,18 @@ def replace_linear_layer_with_target_layer(
 
 
 class ScaledActivation(nn.Module):
+    """
+    A wrapper class for activation modules that scales the output by a specified factor.
+
+    Args:
+        module (nn.Module): The activation module to wrap.
+        scales (torch.Tensor): The scaling factors.
+
+    Attributes:
+        act (nn.Module): The activation module.
+        scales (nn.Parameter): The scaling factors.
+    """
+
     def __init__(self, module, scales):
         super().__init__()
         self.act = module
@@ -145,6 +201,16 @@ class ScaledActivation(nn.Module):
 
 
 def replace_quantization_scales(model, model_type):
+    """
+    Replaces the quantization scales in the model based on the specified model type.
+
+    Args:
+        model (torch.nn.Module): The model containing the layers to be modified.
+        model_type (str): The type of the model to determine the scale mappings.
+
+    Returns:
+        :torch.nn.Module: The modified model with updated quantization scales.
+    """
     if model_type not in AWQ_SCALES_MAPPINGS:
         return model
     for name, module in model.named_children():
@@ -160,6 +226,17 @@ def replace_quantization_scales(model, model_type):
 
 
 def reverse_awq_order(int_weights: torch.Tensor, int_zeros: torch.Tensor, bits: int):
+    """
+    Reverses the order of the AWQ (Adaptive Weight Quantization) tensors.
+
+    Args:
+        int_weights (torch.Tensor): The integer weight tensor.
+        int_zeros (torch.Tensor): The integer zeros tensor.
+        bits (int): The number of bits used for quantization.
+
+    Returns:
+        :tuple: The reversed integer weight and zeros tensors.
+    """
     reverse_order_tensor = torch.arange(
         int_weights.shape[-1],
         dtype=torch.int32,
@@ -175,6 +252,19 @@ def reverse_awq_order(int_weights: torch.Tensor, int_zeros: torch.Tensor, bits: 
 
 
 def unpack_weights_and_zeros(qweight: torch.Tensor, qzeros: torch.Tensor, bits: int, quant: str):
+    """
+    Unpacks the quantized weights and zeros tensors based on the specified bit width and quantization type.
+
+    Args:
+        qweight (torch.Tensor): The quantized weight tensor.
+        qzeros (torch.Tensor): The quantized zeros tensor.
+        bits (int): The number of bits used for quantization.
+        quant (str): The quantization type ("awq" or other).
+
+    Returns:
+        :tuple: A tuple containing the unpacked integer weight and zeros tensors.
+    """
+
     shifts = torch.arange(0, 32, bits)
 
     # unpacking weights column-wise
@@ -196,6 +286,19 @@ def unpack_weights_and_zeros(qweight: torch.Tensor, qzeros: torch.Tensor, bits: 
 
 
 def dequantize_gemm(qweight, qzeros, scales, bits, group_size):
+    """
+    Dequantizes the GEMM (General Matrix Multiply) quantized weights and zeros.
+
+    Args:
+        qweight (torch.Tensor): The quantized weight tensor.
+        qzeros (torch.Tensor): The quantized zeros tensor.
+        scales (torch.Tensor): The scales tensor.
+        bits (int): The number of bits used for quantization.
+        group_size (int): The group size for quantization.
+
+    Returns:
+        :torch.Tensor: The dequantized weight tensor.
+    """
     # Unpack the qweight and qzeros tensors
     scales, int_weight, int_zeros = unpack_weights(qweight, qzeros, scales, bits, "awq")
 
@@ -209,6 +312,19 @@ def dequantize_gemm(qweight, qzeros, scales, bits, group_size):
 
 
 def dequantize_gptq(qweight, qzeros, scales, bits, g_idx):
+    """
+    Dequantizes the ```GPTQ (Generalized Post-Training Quantization)``` quantized weights and zeros.
+
+    Args:
+        qweight (torch.Tensor): The quantized weight tensor.
+        qzeros (torch.Tensor): The quantized zeros tensor.
+        scales (torch.Tensor): The scales tensor.
+        bits (int): The number of bits used for quantization.
+        g_idx (torch.Tensor): The group index tensor.
+
+    Returns:
+        :tuple: A tuple containing the dequantized weight tensor, scales tensor, and zeros tensor.
+    """
     scales, int_weight, int_zeros = unpack_weights(qweight, qzeros, scales, bits, "gptq")
     scales = scales.view(-1, 1, scales.size(-1))
     scales = scales.view(scales.shape[0], -1)
@@ -216,12 +332,24 @@ def dequantize_gptq(qweight, qzeros, scales, bits, g_idx):
     scale_mat = scales[g_idx]
     scale_zeros_mat = scale_zeros[g_idx]
     int_weight = int_weight.T * scale_mat - scale_zeros_mat.float()
-    # int_weight = torch.transpose(int_weight,0,1)
+
     return int_weight, scales, int_zeros
 
 
 def unpack_weights(qweight, qzeros, scales, bits, quant):
-    # import ipdb; ipdb.set_trace()
+    """
+    Unpacks the quantized weights and zeros tensors and performs overflow checks.
+
+    Args:
+        qweight (torch.Tensor): The quantized weight tensor.
+        qzeros (torch.Tensor): The quantized zeros tensor.
+        scales (torch.Tensor): The scales tensor.
+        bits (int): The number of bits used for quantization.
+        quant (str): The quantization type ("awq" or "gptq").
+
+    Returns:
+        :tuple: A tuple containing the scales tensor, unpacked integer weight tensor, and unpacked integer zeros tensor.
+    """
     int_weight, int_zeros = unpack_weights_and_zeros(qweight, qzeros, bits, quant)
 
     # overflow checks

@@ -5,15 +5,28 @@ from torch import nn
 
 from QEfficient.transformers.quantizers.qunatizer_utils import dequantize_gptq
 
-BLOCK_PATTERNS = [
-    "transformer.h",
-    "model.decoder.layers",
-    "gpt_neox.layers",
-    "model.layers",
-]
-
 
 class QuantLinearGPTQ(nn.Module):
+    """
+    A quantized linear layer using GPTQ (Generalized Post-Training Quantization).
+    This class supports only 4-bit quantization and is compatible with QuantLinearORT.
+
+    Attributes:
+        infeatures (int): The number of input features.
+        outfeatures (int): The number of output features.
+        bits (int): The number of bits used for quantization (must be 4).
+        act_order (None or bool): The activation order.
+        orig_fp_weight (None or torch.Tensor): The original floating-point weights.
+        maxq (int): The maximum quantization value.
+        groupsize (int): The group size for quantization.
+        pack_mode (str): The packing mode, set to "GPTQ".
+        qweight (torch.Tensor): The quantized weight tensor.
+        qzeros (torch.Tensor): The quantized zeros tensor.
+        scales (torch.Tensor): The scales tensor.
+        g_idx (torch.Tensor): The group index tensor.
+        bias (torch.Tensor or None): The bias tensor, if applicable.
+    """
+
     def __init__(self, bits, groupsize, infeatures, outfeatures, bias):
         super().__init__()
         if bits != 4:
@@ -26,6 +39,8 @@ class QuantLinearGPTQ(nn.Module):
         self.maxq = 2**self.bits - 1
         self.groupsize = groupsize if groupsize != -1 else infeatures
         self.pack_mode = "GPTQ"
+
+        # For compatibility with QuantLinearORT
         self.register_buffer(
             "qweight",
             torch.zeros((infeatures // 32 * self.bits, outfeatures), dtype=torch.int32),
@@ -78,6 +93,7 @@ class QuantLinearGPTQ(nn.Module):
         self.qzeros = qzeros.to("cpu", non_blocking=True)
 
     def forward(self, x):
+        # Only Inference supported
         if self.act_order is None:
             self.act_order = self.g_idx[: self.groupsize].sum() != 0
         out, _, _ = dequantize_gptq(self.qweight.T, self.qzeros, self.scales, self.bits, self.g_idx)
