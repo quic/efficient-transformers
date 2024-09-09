@@ -168,11 +168,12 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             self._pytorch_transforms.append(CBTransform)
 
         # Update list of pytorch transforms if the model falls in AWQ/GPTQ category
-        if isinstance(self.model.config.quantization_config, QEffAwqConfig):
-            self._pytorch_transforms.insert(0, AwqToMatmulNbitsTransform)
+        if hasattr(self.model.config, 'quantization_config'):
+            if isinstance(self.model.config.quantization_config, QEffAwqConfig):
+                self._pytorch_transforms.insert(0, AwqToMatmulNbitsTransform)
 
-        if isinstance(self.model.config.quantization_config, QEffGPTQConfig):
-            self._pytorch_transforms.insert(0, GPTQToMatmulNbitsTransform)
+            if isinstance(self.model.config.quantization_config, QEffGPTQConfig):
+                self._pytorch_transforms.insert(0, GPTQToMatmulNbitsTransform)
 
         for transform in self._pytorch_transforms:
             transform.apply(self.model)

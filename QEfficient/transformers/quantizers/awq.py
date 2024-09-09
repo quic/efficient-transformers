@@ -12,47 +12,47 @@ from QEfficient.transformers.quantizers.qunatizer_utils import dequantize_gemm
 
 
 class WQLinear_GEMM(nn.Module):
-    def __init__(self, w_bit, group_size, in_features, out_features, bias):
+    def __init__(self, bits, groupsize, infeatures, outfeatures, bias):
         super().__init__()
 
-        if w_bit != 4:
+        if bits != 4:
             raise NotImplementedError("Only 4-bit are supported for now.")
 
-        self.in_features = in_features
-        self.out_features = out_features
-        self.w_bit = w_bit
-        self.group_size = group_size if group_size != -1 else in_features
+        self.infeatures = infeatures
+        self.outfeatures = outfeatures
+        self.bits = bits
+        self.groupsize = groupsize if groupsize != -1 else infeatures
 
         # quick sanity check (make sure alignment)
-        if self.in_features % self.group_size != 0:
+        if self.infeatures % self.groupsize != 0:
             raise ValueError(
-                f"in_features should be perfectly divisible by group_size, got in_features = {self.in_features}, group_size = {self.group_size} while initializing WQLinear_GEMM module"
+                f"infeatures should be perfectly divisible by groupsize, got infeatures = {self.infeatures}, groupsize = {self.groupsize} while initializing WQLinear_GEMM module"
             )
-        if out_features % (32 // self.w_bit) != 0:
+        if outfeatures % (32 // self.bits) != 0:
             raise ValueError(
-                f"out_features must be perfectly divisible by number of weights packed into int32 value i.e. 8, got out_features={self.out_features}"
+                f"outfeatures must be perfectly divisible by number of weights packed into int32 value i.e. 8, got outfeatures={self.outfeatures}"
             )
 
         # For compatibility with QuantLinearORT
-        self.g_idx = torch.tensor([i // group_size for i in range(in_features)], dtype=torch.int32)
+        self.g_idx = torch.tensor([i // groupsize for i in range(infeatures)], dtype=torch.int32)
         self.register_buffer(
             "qweight",
             torch.zeros(
-                (in_features, out_features // (32 // self.w_bit)),
+                (infeatures, outfeatures // (32 // self.bits)),
                 dtype=torch.int32,
             ),
         )
         self.register_buffer(
             "qzeros",
             torch.zeros(
-                (in_features // self.group_size, out_features // (32 // self.w_bit)),
+                (infeatures // self.groupsize, outfeatures // (32 // self.bits)),
                 dtype=torch.int32,
             ),
         )
         self.register_buffer(
             "scales",
             torch.zeros(
-                (in_features // self.group_size, out_features),
+                (infeatures // self.groupsize, outfeatures),
                 dtype=torch.float16,
             ),
         )
@@ -60,7 +60,7 @@ class WQLinear_GEMM(nn.Module):
             self.register_buffer(
                 "bias",
                 torch.zeros(
-                    (out_features),
+                    (outfeatures),
                     dtype=torch.float16,
                 ),
             )
@@ -70,9 +70,9 @@ class WQLinear_GEMM(nn.Module):
     def forward(self, x):
         # Only Inference supported
         with torch.no_grad():
-            out_shape = x.shape[:-1] + (self.out_features,)
+            out_shape = x.shape[:-1] + (self.outfeatures,)
 
-            out = dequantize_gemm(self.qweight, self.qzeros, self.scales, self.w_bit, self.group_size)
+            out = dequantize_gemm(self.qweight, self.qzeros, self.scales, self.bits, self.groupsize)
             out = torch.matmul(x.float(), out.float())
 
             out = out + self.bias if self.bias is not None else out
