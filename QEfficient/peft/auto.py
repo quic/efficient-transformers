@@ -66,7 +66,10 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     _hf_auto_class = AutoPeftModelForCausalLM
 
     @classmethod
-    def transform_names(cls) -> List[str]:
+    def _transform_names(cls) -> List[str]:
+        """
+        Returns names of transforms applied in this class.
+        """
         # Base class
         return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
@@ -96,7 +99,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.get_base_model().config.to_diff_dict()))
         mhash.update(to_hashable(self.model.active_peft_config.to_dict()))
-        mhash.update(to_hashable(self.transform_names()))
+        mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -197,7 +200,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             for transform in self._onnx_transforms:
                 model, transformed = transform.apply(model, **onnx_transform_kwargs)
             model.metadata_props.append(
-                onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self.transform_names()))
+                onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
             logger.info("ONNX transforms applied")
 
