@@ -7,8 +7,12 @@
 
 *Latest news* :fire: <br>
 
-- [coming soon] Support for more popular [models](#models-coming-soon) and inference optimization techniques like continuous batching and speculative decoding <br>
-* [06/2024] Added support for [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
+- [coming soon] Support for more popular [models](coming_soon_models) and inference optimization technique speculative decoding <br>
+- [08/2024] Added Support for inference optimization technique ```continuous batching```
+- [08/2024] Added support for [Jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b)
+- [08/2024] Added support for [Jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat)
+- [08/2024] Added support for [Jais-adapted-7b](https://huggingface.co/inceptionai/jais-adapted-7b)
+- [06/2024] Added support for [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
 - [06/2024] Added support for [Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)
 - [06/2024] Added support for [StarCoder2-15B](https://huggingface.co/bigcode/starcoder2-15b)
 - [06/2024] Added support for [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
@@ -16,7 +20,6 @@
 - [06/2024] Added support for [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5)
 - [05/2024] Added support for [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) & [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1).
 - [04/2024] Initial release of [efficient transformers](https://github.com/quic/efficient-transformers) for seamless inference on pre-trained LLMs.
-
 
 # Overview
 
@@ -60,15 +63,15 @@ pip install dist/QEfficient-0.0.1.dev0-py3-none-any.whl
 
 ``` 
 
-For more details about using ``QEfficient`` via Cloud AI 100 Apps SDK, visit [Linux Installation Guide](https://quic.github.io/efficient-transformers/source/Linux_installation.html)
+For more details about using ``QEfficient`` via Cloud AI 100 Apps SDK, visit [Linux Installation Guide](https://quic.github.io/efficient-transformers/source/installation.html)
 
 
 ## Documentation
 
 * [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html#)
-* [Python API](https://quic.github.io/efficient-transformers/source/high_level_api.html)
-* [Validated Models](https://quic.github.io/efficient-transformers/source/Validate.html)
-* [Models coming soon](https://quic.github.io/efficient-transformers/source/Validate.html#models-coming-soon)
+* [Python API](https://quic.github.io/efficient-transformers/source/hl_api.html)
+* [Validated Models](https://quic.github.io/efficient-transformers/source/validate.html)
+* [Models coming soon](https://quic.github.io/efficient-transformers/source/validate.html#models-coming-soon)
 
 > Note: More details are here: https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Model-Architecture-Support/Large-Language-Models/llm/
 

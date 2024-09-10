@@ -26,10 +26,12 @@
 | [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1) | ✔️ |  |
 | [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b)  | ✔️ |  |
 | [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b) | ✔️ |  |
+| [Jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b) | ✔️ | ✔️ |
+| [Jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat) | ✔️ | ✔️ |
+| [Jais-adapted-7b](https://huggingface.co/inceptionai/jais-adapted-7b) | ✔️ | ✔️ |
+
 (coming_soon_models)=
 # Models Coming Soon
  
-* [Jais-13b](https://huggingface.co/core42/jais-13b)
-* [Jais-30b](https://huggingface.co/core42/jais-30b-chat-v1)
 * [Chatglm2-6b](https://huggingface.co/THUDM/chatglm2-6b)
 * [Baichuan2-7B-Base](https://huggingface.co/baichuan-inc/Baichuan2-7B-Base)
