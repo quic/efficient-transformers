@@ -22,8 +22,12 @@ For other models, there is comprehensive documentation to inspire upon the chang
 
 ***Latest news*** : <br>
 
-- [coming soon] Support for more popular [models](coming_soon_models) and inference optimization techniques like continuous batching and speculative decoding <br>
-* [06/2024] Added support for [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
+- [coming soon] Support for more popular [models](coming_soon_models) and inference optimization technique speculative decoding <br>
+- [08/2024] Added Support for inference optimization technique ```continuous batching```
+- [08/2024] Added support for [Jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b)
+- [08/2024] Added support for [Jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat)
+- [08/2024] Added support for [Jais-adapted-7b](https://huggingface.co/inceptionai/jais-adapted-7b)
+- [06/2024] Added support for [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b)
 - [06/2024] Added support for [Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)
 - [06/2024] Added support for [StarCoder2-15B](https://huggingface.co/bigcode/starcoder2-15b)
 - [06/2024] Added support for [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
