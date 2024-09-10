@@ -12,7 +12,7 @@ from QEfficient.base.pytorch_transforms import ModuleMutatorTransform
 from QEfficient.customop.matmulnbits import QuantLinearORT
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
-from QEfficient.transformers.quantizers.qunatizer_utils import dequantize_gptq, unpack_weights
+from QEfficient.transformers.quantizers.quantizer_utils import dequantize_gptq, unpack_weights
 
 
 class AwqToMatmulNbitsTransform(ModuleMutatorTransform):

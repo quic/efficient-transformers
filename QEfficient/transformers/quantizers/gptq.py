@@ -3,13 +3,15 @@ import math
 import torch
 from torch import nn
 
-from QEfficient.transformers.quantizers.qunatizer_utils import dequantize_gptq
+from QEfficient.transformers.quantizers.quantizer_utils import dequantize_gptq
 
 
 class QuantLinearGPTQ(nn.Module):
     """
     A quantized linear layer using GPTQ (Generalized Post-Training Quantization).
     This class supports only 4-bit quantization and is compatible with QuantLinearORT.
+
+    Research paper link- GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers (https://arxiv.org/abs/2210.17323)
 
     Attributes:
         infeatures (int): The number of input features.
@@ -53,10 +55,7 @@ class QuantLinearGPTQ(nn.Module):
             "scales",
             torch.zeros((math.ceil(infeatures / self.groupsize), outfeatures), dtype=torch.float16),
         )
-        self.register_buffer(
-            "g_idx",
-            torch.tensor([i // self.groupsize for i in range(infeatures)], dtype=torch.int32),
-        )
+        self.g_idx = torch.tensor([i // groupsize for i in range(infeatures)], dtype=torch.int32)
         if bias:
             self.register_buffer(
                 "bias",
@@ -64,33 +63,6 @@ class QuantLinearGPTQ(nn.Module):
             )
         else:
             self.bias = None
-
-    def handle(self):
-        shifts = torch.arange(0, 32, self.bits, dtype=torch.int32, device=self.qzeros.device).unsqueeze(0)
-        izeros = torch.bitwise_right_shift(self.qzeros[:, :, None], shifts[None, None, :]).to(
-            torch.int32  # smallest dtype available
-        )
-        izeros = torch.bitwise_and(izeros[0], (2**self.bits) - 1).view(-1, 1, izeros[0].size(1) * izeros[0].size(2))
-        izeros = izeros.view(izeros.shape[0], -1)
-        izeros += 1
-        device = "cpu"
-        qzeros = self.qzeros.to(device)
-        qzeros.mul_(0)
-        if qzeros.shape[0] == izeros.shape[0]:
-            qzeros = qzeros.T
-            izeros = izeros.T
-        compress_ratio = 32 // self.bits
-        i = 0
-        row = 0
-        while row < qzeros.shape[0]:
-            if self.bits in [2, 4, 8]:
-                for j in range(i, i + compress_ratio):
-                    qzeros[row:] |= izeros[j::compress_ratio] << (self.bits * (j - i))
-                break
-            else:
-                raise NotImplementedError("Only 2,4,8 bits are supported.")
-        qzeros = qzeros.T
-        self.qzeros = qzeros.to("cpu", non_blocking=True)
 
     def forward(self, x):
         # Only Inference supported

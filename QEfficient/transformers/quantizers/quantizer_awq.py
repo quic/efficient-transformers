@@ -10,7 +10,7 @@ from transformers.quantizers.quantizer_awq import AwqQuantizer
 from transformers.utils.quantization_config import AwqBackendPackingMethod, AwqConfig, AWQLinearVersion
 
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
-from QEfficient.transformers.quantizers.qunatizer_utils import (
+from QEfficient.transformers.quantizers.quantizer_utils import (
     get_keys_to_not_convert,
     replace_linear_layer_with_target_layer,
     replace_quantization_scales,

@@ -8,7 +8,7 @@
 import torch
 import torch.nn as nn
 
-from QEfficient.transformers.quantizers.qunatizer_utils import dequantize_gemm
+from QEfficient.transformers.quantizers.quantizer_utils import dequantize_gemm
 
 
 class WQLinear_GEMM(nn.Module):

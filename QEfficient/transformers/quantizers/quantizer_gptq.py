@@ -6,14 +6,13 @@
 # -----------------------------------------------------------------------------
 
 import torch
-import tqdm
 from transformers.quantizers.quantizer_gptq import HfQuantizer
 from transformers.utils.quantization_config import GPTQConfig
 
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
-from QEfficient.transformers.quantizers.qunatizer_utils import (
-    find_layers,
+from QEfficient.transformers.quantizers.quantizer_utils import (
     get_keys_to_not_convert,
+    repack_zeros,
     replace_linear_layer_with_target_layer,
 )
 from QEfficient.utils.logging_utils import logger
@@ -32,7 +31,7 @@ class QEffGPTQConfig(GPTQConfig):
         if self.bits != 4:
             raise ValueError(f"Only 4-bit quantization is supported, got bits={self.bits}")
         if self.desc_act:
-            raise ValueError("Only GPTQ model without decreasing activation size supported.")
+            raise ValueError("Only GPTQ model without descending activation size supported.")
         if self.group_size != -1 and self.group_size <= 0:
             raise ValueError("group_size must be greater than 0 or equal to -1")
         if not (0 < self.damp_percent < 1):
@@ -126,10 +125,10 @@ class QEffGPTQQuantizer(HfQuantizer):
         Returns:
             :torch.nn.Module: The processed model.
         """
-        qlayers = find_layers(model, [QuantLinearGPTQ])
-        for _, qlayer in tqdm.tqdm(qlayers.items(), desc="Repacking qzeros..."):
-            qlayer.handle()
-        print("Done")
+        for name, module in model.named_modules():
+            if isinstance(module, QuantLinearGPTQ):
+                izeros = repack_zeros(module.qzeros, module.bits)
+                module.qzeros = izeros
 
     @property
     def is_trainable(self):

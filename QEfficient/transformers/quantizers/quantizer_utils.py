@@ -5,24 +5,26 @@ from torch import nn
 from transformers.integrations.awq import AWQ_SCALES_MAPPINGS
 
 
-def find_layers(module, layers=[nn.Conv2d, nn.Linear], name=""):  # noqa:B006
+class ScaledActivation(nn.Module):
     """
-    Recursively finds and returns layers of specified types within a given module.
+    A wrapper class for activation modules that scales the output by a specified factor.
 
     Args:
-        module (nn.Module): The module to search within.
-        layers (list): A list of layer types to find (default is [nn.Conv2d, nn.Linear]).
-        name (str): The name prefix for the layers (default is an empty string).
+        module (nn.Module): The activation module to wrap.
+        scales (torch.Tensor): The scaling factors.
 
-    Returns:
-        :dict: A dictionary where keys are layer names and values are the corresponding layer modules.
+    Attributes:
+        act (nn.Module): The activation module.
+        scales (nn.Parameter): The scaling factors.
     """
-    if type(module) in layers:
-        return {name: module}
-    res = {}
-    for name1, child in module.named_children():
-        res.update(find_layers(child, layers=layers, name=name + "." + name1 if name != "" else name1))
-    return res
+
+    def __init__(self, module, scales):
+        super().__init__()
+        self.act = module
+        self.scales = nn.Parameter(scales.data)
+
+    def forward(self, x):
+        return self.act(x) / self.scales.view(1, 1, -1).to(x.device)
 
 
 def get_keys_to_not_convert(model):
@@ -176,28 +178,6 @@ def replace_linear_layer_with_target_layer(
         # Remove the last key for recursion
         current_key_name.pop(-1)
     return model, has_been_replaced
-
-
-class ScaledActivation(nn.Module):
-    """
-    A wrapper class for activation modules that scales the output by a specified factor.
-
-    Args:
-        module (nn.Module): The activation module to wrap.
-        scales (torch.Tensor): The scaling factors.
-
-    Attributes:
-        act (nn.Module): The activation module.
-        scales (nn.Parameter): The scaling factors.
-    """
-
-    def __init__(self, module, scales):
-        super().__init__()
-        self.act = module
-        self.scales = nn.Parameter(scales.data)
-
-    def forward(self, x):
-        return self.act(x) / self.scales.view(1, 1, -1).to(x.device)
 
 
 def replace_quantization_scales(model, model_type):
@@ -357,3 +337,26 @@ def unpack_weights(qweight, qzeros, scales, bits, quant):
     int_zeros = torch.bitwise_and(int_zeros, (2**bits) - 1)
 
     return scales, int_weight, int_zeros
+
+
+def repack_zeros(qzeros, bits):
+    shifts = torch.arange(0, 32, bits, dtype=torch.int32, device=qzeros.device).unsqueeze(0)
+    izeros = torch.bitwise_right_shift(qzeros[:, :, None], shifts[None, None, :]).to(
+        torch.int32  # smallest dtype available
+    )
+    izeros = torch.bitwise_and(izeros[0], (2**bits) - 1).view(-1, 1, izeros[0].size(1) * izeros[0].size(2))
+    izeros = izeros.view(izeros.shape[0], -1)
+    izeros += 1
+    qzeros.mul_(0)
+    if qzeros.shape[0] == izeros.shape[0]:
+        qzeros = qzeros.T
+        izeros = izeros.T
+    compress_ratio = 32 // bits
+    i = 0
+    row = 0
+    while row < qzeros.shape[0]:
+        for j in range(i, i + compress_ratio):
+            qzeros[row:] |= izeros[j::compress_ratio] << (bits * (j - i))
+        break
+    qzeros = qzeros.T
+    return qzeros
