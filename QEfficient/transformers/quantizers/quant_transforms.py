@@ -37,15 +37,15 @@ class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
             original_module.qzeros,
             original_module.scales,
             original_module.bits,
-            original_module.groupsize,
+            original_module.group_size,
         )
 
         original_module.weight = fp16_weight
         new_module = QuantLinearORT(
             original_module.bits,
-            original_module.groupsize,
-            original_module.infeatures,
-            original_module.outfeatures,
+            original_module.group_size,
+            original_module.in_features,
+            original_module.out_features,
             original_module.bias is not None,
         )
         new_module.bias = original_module.bias if original_module.bias is not None else None
@@ -90,9 +90,9 @@ class GPTQToMatmulNbitsTransform(ModuleMutatorTransform):
         original_module.weight = fp16_weight.T
         new_module = QuantLinearORT(
             original_module.bits,
-            original_module.groupsize,
-            original_module.infeatures,
-            original_module.outfeatures,
+            original_module.group_size,
+            original_module.in_features,
+            original_module.out_features,
             original_module.bias is not None,
         )
         new_module.bias = original_module.bias if original_module.bias is not None else None

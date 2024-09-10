@@ -156,9 +156,9 @@ def replace_linear_layer_with_target_layer(
 
                 model._modules[name] = target_cls(
                     bits=quantization_config.bits,
-                    groupsize=quantization_config.group_size,
-                    infeatures=in_features,
-                    outfeatures=out_features,
+                    group_size=quantization_config.group_size,
+                    in_features=in_features,
+                    out_features=out_features,
                     bias=module.bias is not None,
                     # dev=module.weight.device,
                 )
