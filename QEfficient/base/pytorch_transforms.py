@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
-
 from typing import Dict, Tuple, Type
 
 from torch import nn
@@ -43,6 +42,9 @@ class ModuleMappingTransform(PytorchTransform):
         for module in model.modules():
             if repl_module := cls._module_mapping.get(type(module)):
                 module.__class__ = repl_module
+                # Handling the __init__ calls in the models
+                if hasattr(module, "__qeff_init__"):
+                    module.__qeff_init__()
                 transformed = True
         return model, transformed
 

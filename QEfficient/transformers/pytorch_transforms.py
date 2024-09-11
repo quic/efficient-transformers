@@ -44,9 +44,21 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralSparseMoeBlock,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
-from transformers.models.phi.modeling_phi import PhiAttention, PhiForCausalLM, PhiModel
-from transformers.models.phi3.modeling_phi3 import Phi3Attention, Phi3ForCausalLM, Phi3Model, Phi3RMSNorm
-from transformers.models.qwen2.modeling_qwen2 import Qwen2Attention, Qwen2ForCausalLM, Qwen2Model, Qwen2RMSNorm
+from transformers.models.phi.modeling_phi import PhiAttention, PhiDecoderLayer, PhiForCausalLM, PhiModel
+from transformers.models.phi3.modeling_phi3 import (
+    Phi3Attention,
+    Phi3DecoderLayer,
+    Phi3ForCausalLM,
+    Phi3Model,
+    Phi3RMSNorm,
+)
+from transformers.models.qwen2.modeling_qwen2 import (
+    Qwen2Attention,
+    Qwen2DecoderLayer,
+    Qwen2ForCausalLM,
+    Qwen2Model,
+    Qwen2RMSNorm,
+)
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -99,9 +111,24 @@ from QEfficient.transformers.models.mpt.modeling_mpt import (
     QEffMptForCausalLM,
     QEFfMptModel,
 )
-from QEfficient.transformers.models.phi.modeling_phi import QEffPhiAttention, QEffPhiForCausalLM, QEffPhiModel
-from QEfficient.transformers.models.phi3.modeling_phi3 import QEffPhi3Attention, QEffPhi3ForCausalLM, QEffPhi3Model
-from QEfficient.transformers.models.qwen2.modeling_qwen2 import QEffQwen2Attention, QEffQwen2ForCausalLM, QEffQwen2Model
+from QEfficient.transformers.models.phi.modeling_phi import (
+    QEffPhiAttention,
+    QEffPhiDecoderLayer,
+    QEffPhiForCausalLM,
+    QEffPhiModel,
+)
+from QEfficient.transformers.models.phi3.modeling_phi3 import (
+    QEffPhi3Attention,
+    QEffPhi3DecoderLayer,
+    QEffPhi3ForCausalLM,
+    QEffPhi3Model,
+)
+from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
+    QEffQwen2Attention,
+    QEffQwen2DecoderLayer,
+    QEffQwen2ForCausalLM,
+    QEffQwen2Model,
+)
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
     QEFFStarcoder2DecoderLayer,
@@ -194,4 +221,10 @@ class CBTransform(KVCacheTransform):
         MixtralDecoderLayer: QeffMixtralDecoderLayer,
         # Starcoder2
         Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
+        # Phi
+        PhiDecoderLayer: QEffPhiDecoderLayer,
+        # Phi3
+        Phi3DecoderLayer: QEffPhi3DecoderLayer,
+        # Qwen2
+        Qwen2DecoderLayer: QEffQwen2DecoderLayer,
     }

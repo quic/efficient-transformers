@@ -15,13 +15,10 @@ import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
 from transformers.cache_utils import Cache, DynamicCache
-from transformers.modeling_attn_mask_utils import (
-    _prepare_4d_causal_attention_mask,
-    _prepare_4d_causal_attention_mask_for_sdpa,
-)
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
+    Starcoder2DecoderLayer,
     Starcoder2ForCausalLM,
     Starcoder2Model,
     apply_rotary_pos_emb,
@@ -50,6 +47,7 @@ class QEffStarcoder2Attention(Starcoder2Attention):
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
@@ -141,6 +139,7 @@ class QEffStarcoder2Model(Starcoder2Model):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -150,15 +149,11 @@ class QEffStarcoder2Model(Starcoder2Model):
 
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        # retrieve input_ids and inputs_embeds
-        if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both decoder_input_ids and decoder_inputs_embeds at the same time")
-        elif input_ids is not None:
-            batch_size, seq_length = input_ids.shape
-        elif inputs_embeds is not None:
-            batch_size, seq_length, _ = inputs_embeds.shape
-        else:
-            raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
+        if (input_ids is None) ^ (inputs_embeds is not None):
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time, and must specify either one"
+            )
+
         if self.gradient_checkpointing and self.training:
             if use_cache:
                 logger.warning_once(
@@ -166,60 +161,30 @@ class QEffStarcoder2Model(Starcoder2Model):
                 )
                 use_cache = False
 
-        past_key_values_length = 0
-
-        if use_cache:
-            use_legacy_cache = not isinstance(past_key_values, Cache)
-            if use_legacy_cache:
-                past_key_values = DynamicCache.from_legacy_cache(past_key_values)
-            past_key_values_length = past_key_values.get_usable_length(seq_length)
-
-        if position_ids is None:
-            device = input_ids.device if input_ids is not None else inputs_embeds.device
-            position_ids = torch.arange(
-                past_key_values_length, seq_length + past_key_values_length, dtype=torch.long, device=device
+        use_legacy_cache = False
+        if use_cache and not isinstance(past_key_values, Cache) and not self.training:
+            use_legacy_cache = True
+            past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+            logger.warning_once(
+                "We detected that you are passing `past_key_values` as a tuple and this is deprecated and will be removed in v4.43. "
+                "Please use an appropriate `Cache` class (https://huggingface.co/docs/transformers/v4.41.3/en/internal/generation_utils#transformers.Cache)"
             )
-            position_ids = position_ids.unsqueeze(0).view(-1, seq_length)
-        else:
-            position_ids = position_ids.view(-1, seq_length).long()
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        if attention_mask is not None and self._attn_implementation == "flash_attention_2" and use_cache:
-            is_padding_right = attention_mask[:, -1].sum().item() != batch_size
-            if is_padding_right:
-                raise ValueError(
-                    "You are attempting to perform batched generation with padding_side='right'"
-                    " this may lead to unexpected behaviour for Flash Attention version of Starcoder2. Make sure to "
-                    " call `tokenizer.padding_side  = 'left'` before tokenizing the input. "
-                )
+        if cache_position is None:
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+            cache_position = torch.arange(
+                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+            )
+        if position_ids is None:
+            position_ids = cache_position.unsqueeze(0)
 
-        if self._attn_implementation == "flash_attention_2":
-            # 2d mask is passed through the layers
-            attention_mask = attention_mask if (attention_mask is not None and 0 in attention_mask) else None
-        elif self._attn_implementation == "sdpa" and not output_attentions:
-            # output_attentions=True can not be supported when using SDPA, and we fall back on
-            # the manual implementation that requires a 4D causal mask in all cases.
-            attention_mask = _prepare_4d_causal_attention_mask_for_sdpa(
-                attention_mask,
-                (batch_size, seq_length),
-                inputs_embeds,
-                past_key_values_length,
-                sliding_window=self.config.sliding_window,
-            )
-        elif attention_mask is None:
-            # update attention mask for Cloud Ai 100
-            attention_mask = _create_causal_mask(position_ids, past_key_values_length, self.config.sliding_window)
-        else:
-            # 4d mask is passed through the layers
-            attention_mask = _prepare_4d_causal_attention_mask(
-                attention_mask,
-                (batch_size, seq_length),
-                inputs_embeds,
-                past_key_values_length,
-                sliding_window=self.config.sliding_window,
-            )
+        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
+        causal_mask = _create_causal_mask(
+            position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
+        )
 
         hidden_states = inputs_embeds
         hidden_states = nn.functional.dropout(hidden_states, p=self.embedding_dropout, training=self.training)
@@ -237,30 +202,23 @@ class QEffStarcoder2Model(Starcoder2Model):
                 layer_outputs = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     hidden_states,
-                    attention_mask,
+                    causal_mask,
                     position_ids,
                     past_key_values,
                     output_attentions,
                     use_cache,
+                    cache_position,
                 )
-            elif batch_index is not None:
+            else:
                 layer_outputs = decoder_layer(
                     hidden_states,
-                    attention_mask=attention_mask,
+                    attention_mask=causal_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_values,
                     batch_index=batch_index,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
-                )
-            else:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    past_key_value=past_key_values,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
+                    cache_position=cache_position,
                 )
 
             hidden_states = layer_outputs[0]
@@ -291,8 +249,14 @@ class QEffStarcoder2Model(Starcoder2Model):
         )
 
 
-class QEFFStarcoder2DecoderLayer(nn.Module):
-    # Copied from transformers.models.qwen2.modeling_qwen2.Qwen2DecoderLayer.forward
+class QEFFStarcoder2DecoderLayer(Starcoder2DecoderLayer):
+    """
+    Copied from Starcoder2DecoderLayer: https://github.com/huggingface/transformers/blob/main/src/transformers/models/starcoder2/modeling_starcoder2.py
+    The only differences are:
+    - add new args position idx for the cache_kwargs for kv retention
+    - update causal attention mask
+    """
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -337,6 +301,7 @@ class QEFFStarcoder2DecoderLayer(nn.Module):
             batch_index=batch_index,
             output_attentions=output_attentions,
             use_cache=use_cache,
+            cache_position=cache_position,
         )
         hidden_states = residual + hidden_states
 
@@ -378,6 +343,7 @@ class QEffStarcoder2ForCausalLM(Starcoder2ForCausalLM):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
@@ -423,6 +389,7 @@ class QEffStarcoder2ForCausalLM(Starcoder2ForCausalLM):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            cache_position=cache_position,
         )
 
         # Cast to INT32 to avoid issue while running in ONNXRT
