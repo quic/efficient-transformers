@@ -350,7 +350,7 @@ def repack_zeros(qzeros, bits):
     Returns:
         :torch.Tensor: The unpacked integer zeros tensor.
     """
-    
+
     shifts = torch.arange(0, 32, bits, dtype=torch.int32, device=qzeros.device).unsqueeze(0)
     izeros = torch.bitwise_right_shift(qzeros[:, :, None], shifts[None, None, :]).to(
         torch.int32  # smallest dtype available
