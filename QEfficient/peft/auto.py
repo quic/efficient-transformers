@@ -83,7 +83,14 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         super().__init__(model)
 
         self.num_layers = model.config.num_hidden_layers
-        self.adapter_weights = {}
+        self.exported_peft_config = None
+        self.adapter_weights = {
+            adapter_name: {
+                name.replace(f".{adapter_name}.weight", ".weight"): param.detach().numpy().astype("float16")
+                for name, param in model.named_parameters()
+            }
+            for adapter_name in model.peft_config
+        }
         self.transform()
 
     @property
@@ -125,6 +132,12 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     def set_adapter(self, adapter_name: str):
         "Sets active adapter from one of the loaded adapters"
+        if self.exported_peft_config is not None and self.exported_peft_config != self.model.peft_config[adapter_name]:
+            raise ValueError(
+                "Unable to activate incompatible adapter. "
+                "Use an adapter compatible with export-time adapter "
+                "or re-export with this adapter"
+            )
         self.model.set_adapter(adapter_name)
 
     def disable_adapter(self):
@@ -150,7 +163,6 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             warnings.warn("Overriding to use_cache=True")
         kwargs["use_cache"] = True
         obj = cls._from_pretrained(pretrained_name_or_path, *args, **kwargs)
-        obj.load_adapter(pretrained_name_or_path, obj.active_adapter)
         return obj
 
     def transform(self, **kwargs):
@@ -239,6 +251,9 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         Args:
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
         """
+
+        self.exported_peft_config = self.model.active_peft_config
+
         example_shape = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         kv_cache_shape = get_padding_shape_from_config(self.model.config, *example_shape)
         example_inputs = {
