@@ -340,6 +340,17 @@ def unpack_weights(qweight, qzeros, scales, bits, quant):
 
 
 def repack_zeros(qzeros, bits):
+    """
+    Unpacks the quantized zeros tensor.
+
+    Args:
+        qzeros (torch.Tensor): The quantized zeros tensor.
+        bits (int): The number of bits used for quantization.
+
+    Returns:
+        :torch.Tensor: The unpacked integer zeros tensor.
+    """
+    
     shifts = torch.arange(0, 32, bits, dtype=torch.int32, device=qzeros.device).unsqueeze(0)
     izeros = torch.bitwise_right_shift(qzeros[:, :, None], shifts[None, None, :]).to(
         torch.int32  # smallest dtype available

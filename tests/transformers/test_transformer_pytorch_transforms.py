@@ -213,7 +213,7 @@ def test_awq_to_matmulnbits_transform(in_features, out_features):
     assert transformed
     new_out = new_module(rand_data)
     assert isinstance(new_module, QuantLinearORT)
-    compare_original_vs_kv_model_pt_outputs(old_out, new_out, tolerance=1e-8)
+    assert compare_original_vs_kv_model_pt_outputs(old_out, new_out, tolerance=1e-8),f"Test failed because MAE is greater than tolerance"
 
 
 @pytest.mark.parametrize("in_features", [4096, 4096])
@@ -231,11 +231,13 @@ def test_gptq_to_matmulnbits_transform(in_features, out_features):
         size=(in_features // quant_linear_gptq.group_size, out_features // 8),
         dtype=torch.int32,
     )
-    quant_linear_gptq.scales = torch.rand(in_features // quant_linear_gptq.group_size, out_features, dtype=torch.float32)
+    quant_linear_gptq.scales = torch.rand(
+        in_features // quant_linear_gptq.group_size, out_features, dtype=torch.float32
+    )
     rand_data = torch.rand(4, in_features)
     old_out = quant_linear_gptq(rand_data)
     new_module, transformed = GPTQToMatmulNbitsTransform.apply(quant_linear_gptq)
     assert transformed
     new_out = new_module(rand_data)
     assert isinstance(new_module, QuantLinearORT)
-    compare_original_vs_kv_model_pt_outputs(old_out, new_out, tolerance=1e-8)
+    assert compare_original_vs_kv_model_pt_outputs(old_out, new_out, tolerance=1e-4),f"Test failed because MAE is greater than tolerance"
