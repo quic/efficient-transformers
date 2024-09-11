@@ -27,7 +27,7 @@ This script calculates the perplexity for ONNX, QPC, or Torch models using the W
 To run the script, use the following command:
 
 ```bash
-python perplexity_calculator_cloud.py --model_type <model_type> --model_name <model_name> [--model_path <model_path>] [--dataset_name <dataset_name>] [--ctx_len <ctx_len>] [--prompt_len <prompt_len>] [--batch_size <batch_size>] [--stride <stride>] [--num_samples <num_samples>] [--qpc_device_id <qpc_device_id>] [--log_file <log_file>]
+python calculate_perplexity.py --model_type <model_type> --model_name <model_name> [--model_path <model_path>] [--dataset_name <dataset_name>] [--ctx_len <ctx_len>] [--prompt_len <prompt_len>] [--batch_size <batch_size>] [--stride <stride>] [--num_samples <num_samples>] [--qpc_device_id <qpc_device_id>] [--log_file <log_file>]
 
 python perplexity_calculator_cloud.py --model_type torch --model_name meta-llama/Meta-Llama-3-8B-Instruct --num_samples 1
 ```
