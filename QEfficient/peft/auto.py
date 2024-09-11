@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 import onnx
 import torch
-from peft import AutoPeftModelForCausalLM, load_peft_weights
+from peft import AutoPeftModelForCausalLM, PeftModel, load_peft_weights
 from torch import nn
 from transformers import GenerationConfig, StoppingCriteria, StoppingCriteriaList
 from transformers.generation.streamers import BaseStreamer
@@ -74,6 +74,9 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
     def __init__(self, model: nn.Module):
+        if not isinstance(model, PeftModel):
+            raise TypeError(f"Required pytorch module of type PeftModel, got {type(model)}")
+
         if model.active_peft_config.peft_type != "LORA":
             raise NotImplementedError("Only LoRA models are supported")
 
@@ -142,7 +145,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             :args, kwargs: Additional arguments to pass to peft.AutoPeftModelForCausalLM.
         """
         if kwargs.get("full_batch_size"):
-            raise ValueError("Continuous batching currently not supported for PEFT models")
+            raise NotImplementedError("Continuous batching currently not supported for PEFT models")
         if kwargs.get("use_cache") is False:
             warnings.warn("Overriding to use_cache=True")
         kwargs["use_cache"] = True
