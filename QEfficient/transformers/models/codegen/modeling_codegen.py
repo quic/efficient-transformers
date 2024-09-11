@@ -1,4 +1,4 @@
-    # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 #
 # Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
@@ -128,7 +128,10 @@ class QEffCodeGenAttention(CodeGenAttention):
         if layer_past is not None:
             # Update the cache_kwargs with position_ids for Cloud AI 100
             past_key_value = layer_past
-            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index,}
+            cache_kwargs = {
+                "position_ids": position_ids,
+                "batch_index": batch_index,
+            }
             pkv = DynamicCache()
             pkv.key_cache.append(past_key_value[0])
             pkv.value_cache.append(past_key_value[1])

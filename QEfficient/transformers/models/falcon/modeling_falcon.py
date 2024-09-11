@@ -119,7 +119,10 @@ class QEffFalconAttention(FalconAttention):
 
         if layer_past is not None:
             past_key_value = layer_past
-            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index,}
+            cache_kwargs = {
+                "position_ids": position_ids,
+                "batch_index": batch_index,
+            }
             pkv = DynamicCache()
             pkv.key_cache.append(past_key_value[0])
             pkv.value_cache.append(past_key_value[1])
@@ -501,8 +504,8 @@ class QEffFalconForCausalLM(FalconForCausalLM):
             attentions=transformer_outputs.attentions,
         )
 
-class QEffFalconDecoderLayer(FalconDecoderLayer):
 
+class QEffFalconDecoderLayer(FalconDecoderLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,

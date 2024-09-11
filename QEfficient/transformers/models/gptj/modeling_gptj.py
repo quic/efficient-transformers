@@ -89,7 +89,7 @@ class QEffGPTJAttention(GPTJAttention):
         head_mask: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
-         cache_position: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[
         Tuple[torch.Tensor, Tuple[torch.Tensor]],
         Optional[Tuple[torch.Tensor, Tuple[torch.Tensor], Tuple[torch.Tensor, ...]]],
@@ -352,6 +352,7 @@ class QEffGPTJModel(GPTJModel):
             attentions=all_self_attentions,
         )
 
+
 class QEffGPTJForCausalLM(GPTJForCausalLM):
     """
     Copied from GPTJForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gptj/modeling_gptj.py
@@ -438,8 +439,8 @@ class QEffGPTJForCausalLM(GPTJForCausalLM):
             attentions=transformer_outputs.attentions,
         )
 
-class QEffGPTJBlock(GPTJBlock):
 
+class QEffGPTJBlock(GPTJBlock):
     def forward(
         self,
         hidden_states: Optional[torch.FloatTensor],
