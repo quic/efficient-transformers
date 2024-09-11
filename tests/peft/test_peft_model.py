@@ -27,10 +27,15 @@ configs = [
 ]
 
 
+def create_peft_model(base_config, adapter_config, adapter_name="default"):
+    base_model = AutoModelForCausalLM.from_config(base_config, attn_implementation="eager")
+    adapted_model = get_peft_model(base_model, adapter_config, adapter_name)
+    return base_model, adapted_model
+
+
 @pytest.mark.parametrize("base_config,adapter_config", configs)
 def test_auto_peft_model_for_causal_lm_init(base_config, adapter_config):
-    base_model = AutoModelForCausalLM.from_config(base_config, attn_implementation="eager")
-    ia3_model = get_peft_model(base_model, IA3Config())
+    base_model, ia3_model = create_peft_model(base_config, IA3Config())
 
     with pytest.raises(TypeError):
         QEffAutoPeftModelForCausalLM(base_model)
@@ -38,8 +43,7 @@ def test_auto_peft_model_for_causal_lm_init(base_config, adapter_config):
     with pytest.raises(NotImplementedError):
         QEffAutoPeftModelForCausalLM(ia3_model)
 
-    base_model = AutoModelForCausalLM.from_config(base_config, attn_implementation="eager")
-    lora_model = get_peft_model(base_model, adapter_config, "testAdapter101")
+    base_model, lora_model = create_peft_model(base_config, adapter_config, "testAdapter101")
     lora_model.add_adapter("testAdapter102", adapter_config)
     qeff_model = QEffAutoPeftModelForCausalLM(lora_model)
     assert set(qeff_model.adapter_weights.keys()) == {"testAdapter101", "testAdapter102"}
@@ -69,8 +73,7 @@ def test_auto_peft_model_for_causal_lm_hash():
     base_config_0, adapter_config_0 = configs[0].values
     base_config_1, adapter_config_1 = configs[1].values
 
-    base_model_0 = AutoModelForCausalLM.from_config(base_config_0, attn_implementation="eager")
-    lora_model_0 = get_peft_model(base_model_0, adapter_config_0, "adapter_0_0")
+    base_model_0, lora_model_0 = create_peft_model(base_config_0, adapter_config_0, "adapter_0_0")
     lora_model_0.add_adapter("adapter_0_1", adapter_config_0)
     lora_model_0.add_adapter("adapter_1_0", adapter_config_1)
     lora_model_0.add_adapter("adapter_1_1", adapter_config_1)
@@ -89,8 +92,7 @@ def test_auto_peft_model_for_causal_lm_hash():
     assert hash_0_1_0 == hash_0_1_1
     assert hash_0_0_0 != hash_0_1_0
 
-    base_model_1 = AutoModelForCausalLM.from_config(base_config_1, attn_implementation="eager")
-    lora_model_1 = get_peft_model(base_model_1, adapter_config_0, "adapter_0")
+    base_model_1, lora_model_1 = create_peft_model(base_config_1, adapter_config_0, "adapter_0")
     lora_model_1.add_adapter("adapter_1", adapter_config_1)
 
     qeff_model_1 = QEffAutoPeftModelForCausalLM(lora_model_1)
