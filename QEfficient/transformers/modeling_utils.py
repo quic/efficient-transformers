@@ -108,6 +108,9 @@ get_lists_of_cb_qeff_models = ModelArchitectures(
         MistralForCausalLM.__name__,
         MixtralForCausalLM.__name__,
         Starcoder2ForCausalLM.__name__,
+        Qwen2ForCausalLM.__name__,
+        Phi3ForCausalLM.__name__,
+        PhiForCausalLM.__name__,
     ]
 )
 # Create an instance of the named tuple
