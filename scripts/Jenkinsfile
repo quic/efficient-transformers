@@ -1,47 +1,56 @@
 pipeline 
 {
 
-    agent 
+    agent
     {
         node 
         {
             label 'qeff_node'
         }
     }
-
     stages 
     {
         stage('Install QEfficient')
         {
             steps
-            {
-                sh '''
-                    python3.8 -m venv preflight_qeff
-                    . preflight_qeff/bin/activate
-                    pip install --upgrade pip setuptools
-                    pip install .[test] --extra-index-url https://download.pytorch.org/whl/cpu
+            {                
+                script
+                {
+
+                    sh '''
+                    . ~/.bashrc
+                    docker run --privileged -dit --name ${BRANCH_NAME} -v ./:/efficient-transformers -v  ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
+                    docker exec ${BRANCH_NAME} bash -c "
+                    cd /efficient-transformers &&
+                    . /opt/qeff-env/bin/activate &&
+                    pip install --upgrade pip setuptools &&
+                    pip install .[test]"
                     pip install junitparser pytest-xdist
                     rm -rf QEfficient
-                '''
+                    '''
+                }
             }
         }
-
-
         stage('Test')
-            {
+        {
                 steps
                 {
                     //todo(ochougul): Increase when MQ tests are enabled 
-		    timeout(time: 420, unit: 'MINUTES') {
+		            timeout(time: 420, unit: 'MINUTES') 
+                    {
                     sh '''
-                    . preflight_qeff/bin/activate
-                    export TOKENIZERS_PARALLELISM=false
-                    pytest tests --ignore tests/cloud -n 4 --junitxml=tests/tests_log1.xml
-                    pytest tests/cloud --junitxml=tests/tests_log2.xml
-                    junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log.xml
-                    deactivate
-                    exit
-                    '''     
+                    docker exec ${BRANCH_NAME} bash -c "
+                    cd /efficient-transformers &&
+                    . /opt/qeff-env/bin/activate &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export PYTHONPATH=. &&
+                    pytest tests --ignore tests/cloud -n 4 --junitxml=tests/tests_log1.xml &&
+                    pytest tests/cloud --junitxml=tests/tests_log2.xml &&
+                    junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log.xml &&
+                    deactivate &&
+                    exit" 
+                    '''
+
                 }
             }
         }
@@ -50,9 +59,24 @@ pipeline
     {
          always 
          {
-             junit 'tests/tests_log.xml'
-             echo 'Cleaning Workspace'
-             deleteDir() 
+            script
+            {
+                try 
+                {
+                    sh '''
+                    docker rm -f ${BRANCH_NAME}
+                    sudo chown -R ubuntu .
+                    '''
+                } 
+                catch (error) 
+                {
+                    echo "Failed to delete container ${BRANCH_NAME}: ${error}"
+                }
+            }
+            
+            junit 'tests/tests_log.xml'
+            echo 'Cleaning Workspace'
+            deleteDir()
          }
     }
        
