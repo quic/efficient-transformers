@@ -10,6 +10,7 @@ from time import perf_counter
 import numpy as np
 import onnx
 import pytest
+import torch
 from peft import IA3Config, LoraConfig, get_peft_model
 from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -36,6 +37,12 @@ configs = [
 def create_peft_model(base_config, adapter_config, adapter_name="default"):
     base_model = AutoModelForCausalLM.from_config(base_config, attn_implementation="eager")
     adapted_model = get_peft_model(base_model, adapter_config, adapter_name)
+
+    # Add random noise to adapter weights to avoid onnx export deduplicating all-zero weights
+    for name, param in adapted_model.named_parameters():
+        if name.endswith(f".{adapter_name}.weight") and torch.all(param == 0.0):
+            param.data.add_(torch.rand(param.shape))
+
     return base_model, adapted_model
 
 
