@@ -16,12 +16,12 @@ configs = [
         AutoConfig.for_model(
             "llama", num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2, hidden_size=128
         ),
-        LoraConfig(target_modules=["q_proj", "v_proj"]),
+        LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM"),
         id="llama-2l-4h-2kvh-128d-qv",
     ),
     pytest.param(
         AutoConfig.for_model("mistral", num_hidden_layers=2, num_attention_heads=4, hidden_size=128),
-        LoraConfig(target_modules=["q_proj", "k_proj", "v_proj"]),
+        LoraConfig(target_modules=["q_proj", "k_proj", "v_proj"], task_type="CAUSAL_LM"),
         id="mistral-2l-4h-128d-qkv",
     ),
 ]
@@ -35,7 +35,7 @@ def create_peft_model(base_config, adapter_config, adapter_name="default"):
 
 @pytest.mark.parametrize("base_config,adapter_config", configs)
 def test_auto_peft_model_for_causal_lm_init(base_config, adapter_config):
-    base_model, ia3_model = create_peft_model(base_config, IA3Config())
+    base_model, ia3_model = create_peft_model(base_config, IA3Config(task_type="CAUSAL_LM"))
 
     with pytest.raises(TypeError):
         QEffAutoPeftModelForCausalLM(base_model)

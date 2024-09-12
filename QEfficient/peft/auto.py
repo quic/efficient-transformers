@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 import onnx
 import torch
-from peft import AutoPeftModelForCausalLM, PeftModel, load_peft_weights
+from peft import AutoPeftModelForCausalLM, PeftModelForCausalLM, load_peft_weights
 from torch import nn
 from transformers import GenerationConfig, StoppingCriteria, StoppingCriteriaList
 from transformers.generation.streamers import BaseStreamer
@@ -74,7 +74,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
     def __init__(self, model: nn.Module):
-        if not isinstance(model, PeftModel):
+        if not isinstance(model, PeftModelForCausalLM):
             raise TypeError(f"Required pytorch module of type PeftModel, got {type(model)}")
 
         if model.active_peft_config.peft_type != "LORA":
