@@ -55,7 +55,7 @@ class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
 
 class GPTQToMatmulNbitsTransform(ModuleMutatorTransform):
     """
-    A transformation class that mutates a ```QuantLinearGPTQ``` module to a ```QuantLinearORT```
+    A transformation class that mutates a ``QuantLinearGPTQ`` module to a ``QuantLinearORT``
     module by unpacking and dequantizing the quantized weights.
     """
 
@@ -70,14 +70,14 @@ class GPTQToMatmulNbitsTransform(ModuleMutatorTransform):
     @classmethod
     def mutate(cls, original_module: nn.Module, parent_module: nn.Module):
         """
-        ```Mutates``` the original ```QuantLinearGPTQ``` module to a ```QuantLinearORT``` module.
+        ``Mutates`` the original ``QuantLinearGPTQ`` module to a ``QuantLinearORT`` module.
 
         Args:
-            original_module (nn.Module): The original ```QuantLinearGPTQ``` module.
+            original_module (nn.Module): The original ``QuantLinearGPTQ`` module.
             parent_module (nn.Module): The parent module containing the original module.
 
         Returns:
-            :nn.Module: The new ```QuantLinearORT``` module with unpacked and dequantized weights.
+            :nn.Module: The new ``QuantLinearORT`` module with unpacked and dequantized weights.
         """
 
         fp16_weight, scales, zeros = cls.unpack_and_dequantize_gptq(

@@ -50,7 +50,7 @@ def load_pytorch_model(model_config):
         use_cache=True,
         num_hidden_layers=model_config["n_layer"],
         attn_implementation="eager",
-        low_cpu_mem_usage=model_config["low_cpu_mem_usage"],
+        low_cpu_mem_usage=False,
     )  # Run models for single layers only
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()

@@ -51,11 +51,6 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     model_config = {"model_name": model_name}
     model_config["n_layer"] = n_layer
 
-    if model_name == "TheBloke/Llama-2-7B-Chat-GPTQ" or model_name == "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ":
-        model_config["low_cpu_mem_usage"] = False
-    else:
-        model_config["low_cpu_mem_usage"] = None
-
     model_hf, _ = load_pytorch_model(model_config)
 
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)

@@ -29,7 +29,7 @@ class QuantLinearTorchFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, qself_qweight, qself_scales, qself_qzeros, g_idx, bits, group_size, in_features, out_features):
         if torch.onnx.is_in_onnx_export():
-            return torch.zeros(x.shape[:-1] + (out_features,), dtype=x.dtype, device=x.device).float()
+            return torch.zeros(x.shape[:-1] + (out_features,), dtype=x.dtype).float()
         fp_weight = dequantize_blockwise_bits(
             qself_qweight, qself_scales, qself_qzeros, bits, group_size, g_idx, in_features, out_features
         )[0].float()
@@ -42,17 +42,13 @@ def dequantize_blockwise_bits(quant_values, scale, zero_point, bits, group_size,
         raise ValueError("Only bits=4 is supported for executing quantized model")
     if group_size != 128:
         raise ValueError("Only group_size=128 is supported for executing quantized model")
-    expand_quant_value = (
-        quant_values.unsqueeze(-1) >> torch.tensor([[[[0, 4]]]], dtype=torch.int32, device=quant_values.device)
-    ) & 0x0F
+    expand_quant_value = (quant_values.unsqueeze(-1) >> torch.tensor([[[[0, 4]]]], dtype=torch.int32)) & 0x0F
     expand_quant_value = expand_quant_value.reshape(*quant_values.shape[:-1], -1)
     aligned_scale = scale.reshape(*quant_values.shape[:-1], 1)
     if zero_point.dtype == scale.dtype:
         expand_zero_point = zero_point.reshape(*quant_values.shape[:-1], -1)
     else:
-        expand_zero_point = (
-            zero_point.unsqueeze(-1) >> torch.tensor([[[[0, 4]]]], dtype=torch.int32, device=quant_values.device)
-        ) & 0x0F
+        expand_zero_point = (zero_point.unsqueeze(-1) >> torch.tensor([[[[0, 4]]]], dtype=torch.int32)) & 0x0F
         try:
             expand_zero_point = expand_zero_point.reshape(*quant_values.shape[:-1], -1)
         # FIXME: remove try-except
