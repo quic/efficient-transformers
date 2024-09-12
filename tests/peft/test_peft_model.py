@@ -5,6 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
+from time import perf_counter
+
+import numpy as np
+import onnx
 import pytest
 from peft import IA3Config, LoraConfig, get_peft_model
 from transformers import AutoConfig, AutoModelForCausalLM
@@ -20,7 +24,9 @@ configs = [
         id="llama-2l-4h-2kvh-128d-qv",
     ),
     pytest.param(
-        AutoConfig.for_model("mistral", num_hidden_layers=2, num_attention_heads=4, hidden_size=128),
+        AutoConfig.for_model(
+            "mistral", num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2, hidden_size=128
+        ),
         LoraConfig(target_modules=["q_proj", "k_proj", "v_proj"], task_type="CAUSAL_LM"),
         id="mistral-2l-4h-128d-qkv",
     ),
@@ -105,3 +111,69 @@ def test_auto_peft_model_for_causal_lm_hash():
 
     assert hash_0_0_0 != hash_1_0
     assert hash_0_1_0 != hash_1_1
+
+
+@pytest.mark.parametrize("base_config,adapter_config", configs)
+def test_auto_peft_model_for_causal_lm_export(base_config, adapter_config, tmp_path):
+    _, lora_model = create_peft_model(base_config, adapter_config)
+    qeff_model = QEffAutoPeftModelForCausalLM(lora_model)
+    start = perf_counter()
+    qeff_model.export(tmp_path)
+    end = perf_counter()
+    export_time_0 = end - start
+    model_path = tmp_path.with_name(tmp_path.name + "-" + qeff_model.model_hash)
+    assert model_path.is_dir()
+    assert qeff_model.onnx_path.is_file()
+
+    # Check if all the LoRA weights are converted to inputs and outputs
+    onnx_model = onnx.load(qeff_model.onnx_path, load_external_data=False)
+    input_names = {x.name for x in onnx_model.graph.input}
+    output_names = {x.name for x in onnx_model.graph.output}
+    for weight_name in qeff_model.adapter_weights[qeff_model.active_adapter]:
+        assert weight_name in input_names
+        assert weight_name + "_RetainedState" in output_names
+
+    start = perf_counter()
+    qeff_model.export(tmp_path)
+    end = perf_counter()
+    export_time_1 = end - start
+    assert export_time_1 < 0.01 * export_time_0
+
+
+@pytest.mark.parametrize("base_config,adapter_config", configs)
+def test_auto_peft_model_for_causal_lm_activate_invalid(base_config, adapter_config, tmp_path):
+    _, lora_model = create_peft_model(base_config, adapter_config)
+    lora_model.add_adapter("invalid", LoraConfig(target_modules=["q_proj"], task_type="CAUSAL_LM"))
+    qeff_model = QEffAutoPeftModelForCausalLM(lora_model)
+    qeff_model.export(tmp_path)
+
+    with pytest.raises(ValueError):
+        qeff_model.set_adapter("invalid")
+
+
+@pytest.mark.parametrize("base_config,adapter_config", configs)
+def test_auto_peft_model_for_causal_lm_compile_generate(base_config, adapter_config, tmp_path):
+    _, lora_model = create_peft_model(base_config, adapter_config)
+    qeff_model = QEffAutoPeftModelForCausalLM(lora_model)
+    qeff_model.export(tmp_path)
+    start = perf_counter()
+    qeff_model.compile(prefill_seq_len=32, ctx_len=128)
+    end = perf_counter()
+    compile_time_0 = end - start
+
+    qeff_model.generate(
+        input_ids=np.zeros((1, 32), dtype="int64"),
+        attention_mask=np.concatenate(
+            [
+                np.ones(10, dtype="int64"),
+                np.zeros(22, dtype="int64"),
+            ]
+        ).reshape(1, 32),
+        max_new_tokens=10,
+    )
+
+    start = perf_counter()
+    qeff_model.compile(prefill_seq_len=32, ctx_len=128)
+    end = perf_counter()
+    compile_time_1 = end - start
+    assert compile_time_1 < 0.01 * compile_time_0
