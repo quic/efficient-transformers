@@ -16,6 +16,8 @@ pipeline
             steps
             {
                 sh '''
+                    mkdir qeff_cache
+                    export QEFF_HOME=$PWD/qeff_cache
                     python3.8 -m venv preflight_qeff
                     . preflight_qeff/bin/activate
                     pip install --upgrade pip setuptools
