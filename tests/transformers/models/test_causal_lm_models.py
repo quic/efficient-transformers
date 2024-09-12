@@ -6,13 +6,11 @@
 # -----------------------------------------------------------------------------
 
 import os
-from typing import List
 
 import numpy as np
 import pytest
 
 from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100
-from QEfficient.generation.text_generation_inference import fix_prompts, get_input_prompts
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
@@ -36,8 +34,6 @@ test_models = [
 ]
 
 
-@pytest.mark.causal_lm
-@pytest.mark.parametrize("model_name", test_models)
 def test_causal_lm_pytorch_vs_ai100_for_CB(model_name):
     """
     Test function to validate the model before and after KV changes on Pytorch
@@ -58,16 +54,12 @@ def test_causal_lm_pytorch_vs_ai100_for_CB(model_name):
     batch_size = len(Constants.INPUT_STR)
 
     full_batch_size = 1
-    prompt = Constants.INPUT_STR
-    prompts_txt_file_path = "examples/prompts.txt"
-    prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
-    prompt = fix_prompts(prompt, batch_size, full_batch_size)
 
     api_runner = ApiRunner(
         batch_size,
         tokenizer,
         config,
-        prompt,
+        Constants.INPUT_STR,
         Constants.PROMPT_LEN,
         Constants.CTX_LEN,
         full_batch_size,
@@ -98,9 +90,9 @@ def test_causal_lm_pytorch_vs_ai100_for_CB(model_name):
 
     cloud_ai_100_tokens = api_runner.run_kv_model_on_cloud_ai_100(test_qpcs_path)
 
-    # FIXME: here skiping the first token from comparison
-    pytorch_hf_tokens = pytorch_hf_tokens[:, 1 : api_runner.gen_len]
-    cloud_ai_100_tokens = cloud_ai_100_tokens[:, 1 : api_runner.gen_len]
+    # # FIXME: here skiping the first token from comparison
+    pytorch_hf_tokens = pytorch_hf_tokens[:, : api_runner.gen_len]
+    cloud_ai_100_tokens = cloud_ai_100_tokens[:, : api_runner.gen_len]
 
     assert (
         pytorch_hf_tokens == cloud_ai_100_tokens
@@ -173,3 +165,4 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     assert (
         ort_tokens == cloud_ai_100_tokens[:, :gen_len]
     ).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."
+    test_causal_lm_pytorch_vs_ai100_for_CB(model_name=model_name)
