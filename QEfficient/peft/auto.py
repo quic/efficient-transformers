@@ -88,6 +88,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             adapter_name: {
                 name.replace(f".{adapter_name}.weight", ".weight"): param.detach().numpy().astype("float16")
                 for name, param in model.named_parameters()
+                if name.endswith(f".{adapter_name}.weight")
             }
             for adapter_name in model.peft_config
         }
@@ -475,6 +476,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         generation_config = generation_config or self.model.generation_config
         generation_config, model_kwargs = self.model._prepare_generation_config(generation_config, **kwargs)
+        self.model._prepare_special_tokens(generation_config)
         if generation_config.do_sample:
             raise NotImplementedError("do_sample=True not supported currently")
         if generation_config.num_beams > 1:
@@ -552,5 +554,6 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             if streamer:
                 streamer.put(inputs["input_ids"])
 
-        streamer.end()
+        if streamer:
+            streamer.end()
         return generated_ids
