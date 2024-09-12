@@ -24,9 +24,9 @@ pipeline
                     cd /efficient-transformers &&
                     . /opt/qeff-env/bin/activate &&
                     pip install --upgrade pip setuptools &&
-                    pip install .[test]"
-                    pip install junitparser pytest-xdist
-                    rm -rf QEfficient
+                    pip install .[test] --extra-index-url https://download.pytorch.org/whl/cpu &&
+                    pip install junitparser pytest-xdist &&
+                    rm -rf QEfficient "
                     '''
                 }
             }
@@ -47,6 +47,7 @@ pipeline
                     pytest tests --ignore tests/cloud -n 4 --junitxml=tests/tests_log1.xml &&
                     pytest tests/cloud --junitxml=tests/tests_log2.xml &&
                     junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log.xml &&
+                    pytest -W ignore -s -v tests/transformers/models/test_causal_lm_models.py -o junit_logging=all --junitxml=tests/tests_log.xml &&
                     deactivate &&
                     exit" 
                     '''
