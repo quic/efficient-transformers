@@ -34,71 +34,6 @@ test_models = [
 ]
 
 
-def test_causal_lm_pytorch_vs_ai100_for_CB(model_name):
-    """
-    Test function to validate the model before and after KV changes on Pytorch
-    :param model_name: Name of model.
-    """
-    if model_name == "microsoft/Phi-3-mini-4k-instruct":
-        n_layer = 2  # test only 2 layer models
-    else:
-        n_layer = 1
-
-    model_config = {"model_name": model_name}
-    model_config["n_layer"] = n_layer
-
-    model_hf, _ = load_pytorch_model(model_config)
-
-    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
-    config = model_hf.config
-    batch_size = len(Constants.INPUT_STR)
-
-    full_batch_size = 1
-
-    api_runner = ApiRunner(
-        batch_size,
-        tokenizer,
-        config,
-        Constants.INPUT_STR,
-        Constants.PROMPT_LEN,
-        Constants.CTX_LEN,
-        full_batch_size,
-    )
-
-    pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
-    pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
-
-    qeff_model = QEFFAutoModelForCausalLM(model_hf, f"{model_name}")
-    onnx_model_path = qeff_model.export()
-
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
-
-    base_path = os.path.dirname(onnx_model_path)
-    tests_qpc_dir = os.path.join(base_path, "tests_qpc")
-    os.makedirs(tests_qpc_dir, exist_ok=True)
-
-    _, test_qpcs_path = compile_kv_model_on_cloud_ai_100(
-        onnx_path=onnx_model_path,
-        specializations_json="scripts/specializations.json",
-        num_cores=16,
-        base_path=tests_qpc_dir,
-        mxfp6=False,
-        custom_io_path=os.path.join(base_path, "custom_io_fp16.yaml"),
-        aic_enable_depth_first=False,
-    )
-
-    cloud_ai_100_tokens = api_runner.run_kv_model_on_cloud_ai_100(test_qpcs_path)
-
-    # # FIXME: here skiping the first token from comparison
-    pytorch_hf_tokens = pytorch_hf_tokens[:, : api_runner.gen_len]
-    cloud_ai_100_tokens = cloud_ai_100_tokens[:, : api_runner.gen_len]
-
-    assert (
-        pytorch_hf_tokens == cloud_ai_100_tokens
-    ).all(), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
-
-
 @pytest.mark.causal_lm
 @pytest.mark.parametrize("model_name", test_models)
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
@@ -165,4 +100,60 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     assert (
         ort_tokens == cloud_ai_100_tokens[:, :gen_len]
     ).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."
-    test_causal_lm_pytorch_vs_ai100_for_CB(model_name=model_name)
+
+    # FIXME refactor below code and make it modular and remove redundancy
+    if model_name == "microsoft/Phi-3-mini-4k-instruct":
+        n_layer = 2  # test only 2 layer models
+    else:
+        n_layer = 1
+
+    model_config = {"model_name": model_name}
+    model_config["n_layer"] = n_layer
+
+    model_hf, _ = load_pytorch_model(model_config)
+
+    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
+    config = model_hf.config
+    full_batch_size = 1
+    api_runner = ApiRunner(
+        batch_size,
+        tokenizer,
+        config,
+        Constants.INPUT_STR,
+        Constants.PROMPT_LEN,
+        Constants.CTX_LEN,
+        full_batch_size,
+    )
+
+    pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
+    pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
+
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, f"{model_name}")
+    onnx_model_path = qeff_model.export()
+
+    if not get_available_device_id():
+        pytest.skip("No available devices to run model on Cloud AI 100")
+
+    base_path = os.path.dirname(onnx_model_path)
+    tests_qpc_dir = os.path.join(base_path, "tests_qpc_cb")
+    os.makedirs(tests_qpc_dir, exist_ok=True)
+
+    _, test_qpcs_path = compile_kv_model_on_cloud_ai_100(
+        onnx_path=onnx_model_path,
+        specializations_json="scripts/specializations.json",
+        num_cores=16,
+        base_path=tests_qpc_dir,
+        mxfp6=False,
+        custom_io_path=os.path.join(base_path, "custom_io_fp16.yaml"),
+        aic_enable_depth_first=False,
+    )
+
+    cloud_ai_100_tokens = api_runner.run_kv_model_on_cloud_ai_100(test_qpcs_path)
+
+    # # FIXME: here skiping the first token from comparison
+    pytorch_hf_tokens = pytorch_hf_tokens[:, : api_runner.gen_len]
+    cloud_ai_100_tokens = cloud_ai_100_tokens[:, : api_runner.gen_len]
+
+    assert (
+        pytorch_hf_tokens == cloud_ai_100_tokens
+    ).all(), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
