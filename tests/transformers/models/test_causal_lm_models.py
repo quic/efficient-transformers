@@ -88,7 +88,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     _, test_qpcs_path = compile_kv_model_on_cloud_ai_100(
         onnx_path=onnx_model_path,
         specializations_json="scripts/specializations.json",
-        num_cores=14,
+        num_cores=16,
         base_path=tests_qpc_dir,
         mxfp6=False,
         custom_io_path=os.path.join(base_path, "custom_io_fp16.yaml"),
