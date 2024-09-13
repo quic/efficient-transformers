@@ -5,7 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
+import csv
 import logging
+import os
 
 
 class QEffFormatter(logging.Formatter):
@@ -56,3 +58,13 @@ def create_logger() -> logging.Logger:
 
 # Define the logger object that can be used for logging purposes throughout the module.
 logger = create_logger()
+
+
+def tabulate_measurements(fields, file):
+    if not os.path.exists(file):
+        with open(file, "w") as csvfile:
+            csvwriter = csv.writer(csvfile)
+            csvwriter.writerow(list(fields.keys()))
+    with open(file, "a", newline="") as csvfile:
+        csvwriter = csv.writer(csvfile)
+        csvwriter.writerow(list(fields.values()))
