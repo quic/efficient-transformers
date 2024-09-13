@@ -8,7 +8,6 @@
 import argparse
 import logging
 import os
-import time
 from typing import List, Optional
 
 import QEfficient
@@ -16,7 +15,7 @@ from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.constants import QEFF_MODELS_DIR
-from QEfficient.utils.logging_utils import logger, tabulate_measurements
+from QEfficient.utils.logging_utils import MemoryTracker, logger, tabulate_measurements
 
 
 def main(
@@ -82,10 +81,14 @@ def main(
 
     # Handle qpc generation
 
+    if benchmark:
+        mem_tracker = MemoryTracker()
+
     if qpc_exists(qpc_dir_path):
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
 
         compile_time = "NA"
+        peak_mem_use_compile = "NA"
 
     else:
         # Handle onnx model generation
@@ -98,7 +101,7 @@ def main(
         #########
 
         if benchmark:
-            mem_tracker_start = time.perf_counter()
+            mem_tracker.start()
 
         _ = QEfficient.compile(
             onnx_path=onnx_model_path,
@@ -118,11 +121,16 @@ def main(
         )
 
         if benchmark:
-            compile_time = (time.perf_counter() - mem_tracker_start) // 1
+            mem_tracker.stop()
+            compile_time = mem_tracker.duration
+            peak_mem_use_compile = mem_tracker.max_mem_usage
 
     #########
     # Execute
     #########
+
+    if benchmark:
+        mem_tracker.start()
 
     execinfo = cloud_ai_100_exec_kv(
         tokenizer=tokenizer,
@@ -133,6 +141,10 @@ def main(
         generation_len=generation_len,
         full_batch_size=full_batch_size,
     )
+
+    if benchmark:
+        mem_tracker.stop()
+        peak_mem_use_runtime = mem_tracker.max_mem_usage
 
     #########
     # Log
@@ -156,7 +168,9 @@ def main(
             "DEVICE\nID": device_group,
             "MXFP6\nW": mxfp6,
             "MXINT8\n$KV": mxint8,
+            "COMPILE_RAM\nUSAGE (MB)": peak_mem_use_compile,
             "COMPILE\nTIME (S)": compile_time,
+            "RUNTIME_RAM\nUSAGE (MB)": peak_mem_use_runtime,
             "PREFILL\nTIME (S)": round(execinfo.prefill_time, 2),
             "DECODE\nTOK/S": round(execinfo.decode_perf, 2),
             "TOTAL\nTOK/S": round(execinfo.total_perf, 2),

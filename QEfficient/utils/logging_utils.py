@@ -8,6 +8,10 @@
 import csv
 import logging
 import os
+import threading
+import time
+
+import psutil
 
 
 class QEffFormatter(logging.Formatter):
@@ -58,6 +62,35 @@ def create_logger() -> logging.Logger:
 
 # Define the logger object that can be used for logging purposes throughout the module.
 logger = create_logger()
+
+
+class MemoryTracker:
+    def __init__(self, interval=1):
+        self.interval = interval
+        self.tracking = False
+        self.max_mem_usage = 0
+        self.duration = 0.0
+        self.thread = None
+
+    def start(self, init_mem=0):
+        self.tracking = True
+        self.max_mem_usage = init_mem
+        self.duration = time.perf_counter()
+        self.thread = threading.Thread(target=self.track_memory)
+        self.thread.start()
+
+    def stop(self):
+        self.tracking = False
+        self.thread.join()
+        self.duration = (time.perf_counter() - self.duration) // 1
+
+    def track_memory(self):
+        process = psutil.Process(os.getpid())
+        while self.tracking:
+            mem_info = process.memory_info()
+            curr_mem_usage = mem_info.rss // (1024 * 1024)
+            self.max_mem_usage = max(self.max_mem_usage, curr_mem_usage)
+            time.sleep(self.interval)
 
 
 def tabulate_measurements(fields, file):
