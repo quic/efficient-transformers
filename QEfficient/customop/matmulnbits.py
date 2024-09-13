@@ -13,7 +13,7 @@ from torch import nn
 
 class QuantLinearTorchFunction(torch.autograd.Function):
     @staticmethod
-    def symbolic(g, x, qself_qweight, qself_scales, qself_qzeros, g_idx, bits, groupsize, in_features, out_features):
+    def symbolic(g, x, qself_qweight, qself_scales, qself_qzeros, g_idx, bits, group_size, in_features, out_features):
         input_tuple = (x, qself_qweight, qself_scales, qself_qzeros)
         input_tuple += (g_idx,) if g_idx is not None else ()
         return g.op(
@@ -23,36 +23,32 @@ class QuantLinearTorchFunction(torch.autograd.Function):
             K_i=in_features,
             N_i=out_features,
             bits_i=bits,
-            block_size_i=groupsize,
+            block_size_i=group_size,
         )
 
     @staticmethod
-    def forward(ctx, x, qself_qweight, qself_scales, qself_qzeros, g_idx, bits, groupsize, in_features, out_features):
+    def forward(ctx, x, qself_qweight, qself_scales, qself_qzeros, g_idx, bits, group_size, in_features, out_features):
         if torch.onnx.is_in_onnx_export():
-            return torch.zeros(x.shape[:-1] + (out_features,), dtype=x.dtype, device=x.device).float()
+            return torch.zeros(x.shape[:-1] + (out_features,), dtype=x.dtype).float()
         fp_weight = dequantize_blockwise_bits(
-            qself_qweight, qself_scales, qself_qzeros, bits, groupsize, g_idx, in_features, out_features
+            qself_qweight, qself_scales, qself_qzeros, bits, group_size, g_idx, in_features, out_features
         )[0].float()
 
         return torch.matmul(x.float(), fp_weight.T.float())
 
 
-def dequantize_blockwise_bits(quant_values, scale, zero_point, bits, groupsize, g_idx, rows, cols):
+def dequantize_blockwise_bits(quant_values, scale, zero_point, bits, group_size, g_idx, rows, cols):
     if bits != 4:
         raise ValueError("Only bits=4 is supported for executing quantized model")
-    if groupsize != 128:
-        raise ValueError("Only groupsize=128 is supported for executing quantized model")
-    expand_quant_value = (
-        quant_values.unsqueeze(-1) >> torch.tensor([[[[0, 4]]]], dtype=torch.int32, device=quant_values.device)
-    ) & 0x0F
+    if group_size != 128:
+        raise ValueError("Only group_size=128 is supported for executing quantized model")
+    expand_quant_value = (quant_values.unsqueeze(-1) >> torch.tensor([[[[0, 4]]]], dtype=torch.int32)) & 0x0F
     expand_quant_value = expand_quant_value.reshape(*quant_values.shape[:-1], -1)
     aligned_scale = scale.reshape(*quant_values.shape[:-1], 1)
     if zero_point.dtype == scale.dtype:
         expand_zero_point = zero_point.reshape(*quant_values.shape[:-1], -1)
     else:
-        expand_zero_point = (
-            zero_point.unsqueeze(-1) >> torch.tensor([[[[0, 4]]]], dtype=torch.int32, device=quant_values.device)
-        ) & 0x0F
+        expand_zero_point = (zero_point.unsqueeze(-1) >> torch.tensor([[[[0, 4]]]], dtype=torch.int32)) & 0x0F
         try:
             expand_zero_point = expand_zero_point.reshape(*quant_values.shape[:-1], -1)
         # FIXME: remove try-except
@@ -79,30 +75,30 @@ def dequantize_blockwise_bits(quant_values, scale, zero_point, bits, groupsize, 
 
 
 class QuantLinearORT(nn.Module):
-    def __init__(self, bits, groupsize, in_features, out_features, bias):
+    def __init__(self, bits, group_size, in_features, out_features, bias):
         super().__init__()
         if bits not in [2, 3, 4, 5, 6, 7, 8]:
             raise NotImplementedError("Only 2,4,5,6,7,8 bits are supported.")
         self.in_features = in_features
         self.out_features = out_features
         self.bits = bits
-        self.groupsize = groupsize if groupsize != -1 else in_features
+        self.group_size = group_size if group_size != -1 else in_features
         self.act_order = None
 
-        q_rows = in_features // self.groupsize
+        q_rows = in_features // self.group_size
         self.register_buffer(
             "qweight",
-            torch.zeros((out_features, q_rows, self.groupsize // (8 // bits)), dtype=torch.uint8),
+            torch.zeros((out_features, q_rows, self.group_size // (8 // bits)), dtype=torch.uint8),
         )
         self.register_buffer(
             "qzeros",
             torch.zeros((q_rows + (q_rows & 1)) * (out_features // 8 * self.bits), dtype=torch.uint8),
         )
         self.register_buffer(
-            "scales", torch.zeros((math.ceil(in_features / self.groupsize) * out_features), dtype=torch.float16)
+            "scales", torch.zeros((math.ceil(in_features / self.group_size) * out_features), dtype=torch.float16)
         )
         self.register_buffer(
-            "g_idx", torch.tensor([i // self.groupsize for i in range(in_features)], dtype=torch.int32)
+            "g_idx", torch.tensor([i // self.group_size for i in range(in_features)], dtype=torch.int32)
         )
         if bias:
             self.register_buffer("bias", torch.zeros((out_features), dtype=torch.float16))
@@ -121,13 +117,13 @@ class QuantLinearORT(nn.Module):
             raise ValueError("only 4bit is supported by ONNXRUNTIME for now.")
 
         # Order of groups
-        self.act_order = self.g_idx[: self.groupsize // self.bits].sum().item() != 0
+        self.act_order = self.g_idx[: self.group_size // self.bits].sum().item() != 0
 
         intzeros_pt = int_zeros.T if int_zeros.dtype == self.scales.dtype else int_zeros.T.byte()
         scales_pt = self.scales.T.to(int_weight.device)
         intweight_pt = int_weight.byte()
 
-        block_size = self.groupsize
+        block_size = self.group_size
         rows, cols = intweight_pt.shape
         blob_size = block_size // 2
         k_blocks = (rows + block_size - 1) // block_size
@@ -178,7 +174,7 @@ class QuantLinearORT(nn.Module):
             self.qzeros,
             self.g_idx if self.act_order else None,
             self.bits,
-            self.groupsize,
+            self.group_size,
             self.in_features,
             self.out_features,
         )

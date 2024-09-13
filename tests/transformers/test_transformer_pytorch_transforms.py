@@ -12,7 +12,8 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from QEfficient.customop.matmulnbits import QuantLinearORT
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
-from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform
+from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
+from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils._utils import get_padding_shape_from_config
 from QEfficient.utils.logging_utils import logger
 
@@ -197,7 +198,7 @@ def test_kv_cache_transform(
 @pytest.mark.parametrize("in_features", [2048, 4096])
 @pytest.mark.parametrize("out_features", [2048, 4096])
 def test_awq_to_matmulnbits_transform(in_features, out_features):
-    wqlinear = WQLinear_GEMM(w_bit=4, group_size=128, in_features=in_features, out_features=out_features, bias=False)
+    wqlinear = WQLinear_GEMM(bits=4, group_size=128, in_features=in_features, out_features=out_features, bias=False)
 
     wqlinear.qweight = torch.randint(
         low=-(2**31), high=2**31 - 1, size=(in_features, out_features // 8), dtype=torch.int32
@@ -213,4 +214,35 @@ def test_awq_to_matmulnbits_transform(in_features, out_features):
     assert transformed
     new_out = new_module(rand_data)
     assert isinstance(new_module, QuantLinearORT)
-    compare_original_vs_kv_model_pt_outputs(old_out, new_out, tolerance=1e-8)
+    assert compare_original_vs_kv_model_pt_outputs(
+        old_out, new_out, tolerance=1e-8
+    ), "Test failed because MAE is greater than tolerance"
+
+
+@pytest.mark.parametrize("in_features", [4096, 4096])
+@pytest.mark.parametrize("out_features", [4096, 4096])
+def test_gptq_to_matmulnbits_transform(in_features, out_features):
+    quant_linear_gptq = QuantLinearGPTQ(
+        bits=4, group_size=128, in_features=in_features, out_features=out_features, bias=False
+    )
+    quant_linear_gptq.qweight = torch.randint(
+        low=-(2**31), high=2**31 - 1, size=(in_features // 8, out_features), dtype=torch.int32
+    )
+    quant_linear_gptq.qzeros = torch.randint(
+        low=-(2**31),
+        high=2**31 - 1,
+        size=(in_features // quant_linear_gptq.group_size, out_features // 8),
+        dtype=torch.int32,
+    )
+    quant_linear_gptq.scales = torch.rand(
+        in_features // quant_linear_gptq.group_size, out_features, dtype=torch.float32
+    )
+    rand_data = torch.rand(4, in_features)
+    old_out = quant_linear_gptq(rand_data)
+    new_module, transformed = GPTQToMatmulNbitsTransform.apply(quant_linear_gptq)
+    assert transformed
+    new_out = new_module(rand_data)
+    assert isinstance(new_module, QuantLinearORT)
+    assert compare_original_vs_kv_model_pt_outputs(
+        old_out, new_out, tolerance=1e-4
+    ), "Test failed because MAE is greater than tolerance"
