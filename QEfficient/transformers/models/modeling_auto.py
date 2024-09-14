@@ -21,7 +21,6 @@ from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig
 from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils._utils import get_qpc_dir_name_infer, qpc_exists
-from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
 # Dictionary that defines the interface from transformers to be used underneath the QEFF interface
@@ -337,7 +336,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         # Compile
         self.qpc_path = QEfficient.compile(
             onnx_path=self.onnx_path,
-            qpc_path=qpc_dir_path,
+            qpc_path=os.path.dirname(qpc_dir_path),
             num_cores=num_cores,
             device_group=device_group,
             aic_enable_depth_first=aic_enable_depth_first,
