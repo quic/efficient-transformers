@@ -70,25 +70,26 @@ def hf_download(
     return model_path
 
 
-def qpc_exists(qpc_dir_path: str) -> bool:
+def qpc_exists(model_name: str, qpc_base_dir_name: str) -> Tuple[bool, str]:
     """
     Checks if qpc dir exists.
     Returns
     1. Boolean variable indicating if qpc files exist
     2. Path of the qpc dir if found.
     ---------
-
-    :model_name: `str` - HF Model card name.
-    :dir_path: `str` - Path of qpc directory.
-
-    Return:
-        qpc_exists and path to qpc directory
+    :param model_name: str. HF Model card name.
+    :param dir_path: str. Path of qpc directory.
+    :return: Union[Tuple[bool, str]]: qpc_exists and path to qpc directory
     """
+    model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
+    os.makedirs(model_card_dir, exist_ok=True)
+
+    qpc_dir_path = os.path.join(model_card_dir, qpc_base_dir_name, "qpcs")
 
     # Compute the boolean indicating if the QPC exists
     qpc_exists_bool = os.path.isdir(qpc_dir_path) and os.path.isfile(os.path.join(qpc_dir_path, "programqpc.bin"))
 
-    return qpc_exists_bool
+    return qpc_exists_bool, qpc_dir_path
 
 
 def get_onnx_dir_name(model_name, has_fbs):
@@ -169,16 +170,34 @@ def load_hf_tokenizer(
     return tokenizer
 
 
-def get_qpc_dir_path(
-    model_card_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
+def get_qpc_dir_name_infer(
+    num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
 ):
-    # Create a unique directory name for the QPC model based on all parameters
     qpc_base_dir_name = (
         f"qpc_{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos"
         + f"{f'_{full_batch_size}fbs_' if full_batch_size is not None else '_'}"
         + f"{len(device_group) if device_group is not None else 1}"
         + "devices"
         + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
+    )
+
+    return qpc_base_dir_name
+
+
+def get_qpc_dir_path(
+    model_card_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
+):
+    # Create a unique directory name for the QPC model based on all parameters
+    qpc_base_dir_name = get_qpc_dir_name_infer(
+        num_cores=num_cores,
+        mos=mos,
+        batch_size=batch_size,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        mxfp6=mxfp6,
+        mxint8=mxint8,
+        device_group=device_group,
+        full_batch_size=full_batch_size,
     )
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_card_name))
     os.makedirs(model_card_dir, exist_ok=True)
