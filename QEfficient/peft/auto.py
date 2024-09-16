@@ -82,7 +82,10 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     @property
     def model_name(self) -> str:
-        return self.model.get_base_model().__class__.__name__ + "-lora"
+        mname = self.model.get_base_model().__class__.__name__ + "-lora"
+        if mname.startswith("QEff"):
+            mname = mname[4:]
+        return mname
 
     @property
     def model_hash(self) -> str:
@@ -232,6 +235,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     def generate(
         self,
         inputs: Optional[Union[torch.Tensor, np.ndarray]] = None,
+        device_ids: Optional[List[int]] = None,
         generation_config: Optional[GenerationConfig] = None,
         stopping_criteria: Optional[StoppingCriteria] = None,
         streamer: Optional[BaseStreamer] = None,
@@ -251,7 +255,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         if self.qpc_session is None:
             if self.qpc_path is None:
                 raise FileNotFoundError("Please compile the model with `model.compile(...)`")
-            self.qpc_session = QAICInferenceSession(str(self.qpc_path))
+            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
 
             # Skip buffers
             retained_buffers = [x for x in self.qpc_session.output_names if x.endswith("_RetainedState")]
