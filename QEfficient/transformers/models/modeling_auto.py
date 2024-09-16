@@ -58,7 +58,10 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     @property
     def model_name(self) -> str:
-        return self.model.__class__.__name__
+        mname = self.model.__class__.__name__
+        if mname.startswith("QEff"):
+            mname = mname[4:]
+        return mname
 
     @property
     def model_hash(self) -> str:
