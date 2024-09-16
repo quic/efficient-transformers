@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import hashlib
 import os
 from typing import Any, List, Optional, Union
 
@@ -31,7 +30,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     _hf_auto_class: type
 
-    def __init__(self, model: nn.Module, pretrained_model_name_or_path: str, **kwargs) -> None:
+    def __init__(self, model: nn.Module, **kwargs) -> None:
         if hasattr(model.config, "quantization_config") and not isinstance(
             model.config.quantization_config, tuple(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values())
         ):
@@ -41,17 +40,6 @@ class QEFFTransformersBase(QEFFBaseModel):
         self.model.config.use_cache = (
             True  # Always pass use_cache = True, to get KV values as output during ONNX export
         )
-        self.pretrained_model_name_or_path = pretrained_model_name_or_path
-
-        # Set model card name, which is used to decide ONNX, QPC files path during export and compile resp.
-        if model_card_name := kwargs.pop("model_card_name", None):
-            self.model_card_name = model_card_name
-        elif os.path.isdir(self.pretrained_model_name_or_path):
-            hash_object = hashlib.sha256()
-            hash_object.update(self.pretrained_model_name_or_path.encode("utf-8"))
-            self.model_card_name = hash_object.hexdigest()
-        else:
-            self.model_card_name = self.pretrained_model_name_or_path
 
         self.full_batch_size = kwargs.get("full_batch_size", None)
         self.kwargs = kwargs
@@ -74,8 +62,6 @@ class QEFFTransformersBase(QEFFBaseModel):
         There are few additional parameters that this method can take.
 
         ``Mandatory`` Args:
-            :transform (bool): Whether to optimize model for KV retention; default is ``True``. Pass ``False`` to get BertStyle model.
-            :model_card_name (str): ``HuggingFace`` model card name or name of the model if custom, used for deciding directory name while saving ``ONNX/qpc`` files.
             :full_batch_size (int): Pass this if you want to execute model with continuous batching.
             Example usage:
 
@@ -93,29 +79,19 @@ class QEFFTransformersBase(QEFFBaseModel):
             model.generate(prompts=["Hi there!!"])
 
         """
-        model_card_name = kwargs.pop(
-            "model_card_name", None
-        )  # Remove model_card_name from kwargs for transformers APIs
-
         full_batch_size = kwargs.pop("full_batch_size", None)
 
         attn_implementation = kwargs.get("attn_implementation", None)
-        if attn_implementation != "eager":
-            logger.warning(f"Updating attn_implementation to be 'eager', got {attn_implementation}")
-            kwargs.update({"attn_implementation": "eager"})
+        if attn_implementation is not None and attn_implementation != "eager":
+            logger.warning('Updating attn_implementation="eager"')
+        kwargs.update({"attn_implementation": "eager"})
 
         if low_cpu_mem_usage := kwargs.get("low_cpu_mem_usage", None):
             logger.warning(f"Updating low_cpu_mem_usage to be 'False', got {low_cpu_mem_usage}")
         kwargs.update({"low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(
-            model,
-            pretrained_model_name_or_path=pretrained_model_name_or_path,
-            model_card_name=model_card_name,
-            full_batch_size=full_batch_size,
-            **kwargs,
-        )
+        return cls(model, full_batch_size=full_batch_size, **kwargs)
 
     @property
     def tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
@@ -142,7 +118,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
     ``Mandatory`` Args:
         :model (nn.Module):  PyTorch model
-        :pretrained_model_name_or_path (str): We recommend passing name of the model as input here, as you are not using `from_pretrained` method. This name will be used for deciding path of the ``ONNX/qpc`` files generated during ``export``, ``compilation`` stages.
 
     .. code-block:: python
 
@@ -198,15 +173,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     def export(self) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
-        The model should already be transformed i.e. ``self.is_transformed`` should be ``True``.
-        Otherwise, this will raise an ``AssertionError``.
-        We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
-
-        ``Optional`` Args:
-            does not any arguments.
-
-        Raises:
-            :AttributeError: If ``pretrained_model_name_or_path`` is a path, this function needs model card name of the model so that it can distinguish between directories while saving the ``ONNX`` files generated. So, user needs to pass ``model_card_name`` as a valid ``string`` in that case, Otherwise this will raise the error.
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
