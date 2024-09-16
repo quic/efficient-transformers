@@ -32,6 +32,10 @@ class QEFFTransformersBase(QEFFBaseModel):
     _hf_auto_class: type
 
     def __init__(self, model: nn.Module) -> None:
+        model_class_name = model.__class__.__name__
+        if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
+            raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
+
         if hasattr(model.config, "quantization_config") and not isinstance(
             model.config.quantization_config, tuple(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values())
         ):
