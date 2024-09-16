@@ -17,6 +17,8 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
+from QEfficient.base.onnx_transforms import OnnxTransform
+from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
@@ -32,6 +34,9 @@ class QEFFBaseModel(ABC):
     :_pytorch_transforms: Pytorch transformations to be applied after initialization.
     :_onnx_transforms: ONNX transformations to be applied after ONNX export.
     """
+
+    _pytorch_transforms: List[PytorchTransform]
+    _onnx_transforms: List[OnnxTransform]
 
     @classmethod
     def _transform_names(cls) -> List[str]:
