@@ -6,10 +6,10 @@
 # ----------------------------------------------------------------------------
 
 import os
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional
 
 import torch.nn as nn
-from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers import AutoModel, AutoModelForCausalLM
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
@@ -18,7 +18,7 @@ from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFI
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig
 from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig
-from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
+from QEfficient.utils import get_qpc_dir_path
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
@@ -92,22 +92,6 @@ class QEFFTransformersBase(QEFFBaseModel):
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         return cls(model, full_batch_size=full_batch_size, **kwargs)
-
-    @property
-    def tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
-        """Returns the tokenizer for given model based on ``self.pretrained_model_name_or_path``.
-        Loads the tokenizer if required.
-
-        Returns:
-            :Union[PreTrainedTokenizer, PreTrainedTokenizerFast]: Tokenizer from ``transformers`` for the given model.
-        """
-        if self._tokenizer is None:
-            self._tokenizer = self.get_tokenizer()
-        return self._tokenizer
-
-    def get_tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
-        tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=self.pretrained_model_name_or_path, **self.kwargs)
-        return tokenizer
 
 
 class QEFFAutoModelForCausalLM(QEFFTransformersBase):
