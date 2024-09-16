@@ -136,7 +136,7 @@
 <span class="kn">from</span> <span class="nn">QEfficient.transformers.quantizers.quantizer_awq</span> <span class="kn">import</span> <span class="n">QEffAwqConfig</span>
 <span class="kn">from</span> <span class="nn">QEfficient.transformers.quantizers.quantizer_gptq</span> <span class="kn">import</span> <span class="n">QEffGPTQConfig</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">get_qpc_dir_path</span><span class="p">,</span> <span class="n">load_hf_tokenizer</span>
-<span class="kn">from</span> <span class="nn">QEfficient.utils.constants</span> <span class="kn">import</span> <span class="n">QEFF_MODELS_DIR</span>
+<span class="kn">from</span> <span class="nn">QEfficient.utils._utils</span> <span class="kn">import</span> <span class="n">get_qpc_dir_name_infer</span><span class="p">,</span> <span class="n">qpc_exists</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.logging_utils</span> <span class="kn">import</span> <span class="n">logger</span>
 
 <span class="c1"># Dictionary that defines the interface from transformers to be used underneath the QEFF interface</span>
@@ -303,6 +303,11 @@
 
             <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">quantization_config</span><span class="p">,</span> <span class="n">QEffGPTQConfig</span><span class="p">):</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">GPTQToMatmulNbitsTransform</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">AwqToMatmulNbitsTransform</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">AwqToMatmulNbitsTransform</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">GPTQToMatmulNbitsTransform</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">GPTQToMatmulNbitsTransform</span><span class="p">)</span>
 
         <span class="k">for</span> <span class="n">transform</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="p">:</span>
             <span class="n">transform</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">)</span>
@@ -434,8 +439,8 @@
 
         <span class="bp">self</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
 
-        <span class="n">qpc_base_dir_name</span> <span class="o">=</span> <span class="n">get_qpc_dir_path</span><span class="p">(</span>
-            <span class="n">model_card_name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_card_name</span><span class="p">,</span>
+        <span class="c1"># Prepare qpc dir path</span>
+        <span class="n">qpc_base_dir_name</span> <span class="o">=</span> <span class="n">get_qpc_dir_name_infer</span><span class="p">(</span>
             <span class="n">num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
             <span class="n">mos</span><span class="o">=</span><span class="n">mos</span><span class="p">,</span>
             <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
@@ -444,19 +449,15 @@
             <span class="n">mxfp6</span><span class="o">=</span><span class="n">mxfp6</span><span class="p">,</span>
             <span class="n">mxint8</span><span class="o">=</span><span class="n">mxint8</span><span class="p">,</span>
             <span class="n">device_group</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
-            <span class="n">full_batch_size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
         <span class="p">)</span>
-        <span class="n">qpc_base_dir_name</span> <span class="o">=</span> <span class="p">(</span>
-            <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">qpc_base_dir_name</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;_&quot;</span> <span class="o">+</span> <span class="n">qpc_dir_suffix</span> <span class="k">if</span> <span class="n">qpc_dir_suffix</span> <span class="k">else</span> <span class="n">qpc_base_dir_name</span>
-        <span class="p">)</span>
-        <span class="n">model_card_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">QEFF_MODELS_DIR</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model_card_name</span><span class="p">))</span>
-        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">model_card_dir</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-        <span class="n">qpc_dir_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">model_card_dir</span><span class="p">,</span> <span class="n">qpc_base_dir_name</span><span class="p">)</span>
+        <span class="n">qpc_base_dir_name</span> <span class="o">=</span> <span class="n">qpc_base_dir_name</span> <span class="o">+</span> <span class="s2">&quot;_&quot;</span> <span class="o">+</span> <span class="n">qpc_dir_suffix</span> <span class="k">if</span> <span class="n">qpc_dir_suffix</span> <span class="k">else</span> <span class="n">qpc_base_dir_name</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">qpc_dir_path</span> <span class="o">=</span> <span class="n">qpc_exists</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_card_name</span><span class="p">,</span> <span class="n">qpc_base_dir_name</span><span class="o">=</span><span class="n">qpc_base_dir_name</span><span class="p">)</span>
 
         <span class="c1"># Compile</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">qpc_path</span> <span class="o">=</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
             <span class="n">onnx_path</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">onnx_path</span><span class="p">,</span>
-            <span class="n">qpc_path</span><span class="o">=</span><span class="n">qpc_dir_path</span><span class="p">,</span>
+            <span class="n">qpc_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">qpc_dir_path</span><span class="p">),</span>
             <span class="n">num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
             <span class="n">device_group</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
             <span class="n">aic_enable_depth_first</span><span class="o">=</span><span class="n">aic_enable_depth_first</span><span class="p">,</span>
