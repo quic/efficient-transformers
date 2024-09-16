@@ -35,9 +35,6 @@ class QEFFTransformersBase(QEFFBaseModel):
             raise AssertionError("Please use `from_pretrained` method to load quantized models")
 
         super().__init__(model)
-        self.model.config.use_cache = (
-            True  # Always pass use_cache = True, to get KV values as output during ONNX export
-        )
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
@@ -45,29 +42,6 @@ class QEFFTransformersBase(QEFFBaseModel):
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
-        """
-        This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
-        Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
-
-        Accepts All the parameters that are acceptable by ``transformers.AutoModelForCausalLM``
-
-        ``Mandatory`` Args:
-            :pretrained_model_name_or_path (str): Model card name from huggingface or local path to model directory.
-
-        .. code-block:: python
-
-            from QEfficient import QEFFAutoModelForCausalLM
-
-            # Initialize the model using from_pretrained similar to transformers.AutoModelForCausalLM
-            model = QEFFAutoModelForCausalLM.from_pretrained("gpt2")
-
-            # Now you can directly compile the model for Cloud AI 100
-            model.compile(num_cores=14, device_group=[0])  # Considering you have a Cloud AI 100 Standard SKU
-
-            # You can now execute the model
-            model.generate(prompts=["Hi there!!"])
-
-        """
         attn_implementation = kwargs.get("attn_implementation", None)
         if attn_implementation is not None and attn_implementation != "eager":
             logger.warning('Updating attn_implementation="eager"')
@@ -85,7 +59,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
     The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
     Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
-    Please note that the QEFF class is also a part of the ``QEfficient`` module.
 
     ``Mandatory`` Args:
         :model (nn.Module):  PyTorch model
@@ -104,6 +77,23 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     _hf_auto_class = AutoModelForCausalLM
     _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    def __init__(self, model: nn.Module):
+        # Set use_cache=True to get KV values as output during ONNX export
+        self.model.config.use_cache = True
+        super().__init__(model)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+        """
+        This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
+        Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
+
+        Args:
+            :pretrained_name_or_path (str): Model card name from huggingface or local path to model directory.
+            :args, kwargs: Additional arguments to pass to transformers.AutoModelForCausalLM.
+        """
+        return super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
     def export(self) -> str:
         """
@@ -227,9 +217,6 @@ class QEffAutoModel(QEFFTransformersBase):
     _hf_auto_class = AutoModel
     _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
-
-    def execute(self, *args, **kwargs):  # type: ignore
-        raise NotImplementedError("Reached too far!!")
 
     def export(self):
         raise NotImplementedError("Reached too far!!")
