@@ -5,20 +5,21 @@
 #
 # ----------------------------------------------------------------------------
 
-import os
-from typing import Any, List
+import logging
+from typing import Any, Optional
 
+import torch
 import torch.nn as nn
 from transformers import AutoModel, AutoModelForCausalLM
 
-import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTransform, KVCacheTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
-from QEfficient.utils import get_qpc_dir_path
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils import constants, get_padding_shape_from_config
+
+logger = logging.getLogger(__file__)
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -42,14 +43,13 @@ class QEFFTransformersBase(QEFFBaseModel):
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
-        attn_implementation = kwargs.get("attn_implementation", None)
-        if attn_implementation is not None and attn_implementation != "eager":
+        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
-        kwargs.update({"attn_implementation": "eager"})
 
-        if low_cpu_mem_usage := kwargs.get("low_cpu_mem_usage", None):
-            logger.warning(f"Updating low_cpu_mem_usage to be 'False', got {low_cpu_mem_usage}")
-        kwargs.update({"low_cpu_mem_usage": False})
+        if kwargs.get("low_cpu_mem_usage", None):
+            logger.warning("Updating low_cpu_mem_usage=False")
+
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         return cls(model)
@@ -95,117 +95,75 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         """
         return super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
-    def export(self) -> str:
-        """
-        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+    def export(self, export_dir: Optional[str] = None) -> str:
+        example_shape = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+        kv_cache_shape = get_padding_shape_from_config(self.model.config, *example_shape)
+        example_inputs = {
+            "input_ids": torch.zeros(example_shape, dtype=torch.int64),
+            "position_ids": torch.arange(example_shape[1], dtype=torch.int64).view(example_shape),
+            "past_key_values": [[] for _ in range(self.num_layers)],
+        }
+        dynamic_axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+        }
+        output_names = ["logits"]
+        for i in range(self.num_layers):
+            for kv in ["key", "value"]:
+                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                dynamic_axes[f"past_{kv}.{i}"] = {0: "batch_size", 2: "ctx_len"}
+                output_names.append(f"past_{kv}.{i}_RetainedState")
 
-        Returns:
-            :str: Path of the generated ``ONNX`` graph.
-        """
-        # Export
-        _, onnx_model_path = QEfficient.export(
-            model_name=self.model_card_name,
-            model_kv=self,
-            tokenizer=self.tokenizer,
-            full_batch_size=self.full_batch_size,
+        input_names = list(dynamic_axes.keys())
+
+        return self._export(
+            example_inputs,
+            input_names,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
         )
-        self.onnx_path = onnx_model_path
-
-        return self.onnx_path
 
     def compile(
         self,
-        num_cores: int,
-        device_group: List[int] = None,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
         batch_size: int = 1,
-        prompt_len: int = 32,
-        ctx_len: int = 128,
-        mxfp6: bool = True,
-        mxint8: bool = False,
-        mos: int = -1,
-        aic_enable_depth_first: bool = False,
+        prefill_seq_len: int,
+        ctx_len: int,
+        num_devices: int = 1,
+        num_cores: int = 16,
+        mxfp6_matmul: bool = False,
+        mxint8_kv_cache: bool = False,
+        **compiler_options,
     ) -> str:
-        """
-        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
-        If the model has not been exported yet, this method will handle the export process.
-        The generated ``qpc`` can be found under the directory ``efficient-transformers/qeff_models/{self.model_card_name}/qpc``.
+        # Specializations
+        specializations = [
+            {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
+            {"batch_size": batch_size, "seq_len": 1, "ctx_len": ctx_len},
+        ]
 
-        ``Mandatory`` Args:
-            :num_cores (int): Number of cores used to compile the model.
-            :device_group (List[int]): If this is a list of more that one integers, tensor-slicing is invoked, defaults to None, and automatically chooses suitable device.
-        ``Optional`` Args:
-            :model_card_name (Optional[str], optional): Name of the model, Mandatory if ``self.pretrained_model_name_or_path`` is a path. ``Defaults to None``.
-            :batch_size (int, optional): Batch size. ``Defaults to 1``.
-            :prompt_len (int, optional): The length of the Prefill prompt should be less that ``prompt_len``. ``Defaults to 32``.
-            :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
-            :mxfp6 (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
-            :mxint8 (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
-            :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
-            :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+        # Custom IO
+        custom_io = {}
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        for suffix in ["", "_RetainedState"]:
+            for i in range(self.num_layers):
+                for kv in ["key", "value"]:
+                    custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
 
-        Returns:
-            :str: Path of the compiled ``qpc`` package.
-        """
-        # Export first if self.ort_runtime_args are not populated
-        if self.onnx_path is None:
-            logger.info(f"Exporting the {self.model.__class__.__name__} model to ONNX for compilation!")
-            self.export()
-
-        # Prepare qpc dir path
-        qpc_dir_path = get_qpc_dir_path(
-            model_card_name=self.model_card_name,
-            num_cores=num_cores,
-            mos=mos,
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            mxfp6=mxfp6,
-            mxint8=mxint8,
-            device_group=device_group,
-            full_batch_size=self.full_batch_size,
-        )
-
-        # Compile
-        QEfficient.compile(
-            onnx_path=self.onnx_path,
-            qpc_path=os.path.dirname(qpc_dir_path),
-            num_cores=num_cores,
-            device_group=device_group,
-            aic_enable_depth_first=aic_enable_depth_first,
-            mos=mos,
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            mxfp6=mxfp6,
-            mxint8=mxint8,
-            full_batch_size=self.full_batch_size,
-        )
-        self.qpc_path = qpc_dir_path
-        return self.qpc_path
-
-    def generate(self, prompts: List[str], device_id: List[int] = None, **kwargs):
-        """
-        This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
-        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
-        If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
-
-        ``Mandatory`` Args:
-            :prompts (List[str]): List of prompts to run the execution.
-            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
-        """
-        self.run_cloud_ai_100(prompts=prompts, device_id=device_id, **kwargs)
-
-    def run_cloud_ai_100(self, prompts: List[str], device_id: List[int] = None, **kwargs):
-        if not isinstance(self.qpc_path, str):
-            raise TypeError("Please run compile API first!")
-        generation_len = kwargs.pop("generation_len", None)
-        return QEfficient.cloud_ai_100_exec_kv(
-            self.tokenizer,
-            self.qpc_path,
-            prompt=prompts,
-            device_id=device_id,
-            generation_len=generation_len,
-            full_batch_size=self.full_batch_size,
+        return self._compile(
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            retained_state=True,
+            specializations=specializations,
+            convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            custom_io=custom_io,
+            mdp_ts_num_devices=num_devices,
+            aic_num_cores=num_cores,
+            **compiler_options,
         )
 
 
