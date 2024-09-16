@@ -13,11 +13,10 @@ from transformers import AutoModel, AutoModelForCausalLM
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
+from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTransform, KVCacheTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
-from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig
-from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig
 from QEfficient.utils import get_qpc_dir_path
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
@@ -44,9 +43,6 @@ class QEFFTransformersBase(QEFFBaseModel):
         self.full_batch_size = kwargs.get("full_batch_size", None)
         self.kwargs = kwargs
         self._tokenizer = None
-        self.is_transformed = False
-        if kwargs.get("transform", True):
-            self.transform(**kwargs)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}\n" + self.model.__repr__()
@@ -115,44 +111,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
 
     _hf_auto_class = AutoModelForCausalLM
-    _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
-
-    def transform(self, **kwargs):
-        """
-        This method applies all relevant optimization transforms on the model and toggles the ``self.is_transformed`` attribute to True. If the model is already transformed, the method will simply return.
-        Please note that this method does not require any input arguments."
-
-        Returns:
-            :obj: Same object with transformed ``self.model``
-        """
-        if self.is_transformed:
-            return
-
-        if self.full_batch_size is not None:
-            if KVCacheTransform in self._pytorch_transforms:
-                self._pytorch_transforms[self._pytorch_transforms.index(KVCacheTransform)] = CBTransform
-            if CBTransform not in self._pytorch_transforms:
-                raise RuntimeError("please don't update _pytorch_transforms variable")
-        else:
-            if CBTransform in self._pytorch_transforms:
-                self._pytorch_transforms[self._pytorch_transforms.index(CBTransform)] = KVCacheTransform
-            if KVCacheTransform not in self._pytorch_transforms:
-                raise RuntimeError("Please don't update _pytorch_transforms variable")
-
-        # Update list of pytorch transforms if the model falls in AWQ/GPTQ category
-        if hasattr(self.model.config, "quantization_config"):
-            if isinstance(self.model.config.quantization_config, QEffAwqConfig):
-                self._pytorch_transforms.insert(0, AwqToMatmulNbitsTransform)
-
-            if isinstance(self.model.config.quantization_config, QEffGPTQConfig):
-                self._pytorch_transforms.insert(0, GPTQToMatmulNbitsTransform)
-
-        for transform in self._pytorch_transforms:
-            transform.apply(self.model)
-        self.is_transformed = True
-
-    def execute(self, *args, **kwargs):  # type: ignore
-        raise NotImplementedError("Reached too far!!")
+    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def export(self) -> str:
         """
@@ -331,6 +291,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
 class QEffAutoModel(QEFFTransformersBase):
     _hf_auto_class = AutoModel
+    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def execute(self, *args, **kwargs):  # type: ignore
         raise NotImplementedError("Reached too far!!")
