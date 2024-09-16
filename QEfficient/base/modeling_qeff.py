@@ -11,7 +11,6 @@ import logging
 import shutil
 import subprocess
 from abc import ABC, abstractmethod, abstractproperty
-from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -22,12 +21,6 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
 logger = logging.getLogger(__name__)
-
-
-class Runtime(Enum):
-    CPU_ORT = "CPU_ORT"
-    CPU_PT = "CPU_PT"
-    AI_100 = "AI_100"
 
 
 class QEFFBaseModel(ABC):
