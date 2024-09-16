@@ -61,10 +61,48 @@ class QEFFBaseModel(ABC):
     def model_hash(self) -> str: ...
 
     @abstractmethod
-    def export(self, *args, **kwargs) -> Path: ...
+    def export(self, export_dir: Optional[str] = None) -> Path:
+        """
+        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+
+        Args:
+            :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
+
+        Returns:
+            :Path: Path of the generated ``ONNX`` file.
+        """
 
     @abstractmethod
-    def compile(self, *args, **kwargs) -> Path: ...
+    def compile(self, *args, **kwargs) -> Path:
+        """
+        Compile the exported onnx to run on AI100.
+        If the model has not been exported yet, this method will handle the export process.
+
+        Args:
+            :onnx_path (str): Onnx file to compile
+            :compile_dir (str): Directory path to compile the qpc. A suffix is added to the directory path to avoid reusing same qpc for different parameters.
+            :num_devices (int): Number of devices to compile for. ``Defaults to 1``.
+            :num_cores (int): Number of cores to utilize in each device ``Defaults to 16``.
+            :mxfp6_matmul (bool): Use MXFP6 to compress weights for MatMul nodes to run faster on device. ``Defaults to False``.
+            :mxint8_kv_cache (bool): Use MXINT8 to compress KV-cache on device to access and update KV-cache faster. ``Defaults to False``.
+            :compiler_options: Pass any compiler option as input. Any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
+                - aic_num_cores=16 -> -aic-num-cores=16
+                - convert_to_fp16=True -> -convert-to-fp16
+
+        ``QEffAutoModelForCausalLM`` Args:
+            :batch_size (int): Batch size to compile for. ``Defaults to 1``.
+            :prefill_seq_len (int): Prefill sequence length to compile for. Prompt will be chunked according to this length.
+            :ctx_len (int): Context length to allocate space for KV-cache tensors.
+
+        ``QEffAutoModelForCausalLMwithCB`` Args:
+            :full_batch_size (int): Full batch size to allocate cache lines.
+            :decode_batch_size (int): Batch size to run decode iteration. ``Defaults to full_batch_size``.
+            :prefill_seq_len (int): Prefill sequence length to compile for. Prompt will be chunked according to this length.
+            :ctx_len (int): Context length to allocate space for KV-cache tensors.
+
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
+        """
 
     def _export(
         self,
