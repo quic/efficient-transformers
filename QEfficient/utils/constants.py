@@ -43,6 +43,9 @@ def get_models_dir():
 
 QEFF_MODELS_DIR = get_models_dir()
 
+ONNX_EXPORT_EXAMPLE_BATCH_SIZE = 1
+ONNX_EXPORT_EXAMPLE_SEQ_LEN = 32
+
 
 class Constants:
     # Export Constants.

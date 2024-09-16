@@ -51,7 +51,6 @@ pipeline
                     deactivate &&
                     exit" 
                     '''
-
                 }
             }
         }

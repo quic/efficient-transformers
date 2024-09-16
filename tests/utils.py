@@ -9,7 +9,10 @@ import functools
 import unittest
 
 from transformers import AutoModelForCausalLM
+from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 
+from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, QEffAwqQuantizer
+from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig, QEffGPTQQuantizer
 from QEfficient.utils import hf_download
 from QEfficient.utils.device_utils import is_multi_qranium_setup_available
 
@@ -43,8 +46,19 @@ def load_pytorch_model(model_config):
         ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
     model_hf = AutoModelForCausalLM.from_pretrained(
-        model_path, use_cache=True, num_hidden_layers=model_config["n_layer"], attn_implementation="eager"
+        model_path,
+        use_cache=True,
+        num_hidden_layers=model_config["n_layer"],
+        attn_implementation="eager",
+        low_cpu_mem_usage=False,
     )  # Run models for single layers only
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
     return model_hf, params
+
+
+def replace_transformers_quantizers():
+    AUTO_QUANTIZER_MAPPING.update({"awq": QEffAwqQuantizer})
+    AUTO_QUANTIZATION_CONFIG_MAPPING.update({"awq": QEffAwqConfig})
+    AUTO_QUANTIZER_MAPPING.update({"gptq": QEffGPTQQuantizer})
+    AUTO_QUANTIZATION_CONFIG_MAPPING.update({"gptq": QEffGPTQConfig})
