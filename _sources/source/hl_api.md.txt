@@ -9,6 +9,13 @@
    :undoc-members: 
    :exclude-members: QEffAutoModel,QEFFTransformersBase, run_ort, run_pytorch, get_tokenizer, run_cloud_ai_100, execute
 ``` 
+
+## `QEffAutoPeftModelForCausalLM`
+```{eval-rst}
+.. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
+   :members:
+```
+
 ## `export`
 ```{eval-rst}
 .. automodule:: QEfficient.exporter.export_hf_to_cloud_ai_100
