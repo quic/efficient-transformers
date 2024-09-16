@@ -12,6 +12,7 @@ import pytest
 import QEfficient
 import QEfficient.cloud.infer
 from QEfficient.cloud.infer import main as infer
+from QEfficient.utils._utils import get_qpc_dir_path
 
 
 @pytest.mark.cli
@@ -30,7 +31,6 @@ def test_infer(setup, mocker):
     """
     ms = setup
     load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.infer, "load_hf_tokenizer")
-    qpc_exists_spy = mocker.spy(QEfficient.cloud.infer, "qpc_exists")
     get_onnx_model_path_spy = mocker.spy(QEfficient.cloud.infer, "get_onnx_model_path")
     compile_spy = mocker.spy(QEfficient, "compile")
     cloud_ai_100_exec_kv_spy = mocker.spy(QEfficient.cloud.infer, "cloud_ai_100_exec_kv")
@@ -54,9 +54,21 @@ def test_infer(setup, mocker):
     )
     # tokenizer check
     load_hf_tokenizer_spy.assert_called_once()
+    qpc_dir_path = get_qpc_dir_path(
+        ms.model_name,
+        ms.num_cores,
+        ms.mos,
+        ms.batch_size,
+        ms.prompt_len,
+        ms.ctx_len,
+        ms.mxfp6,
+        ms.mxint8,
+        ms.device_group,
+        ms.full_batch_size,
+    )
+
     # qpc exist check
-    qpc_exists_spy.assert_called_once()
-    if qpc_exists_spy.spy_return is True:
+    if os.path.isdir(qpc_dir_path) and os.path.isfile(os.path.join(qpc_dir_path, "programqpc.bin")):
         assert os.path.isdir(ms.qpc_dir_path())
     else:
         get_onnx_model_path_spy.assert_called_once()

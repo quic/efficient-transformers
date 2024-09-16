@@ -187,6 +187,11 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
             if isinstance(self.model.config.quantization_config, QEffGPTQConfig):
                 self._pytorch_transforms.insert(0, GPTQToMatmulNbitsTransform)
+        else:
+            if AwqToMatmulNbitsTransform in self._pytorch_transforms:
+                self._pytorch_transforms.remove(AwqToMatmulNbitsTransform)
+            if GPTQToMatmulNbitsTransform in self._pytorch_transforms:
+                self._pytorch_transforms.remove(GPTQToMatmulNbitsTransform)
 
         for transform in self._pytorch_transforms:
             transform.apply(self.model)
