@@ -23,17 +23,13 @@ from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
-# Dictionary that defines the interface from transformers to be used underneath the QEFF interface
-QEFFAutoModelToTransformersAutoModelMap = {
-    "QEFFAutoModelForCausalLM": AutoModelForCausalLM,
-    "QEFFAutoModel": AutoModel,
-}
-
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
     Parent class for models QEFF provides from transformers i.e. (AutoModel, AutoModelForCausalLM, AutoModelForAudioClassification etc.) from transformers/models/modeling_auto.py file.
     """
+
+    _hf_auto_class: type
 
     def __init__(self, model: nn.Module, pretrained_model_name_or_path: str, **kwargs) -> None:
         if hasattr(model.config, "quantization_config") and not isinstance(
@@ -112,9 +108,7 @@ class QEFFTransformersBase(QEFFBaseModel):
             logger.warning(f"Updating low_cpu_mem_usage to be 'False', got {low_cpu_mem_usage}")
         kwargs.update({"low_cpu_mem_usage": False})
 
-        model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
-            pretrained_model_name_or_path, *args, **kwargs
-        )
+        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         return cls(
             model,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
@@ -154,8 +148,14 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
         from QEfficient import QEFFAutoModelForCausalLM
 
+        model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=2)
+        model.compile(prefill_seq_len=32, ctx_len=1024)
+
+        inputs = ...
+        outputs = model.generate(**inputs, max_new_tokens=128)
     """
 
+    _hf_auto_class = AutoModelForCausalLM
     _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
 
     def transform(self, **kwargs):
@@ -380,6 +380,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
 
 class QEffAutoModel(QEFFTransformersBase):
+    _hf_auto_class = AutoModel
+
     def execute(self, *args, **kwargs):  # type: ignore
         raise NotImplementedError("Reached too far!!")
 
