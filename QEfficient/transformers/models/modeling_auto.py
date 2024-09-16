@@ -100,9 +100,11 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module):
+        super().__init__(model)
+
         # Set use_cache=True to get KV values as output during ONNX export
         self.model.config.use_cache = True
-        super().__init__(model)
+        self.num_layers = model.config.num_hidden_layers
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
