@@ -6,7 +6,7 @@
 # ----------------------------------------------------------------------------
 
 import os
-from typing import Any, List, Optional
+from typing import Any, List
 
 import torch.nn as nn
 from transformers import AutoModel, AutoModelForCausalLM
@@ -18,7 +18,6 @@ from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTra
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import get_qpc_dir_path
-from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
 
@@ -29,7 +28,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     _hf_auto_class: type
 
-    def __init__(self, model: nn.Module, **kwargs) -> None:
+    def __init__(self, model: nn.Module) -> None:
         if hasattr(model.config, "quantization_config") and not isinstance(
             model.config.quantization_config, tuple(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values())
         ):
@@ -40,12 +39,8 @@ class QEFFTransformersBase(QEFFBaseModel):
             True  # Always pass use_cache = True, to get KV values as output during ONNX export
         )
 
-        self.full_batch_size = kwargs.get("full_batch_size", None)
-        self.kwargs = kwargs
-        self._tokenizer = None
-
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}\n" + self.model.__repr__()
+        return self.__class__.__name__ + "\n" + self.model.__repr__()
 
     @classmethod
     @with_replaced_quantizers
@@ -55,11 +50,9 @@ class QEFFTransformersBase(QEFFBaseModel):
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
 
         Accepts All the parameters that are acceptable by ``transformers.AutoModelForCausalLM``
-        There are few additional parameters that this method can take.
 
         ``Mandatory`` Args:
-            :full_batch_size (int): Pass this if you want to execute model with continuous batching.
-            Example usage:
+            :pretrained_model_name_or_path (str): Model card name from huggingface or local path to model directory.
 
         .. code-block:: python
 
@@ -75,8 +68,6 @@ class QEFFTransformersBase(QEFFBaseModel):
             model.generate(prompts=["Hi there!!"])
 
         """
-        full_batch_size = kwargs.pop("full_batch_size", None)
-
         attn_implementation = kwargs.get("attn_implementation", None)
         if attn_implementation is not None and attn_implementation != "eager":
             logger.warning('Updating attn_implementation="eager"')
@@ -87,7 +78,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update({"low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model, full_batch_size=full_batch_size, **kwargs)
+        return cls(model)
 
 
 class QEFFAutoModelForCausalLM(QEFFTransformersBase):
@@ -202,67 +193,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self.qpc_path = qpc_dir_path
         return self.qpc_path
 
-    def export_and_compile(
-        self,
-        num_cores: int,
-        device_group: List[int],
-        batch_size: int = 1,
-        prompt_len: int = 32,
-        ctx_len: int = 128,
-        mxfp6: bool = True,
-        mxint8: bool = False,
-        mos: int = -1,
-        aic_enable_depth_first: bool = False,
-        qpc_dir_suffix: Optional[str] = None,
-        full_batch_size: Optional[int] = None,
-    ) -> str:
-        """
-        This API is specific to Internal VLLM use-case and is not recommended to be used in your application unless your are using VLLM.
-        """
-        _, transformed = CBTransform.apply(self.model)
-        if not transformed:
-            raise RuntimeError("Could not apply Continuous batch transform on the model")
-        if full_batch_size is not None:
-            self.full_batch_size = full_batch_size
-
-        self.export()
-
-        qpc_base_dir_name = get_qpc_dir_path(
-            model_card_name=self.model_card_name,
-            num_cores=num_cores,
-            mos=mos,
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            mxfp6=mxfp6,
-            mxint8=mxint8,
-            device_group=device_group,
-            full_batch_size=self.full_batch_size,
-        )
-        qpc_base_dir_name = (
-            os.path.dirname(qpc_base_dir_name) + "_" + qpc_dir_suffix if qpc_dir_suffix else qpc_base_dir_name
-        )
-        model_card_dir = os.path.join(QEFF_MODELS_DIR, str(self.model_card_name))
-        os.makedirs(model_card_dir, exist_ok=True)
-        qpc_dir_path = os.path.join(model_card_dir, qpc_base_dir_name)
-
-        # Compile
-        self.qpc_path = QEfficient.compile(
-            onnx_path=self.onnx_path,
-            qpc_path=qpc_dir_path,
-            num_cores=num_cores,
-            device_group=device_group,
-            aic_enable_depth_first=aic_enable_depth_first,
-            mos=mos,
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            mxfp6=mxfp6,
-            mxint8=mxint8,
-            full_batch_size=full_batch_size,
-        )
-        return self.qpc_path
-
     def generate(self, prompts: List[str], device_id: List[int] = None, **kwargs):
         """
         This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -287,6 +217,10 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             generation_len=generation_len,
             full_batch_size=self.full_batch_size,
         )
+
+
+class QEFFAutoModelForCausalLMwithCB(QEFFAutoModelForCausalLM):
+    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, CBTransform]
 
 
 class QEffAutoModel(QEFFTransformersBase):
