@@ -153,13 +153,6 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         return obj
 
     def export(self, export_dir: Optional[str] = None) -> str:
-        """
-        Export the pytorch model to ONNX.
-
-        Args:
-            :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
-        """
-
         self.exported_peft_config = self.model.active_peft_config
 
         example_shape = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
@@ -206,23 +199,6 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         mxint8_kv_cache: bool = False,
         **compiler_options,
     ) -> str:
-        """
-        Compile the exported onnx to run on AI100
-
-        Args:
-            :onnx_path (str): Onnx file to compile
-            :compile_dir (str): Directory path to compile the qpc. A suffix is added to the directory path to avoid reusing same qpc for different parameters.
-            :batch_size (int): Batch size to compile for. ``Defaults to 1``.
-            :prefill_seq_len (int): Prefill sequence length to compile for. Prompt will be chunked according to this length.
-            :ctx_len (int): Context length to allocate space for KV-cache tensors.
-            :num_devices (int): Number of devices to compile for. ``Defaults to 1``.
-            :num_cores (int): Number of cores to utilize in each device ``Defaults to 16``.
-            :mxfp6_matmul (bool): Use MXFP6 to compress weights for MatMul nodes to run faster on device. ``Defaults to False``.
-            :mxint8_kv_cache (bool): Use MXINT8 to compress KV-cache on device to access and update KV-cache faster. ``Defaults to False``.
-            :compiler_options: Pass any compiler option as input. Any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
-                - aic_num_cores=16 -> -aic-num-cores=16
-                - convert_to_fp16=True -> -convert-to-fp16
-        """
         # Specializations
         specializations = [
             {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
