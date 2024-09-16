@@ -170,6 +170,85 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 class QEFFAutoModelForCausalLMwithCB(QEFFAutoModelForCausalLM):
     _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, CBTransform]
 
+    def export(self, export_dir: Optional[str] = None) -> str:
+        example_shape = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+        kv_cache_shape = get_padding_shape_from_config(
+            self.model.config, constants.ONNX_EXPORT_EXAMPLE_FBS, example_shape[1]
+        )
+        example_inputs = {
+            "batch_index": torch.arange(example_shape[0]).view(example_shape[0], 1),
+            "input_ids": torch.zeros(example_shape, dtype=torch.int64),
+            "position_ids": torch.arange(example_shape[1], dtype=torch.int64).view(example_shape),
+            "past_key_values": [[] for _ in range(self.num_layers)],
+        }
+        dynamic_axes = {
+            "batch_index": {0: "batch_size"},
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+        }
+        output_names = ["logits"]
+        for i in range(self.num_layers):
+            for kv in ["key", "value"]:
+                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                dynamic_axes[f"past_{kv}.{i}"] = {0: "full_batch_size", 2: "ctx_len"}
+                output_names.append(f"past_{kv}.{i}_RetainedState")
+
+        input_names = list(dynamic_axes.keys())
+
+        return self._export(
+            example_inputs,
+            input_names,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+        )
+
+    def compile(
+        self,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        full_batch_size: int,
+        decode_batch_size: int = None,
+        prefill_seq_len: int,
+        ctx_len: int,
+        num_devices: int = 1,
+        num_cores: int = 16,
+        mxfp6_matmul: bool = False,
+        mxint8_kv_cache: bool = False,
+        **compiler_options,
+    ) -> str:
+        if decode_batch_size is None:
+            decode_batch_size = full_batch_size
+
+        # Specializations
+        specializations = [
+            {"full_batch_size": full_batch_size, "batch_size": 1, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
+            {"full_batch_size": full_batch_size, "batch_size": decode_batch_size, "seq_len": 1, "ctx_len": ctx_len},
+        ]
+
+        # Custom IO
+        custom_io = {}
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        for suffix in ["", "_RetainedState"]:
+            for i in range(self.num_layers):
+                for kv in ["key", "value"]:
+                    custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+
+        return self._compile(
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            retained_state=True,
+            specializations=specializations,
+            convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            custom_io=custom_io,
+            mdp_ts_num_devices=num_devices,
+            aic_num_cores=num_cores,
+            **compiler_options,
+        )
+
 
 class QEffAutoModel(QEFFTransformersBase):
     _hf_auto_class = AutoModel
