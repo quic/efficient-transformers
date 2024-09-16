@@ -13,7 +13,7 @@ import torch.nn as nn
 from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 import QEfficient
-from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
+from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTransform, KVCacheTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
@@ -353,7 +353,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         )
         return self.qpc_path
 
-    def generate(self, prompts: List[str], device_id: List[int] = None, runtime: str = "AI_100", **kwargs):
+    def generate(self, prompts: List[str], device_id: List[int] = None, **kwargs):
         """
         This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
         This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
@@ -362,11 +362,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         ``Mandatory`` Args:
             :prompts (List[str]): List of prompts to run the execution.
             :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
-        ``optional`` Args:
-            :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to "AI_100".
         """
-        if Runtime(runtime) != Runtime.AI_100:
-            raise ValueError("Only AI_100 runtime is supported right now via generate API")
         self.run_cloud_ai_100(prompts=prompts, device_id=device_id, **kwargs)
 
     def run_cloud_ai_100(self, prompts: List[str], device_id: List[int] = None, **kwargs):
