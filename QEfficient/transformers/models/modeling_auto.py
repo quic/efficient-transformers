@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import hashlib
 import logging
 from typing import Any, Optional
 
@@ -18,6 +19,7 @@ from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTra
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import constants, get_padding_shape_from_config
+from QEfficient.utils.cache import to_hashable
 
 logger = logging.getLogger(__file__)
 
@@ -53,6 +55,25 @@ class QEFFTransformersBase(QEFFBaseModel):
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         return cls(model)
+
+    @property
+    def model_name(self) -> str:
+        return self.model.__class__.__name__
+
+    @property
+    def model_hash(self) -> str:
+        # NOTE: model_config.to_diff_dict() has "_name_or_path" attribute which is the model card name or path.
+        # Using same card name will result in same hash. But, using a relative path for one run and
+        # absolute path for another run will result in different hash.
+        # The added complexity to resolve different paths to same location is not worth pursuing.
+        # Instead, advise the user to always provide same relative paths or absolute paths for local models.
+
+        # Compute the hash with: model_config, transforms
+        mhash = hashlib.sha256()
+        mhash.update(to_hashable(self.model.config.to_diff_dict()))
+        mhash.update(to_hashable(self._transform_names()))
+        mhash = mhash.hexdigest()[:16]
+        return mhash
 
 
 class QEFFAutoModelForCausalLM(QEFFTransformersBase):
