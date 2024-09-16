@@ -23,6 +23,8 @@ For other models, there is comprehensive documentation to inspire upon the chang
 ***Latest news*** : <br>
 
 - [coming soon] Support for more popular [models](coming_soon_models) and inference optimization technique speculative decoding <br>
+- [09/2024] [AWQ](https://arxiv.org/abs/2306.00978)/[GPTQ](https://arxiv.org/abs/2210.17323) 4-bit quantized models are supported
+- [09/2024] Now we support PEFT(https://huggingface.co/docs/peft/index) models
 - [08/2024] Added Support for inference optimization technique ```continuous batching```
 - [08/2024] Added support for [Jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b)
 - [08/2024] Added support for [Jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat)

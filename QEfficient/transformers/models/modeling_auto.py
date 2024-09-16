@@ -20,7 +20,7 @@ from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbits
 from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig
 from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
-from QEfficient.utils.constants import QEFF_MODELS_DIR
+from QEfficient.utils._utils import get_qpc_dir_name_infer, qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 # Dictionary that defines the interface from transformers to be used underneath the QEFF interface
@@ -187,6 +187,11 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
             if isinstance(self.model.config.quantization_config, QEffGPTQConfig):
                 self._pytorch_transforms.insert(0, GPTQToMatmulNbitsTransform)
+        else:
+            if AwqToMatmulNbitsTransform in self._pytorch_transforms:
+                self._pytorch_transforms.remove(AwqToMatmulNbitsTransform)
+            if GPTQToMatmulNbitsTransform in self._pytorch_transforms:
+                self._pytorch_transforms.remove(GPTQToMatmulNbitsTransform)
 
         for transform in self._pytorch_transforms:
             transform.apply(self.model)
@@ -318,8 +323,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
         self.export()
 
-        qpc_base_dir_name = get_qpc_dir_path(
-            model_card_name=self.model_card_name,
+        # Prepare qpc dir path
+        qpc_base_dir_name = get_qpc_dir_name_infer(
             num_cores=num_cores,
             mos=mos,
             batch_size=batch_size,
@@ -328,19 +333,15 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxfp6=mxfp6,
             mxint8=mxint8,
             device_group=device_group,
-            full_batch_size=self.full_batch_size,
+            full_batch_size=full_batch_size,
         )
-        qpc_base_dir_name = (
-            os.path.dirname(qpc_base_dir_name) + "_" + qpc_dir_suffix if qpc_dir_suffix else qpc_base_dir_name
-        )
-        model_card_dir = os.path.join(QEFF_MODELS_DIR, str(self.model_card_name))
-        os.makedirs(model_card_dir, exist_ok=True)
-        qpc_dir_path = os.path.join(model_card_dir, qpc_base_dir_name)
+        qpc_base_dir_name = qpc_base_dir_name + "_" + qpc_dir_suffix if qpc_dir_suffix else qpc_base_dir_name
+        _, qpc_dir_path = qpc_exists(model_name=self.model_card_name, qpc_base_dir_name=qpc_base_dir_name)
 
         # Compile
         self.qpc_path = QEfficient.compile(
             onnx_path=self.onnx_path,
-            qpc_path=qpc_dir_path,
+            qpc_path=os.path.dirname(qpc_dir_path),
             num_cores=num_cores,
             device_group=device_group,
             aic_enable_depth_first=aic_enable_depth_first,

@@ -13,7 +13,7 @@ from typing import List, Optional
 import QEfficient
 from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
+from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
 
@@ -78,7 +78,7 @@ def main(
     )
 
     # Handle qpc generation
-    if qpc_exists(qpc_dir_path):
+    if os.path.isdir(qpc_dir_path) and os.path.isfile(os.path.join(qpc_dir_path, "programqpc.bin")):
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
     else:
         # Handle onnx model generation
