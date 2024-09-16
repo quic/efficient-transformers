@@ -126,7 +126,6 @@ class QEFFBaseModel(ABC):
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
         """
-        # Base class
         export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
         export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
         onnx_path = export_dir / f"{self.model_name}.onnx"
@@ -200,7 +199,9 @@ class QEFFBaseModel(ABC):
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
         """
-        # Base class
+        if onnx_path is None and self.onnx_path is None:
+            self.export()
+
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
