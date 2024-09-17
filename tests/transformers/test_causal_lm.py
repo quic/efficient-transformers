@@ -105,10 +105,22 @@ def test_causal_lm_hash(QEFFAutoClass, config):
     assert hash_0_0 != hash_1_0
 
 
+@pytest.mark.parametrize(
+    "QEFFAutoClass", [QEFFAutoModelForCausalLM, QEFFAutoModelForCausalLMwithCB], ids=["nocb", "cb"]
+)
 @pytest.mark.parametrize("config", configs, ids=config_id)
-def test_causal_lm_export(config, tmp_path):
+def test_causal_lm_export(QEFFAutoClass, config, tmp_path):
+    if QEFFAutoClass is QEFFAutoModelForCausalLMwithCB and config.model_type in {
+        "codegen",
+        "falcon",
+        "gpt2",
+        "gptj",
+        "mpt",
+    }:
+        pytest.skip()
+
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
-    qeff_model = QEFFAutoModelForCausalLM(model)
+    qeff_model = QEFFAutoClass(model)
     start = perf_counter()
     qeff_model.export(tmp_path)
     end = perf_counter()
@@ -125,6 +137,7 @@ def test_causal_lm_export(config, tmp_path):
     }
     retained_output_names.issubset({x.name for x in onnx_model.graph.input})
 
+    # Check if there is no re-export
     start = perf_counter()
     qeff_model.export(tmp_path)
     end = perf_counter()
@@ -138,12 +151,28 @@ def tmp_cache(tmp_path, monkeypatch):
     yield tmp_path
 
 
+@pytest.mark.parametrize(
+    "QEFFAutoClass", [QEFFAutoModelForCausalLM, QEFFAutoModelForCausalLMwithCB], ids=["nocb", "cb"]
+)
 @pytest.mark.parametrize("config", configs, ids=config_id)
-def test_causal_lm_compile(config, tmp_cache):
+def test_causal_lm_compile(QEFFAutoClass, config, tmp_cache):
+    if QEFFAutoClass is QEFFAutoModelForCausalLMwithCB and config.model_type in {
+        "codegen",
+        "falcon",
+        "gpt2",
+        "gptj",
+        "mpt",
+    }:
+        pytest.skip()
+
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
-    qeff_model = QEFFAutoModelForCausalLM(model)
+    qeff_model = QEFFAutoClass(model)
     start = perf_counter()
-    qeff_model.compile(prefill_seq_len=8, ctx_len=16)
+    compile_params = {"prefill_seq_len": 8, "ctx_len": 16}
+    if QEFFAutoClass is QEFFAutoModelForCausalLMwithCB:
+        compile_params["full_batch_size"] = 32
+        compile_params["decode_batch_size"] = 8
+    qeff_model.compile(**compile_params)
     end = perf_counter()
     compile_time_0 = end - start
     model_path = tmp_cache / (qeff_model.model_name + "-" + qeff_model.model_hash)
@@ -160,7 +189,7 @@ def test_causal_lm_compile(config, tmp_cache):
 
     # Check if there is no re-compilation
     start = perf_counter()
-    qeff_model.compile(prefill_seq_len=8, ctx_len=16)
+    qeff_model.compile(**compile_params)
     end = perf_counter()
     compile_time_1 = end - start
     assert compile_time_1 < 0.01 * compile_time_0
