@@ -1,7 +1,7 @@
 {
     "license": "SEE LICENSE IN LICENSE FILE",
     "model_name" : ["gpt2","lu-vae/llama-68m-fft"],
-    "num_cores" : [14],
+    "num_cores" : [16],
     "prompt" : ["My name is"],
     "prompts_txt_file_path" : ["examples/prompts.txt"],
     "aic_enable_depth_first" : [1],
