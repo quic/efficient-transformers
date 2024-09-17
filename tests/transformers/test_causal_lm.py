@@ -6,7 +6,9 @@
 # ----------------------------------------------------------------------------
 
 import copy
+from time import perf_counter
 
+import onnx
 import pytest
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 
@@ -92,3 +94,64 @@ def test_causal_lm_hash(config):
     assert hash_1_0 == hash_1_1
 
     assert hash_0_0 != hash_1_0
+
+
+@pytest.mark.parametrize("config", configs, ids=config_id)
+def test_causal_lm_export(config, tmp_path):
+    model = AutoModelForCausalLM.from_config(config, **model_kwargs)
+    qeff_model = QEFFAutoModelForCausalLM(model)
+    start = perf_counter()
+    qeff_model.export(tmp_path)
+    end = perf_counter()
+    export_time_0 = end - start
+    model_path = tmp_path.with_name(tmp_path.name + "-" + qeff_model.model_hash)
+    assert model_path.is_dir()
+    assert qeff_model.onnx_path.is_file()
+    assert qeff_model.onnx_path.relative_to(model_path).parts == (qeff_model.model_name + ".onnx",)
+
+    # Check if the KV-cache inputs and outputs are created
+    onnx_model = onnx.load(qeff_model.onnx_path, load_external_data=False)
+    retained_output_names = {
+        x.name[: -len("_RetainedState")] for x in onnx_model.graph.output if x.name.endswith("_RetainedState")
+    }
+    retained_output_names.issubset({x.name for x in onnx_model.graph.input})
+
+    start = perf_counter()
+    qeff_model.export(tmp_path)
+    end = perf_counter()
+    export_time_1 = end - start
+    assert export_time_1 < 0.01 * export_time_0
+
+
+@pytest.fixture
+def tmp_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr("QEfficient.base.modeling_qeff.QEFF_HOME", tmp_path)
+    yield tmp_path
+
+
+@pytest.mark.parametrize("config", configs, ids=config_id)
+def test_causal_lm_compile(config, tmp_cache):
+    model = AutoModelForCausalLM.from_config(config, **model_kwargs)
+    qeff_model = QEFFAutoModelForCausalLM(model)
+    start = perf_counter()
+    qeff_model.compile(prefill_seq_len=8, ctx_len=16)
+    end = perf_counter()
+    compile_time_0 = end - start
+    model_path = tmp_cache / (qeff_model.model_name + "-" + qeff_model.model_hash)
+
+    # Check if ONNX is exported properly
+    assert model_path.is_dir()
+    assert qeff_model.onnx_path.is_file()
+    assert qeff_model.onnx_path.relative_to(model_path).parts == (qeff_model.model_name + ".onnx",)
+
+    # Check if QPC is compiled properly
+    assert qeff_model.qpc_path.is_dir()
+    assert (qeff_model.qpc_path / "programqpc.bin").is_file()
+    assert qeff_model.qpc_path.relative_to(tmp_cache).parts[0] == qeff_model.model_name + "-" + qeff_model.model_hash
+
+    # Check if there is no re-compilation
+    start = perf_counter()
+    qeff_model.compile(prefill_seq_len=8, ctx_len=16)
+    end = perf_counter()
+    compile_time_1 = end - start
+    assert compile_time_1 < 0.01 * compile_time_0
