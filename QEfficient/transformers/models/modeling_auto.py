@@ -220,11 +220,8 @@ class QEFFAutoModelForCausalLMwithCB(QEFFAutoModelForCausalLM):
                 dynamic_axes[f"past_{kv}.{i}"] = {0: "full_batch_size", 2: "ctx_len"}
                 output_names.append(f"past_{kv}.{i}_RetainedState")
 
-        input_names = list(dynamic_axes.keys())
-
         return self._export(
             example_inputs,
-            input_names,
             output_names,
             dynamic_axes,
             export_dir=export_dir,
