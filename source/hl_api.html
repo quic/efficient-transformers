@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html class="writer-html5" lang="en">
 <head>
-  <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>High Level API &mdash; efficient-transformers main documentation</title>
@@ -66,7 +66,7 @@
 <p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-execute"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
 </ul>
@@ -86,7 +86,19 @@
 </li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#qeffautopeftmodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#qeffautopeftmodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.active_adapter"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM.active_adapter</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.compile"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM.compile()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.export"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM.export()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.from_pretrained"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM.from_pretrained()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.generate"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM.generate()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.load_adapter"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM.load_adapter()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.set_adapter"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM.set_adapter()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">export</span></code></a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_hf_to_cloud_ai_100.qualcomm_efficient_converter"><code class="docutils literal notranslate"><span class="pre">qualcomm_efficient_converter()</span></code></a></li>
 </ul>
@@ -318,6 +330,164 @@ Please note that this method does not require any input arguments.”</p>
 </section>
 <section id="qeffautopeftmodelforcausallm">
 <h2><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM</span></code><a class="headerlink" href="#qeffautopeftmodelforcausallm" title="Permalink to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.peft.auto.QEffAutoPeftModelForCausalLM">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.peft.auto.</span></span><span class="sig-name descname"><span class="pre">QEffAutoPeftModelForCausalLM</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Module</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/peft/auto.html#QEffAutoPeftModelForCausalLM"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM" title="Permalink to this definition"></a></dt>
+<dd><p>QEff class for loading models with PEFT adapters (Only LoRA is supported currently).
+Once exported and compiled for an adapter, the same can be utilized for another adapter with same base model and adapter config.</p>
+<dl class="simple">
+<dt>Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">model (nn.Module)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>PyTorch model</p>
+</dd>
+</dl>
+</dd>
+</dl>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">QEfficient</span> <span class="kn">import</span> <span class="n">QEffAutoPeftModelForCausalLM</span>
+
+<span class="n">m</span> <span class="o">=</span> <span class="n">QEffAutoPeftModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;predibase/magicoder&quot;</span><span class="p">,</span> <span class="s2">&quot;magicoder&quot;</span><span class="p">)</span>
+<span class="n">m</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
+<span class="n">m</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">prefill_seq_len</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">ctx_len</span><span class="o">=</span><span class="mi">1024</span><span class="p">)</span>
+
+<span class="n">inputs</span> <span class="o">=</span> <span class="o">...</span>  <span class="c1"># A coding prompt</span>
+<span class="n">outputs</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
+
+<span class="n">inputs</span> <span class="o">=</span> <span class="o">...</span>  <span class="c1"># A math prompt</span>
+<span class="n">m</span><span class="o">.</span><span class="n">load_adapter</span><span class="p">(</span><span class="s2">&quot;predibase/gsm8k&quot;</span><span class="p">,</span> <span class="s2">&quot;gsm8k&quot;</span><span class="p">)</span>
+<span class="n">m</span><span class="o">.</span><span class="n">set_adapter</span><span class="p">(</span><span class="s2">&quot;gsm8k&quot;</span><span class="p">)</span>
+<span class="n">outputs</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
+</pre></div>
+</div>
+<dl class="py property">
+<dt class="sig sig-object py" id="QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.active_adapter">
+<em class="property"><span class="pre">property</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">active_adapter</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.active_adapter" title="Permalink to this definition"></a></dt>
+<dd><p>Currently active adapter to be used for inference</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.compile">
+<span class="sig-name descname"><span class="pre">compile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">onnx_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compile_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prefill_seq_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_devices</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_cores</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">16</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxfp6_matmul</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxint8_kv_cache</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">compiler_options</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/peft/auto.html#QEffAutoPeftModelForCausalLM.compile"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.compile" title="Permalink to this definition"></a></dt>
+<dd><p>Compile the exported onnx to run on AI100</p>
+<dl class="simple">
+<dt>Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">onnx_path (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Onnx file to compile</p>
+</dd>
+<dt class="field-even">compile_dir (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Directory path to compile the qpc. A suffix is added to the directory path to avoid reusing same qpc for different parameters.</p>
+</dd>
+<dt class="field-odd">batch_size (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Batch size to compile for. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">1</span></code>.</p>
+</dd>
+<dt class="field-even">prefill_seq_len (int)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Prefill sequence length to compile for. Prompt will be chunked according to this length.</p>
+</dd>
+<dt class="field-odd">ctx_len (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Context length to allocate space for KV-cache tensors.</p>
+</dd>
+<dt class="field-even">num_devices (int)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Number of devices to compile for. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">1</span></code>.</p>
+</dd>
+<dt class="field-odd">num_cores (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Number of cores to utilize in each device <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">16</span></code>.</p>
+</dd>
+<dt class="field-even">mxfp6_matmul (bool)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Use MXFP6 to compress weights for MatMul nodes to run faster on device. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False</span></code>.</p>
+</dd>
+<dt class="field-odd">mxint8_kv_cache (bool)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Use MXINT8 to compress KV-cache on device to access and update KV-cache faster. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False</span></code>.</p>
+</dd>
+<dt class="field-even">compiler_options<span class="colon">:</span></dt>
+<dd class="field-even"><p>Pass any compiler option as input. Any flag that is supported by <code class="docutils literal notranslate"><span class="pre">qaic-exec</span></code> can be passed. Params are converted to flags as below:
+- aic_num_cores=16 -&gt; -aic-num-cores=16
+- convert_to_fp16=True -&gt; -convert-to-fp16</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.export">
+<span class="sig-name descname"><span class="pre">export</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">export_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/peft/auto.html#QEffAutoPeftModelForCausalLM.export"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.export" title="Permalink to this definition"></a></dt>
+<dd><p>Export the pytorch model to ONNX.</p>
+<dl class="simple">
+<dt>Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">export_dir (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.from_pretrained">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_pretrained</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">pretrained_name_or_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/peft/auto.html#QEffAutoPeftModelForCausalLM.from_pretrained"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.from_pretrained" title="Permalink to this definition"></a></dt>
+<dd><dl class="simple">
+<dt>Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">pretrained_name_or_path (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Model card name from huggingface or local path to model directory.</p>
+</dd>
+<dt class="field-even">args, kwargs<span class="colon">:</span></dt>
+<dd class="field-even"><p>Additional arguments to pass to peft.AutoPeftModelForCausalLM.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.generate">
+<span class="sig-name descname"><span class="pre">generate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Tensor</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">ndarray</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generation_config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">GenerationConfig</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stopping_criteria</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">StoppingCriteria</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">streamer</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">BaseStreamer</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">ndarray</span></span></span><a class="reference internal" href="../_modules/QEfficient/peft/auto.html#QEffAutoPeftModelForCausalLM.generate"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.generate" title="Permalink to this definition"></a></dt>
+<dd><p>Generate tokens from compiled binary. This method takes same parameters as huggingface model.generate() method.</p>
+<dl class="simple">
+<dt>Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">inputs<span class="colon">:</span></dt>
+<dd class="field-odd"><p>input_ids</p>
+</dd>
+<dt class="field-even">generation_config<span class="colon">:</span></dt>
+<dd class="field-even"><p>Merge this generation_config with model-specific for the current generation.</p>
+</dd>
+<dt class="field-odd">stopping_criteria<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Pass custom stopping_criteria to stop at a specific point in generation.</p>
+</dd>
+<dt class="field-even">streamer<span class="colon">:</span></dt>
+<dd class="field-even"><p>Streamer to put the generated tokens into.</p>
+</dd>
+<dt class="field-odd">kwargs<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Additional parameters for generation_config or to be passed to the model while generating.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.load_adapter">
+<span class="sig-name descname"><span class="pre">load_adapter</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">adapter_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/peft/auto.html#QEffAutoPeftModelForCausalLM.load_adapter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.load_adapter" title="Permalink to this definition"></a></dt>
+<dd><p>Loads a new adapter from huggingface hub or local path</p>
+<dl class="simple">
+<dt>Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">model_id (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Adapter model ID from huggingface hub or local path</p>
+</dd>
+<dt class="field-even">adapter_name (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Adapter name to be used to set this adapter as current</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.set_adapter">
+<span class="sig-name descname"><span class="pre">set_adapter</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">adapter_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/peft/auto.html#QEffAutoPeftModelForCausalLM.set_adapter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.set_adapter" title="Permalink to this definition"></a></dt>
+<dd><p>Sets active adapter from one of the loaded adapters</p>
+</dd></dl>
+
+</dd></dl>
+
 </section>
 <section id="module-QEfficient.exporter.export_hf_to_cloud_ai_100">
 <span id="export"></span><h2><code class="docutils literal notranslate"><span class="pre">export</span></code><a class="headerlink" href="#module-QEfficient.exporter.export_hf_to_cloud_ai_100" title="Permalink to this heading"></a></h2>
