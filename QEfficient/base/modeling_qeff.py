@@ -6,6 +6,7 @@
 # ----------------------------------------------------------------------------
 
 import hashlib
+import inspect
 import json
 import logging
 import shutil
@@ -107,7 +108,6 @@ class QEFFBaseModel(ABC):
     def _export(
         self,
         example_inputs: Dict[str, torch.Tensor],
-        input_names: List[str],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
         export_kwargs: Dict[str, any] = {},
@@ -119,7 +119,6 @@ class QEFFBaseModel(ABC):
 
         Args:
             :example_inputs (dict): Sample inputs to trace the model.
-            :input_names (list): names to assign to the input nodes of the graph, in order.
             :output_names (list): names to assign to the output nodes of the graph, in order.
             :dynamic_axes (dict): Same as dynamic_axes parameter to be passed to `torch.onnx.export`.
             :export_kwargs (dict): Additional arguments to be passed to `torch.onnx.export`.
@@ -136,6 +135,17 @@ class QEFFBaseModel(ABC):
         tmp_onnx_dir = export_dir / "onnx_tmp"
         tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create input_names from example_inputs
+        input_names = []
+        for param in inspect.signature(self.model.forward).parameters:
+            if param in example_inputs:
+                if param == "past_key_values":
+                    for i in range(len(example_inputs["past_key_values"])):
+                        input_names.append(f"past_key.{i}")
+                        input_names.append(f"past_value.{i}")
+                else:
+                    input_names.append(param)
 
         try:
             torch.onnx.export(

@@ -176,11 +176,8 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
                 dynamic_axes[f"past_{kv}.{i}"] = {0: "batch_size", 2: "ctx_len"}
                 output_names.append(f"past_{kv}.{i}_RetainedState")
 
-        input_names = list(dynamic_axes.keys())
-
         return self._export(
             example_inputs,
-            input_names,
             output_names,
             dynamic_axes,
             export_kwargs={"do_constant_folding": False},  # To avoid merging adapter weights with base weights
