@@ -47,6 +47,8 @@ ONNX_EXPORT_EXAMPLE_BATCH_SIZE = 1
 ONNX_EXPORT_EXAMPLE_SEQ_LEN = 32
 ONNX_EXPORT_EXAMPLE_FBS = 4
 
+COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-aic-hw-version=2.0"]
+
 
 class Constants:
     # Export Constants.

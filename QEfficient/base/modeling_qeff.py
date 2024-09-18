@@ -22,6 +22,7 @@ import torch
 from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils import constants
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
 logger = logging.getLogger(__name__)
@@ -227,7 +228,7 @@ class QEFFBaseModel(ABC):
         if not onnx_path.is_file():
             raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
 
-        command = ["/opt/qti-aic/exec/qaic-exec", f"-m={onnx_path}", "-aic-hw", "-aic-hw-version=2.0"]
+        command = constants.COMPILER + [f"-m={onnx_path}"]
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
             if isinstance(value, bool):
