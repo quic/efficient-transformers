@@ -9,14 +9,18 @@ import os
 
 import numpy as np
 import pytest
+from transformers import AutoModelForCausalLM
+from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 
 from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, QEffAwqQuantizer
+from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig, QEffGPTQQuantizer
+from QEfficient.utils import hf_download
 from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
-from tests.utils import load_pytorch_model, replace_transformers_quantizers
 
 test_models = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -39,6 +43,38 @@ test_models = [
 ]
 
 
+# TODO: Make this a fixture? Or better, always update the quantizer and config in transformers.
+# When a user imports QEfficient, these are always available.
+def replace_transformers_quantizers():
+    AUTO_QUANTIZER_MAPPING.update({"awq": QEffAwqQuantizer, "gptq": QEffGPTQQuantizer})
+    AUTO_QUANTIZATION_CONFIG_MAPPING.update({"awq": QEffAwqConfig, "gptq": QEffGPTQConfig})
+
+
+def load_causal_lm_model(model_config):
+    """
+    Function to load model from huggingface and transform to KV model
+    --------
+
+    :model_config: Dict
+
+    :return model_hf, params
+    """
+    model_path = hf_download(
+        repo_id=model_config["model_name"],
+        ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
+    )
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        use_cache=True,
+        num_hidden_layers=model_config["n_layer"],
+        attn_implementation="eager",
+        low_cpu_mem_usage=False,
+    )  # Run models for single layers only
+    params = sum(p.numel() for p in model_hf.parameters())
+    model_hf.eval()
+    return model_hf, params
+
+
 @pytest.mark.causal_lm
 @pytest.mark.parametrize("model_name", test_models)
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
@@ -55,7 +91,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     model_config = {"model_name": model_name}
     model_config["n_layer"] = n_layer
 
-    model_hf, _ = load_pytorch_model(model_config)
+    model_hf, _ = load_causal_lm_model(model_config)
 
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
@@ -108,7 +144,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     ).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."
 
     # testing for CB models
-    model_hf, _ = load_pytorch_model(model_config)
+    model_hf, _ = load_causal_lm_model(model_config)
     full_batch_size = 1
     api_runner = ApiRunner(
         batch_size,
