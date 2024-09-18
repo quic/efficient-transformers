@@ -292,7 +292,20 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
-        subprocess.run(command).check_returncode()
+        try:
+            subprocess.run(command, capture_output=True, check=True)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                "\n".join(
+                    [
+                        "Compilation failed!",
+                        f"Compiler command: {e.cmd}",
+                        f"Compiler exitcode: {e.returncode}",
+                        "Compiler stderr:",
+                        e.stderr.decode(),
+                    ]
+                )
+            )
 
         self.qpc_path = qpc_path
         return qpc_path
