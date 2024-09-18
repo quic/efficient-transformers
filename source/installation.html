@@ -70,7 +70,7 @@
 <p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-execute"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
 </ul>
@@ -154,7 +154,12 @@ python3.8<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> 
 pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>pip
 
 <span class="c1"># Clone and Install the QEfficient Repo.</span>
-pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/quic/efficient-transformers
+pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/quic/efficient-transformers<span class="w"> </span>--extra-index-url<span class="w"> </span>https://download.pytorch.org/whl/cpu
+
+<span class="c1"># Or build wheel package using the below command.</span>
+pip<span class="w"> </span>install<span class="w"> </span>build<span class="w"> </span>wheel
+python<span class="w"> </span>-m<span class="w"> </span>build<span class="w"> </span>--wheel<span class="w"> </span>--outdir<span class="w"> </span>dist
+pip<span class="w"> </span>install<span class="w"> </span>dist/QEfficient-0.0.1.dev0-py3-none-any.whl<span class="w"> </span>--extra-index-url<span class="w"> </span>https://download.pytorch.org/whl/cpu
 </pre></div>
 </div>
 </section>
