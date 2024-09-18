@@ -11,7 +11,7 @@ import json
 import logging
 import shutil
 import subprocess
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -55,10 +55,12 @@ class QEFFBaseModel(ABC):
             self.model, transformed = transform.apply(self.model)
         logger.info("Pytorch transforms applied")
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def model_name(self) -> str: ...
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def model_hash(self) -> str: ...
 
     @abstractmethod
