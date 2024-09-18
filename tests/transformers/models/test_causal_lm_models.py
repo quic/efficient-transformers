@@ -71,7 +71,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
     pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
-    qeff_model = QEFFAutoModelForCausalLM(model_hf, f"{model_name}")
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
 
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
