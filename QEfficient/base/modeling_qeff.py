@@ -11,6 +11,7 @@ import json
 import logging
 import shutil
 import subprocess
+import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -51,9 +52,15 @@ class QEFFBaseModel(ABC):
         self.qpc_session: Optional[QAICInferenceSession] = None
 
         # Apply the transformations
+        any_transformed = False
         for transform in self._pytorch_transforms:
             self.model, transformed = transform.apply(self.model)
-        logger.info("Pytorch transforms applied")
+            any_transformed = any_transformed or transformed
+
+        if not any_transformed:
+            warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
+        else:
+            logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
     @property
     @abstractmethod

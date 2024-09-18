@@ -56,6 +56,15 @@ configs = [
 model_kwargs = {"attn_implementation": "eager"}
 
 
+@pytest.mark.parametrize(
+    "QEFFAutoClass", [QEFFAutoModelForCausalLM, QEFFAutoModelForCausalLMwithCB], ids=["nocb", "cb"]
+)
+def test_causal_lm_unsupported(QEFFAutoClass):
+    model = AutoModelForCausalLM.from_config(AutoConfig.for_model("opt"))
+    with pytest.warns():
+        QEFFAutoClass(model)
+
+
 def config_id(config):
     return config.model_type
 
