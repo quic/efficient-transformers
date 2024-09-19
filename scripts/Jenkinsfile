@@ -36,7 +36,7 @@ pipeline
                     sh '''
                     . preflight_qeff/bin/activate
                     export TOKENIZERS_PARALLELISM=false
-                    pytest tests --ignore tests/cloud -n 4 --junitxml=tests/tests_log1.xml
+                    pytest tests --ignore tests/cloud --junitxml=tests/tests_log1.xml
                     pytest tests/cloud --junitxml=tests/tests_log2.xml
                     junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log.xml
                     deactivate

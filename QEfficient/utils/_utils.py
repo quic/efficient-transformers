@@ -199,7 +199,7 @@ def check_and_assign_cache_dir(local_model_dir, cache_dir):
 
 def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast]) -> None:
     """
-    Checks and fixes tokenizer paddding side and pad_token_id viability.
+    Checks and fixes tokenizer padding side and pad_token_id viability.
     --------
 
     tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` - Pass model tokenizer to check and fix.
@@ -251,7 +251,7 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
             n_heads = config.num_attention_heads
         d_head = config.hidden_size // config.num_attention_heads
     else:
-        raise ValueError("Invalid model configuration: n_head/n_heads or num_key_value_heads not found.")
+        raise ValueError("Invalid model configuration: n_head/d_heads or num_key_value_heads not found.")
     padding_shape = [batch_size, n_heads, seq_len, d_head]
     return padding_shape
 
