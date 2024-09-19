@@ -16,7 +16,7 @@ from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
-from tests.utils import load_pytorch_model
+from tests.utils import load_pytorch_model, replace_transformers_quantizers
 
 test_models = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -41,6 +41,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     Test function to validate the model before and after KV changes on Pytorch
     :param model_name: Name of model.
     """
+    replace_transformers_quantizers()
     if model_name == "microsoft/Phi-3-mini-4k-instruct":
         n_layer = 2  # test only 2 layer models
     else:
@@ -88,7 +89,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     _, test_qpcs_path = compile_kv_model_on_cloud_ai_100(
         onnx_path=onnx_model_path,
         specializations_json="scripts/specializations.json",
-        num_cores=16,
+        num_cores=14,
         base_path=tests_qpc_dir,
         mxfp6=False,
         custom_io_path=os.path.join(base_path, "custom_io_fp16.yaml"),
@@ -101,19 +102,8 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         ort_tokens == cloud_ai_100_tokens[:, :gen_len]
     ).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."
 
-    # FIXME refactor below code and make it modular and remove redundancy
-    if model_name == "microsoft/Phi-3-mini-4k-instruct":
-        n_layer = 2  # test only 2 layer models
-    else:
-        n_layer = 1
-
-    model_config = {"model_name": model_name}
-    model_config["n_layer"] = n_layer
-
+    # testing for CB models
     model_hf, _ = load_pytorch_model(model_config)
-
-    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
-    config = model_hf.config
     full_batch_size = 1
     api_runner = ApiRunner(
         batch_size,
@@ -141,7 +131,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     _, test_qpcs_path = compile_kv_model_on_cloud_ai_100(
         onnx_path=onnx_model_path,
         specializations_json="scripts/specializations.json",
-        num_cores=16,
+        num_cores=14,
         base_path=tests_qpc_dir,
         mxfp6=False,
         custom_io_path=os.path.join(base_path, "custom_io_fp16.yaml"),
@@ -150,7 +140,6 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
     cloud_ai_100_tokens = api_runner.run_kv_model_on_cloud_ai_100(test_qpcs_path)
 
-    # # FIXME: here skiping the first token from comparison
     pytorch_hf_tokens = pytorch_hf_tokens[:, : api_runner.gen_len]
     cloud_ai_100_tokens = cloud_ai_100_tokens[:, : api_runner.gen_len]
 
