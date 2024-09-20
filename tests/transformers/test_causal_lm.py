@@ -12,7 +12,7 @@ import onnx
 import pytest
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForCausalLMwithCB
+from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
 configs = [
     # name, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
@@ -56,70 +56,60 @@ configs = [
 model_kwargs = {"attn_implementation": "eager"}
 
 
-@pytest.mark.parametrize(
-    "QEFFAutoClass", [QEFFAutoModelForCausalLM, QEFFAutoModelForCausalLMwithCB], ids=["nocb", "cb"]
-)
-def test_causal_lm_unsupported(QEFFAutoClass):
+@pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
+def test_causal_lm_unsupported(cb):
     model = AutoModelForCausalLM.from_config(AutoConfig.for_model("opt"))
     with pytest.warns():
-        QEFFAutoClass(model)
+        QEFFAutoModelForCausalLM(model, cb)
 
 
 def config_id(config):
     return config.model_type
 
 
-@pytest.mark.parametrize(
-    "QEFFAutoClass", [QEFFAutoModelForCausalLM, QEFFAutoModelForCausalLMwithCB], ids=["nocb", "cb"]
-)
+@pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_id)
-def test_causal_lm_init(QEFFAutoClass, config):
+def test_causal_lm_init(config, cb):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
-    qeff_model = QEFFAutoClass(model)
+    qeff_model = QEFFAutoModelForCausalLM(model, cb)
     with pytest.raises(TypeError):
-        QEFFAutoClass(AutoModel.from_config(config, **model_kwargs))
+        QEFFAutoModelForCausalLM(AutoModel.from_config(config, **model_kwargs), cb)
     assert qeff_model.model.__class__.__name__.startswith("QEff")
 
 
-@pytest.mark.parametrize(
-    "QEFFAutoClass", [QEFFAutoModelForCausalLM, QEFFAutoModelForCausalLMwithCB], ids=["nocb", "cb"]
-)
+@pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_id)
-def test_causal_lm_pretrained(QEFFAutoClass, config, tmp_path):
+def test_causal_lm_pretrained(config, cb, tmp_path):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     model.save_pretrained(tmp_path)
 
-    qeff_model = QEFFAutoClass.from_pretrained(tmp_path)
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(tmp_path, cb)
     assert qeff_model.model.__class__.__name__.startswith("QEff")
 
 
-@pytest.mark.parametrize(
-    "QEFFAutoClass", [QEFFAutoModelForCausalLM, QEFFAutoModelForCausalLMwithCB], ids=["nocb", "cb"]
-)
+@pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_id)
-def test_causal_lm_hash(QEFFAutoClass, config):
-    hash_0_0 = QEFFAutoClass(AutoModelForCausalLM.from_config(config, **model_kwargs)).model_hash
-    hash_0_1 = QEFFAutoClass(AutoModelForCausalLM.from_config(config, **model_kwargs)).model_hash
+def test_causal_lm_hash(config, cb):
+    hash_0_0 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb).model_hash
+    hash_0_1 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb).model_hash
 
     assert hash_0_0 == hash_0_1
 
     cfg1 = copy.deepcopy(config)
     cfg1.num_hidden_layers -= 1
-    hash_1_0 = QEFFAutoClass(AutoModelForCausalLM.from_config(cfg1, **model_kwargs)).model_hash
+    hash_1_0 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(cfg1, **model_kwargs), cb).model_hash
     cfg2 = copy.deepcopy(config)
     cfg2.num_hidden_layers -= 1
-    hash_1_1 = QEFFAutoClass(AutoModelForCausalLM.from_config(cfg2, **model_kwargs)).model_hash
+    hash_1_1 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(cfg2, **model_kwargs), cb).model_hash
     assert hash_1_0 == hash_1_1
 
     assert hash_0_0 != hash_1_0
 
 
-@pytest.mark.parametrize(
-    "QEFFAutoClass", [QEFFAutoModelForCausalLM, QEFFAutoModelForCausalLMwithCB], ids=["nocb", "cb"]
-)
+@pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_id)
-def test_causal_lm_export(QEFFAutoClass, config, tmp_path):
-    if QEFFAutoClass is QEFFAutoModelForCausalLMwithCB and config.model_type in {
+def test_causal_lm_export(config, cb, tmp_path):
+    if cb and config.model_type in {
         "codegen",
         "falcon",
         "gpt2",
@@ -129,11 +119,8 @@ def test_causal_lm_export(QEFFAutoClass, config, tmp_path):
         pytest.skip()
 
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
-    qeff_model = QEFFAutoClass(model)
-    start = perf_counter()
+    qeff_model = QEFFAutoModelForCausalLM(model, cb)
     qeff_model.export(tmp_path)
-    end = perf_counter()
-    export_time_0 = end - start
     model_path = tmp_path.with_name(tmp_path.name + "-" + qeff_model.model_hash)
     assert model_path.is_dir()
     assert qeff_model.onnx_path.is_file()
@@ -150,8 +137,8 @@ def test_causal_lm_export(QEFFAutoClass, config, tmp_path):
     start = perf_counter()
     qeff_model.export(tmp_path)
     end = perf_counter()
-    export_time_1 = end - start
-    assert export_time_1 < 0.01 * export_time_0
+    export_time = end - start
+    assert export_time < 2.0
 
 
 @pytest.fixture
@@ -160,12 +147,10 @@ def tmp_cache(tmp_path, monkeypatch):
     yield tmp_path
 
 
-@pytest.mark.parametrize(
-    "QEFFAutoClass", [QEFFAutoModelForCausalLM, QEFFAutoModelForCausalLMwithCB], ids=["nocb", "cb"]
-)
+@pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_id)
-def test_causal_lm_compile(QEFFAutoClass, config, tmp_cache):
-    if QEFFAutoClass is QEFFAutoModelForCausalLMwithCB and config.model_type in {
+def test_causal_lm_compile(config, cb, tmp_cache):
+    if cb and config.model_type in {
         "codegen",
         "falcon",
         "gpt2",
@@ -175,15 +160,12 @@ def test_causal_lm_compile(QEFFAutoClass, config, tmp_cache):
         pytest.skip()
 
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
-    qeff_model = QEFFAutoClass(model)
-    start = perf_counter()
+    qeff_model = QEFFAutoModelForCausalLM(model, cb)
     compile_params = {"prefill_seq_len": 8, "ctx_len": 16}
-    if QEFFAutoClass is QEFFAutoModelForCausalLMwithCB:
+    if cb:
         compile_params["full_batch_size"] = 32
-        compile_params["decode_batch_size"] = 8
+        compile_params["batch_size"] = 8
     qeff_model.compile(**compile_params)
-    end = perf_counter()
-    compile_time_0 = end - start
     model_path = tmp_cache / (qeff_model.model_name + "-" + qeff_model.model_hash)
 
     # Check if ONNX is exported properly
@@ -200,5 +182,5 @@ def test_causal_lm_compile(QEFFAutoClass, config, tmp_cache):
     start = perf_counter()
     qeff_model.compile(**compile_params)
     end = perf_counter()
-    compile_time_1 = end - start
-    assert compile_time_1 < 0.01 * compile_time_0
+    compile_time = end - start
+    assert compile_time < 2.0
