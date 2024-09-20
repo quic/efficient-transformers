@@ -26,7 +26,7 @@ class ApiRunner:
     4. ``ONNX`` model on Cloud AI 100
     """
 
-    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len):
+    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size=None):
         """
         Initialization
 
@@ -45,10 +45,48 @@ class ApiRunner:
             prompt=prompt,
             prompt_len=prompt_len,
             ctx_len=ctx_len,
-            full_batch_size=None,
+            full_batch_size=full_batch_size,
         )
 
         self.gen_len = self.input_handler.ctx_len - self.input_handler.prompt_len
+
+    @torch.no_grad()
+    def run_hf_model_on_pytorch_CB(self, model_hf):
+        """
+        Function responsible for running HuggingFace ``PyTorch`` model and return the output tokens
+
+        ``Mandatory`` Args:
+            :model_hf (torch.nn.module): Original ``PyTorch`` model
+
+        Return:
+            :numpy.ndarray: Generated output tokens
+        """
+        input_ids = [
+            self.input_handler.tokenizer.encode(prompt, return_tensors="pt") for prompt in self.input_handler.prompt
+        ]
+
+        generated_ids = []
+
+        for idx, inp_ids in enumerate(input_ids):
+            gen_ids = inp_ids.clone()
+            for _ in range(self.gen_len):
+                outputs = model_hf(input_ids=gen_ids)
+                logits = outputs.logits[:, -1, :]
+                predicted_token_id = torch.argmax(logits, dim=-1)
+                gen_ids = torch.cat([gen_ids, predicted_token_id.unsqueeze(-1)], dim=-1)
+
+            gen_ids = gen_ids.detach().numpy()
+            gen_ids = gen_ids[:, inp_ids.shape[1] :]
+            generated_ids.append(gen_ids)
+
+        generated_texts = [
+            self.input_handler.tokenizer.decode(gen_ids.squeeze().tolist(), skip_special_tokens=True)
+            for gen_ids in generated_ids
+        ]
+        print("Original HF Model Outputs (Torch CPU): \n")
+        print("Prompt:", repr(self.input_handler.prompt))
+        print("Completion:", repr(generated_texts))
+        return generated_ids
 
     @torch.no_grad()
     def run_hf_model_on_pytorch(self, model_hf):
@@ -193,7 +231,7 @@ class ApiRunner:
             ctx_len=self.input_handler.ctx_len,
             generation_len=self.gen_len,
             stream=False,
-            full_batch_size=None,
+            full_batch_size=self.input_handler.full_batch_size,
         ).cloud_ai_100_exec_kv_helper(
             prompt=self.input_handler.prompt,
             generation_len=self.gen_len,
