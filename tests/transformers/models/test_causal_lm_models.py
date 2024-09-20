@@ -7,6 +7,7 @@
 
 import os
 
+import numpy as np
 import pytest
 
 from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100
@@ -103,3 +104,48 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     assert (
         ort_tokens == cloud_ai_100_tokens[:, :gen_len]
     ).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."
+
+    # testing for CB models
+    model_hf, _ = load_pytorch_model(model_config)
+    full_batch_size = 1
+    api_runner = ApiRunner(
+        batch_size,
+        tokenizer,
+        config,
+        Constants.INPUT_STR,
+        Constants.PROMPT_LEN,
+        Constants.CTX_LEN,
+        full_batch_size,
+    )
+
+    pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
+    pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
+
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, f"{model_name}")
+    onnx_model_path = qeff_model.export()
+
+    if not get_available_device_id():
+        pytest.skip("No available devices to run model on Cloud AI 100")
+
+    base_path = os.path.dirname(onnx_model_path)
+    tests_qpc_dir = os.path.join(base_path, "tests_qpc_cb")
+    os.makedirs(tests_qpc_dir, exist_ok=True)
+
+    _, test_qpcs_path = compile_kv_model_on_cloud_ai_100(
+        onnx_path=onnx_model_path,
+        specializations_json="scripts/specializations.json",
+        num_cores=14,
+        base_path=tests_qpc_dir,
+        mxfp6=False,
+        custom_io_path=os.path.join(base_path, "custom_io_fp16.yaml"),
+        aic_enable_depth_first=False,
+    )
+
+    cloud_ai_100_tokens = api_runner.run_kv_model_on_cloud_ai_100(test_qpcs_path)
+
+    pytorch_hf_tokens = pytorch_hf_tokens[:, : api_runner.gen_len]
+    cloud_ai_100_tokens = cloud_ai_100_tokens[:, : api_runner.gen_len]
+
+    assert (
+        pytorch_hf_tokens == cloud_ai_100_tokens
+    ).all(), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."

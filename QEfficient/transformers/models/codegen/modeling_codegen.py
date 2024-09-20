@@ -13,10 +13,11 @@ import torch
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
-from transformers.cache_utils import DynamicCache
+from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
+    CodeGenBlock,
     CodeGenForCausalLM,
     CodeGenModel,
     apply_rotary_pos_emb,
@@ -78,6 +79,7 @@ class QEffCodeGenAttention(CodeGenAttention):
         position_ids: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = False,
+        batch_index: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
     ) -> Union[
         Tuple[torch.Tensor, Tuple[torch.Tensor]],
@@ -126,7 +128,10 @@ class QEffCodeGenAttention(CodeGenAttention):
         if layer_past is not None:
             # Update the cache_kwargs with position_ids for Cloud AI 100
             past_key_value = layer_past
-            cache_kwargs = {"position_ids": position_ids}
+            cache_kwargs = {
+                "position_ids": position_ids,
+                "batch_index": batch_index,
+            }
             pkv = DynamicCache()
             pkv.key_cache.append(past_key_value[0])
             pkv.value_cache.append(past_key_value[1])
@@ -167,6 +172,7 @@ class QEffCodeGenModel(CodeGenModel):
         past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
@@ -279,6 +285,17 @@ class QEffCodeGenModel(CodeGenModel):
                     use_cache,
                     output_attentions,
                 )
+            elif batch_index is not None:
+                outputs = block(
+                    hidden_states=hidden_states,
+                    layer_past=layer_past,
+                    batch_index=batch_index,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    head_mask=head_mask[i],
+                    use_cache=use_cache,
+                    output_attentions=output_attentions,
+                )
             else:
                 outputs = block(
                     hidden_states=hidden_states,
@@ -331,6 +348,7 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
@@ -351,6 +369,7 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
             past_key_values=past_key_values,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
+            batch_index=batch_index,
             position_ids=position_ids,
             head_mask=head_mask,
             inputs_embeds=inputs_embeds,
@@ -393,3 +412,45 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
         )
+
+
+class QeffCodeGenBlock(CodeGenBlock):
+    # Ignore copy
+
+    def forward(
+        self,
+        hidden_states: Optional[torch.FloatTensor],
+        layer_past: Optional[Cache] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = False,
+        output_attentions: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+    ) -> Union[Tuple[torch.Tensor], Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor, ...]]]]:
+        residual = hidden_states
+        hidden_states = self.ln_1(hidden_states)
+        attn_outputs = self.attn(
+            hidden_states=hidden_states,
+            layer_past=layer_past,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            batch_index=batch_index,
+            head_mask=head_mask,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            cache_position=cache_position,
+        )
+        attn_output = attn_outputs[0]  # output_attn: a, present, (attentions)
+        outputs = attn_outputs[1:]
+
+        feed_forward_hidden_states = self.mlp(hidden_states)
+        hidden_states = attn_output + feed_forward_hidden_states + residual
+
+        if use_cache:
+            outputs = (hidden_states,) + outputs
+        else:
+            outputs = (hidden_states,) + outputs[1:]
+
+        return outputs  # hidden_states, present, (attentions)
