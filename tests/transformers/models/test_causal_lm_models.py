@@ -31,6 +31,9 @@ test_models = [
     "wtang06/mpt-125m-c4",
     "hakurei/gpt-j-random-tinier",
     "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
+    #    "TheBloke/Llama-2-7B-Chat-GPTQ",  # GPTQ model -> Enable once GPTQ+ROPE
+    #    issue is resolved
 ]
 
 
