@@ -109,15 +109,6 @@ def test_causal_lm_hash(config, cb):
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_id)
 def test_causal_lm_export(config, cb, tmp_path):
-    if cb and config.model_type in {
-        "codegen",
-        "falcon",
-        "gpt2",
-        "gptj",
-        "mpt",
-    }:
-        pytest.skip()
-
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
     qeff_model.export(tmp_path)
@@ -150,15 +141,6 @@ def tmp_cache(tmp_path, monkeypatch):
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_id)
 def test_causal_lm_compile(config, cb, tmp_cache):
-    if cb and config.model_type in {
-        "codegen",
-        "falcon",
-        "gpt2",
-        "gptj",
-        "mpt",
-    }:
-        pytest.skip()
-
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
     compile_params = {"prefill_seq_len": 8, "ctx_len": 16}
