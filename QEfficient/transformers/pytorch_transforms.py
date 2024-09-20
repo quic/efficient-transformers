@@ -22,17 +22,13 @@ from transformers.models.falcon.modeling_falcon import (
     FalconModel,
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
-<<<<<<< HEAD
-from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
-=======
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
     GPTBigCodeBlock,
     GPTBigCodeForCausalLM,
     GPTBigCodeModel,
 )
-from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
->>>>>>> 24c79ea (Add support for model granite-Starcoder1 arch)
+from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
@@ -99,22 +95,18 @@ from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2LMHeadModel,
     QEffGPT2Model,
 )
-<<<<<<< HEAD
-from QEfficient.transformers.models.gptj.modeling_gptj import (
-    QEffGPTJAttention,
-    QEffGPTJBlock,
-    QEffGPTJForCausalLM,
-    QEffGPTJModel,
-)
-=======
 from QEfficient.transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     QEffGPTBigCodeAttention,
     QEffGPTBigCodeBlock,
     QEffGPTBigCodeForCausalLM,
     QEffGPTBigCodeModel,
 )
-from QEfficient.transformers.models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJForCausalLM, QEffGPTJModel
->>>>>>> 24c79ea (Add support for model granite-Starcoder1 arch)
+from QEfficient.transformers.models.gptj.modeling_gptj import (
+    QEffGPTJAttention,
+    QEffGPTJBlock,
+    QEffGPTJForCausalLM,
+    QEffGPTJModel,
+)
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
