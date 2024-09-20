@@ -97,13 +97,13 @@ def export_onnx(
             input_names=input_names,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
-            opset_version=13,
+            opset_version=14,
             custom_opsets={"com.qti.aisw.onnx": 1},
         )
     except Exception as e:
         raise RuntimeError("Exporting to ONNX failed. {}".format(e))
 
-    onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx")
+    onnx.checker.check_model(f"{gen_models_path}_tmp/{model_base_name}.onnx", full_check=True)
     loaded_model = onnx.load(f"{gen_models_path}_tmp/{model_base_name}.onnx")
     shutil.rmtree(f"{gen_models_path}_tmp")
     os.makedirs(f"{gen_models_path}", exist_ok=True)
@@ -123,7 +123,7 @@ def export_onnx(
         size_threshold=1024,
         convert_attribute=False,
     )
-    onnx.checker.check_model(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
+    onnx.checker.check_model(os.path.join(gen_models_path, f"{model_base_name}.onnx"), full_check=True)
 
     # Run shape inference in intial model itself
     onnx.shape_inference.infer_shapes_path(

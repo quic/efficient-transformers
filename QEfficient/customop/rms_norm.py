@@ -9,7 +9,7 @@ import onnxscript
 import torch
 from torch import nn
 
-ops = onnxscript.opset13
+ops = onnxscript.opset14
 
 
 @onnxscript.script(onnxscript.values.Opset(domain="com.qti.aisw.onnx", version=1))
@@ -45,7 +45,10 @@ class CustomRMSNormAIC(nn.Module):
     def __init__(self, hidden_size, eps=1e-05):
         super(CustomRMSNormAIC, self).__init__()
         self.variance_epsilon = eps
+        self.eps = eps  # Added to support GemmaRMSNorm
         self.weight = torch.nn.Parameter(torch.ones(hidden_size))
 
     def forward(self, hidden_states):
-        return CustomRMSNormFunc.apply(hidden_states, self.weight, self.variance_epsilon)
+        return CustomRMSNormFunc.apply(
+            hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+        )

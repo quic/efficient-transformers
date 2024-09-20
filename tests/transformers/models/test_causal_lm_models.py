@@ -32,6 +32,8 @@ test_models = [
     "hakurei/gpt-j-random-tinier",
     "mistralai/Mixtral-8x7B-Instruct-v0.1",
     "google/gemma-2b",
+    "google/gemma-1.1-2b-it",
+    "google/gemma-2-2b",
     "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
     "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
     "ibm-granite/granite-20b-code-base",

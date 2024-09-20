@@ -25,6 +25,14 @@ from transformers.models.gemma.modeling_gemma import (
     GemmaDecoderLayer,
     GemmaForCausalLM,
     GemmaModel,
+    GemmaRMSNorm,
+)
+from transformers.models.gemma2.modeling_gemma2 import (
+    Gemma2Attention,
+    Gemma2DecoderLayer,
+    Gemma2ForCausalLM,
+    Gemma2Model,
+    Gemma2RMSNorm,
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
@@ -81,6 +89,12 @@ from .models.falcon.modeling_falcon import (
     QEffFalconModel,
 )
 from .models.gemma.modeling_gemma import QEffGemmaAttention, QEffGemmaDecoderLayer, QEffGemmaForCausalLM, QEffGemmaModel
+from .models.gemma2.modeling_gemma2 import (
+    QEffGemma2Attention,
+    QEffGemma2DecoderLayer,
+    QEffGemma2ForCausalLM,
+    QEffGemma2Model,
+)
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
 from .models.gpt_bigcode.modeling_gpt_bigcode import (
     QEffGPTBigCodeAttention,
@@ -127,6 +141,7 @@ get_lists_of_cb_qeff_models = ModelArchitectures(
     [
         LlamaForCausalLM.__name__,
         GemmaForCausalLM.__name__,
+        Gemma2ForCausalLM.__name__,
         MistralForCausalLM.__name__,
         MixtralForCausalLM.__name__,
         Starcoder2ForCausalLM.__name__,
@@ -150,6 +165,7 @@ qeff_supported_architectures = ModelArchitectures(
         CodeGenForCausalLM.__name__,
         LlamaForCausalLM.__name__,
         GemmaForCausalLM.__name__,
+        Gemma2ForCausalLM.__name__,
         MistralForCausalLM.__name__,
         MixtralForCausalLM.__name__,
         Phi3ForCausalLM.__name__,
@@ -184,6 +200,13 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     GemmaAttention: QEffGemmaAttention,
     GemmaForCausalLM: QEffGemmaForCausalLM,
     GemmaDecoderLayer: QEffGemmaDecoderLayer,
+    GemmaRMSNorm: CustomRMSNormAIC,
+    # Gemma2 model layers
+    Gemma2Model: QEffGemma2Model,
+    Gemma2Attention: QEffGemma2Attention,
+    Gemma2ForCausalLM: QEffGemma2ForCausalLM,
+    Gemma2DecoderLayer: QEffGemma2DecoderLayer,
+    Gemma2RMSNorm: CustomRMSNormAIC,
     # MPT model layers
     MptAttention: QEffMptAttention,
     MptBlock: QEffMptBlock,

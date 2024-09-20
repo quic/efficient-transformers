@@ -12,6 +12,13 @@
 | [CodeLlama-7b-hf](https://huggingface.co/codellama/CodeLlama-7b-hf) | ✔️ |
 | [CodeLlama-13b-hf](https://huggingface.co/codellama/CodeLlama-13b-hf) | ✔️ | 
 | [CodeLlama-34b-hf](https://huggingface.co/codellama/CodeLlama-34b-hf) | ✔️ |
+| [Gemma-2b](https://huggingface.co/google/gemma-2b) | ✔️ |
+| [Gemma-7b](https://huggingface.co/google/gemma-7b) | ✔️ |
+| [CodeGemma-2b](https://huggingface.co/google/codegemma-2b) | ✔️ |
+| [CodeGemma-7b](https://huggingface.co/google/codegemma-7b) | ✔️ |
+| [Gemma-2-2b](https://huggingface.co/google/gemma-2-2b) | ✔️ |
+| [Gemma-2-7b](https://huggingface.co/google/gemma-2-7b) | ✔️ |
+| [Gemma-2-27b](https://huggingface.co/google/gemma-2-27b) | ✔️ |
 | [Salesforce/codegen25-7b-mono_P](https://huggingface.co/Salesforce/codegen25-7b-mono_P) | ✔️ |
 | [Salesforce/xgen-7b-8k-base](https://huggingface.co/Salesforce/xgen-7b-8k-base) | ✔️ |
 | [MPT-7b](https://huggingface.co/mosaicml/mpt-7b) | ✔️ |

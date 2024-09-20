@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import math
 from typing import List, Optional, Tuple, Union
 
 import torch
@@ -17,13 +16,13 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-from transformers.models.gemma.modeling_gemma import (
-    GemmaAttention,
-    GemmaConfig,
-    GemmaDecoderLayer,
-    GemmaForCausalLM,
-    GemmaModel,
-    GemmaRotaryEmbedding,
+from transformers.models.gemma2.modeling_gemma2 import (
+    Gemma2Attention,
+    Gemma2Config,
+    Gemma2DecoderLayer,
+    Gemma2ForCausalLM,
+    Gemma2Model,
+    Gemma2RotaryEmbedding,
     logger,
     repeat_kv,
     rotate_half,
@@ -32,15 +31,15 @@ from transformers.models.gemma.modeling_gemma import (
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
-class QEffGemmaRotaryEmbedding(GemmaRotaryEmbedding):
+class QEffGemma2RotaryEmbedding(Gemma2RotaryEmbedding):
     """
-    Copied from GemmaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma/modeling_gemma.py
+    Copied from Gemma2RotaryEmbedding: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma2/modeling_gemma2.py
     The only differences are:
     - Add static sin/cos computations.
     """
 
     def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
-        super(GemmaRotaryEmbedding, self).__init__()
+        super(Gemma2RotaryEmbedding, self).__init__()
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
         self.base = base
@@ -104,21 +103,21 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
 
-class QEffGemmaAttention(GemmaAttention):
+class QEffGemma2Attention(Gemma2Attention):
     """
-    Copied from GemmaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma/modeling_gemma.py
+    Copied from Gemma2ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma2/modeling_gemma2.py
     The only differences are:
     - add new args cache idx for the kv retention
     """
 
-    def __init__(self, config: GemmaConfig, layer_idx: Optional[int] = None):
+    def __init__(self, config: Gemma2Config, layer_idx: Optional[int] = None):
         super().__init__(config, layer_idx)
         # Define the general __qeff_init__() for any changes in the init calls
         # Set the init in the module mapping pytorch transforms
         self.__qeff_init__()
 
     def __qeff_init__(self):
-        self.rotary_emb = QEffGemmaRotaryEmbedding(
+        self.rotary_emb = QEffGemma2RotaryEmbedding(
             self.head_dim,
             max_position_embeddings=self.max_position_embeddings,
             base=self.rope_theta,
@@ -161,16 +160,27 @@ class QEffGemmaAttention(GemmaAttention):
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "sliding_window": self.sliding_window,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+            }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
+
+        if self.config.attn_logit_softcapping is not None:
+            attn_weights = attn_weights / self.config.attn_logit_softcapping
+            attn_weights = torch.tanh(attn_weights)
+            attn_weights = attn_weights * self.config.attn_logit_softcapping
 
         if attention_mask is not None:  # no matter the length, we just slice it
-            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+            attn_weights = torch.where(attention_mask.bool(), torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
@@ -185,7 +195,7 @@ class QEffGemmaAttention(GemmaAttention):
 
         attn_output = attn_output.transpose(1, 2).contiguous()
 
-        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
+        attn_output = attn_output.reshape(bsz, q_len, -1)
         attn_output = self.o_proj(attn_output)
 
         if not output_attentions:
@@ -194,9 +204,9 @@ class QEffGemmaAttention(GemmaAttention):
         return attn_output, attn_weights, past_key_value
 
 
-class QEffGemmaForCausalLM(GemmaForCausalLM):
+class QEffGemma2ForCausalLM(Gemma2ForCausalLM):
     """
-    Copied from GemmaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma/modeling_gemma.py
+    Copied from Gemma2ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma2/modeling_gemma2.py
     The only differences are:
     - add new args cache idx for the kv retention
     """
@@ -228,10 +238,10 @@ class QEffGemmaForCausalLM(GemmaForCausalLM):
         Example:
 
         ```python
-        >>> from transformers import AutoTokenizer, GemmaForCausalLM
+        >>> from transformers import AutoTokenizer, Gemma2ForCausalLM
 
-        >>> model = GemmaForCausalLM.from_pretrained("google/gemma-7b")
-        >>> tokenizer = AutoTokenizer.from_pretrained("google/gemma-7b")
+        >>> model = Gemma2ForCausalLM.from_pretrained("google/gemma-2-9b")
+        >>> tokenizer = AutoTokenizer.from_pretrained("google/gemma-2-9b")
 
         >>> prompt = "What is your favorite condiment?"
         >>> inputs = tokenizer(prompt, return_tensors="pt")
@@ -267,6 +277,11 @@ class QEffGemmaForCausalLM(GemmaForCausalLM):
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states).float()
 
+        if self.config.final_logit_softcapping is not None:
+            logits = logits / self.config.final_logit_softcapping
+            logits = torch.tanh(logits)
+            logits = logits * self.config.final_logit_softcapping
+
         loss = None
         if labels is not None:
             # Shift so that tokens < n predict n
@@ -293,9 +308,57 @@ class QEffGemmaForCausalLM(GemmaForCausalLM):
         )
 
 
-class QEffGemmaDecoderLayer(GemmaDecoderLayer):
+def Gemma2NewForward(
+    self,
+    hidden_states: torch.Tensor,
+    attention_mask: Optional[torch.Tensor] = None,
+    position_ids: Optional[torch.LongTensor] = None,
+    past_key_value: Optional[Cache] = None,
+    output_attentions: Optional[bool] = False,
+    use_cache: Optional[bool] = False,
+    cache_position: Optional[torch.LongTensor] = None,
+) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+    residual = hidden_states
+
+    hidden_states = self.input_layernorm(hidden_states)
+
+    # Self Attention
+    hidden_states, self_attn_weights, present_key_value = self.self_attn(
+        hidden_states=hidden_states,
+        attention_mask=attention_mask,
+        position_ids=position_ids,
+        past_key_value=past_key_value,
+        output_attentions=output_attentions,
+        use_cache=use_cache,
+        cache_position=cache_position,
+    )
+    hidden_states = self.post_attention_layernorm(hidden_states)
+    hidden_states = residual + hidden_states
+
+    residual = hidden_states
+    hidden_states = self.pre_feedforward_layernorm(hidden_states)
+    hidden_states = self.mlp(hidden_states)
+    hidden_states = self.post_feedforward_layernorm(hidden_states)
+    hidden_states = residual + hidden_states
+
+    outputs = (hidden_states,)
+
+    if output_attentions:
+        outputs += (self_attn_weights,)
+
+    if use_cache:
+        outputs += (present_key_value,)
+
+    return outputs
+
+
+# Replacing the forward hook of gemma2 to avoid torch tril
+Gemma2DecoderLayer.forward = Gemma2NewForward
+
+
+class QEffGemma2DecoderLayer(Gemma2DecoderLayer):
     """
-    Copied from GemmaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma/modeling_gemma.py
+    Copied from Gemma2ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma2/modeling_gemma2.py
     The only differences are:
     - add new args batch idx for the CB models
     """
@@ -342,12 +405,14 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
         )
+        hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = residual + hidden_states
 
         # Fully Connected
         residual = hidden_states
-        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.pre_feedforward_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
+        hidden_states = self.post_feedforward_layernorm(hidden_states)
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
@@ -361,25 +426,29 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
         return outputs
 
 
-class QEffGemmaModel(GemmaModel):
+class QEffGemma2Model(Gemma2Model):
     """
-    Copied from GemmaModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma/modeling_gemma.py
+    Copied from Gemma2Model: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma2/modeling_gemma2.py
     The only differences are:
     - add new args cache idx for the kv retention
     """
 
-    def __init__(self, config: GemmaConfig):
+    def __init__(self, config: Gemma2Config):
         super().__init__(config)
         # Define the general __qeff_init__() for any changes in the init calls
         # Set the init in the module mapping pytorch transforms
         self.__qeff_init__()
 
     def __qeff_init__(self):
-        # This is done since GemmaRMSNorm uses (1.0 + weight) * hidden_states instead of the usual (weight)*hidden_states which is compatible with QAIC.
+        # This is done since Gemma2RMSNorm uses (1.0 + weight) * hidden_states instead of the usual (weight)*hidden_states which is compatible with QAIC.
         for layer in self.layers:
-            layer.input_layernorm.weight = nn.Parameter(layer.input_layernorm.weight + 1.0)
-            layer.post_attention_layernorm.weight = nn.Parameter(layer.post_attention_layernorm.weight + 1.0)
-        self.norm.weight = nn.Parameter(self.norm.weight + 1.0)
+            with torch.no_grad():
+                layer.input_layernorm.weight.copy_(layer.input_layernorm.weight + 1.0)
+                layer.post_attention_layernorm.weight.copy_(layer.post_attention_layernorm.weight + 1.0)
+                layer.pre_feedforward_layernorm.weight.copy_(layer.pre_feedforward_layernorm.weight + 1.0)
+                layer.post_feedforward_layernorm.weight.copy_(layer.post_feedforward_layernorm.weight + 1.0)
+        with torch.no_grad():
+            self.norm.weight.copy_(self.norm.weight + 1.0)
 
     def forward(
         self,
@@ -437,7 +506,7 @@ class QEffGemmaModel(GemmaModel):
         hidden_states = inputs_embeds
 
         # normalized
-        # Gemma downcasts the below to float16, causing sqrt(3072)=55.4256 to become 55.5
+        # Gemma2 downcasts the below to float16, causing sqrt(3072)=55.4256 to become 55.5
         # See https://github.com/huggingface/transformers/pull/29402
         normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)
         hidden_states = hidden_states * normalizer
@@ -569,7 +638,9 @@ class QEffGemmaModel(GemmaModel):
                     padding_mask, min_dtype
                 )
             else:
-                causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
+                causal_mask = _create_causal_mask(
+                    position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
+                )
 
         if (
             self.config._attn_implementation == "sdpa"

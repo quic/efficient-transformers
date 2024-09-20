@@ -8,7 +8,7 @@
 import onnxscript
 import torch
 
-ops = onnxscript.opset13
+ops = onnxscript.opset14
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
