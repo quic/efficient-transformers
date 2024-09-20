@@ -20,7 +20,7 @@ Run the install.sh script as root or with sudo to install with root permissions.
 sudo ./install.sh --enable-qeff
 source  /opt/qti-aic/dev/python/qeff/bin/activate
 ```
-On successful installation of the Apps SDK, the contents are stored to the /opt/qti-aic path under the dev and exec directories:
+On successful installation, the contents are stored to the /opt/qti-aic path under the dev and exec directories:
 ```
 dev exec integrations scripts
 ```
@@ -36,7 +36,7 @@ sudo chmod a+x /opt/qti-aic/exec/*
 
 # Sanity Check
 
-After any of the above installation methods, you can check if ``QEfficient`` is installed correctly by using
+After above installation methods, you can check if ``QEfficient`` is installed correctly by using
 ```bash
 python -c "import QEfficient; print(QEfficient.__version__)"
 ```
