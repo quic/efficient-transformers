@@ -200,10 +200,12 @@ class KVCacheTransform(ModuleMappingTransform):
     _module_mapping = {
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
+        CodeGenBlock: QeffCodeGenBlock,
         CodeGenModel: QEffCodeGenModel,
         CodeGenForCausalLM: QEffCodeGenForCausalLM,
         # Falcon
         FalconAttention: QEffFalconAttention,
+        FalconDecoderLayer: QEffFalconDecoderLayer,
         FalconModel: QEffFalconModel,
         FalconForCausalLM: QEffFalconForCausalLM,
         # GPT2
@@ -213,27 +215,33 @@ class KVCacheTransform(ModuleMappingTransform):
         GPT2LMHeadModel: QEffGPT2LMHeadModel,
         # GPTJ
         GPTJAttention: QEffGPTJAttention,
+        GPTJBlock: QEffGPTJBlock,
         GPTJModel: QEffGPTJModel,
         GPTJForCausalLM: QEffGPTJForCausalLM,
         # Llama
         LlamaAttention: QEffLlamaAttention,
+        LlamaDecoderLayer: QEffLlamaDecoderLayer,
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
         # Gemma
         GemmaAttention: QEffGemmaAttention,
+        GemmaDecoderLayer: QEffGemmaDecoderLayer,
         GemmaModel: QEffGemmaModel,
         GemmaForCausalLM: QEffGemmaForCausalLM,
         # Gemma2
         Gemma2Attention: QEffGemma2Attention,
+        Gemma2DecoderLayer: QEffGemma2DecoderLayer,
         Gemma2Model: QEffGemma2Model,
         Gemma2ForCausalLM: QEffGemma2ForCausalLM,
         # Mistral
         MistralAttention: QEffMistralAttention,
+        MistralDecoderLayer: QEffMistralDecoderLayer,
         MistralModel: QEffMistralModel,
         MistralForCausalLM: QEffMistralForCausalLM,
         # Mixtral
         MixtralAttention: QEffMixtralAttention,
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
+        MixtralDecoderLayer: QeffMixtralDecoderLayer,
         MixtralModel: QEffMixtralModel,
         MixtralForCausalLM: QEffMixtralForCausalLM,
         # Mpt
@@ -243,18 +251,22 @@ class KVCacheTransform(ModuleMappingTransform):
         MptForCausalLM: QEffMptForCausalLM,
         # Phi3
         Phi3Attention: QEffPhi3Attention,
+        Phi3DecoderLayer: QEffPhi3DecoderLayer,
         Phi3Model: QEffPhi3Model,
         Phi3ForCausalLM: QEffPhi3ForCausalLM,
         # Phi
         PhiAttention: QEffPhiAttention,
+        PhiDecoderLayer: QEffPhiDecoderLayer,
         PhiModel: QEffPhiModel,
         PhiForCausalLM: QEffPhiForCausalLM,
         # Qwen2
         Qwen2Attention: QEffQwen2Attention,
+        Qwen2DecoderLayer: QEffQwen2DecoderLayer,
         Qwen2Model: QEffQwen2Model,
         Qwen2ForCausalLM: QEffQwen2ForCausalLM,
         # Starcoder2
         Starcoder2Attention: QEffStarcoder2Attention,
+        Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
         Starcoder2Model: QEffStarcoder2Model,
         Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
         # GptBigcode
@@ -270,33 +282,3 @@ class KVCacheTransform(ModuleMappingTransform):
         # FIXME: see if we can merge into _module_mapping dict
         transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update
         return model, transformed
-
-
-class CBTransform(KVCacheTransform):
-    _module_mapping = {
-        **KVCacheTransform._module_mapping,  # Unpack existing KV mapping
-        # Llama
-        LlamaDecoderLayer: QEffLlamaDecoderLayer,
-        # Gemma
-        GemmaDecoderLayer: QEffGemmaDecoderLayer,
-        # Gemma2
-        Gemma2DecoderLayer: QEffGemma2DecoderLayer,
-        # Mistral
-        MistralDecoderLayer: QEffMistralDecoderLayer,
-        # Mixtral
-        MixtralDecoderLayer: QeffMixtralDecoderLayer,
-        # Starcoder2
-        Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
-        # Phi
-        PhiDecoderLayer: QEffPhiDecoderLayer,
-        # Phi3
-        Phi3DecoderLayer: QEffPhi3DecoderLayer,
-        # Qwen2
-        Qwen2DecoderLayer: QEffQwen2DecoderLayer,
-        # Codegen
-        CodeGenBlock: QeffCodeGenBlock,
-        # Falcon
-        FalconDecoderLayer: QEffFalconDecoderLayer,
-        # GPT-J
-        GPTJBlock: QEffGPTJBlock,
-    }
