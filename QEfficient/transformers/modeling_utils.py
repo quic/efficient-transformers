@@ -152,6 +152,7 @@ get_lists_of_cb_qeff_models = ModelArchitectures(
         GPT2LMHeadModel.__name__,
         GPTJForCausalLM.__name__,
         MptForCausalLM.__name__,
+        "MPTForCausalLM",
         FalconForCausalLM.__name__,
         GPTBigCodeForCausalLM.__name__,
     ]
