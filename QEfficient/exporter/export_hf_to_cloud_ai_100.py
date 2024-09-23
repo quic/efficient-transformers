@@ -13,7 +13,6 @@ from typing import Optional, Tuple, Union
 import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
-import QEfficient
 from QEfficient.base.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
@@ -356,24 +355,14 @@ def export_lm_model_for_cloud(
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
 
-    if qeff_model.is_transformed:
-        model_name = export_kvstyle_transformed_model_to_onnx(
-            model_name=model_name,
-            transformed_model=qeff_model.model,
-            tokenizer=tokenizer,
-            onnx_dir_path=onnx_dir_path,
-            seq_len=seq_length,
-            full_batch_size=full_batch_size,
-        )  # type: ignore
-
-    else:
-        model_name = export_bertstyle_model_to_onnx(
-            model_name=model_name,
-            model=qeff_model.model,
-            tokenizer=tokenizer,
-            onnx_dir_path=onnx_dir_path,
-            seq_len=seq_length,
-        )  # type: ignore
+    model_name = export_kvstyle_transformed_model_to_onnx(
+        model_name=model_name,
+        transformed_model=qeff_model.model,
+        tokenizer=tokenizer,
+        onnx_dir_path=onnx_dir_path,
+        seq_len=seq_length,
+        full_batch_size=full_batch_size,
+    )
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
@@ -440,13 +429,8 @@ def qualcomm_efficient_converter(
         )
     )
 
-    # Transform if required
-    if model_kv.is_transformed and not kv:
-        raise AttributeError("Transformed model is passed while requesting to convert non-transformed model")
-    model_kv = model_kv if model_kv.is_transformed else QEfficient.transform(model_kv) if kv else model_kv
-
     if onnx_dir_path is None:
-        model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_kv.model_card_name))
+        model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
         onnx_dir_path = os.path.join(model_card_dir, "onnx")
         os.makedirs(onnx_dir_path, exist_ok=True)
 

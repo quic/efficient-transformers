@@ -13,6 +13,7 @@ from transformers import AutoModelForCausalLM
 from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 
 from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100
+from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, QEffAwqQuantizer
 from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig, QEffGPTQQuantizer
@@ -115,7 +116,11 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         pytorch_hf_tokens == pytorch_kv_tokens
     ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
-    onnx_model_path = qeff_model.export()
+    _, onnx_model_path = qualcomm_efficient_converter(
+        model_name=model_name,
+        model_kv=qeff_model,
+        tokenizer=tokenizer,
+    )
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path)
 
     assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
@@ -160,7 +165,12 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
 
     qeff_model = QEFFAutoModelForCausalLM(model_hf, f"{model_name}")
-    onnx_model_path = qeff_model.export()
+    _, onnx_model_path = qualcomm_efficient_converter(
+        model_name=model_name,
+        model_kv=qeff_model,
+        tokenizer=tokenizer,
+        full_batch_size=4,
+    )
 
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
