@@ -254,6 +254,7 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
                     n_heads = 1  # MQA , multi query is true
                 else:
                     n_heads = config.num_attention_heads
+        d_head = config.hidden_size // config.num_attention_heads
     else:
         raise ValueError("Invalid model configuration: n_head/d_heads or num_key_value_heads not found.")
     padding_shape = [batch_size, n_heads, seq_len, d_head]
