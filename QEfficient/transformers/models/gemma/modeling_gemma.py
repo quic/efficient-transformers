@@ -368,19 +368,6 @@ class QEffGemmaModel(GemmaModel):
     - add new args cache idx for the kv retention
     """
 
-    def __init__(self, config: GemmaConfig):
-        super().__init__(config)
-        # Define the general __qeff_init__() for any changes in the init calls
-        # Set the init in the module mapping pytorch transforms
-        self.__qeff_init__()
-
-    def __qeff_init__(self):
-        # This is done since GemmaRMSNorm uses (1.0 + weight) * hidden_states instead of the usual (weight)*hidden_states which is compatible with QAIC.
-        for layer in self.layers:
-            layer.input_layernorm.weight = nn.Parameter(layer.input_layernorm.weight + 1.0)
-            layer.post_attention_layernorm.weight = nn.Parameter(layer.post_attention_layernorm.weight + 1.0)
-        self.norm.weight = nn.Parameter(self.norm.weight + 1.0)
-
     def forward(
         self,
         input_ids: torch.LongTensor = None,

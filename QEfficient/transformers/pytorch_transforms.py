@@ -89,7 +89,7 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
 )
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
-from QEfficient.customop import CustomRMSNormAIC
+from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
@@ -186,8 +186,8 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
 
 class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
-        GemmaRMSNorm: CustomRMSNormAIC,
-        Gemma2RMSNorm: CustomRMSNormAIC,
+        GemmaRMSNorm: GemmaCustomRMSNormAIC,
+        Gemma2RMSNorm: GemmaCustomRMSNormAIC,
         LlamaRMSNorm: CustomRMSNormAIC,
         MistralRMSNorm: CustomRMSNormAIC,
         MixtralRMSNorm: CustomRMSNormAIC,

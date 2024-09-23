@@ -166,6 +166,7 @@ class QEffGemma2Attention(Gemma2Attention):
                 "sliding_window": self.sliding_window,
                 "batch_index": batch_index,
                 "position_ids": position_ids,
+                "cache_position": cache_position,
             }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
@@ -432,23 +433,6 @@ class QEffGemma2Model(Gemma2Model):
     The only differences are:
     - add new args cache idx for the kv retention
     """
-
-    def __init__(self, config: Gemma2Config):
-        super().__init__(config)
-        # Define the general __qeff_init__() for any changes in the init calls
-        # Set the init in the module mapping pytorch transforms
-        self.__qeff_init__()
-
-    def __qeff_init__(self):
-        # This is done since Gemma2RMSNorm uses (1.0 + weight) * hidden_states instead of the usual (weight)*hidden_states which is compatible with QAIC.
-        for layer in self.layers:
-            with torch.no_grad():
-                layer.input_layernorm.weight.copy_(layer.input_layernorm.weight + 1.0)
-                layer.post_attention_layernorm.weight.copy_(layer.post_attention_layernorm.weight + 1.0)
-                layer.pre_feedforward_layernorm.weight.copy_(layer.pre_feedforward_layernorm.weight + 1.0)
-                layer.post_feedforward_layernorm.weight.copy_(layer.post_feedforward_layernorm.weight + 1.0)
-        with torch.no_grad():
-            self.norm.weight.copy_(self.norm.weight + 1.0)
 
     def forward(
         self,
