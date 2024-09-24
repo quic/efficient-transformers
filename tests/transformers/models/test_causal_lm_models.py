@@ -34,6 +34,7 @@ test_models = [
     "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
     #    "TheBloke/Llama-2-7B-Chat-GPTQ",  # GPTQ model -> Enable once GPTQ+ROPE
     #    issue is resolved
+    "ibm-granite/granite-20b-code-base",
 ]
 
 
