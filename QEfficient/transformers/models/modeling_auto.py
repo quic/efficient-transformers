@@ -182,7 +182,86 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mhash = mhash.hexdigest()[:16]
         return mhash
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+        Returns:
+            :Union[PreTrainedTokenizer, PreTrainedTokenizerFast]: Tokenizer from ``transformers`` for the given model.
+        """
+        if self._tokenizer is None:
+            self._tokenizer = self.get_tokenizer()
+        return self._tokenizer
+
+    def get_tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
+        tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=self.pretrained_model_name_or_path, **self.kwargs)
+        return tokenizer
+
+
+class QEFFAutoModelForCausalLM(QEFFTransformersBase):
+    """
+    The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
+    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+    Please note that the QEFF class is also a part of the ``QEfficient`` module.
+
+    ``Mandatory`` Args:
+        :model (nn.Module):  PyTorch model
+        :pretrained_model_name_or_path (str): We recommend passing name of the model as input here, as you are not using `from_pretrained` method. This name will be used for deciding path of the ``ONNX/qpc`` files generated during ``export``, ``compilation`` stages.
+
+    .. code-block:: python
+
+        from QEfficient import QEFFAutoModelForCausalLM
+
+    """
+
+    _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
+
+    def transform(self, **kwargs):
+        """
+        This method applies all relevant optimization transforms on the model and toggles the ``self.is_transformed`` attribute to True. If the model is already transformed, the method will simply return.
+        Please note that this method does not require any input arguments."
+
+        Returns:
+            :obj: Same object with transformed ``self.model``
+        """
+        if self.is_transformed:
+            return
+        if self.full_batch_size is not None:
+            if KVCacheTransform in self._pytorch_transforms:
+                self._pytorch_transforms[self._pytorch_transforms.index(KVCacheTransform)] = CBTransform
+            if CBTransform not in self._pytorch_transforms:
+                raise RuntimeError("please don't update _pytorch_transforms variable")
+        else:
+            if CBTransform in self._pytorch_transforms:
+                self._pytorch_transforms[self._pytorch_transforms.index(CBTransform)] = KVCacheTransform
+            if KVCacheTransform not in self._pytorch_transforms:
+                raise RuntimeError("Please don't update _pytorch_transforms variable")
+
+        # Update list of pytorch transforms if the model falls in AWQ/GPTQ category
+        if hasattr(self.model.config, "quantization_config"):
+            if isinstance(self.model.config.quantization_config, QEffAwqConfig):
+                self._pytorch_transforms.insert(0, AwqToMatmulNbitsTransform)
+
+            if isinstance(self.model.config.quantization_config, QEffGPTQConfig):
+                self._pytorch_transforms.insert(0, GPTQToMatmulNbitsTransform)
+
+        num_speculative_tokens = kwargs.get("num_speculative_tokens", None)
+        is_dlm = kwargs.get("is_dlm", False)
+        assert (
+            not isinstance(num_speculative_tokens, int)
+        ) or not is_dlm, "number of speculative tokens are only to be specified for Target LM"
+        if num_speculative_tokens:
+            assert isinstance(num_speculative_tokens, int) and num_speculative_tokens > 0, (
+                "argument num_speculative_tokens" " should be of type integer and" " be positive if specified"
+            )
+            setattr(self.model, "num_speculative_tokens", num_speculative_tokens)
+        elif is_dlm:
+            setattr(self.model, "is_dlm", True)
+
+        for transform in self._pytorch_transforms:
+            transform.apply(self.model)
+        self.is_transformed = True
+
+    def execute(self, *args, **kwargs):  # type: ignore
+        raise NotImplementedError("Reached too far!!")
+
+    def export(self) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
         We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
@@ -325,8 +404,27 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             **compiler_options,
         )
 
-    # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate
-    def generate(
+        # Compile
+        QEfficient.compile(
+            onnx_path=self.onnx_path,
+            qpc_path=os.path.dirname(qpc_dir_path),
+            num_cores=num_cores,
+            device_group=device_group,
+            aic_enable_depth_first=aic_enable_depth_first,
+            mos=mos,
+            batch_size=batch_size,
+            prompt_len=prompt_len,
+            ctx_len=ctx_len,
+            mxfp6=mxfp6,
+            mxint8=mxint8,
+            full_batch_size=self.full_batch_size,
+            num_speculative_tokens=getattr(self.model, "num_speculative_tokens", None),
+            is_dlm=getattr(self.model, "is_dlm", False),
+        )
+        self.qpc_path = qpc_dir_path
+        return self.qpc_path
+
+    def export_and_compile(
         self,
         tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
         prompts: List[str],

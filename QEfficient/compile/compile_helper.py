@@ -25,15 +25,27 @@ def create_and_dump_specializations(
     num_speculative_tokens: Optional[int] = None,
 ):
     # Create specialization cfgs
-    decode_seq_len = 1 if num_speculative_tokens is None else num_speculative_tokens+1
-    specialization_cfgs = [
-        dict(batch_size=str(batch_size), seq_len=str(prompt_len), ctx_len=str(ctx_len)), # prefill
-        dict(batch_size=str(batch_size), seq_len=str(decode_seq_len), ctx_len=str(ctx_len)) # decode
-    ]
+    prefill_specialization = {"batch_size": str(batch_size), "seq_len": str(prompt_len), "ctx_len": str(ctx_len)}
+    if num_speculative_tokens is None:
+        decode_specialization = {
+            "batch_size": str(batch_size),
+            "seq_len": "1",
+            "ctx_len": str(ctx_len),
+        }
+    else:
+        decode_specialization = {
+            "batch_size": str(batch_size),
+            "seq_len": str(num_speculative_tokens + 1),
+            "ctx_len": str(ctx_len),
+        }
+    specialization_cfgs = [prefill_specialization, decode_specialization]
     if is_dlm:
-        specialization_cfgs.append(
-            dict(batch_size=str(batch_size), seq_len="2", ctx_len=str(ctx_len)) 
-        )
+        dlm_specialization = {
+            "batch_size": str(batch_size),
+            "seq_len": "2",
+            "ctx_len": str(ctx_len),
+        }
+        specialization_cfgs.append(dlm_specialization)
 
     specializations = dict(specializations=specialization_cfgs)
 
@@ -45,10 +57,6 @@ def create_and_dump_specializations(
         if len(specializations["specializations"]) == 3:
             specializations["specializations"][2]["batch_size"] = str(full_batch_size)
             specializations["specializations"][2]["full_batch_size"] = str(full_batch_size)
-
-    # To handle repetative input in specializations when prompt_len is 1
-    if prompt_len == 1 and full_batch_size is None:
-        specializations["specializations"].pop()
 
     # Dump
     with open(path, "w") as file:
@@ -179,7 +187,7 @@ def compile(
         ctx_len=ctx_len,
         path=specialization_json_path,
         full_batch_size=full_batch_size,
-        is_dlm=kwargs.get("is_dlm", False),
+        is_dlm=kwargs.get("is_dlm", None),
         num_speculative_tokens=kwargs.get("num_speculative_tokens", None),
     )
 

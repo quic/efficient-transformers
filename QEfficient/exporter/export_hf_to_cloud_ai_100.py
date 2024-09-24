@@ -223,7 +223,7 @@ def export_kvstyle_transformed_model_to_onnx(
         prompt_len=prompt_len,
         ctx_len=seq_len,
         full_batch_size=full_batch_size,
-        num_logits_to_keep=num_logits_to_keep,
+        num_speculative_tokens=getattr(transformed_model, "num_speculative_tokens", None),
     )
 
     inputs = input_handler.prepare_pytorch_inputs()
