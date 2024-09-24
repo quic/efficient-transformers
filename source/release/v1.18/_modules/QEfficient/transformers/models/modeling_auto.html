@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QEfficient.transformers.models.modeling_auto &mdash; efficient-transformers main documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../../../_static/css/theme.css?v=19f00094" />
+      <link rel="stylesheet" type="text/css" href="../../../../_static/my_theme.css?v=547657ed" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../../../../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../../../../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="../../../../" id="documentation_options" src="../../../../_static/documentation_options.js?v=d01aebe5"></script>
+        <script src="../../../../_static/doctools.js?v=888ff710"></script>
+        <script src="../../../../_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="../../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../../index.html" class="icon icon-home">
+            efficient-transformers
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/validate.html#models-coming-soon">Models Coming Soon</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Installation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/installation.html">Pre-requisites</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/installation.html#sanity-check">Sanity Check</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/quick_start.html">Transformed models and QPC storage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/quick_start.html#command-line-interface">Command Line Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/quick_start.html#python-api">Python API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/hl_api.html">High Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/ll_api.html">Low Level API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/blogs.html#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/reference.html">Qualcomm Cloud AI home</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/reference.html#qualcomm-cloud-ai-sdk-download">Qualcomm Cloud AI SDK download</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/reference.html#qualcomm-cloud-ai-api-reference">Qualcomm Cloud AI API reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/reference.html#user-guide">User Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/reference.html#ocp-microscaling-formats-mx-specification">OCP Microscaling Formats (MX) Specification</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../../index.html">efficient-transformers</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">QEfficient.transformers.models.modeling_auto</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for QEfficient.transformers.models.modeling_auto</h1><div class="highlight"><pre>
+<span></span><span class="c1"># -----------------------------------------------------------------------------</span>
+<span class="c1">#</span>
+<span class="c1"># Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: BSD-3-Clause</span>
+<span class="c1">#</span>
+<span class="c1"># ----------------------------------------------------------------------------</span>
+
+<span class="kn">import</span> <span class="nn">hashlib</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Union</span>
+
+<span class="kn">import</span> <span class="nn">torch.nn</span> <span class="k">as</span> <span class="nn">nn</span>
+<span class="kn">from</span> <span class="nn">transformers</span> <span class="kn">import</span> <span class="n">AutoModel</span><span class="p">,</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span> <span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span>
+
+<span class="kn">import</span> <span class="nn">QEfficient</span>
+<span class="kn">from</span> <span class="nn">QEfficient.base.modeling_qeff</span> <span class="kn">import</span> <span class="n">QEFFBaseModel</span><span class="p">,</span> <span class="n">Runtime</span>
+<span class="kn">from</span> <span class="nn">QEfficient.transformers.pytorch_transforms</span> <span class="kn">import</span> <span class="n">CBTransform</span><span class="p">,</span> <span class="n">CustomOpsTransform</span><span class="p">,</span> <span class="n">KVCacheTransform</span>
+<span class="kn">from</span> <span class="nn">QEfficient.transformers.quantizers.auto</span> <span class="kn">import</span> <span class="n">QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING</span><span class="p">,</span> <span class="n">with_replaced_quantizers</span>
+<span class="kn">from</span> <span class="nn">QEfficient.transformers.quantizers.quant_transforms</span> <span class="kn">import</span> <span class="n">AwqToMatmulNbitsTransform</span><span class="p">,</span> <span class="n">GPTQToMatmulNbitsTransform</span>
+<span class="kn">from</span> <span class="nn">QEfficient.transformers.quantizers.quantizer_awq</span> <span class="kn">import</span> <span class="n">QEffAwqConfig</span>
+<span class="kn">from</span> <span class="nn">QEfficient.transformers.quantizers.quantizer_gptq</span> <span class="kn">import</span> <span class="n">QEffGPTQConfig</span>
+<span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">get_qpc_dir_path</span><span class="p">,</span> <span class="n">load_hf_tokenizer</span>
+<span class="kn">from</span> <span class="nn">QEfficient.utils._utils</span> <span class="kn">import</span> <span class="n">get_qpc_dir_name_infer</span><span class="p">,</span> <span class="n">qpc_exists</span>
+<span class="kn">from</span> <span class="nn">QEfficient.utils.logging_utils</span> <span class="kn">import</span> <span class="n">logger</span>
+
+<span class="c1"># Dictionary that defines the interface from transformers to be used underneath the QEFF interface</span>
+<span class="n">QEFFAutoModelToTransformersAutoModelMap</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;QEFFAutoModelForCausalLM&quot;</span><span class="p">:</span> <span class="n">AutoModelForCausalLM</span><span class="p">,</span>
+    <span class="s2">&quot;QEFFAutoModel&quot;</span><span class="p">:</span> <span class="n">AutoModel</span><span class="p">,</span>
+<span class="p">}</span>
+
+
+<span class="k">class</span> <span class="nc">QEFFTransformersBase</span><span class="p">(</span><span class="n">QEFFBaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Parent class for models QEFF provides from transformers i.e. (AutoModel, AutoModelForCausalLM, AutoModelForAudioClassification etc.) from transformers/models/modeling_auto.py file.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">pretrained_model_name_or_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;quantization_config&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span>
+            <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">quantization_config</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+        <span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">AssertionError</span><span class="p">(</span><span class="s2">&quot;Please use `from_pretrained` method to load quantized models&quot;</span><span class="p">)</span>
+
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">use_cache</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="kc">True</span>  <span class="c1"># Always pass use_cache = True, to get KV values as output during ONNX export</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pretrained_model_name_or_path</span> <span class="o">=</span> <span class="n">pretrained_model_name_or_path</span>
+
+        <span class="c1"># Set model card name, which is used to decide ONNX, QPC files path during export and compile resp.</span>
+        <span class="k">if</span> <span class="n">model_card_name</span> <span class="o">:=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;model_card_name&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">model_card_name</span> <span class="o">=</span> <span class="n">model_card_name</span>
+        <span class="k">elif</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isdir</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pretrained_model_name_or_path</span><span class="p">):</span>
+            <span class="n">hash_object</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">()</span>
+            <span class="n">hash_object</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pretrained_model_name_or_path</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">model_card_name</span> <span class="o">=</span> <span class="n">hash_object</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">model_card_name</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">pretrained_model_name_or_path</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">kwargs</span> <span class="o">=</span> <span class="n">kwargs</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_tokenizer</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">is_transformed</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="k">if</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;transform&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="fm">__repr__</span><span class="p">()</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="nd">@with_replaced_quantizers</span>
+    <span class="k">def</span> <span class="nf">from_pretrained</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">pretrained_model_name_or_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.</span>
+<span class="sd">        Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.</span>
+
+<span class="sd">        Accepts All the parameters that are acceptable by ``transformers.AutoModelForCausalLM``</span>
+<span class="sd">        There are few additional parameters that this method can take.</span>
+
+<span class="sd">        ``Mandatory`` Args:</span>
+<span class="sd">            :transform (bool): Whether to optimize model for KV retention; default is ``True``. Pass ``False`` to get BertStyle model.</span>
+<span class="sd">            :model_card_name (str): ``HuggingFace`` model card name or name of the model if custom, used for deciding directory name while saving ``ONNX/qpc`` files.</span>
+<span class="sd">            :full_batch_size (int): Pass this if you want to execute model with continuous batching.</span>
+<span class="sd">            Example usage:</span>
+
+<span class="sd">        .. code-block:: python</span>
+
+<span class="sd">            from QEfficient import QEFFAutoModelForCausalLM</span>
+
+<span class="sd">            # Initialize the model using from_pretrained similar to transformers.AutoModelForCausalLM</span>
+<span class="sd">            model = QEFFAutoModelForCausalLM.from_pretrained(&quot;gpt2&quot;)</span>
+
+<span class="sd">            # Now you can directly compile the model for Cloud AI 100</span>
+<span class="sd">            model.compile(num_cores=14, device_group=[0])  # Considering you have a Cloud AI 100 Standard SKU</span>
+
+<span class="sd">            # You can now execute the model</span>
+<span class="sd">            model.generate(prompts=[&quot;Hi there!!&quot;])</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">model_card_name</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span>
+            <span class="s2">&quot;model_card_name&quot;</span><span class="p">,</span> <span class="kc">None</span>
+        <span class="p">)</span>  <span class="c1"># Remove model_card_name from kwargs for transformers APIs</span>
+
+        <span class="n">full_batch_size</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+        <span class="n">attn_implementation</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;attn_implementation&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">attn_implementation</span> <span class="o">!=</span> <span class="s2">&quot;eager&quot;</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Updating attn_implementation to be &#39;eager&#39;, got </span><span class="si">{</span><span class="n">attn_implementation</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">kwargs</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;attn_implementation&quot;</span><span class="p">:</span> <span class="s2">&quot;eager&quot;</span><span class="p">})</span>
+
+        <span class="k">if</span> <span class="n">low_cpu_mem_usage</span> <span class="o">:=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;low_cpu_mem_usage&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">):</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Updating low_cpu_mem_usage to be &#39;False&#39;, got </span><span class="si">{</span><span class="n">low_cpu_mem_usage</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">kwargs</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;low_cpu_mem_usage&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">})</span>
+
+        <span class="n">model</span> <span class="o">=</span> <span class="n">QEFFAutoModelToTransformersAutoModelMap</span><span class="p">[</span><span class="bp">cls</span><span class="o">.</span><span class="vm">__name__</span><span class="p">]</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+            <span class="n">pretrained_model_name_or_path</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span>
+            <span class="n">model</span><span class="p">,</span>
+            <span class="n">pretrained_model_name_or_path</span><span class="o">=</span><span class="n">pretrained_model_name_or_path</span><span class="p">,</span>
+            <span class="n">model_card_name</span><span class="o">=</span><span class="n">model_card_name</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
+            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">tokenizer</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the tokenizer for given model based on ``self.pretrained_model_name_or_path``.</span>
+<span class="sd">        Loads the tokenizer if required.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            :Union[PreTrainedTokenizer, PreTrainedTokenizerFast]: Tokenizer from ``transformers`` for the given model.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tokenizer</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_tokenizer</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_tokenizer</span><span class="p">()</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tokenizer</span>
+
+    <span class="k">def</span> <span class="nf">get_tokenizer</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">]:</span>
+        <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">load_hf_tokenizer</span><span class="p">(</span><span class="n">pretrained_model_name_or_path</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pretrained_model_name_or_path</span><span class="p">,</span> <span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">tokenizer</span>
+
+
+<div class="viewcode-block" id="QEFFAutoModelForCausalLM"><a class="viewcode-back" href="../../../../source/hl_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM">[docs]</a><span class="k">class</span> <span class="nc">QEFFAutoModelForCausalLM</span><span class="p">(</span><span class="n">QEFFTransformersBase</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.</span>
+<span class="sd">    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.</span>
+<span class="sd">    Please note that the QEFF class is also a part of the ``QEfficient`` module.</span>
+
+<span class="sd">    ``Mandatory`` Args:</span>
+<span class="sd">        :model (nn.Module):  PyTorch model</span>
+<span class="sd">        :pretrained_model_name_or_path (str): We recommend passing name of the model as input here, as you are not using `from_pretrained` method. This name will be used for deciding path of the ``ONNX/qpc`` files generated during ``export``, ``compilation`` stages.</span>
+
+<span class="sd">    .. code-block:: python</span>
+
+<span class="sd">        from QEfficient import QEFFAutoModelForCausalLM</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">_pytorch_transforms</span> <span class="o">=</span> <span class="p">[</span><span class="n">CustomOpsTransform</span><span class="p">,</span> <span class="n">KVCacheTransform</span><span class="p">]</span>
+
+<div class="viewcode-block" id="QEFFAutoModelForCausalLM.transform"><a class="viewcode-back" href="../../../../source/hl_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.transform">[docs]</a>    <span class="k">def</span> <span class="nf">transform</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        This method applies all relevant optimization transforms on the model and toggles the ``self.is_transformed`` attribute to True. If the model is already transformed, the method will simply return.</span>
+<span class="sd">        Please note that this method does not require any input arguments.&quot;</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            :obj: Same object with transformed ``self.model``</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_transformed</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">KVCacheTransform</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">KVCacheTransform</span><span class="p">)]</span> <span class="o">=</span> <span class="n">CBTransform</span>
+            <span class="k">if</span> <span class="n">CBTransform</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;please don&#39;t update _pytorch_transforms variable&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">CBTransform</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">CBTransform</span><span class="p">)]</span> <span class="o">=</span> <span class="n">KVCacheTransform</span>
+            <span class="k">if</span> <span class="n">KVCacheTransform</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;Please don&#39;t update _pytorch_transforms variable&quot;</span><span class="p">)</span>
+
+        <span class="c1"># Update list of pytorch transforms if the model falls in AWQ/GPTQ category</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;quantization_config&quot;</span><span class="p">):</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">quantization_config</span><span class="p">,</span> <span class="n">QEffAwqConfig</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">AwqToMatmulNbitsTransform</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">quantization_config</span><span class="p">,</span> <span class="n">QEffGPTQConfig</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">GPTQToMatmulNbitsTransform</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">AwqToMatmulNbitsTransform</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">AwqToMatmulNbitsTransform</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">GPTQToMatmulNbitsTransform</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">GPTQToMatmulNbitsTransform</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">transform</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pytorch_transforms</span><span class="p">:</span>
+            <span class="n">transform</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">is_transformed</span> <span class="o">=</span> <span class="kc">True</span></div>
+
+    <span class="k">def</span> <span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>  <span class="c1"># type: ignore</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Reached too far!!&quot;</span><span class="p">)</span>
+
+<div class="viewcode-block" id="QEFFAutoModelForCausalLM.export"><a class="viewcode-back" href="../../../../source/hl_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.export">[docs]</a>    <span class="k">def</span> <span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Exports the model to ``ONNX`` format using ``torch.onnx.export``.</span>
+<span class="sd">        The model should already be transformed i.e. ``self.is_transformed`` should be ``True``.</span>
+<span class="sd">        Otherwise, this will raise an ``AssertionError``.</span>
+<span class="sd">        We currently don&#39;t support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this.&quot;</span>
+
+<span class="sd">        ``Optional`` Args:</span>
+<span class="sd">            does not any arguments.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            :AttributeError: If ``pretrained_model_name_or_path`` is a path, this function needs model card name of the model so that it can distinguish between directories while saving the ``ONNX`` files generated. So, user needs to pass ``model_card_name`` as a valid ``string`` in that case, Otherwise this will raise the error.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            :str: Path of the generated ``ONNX`` graph.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_transformed</span><span class="p">,</span> <span class="s2">&quot;Please first run transform on the QEFFAutoModelForCausalLM object&quot;</span>
+        <span class="c1"># Export</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">onnx_model_path</span> <span class="o">=</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">export</span><span class="p">(</span>
+            <span class="n">model_name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_card_name</span><span class="p">,</span>
+            <span class="n">model_kv</span><span class="o">=</span><span class="bp">self</span><span class="p">,</span>
+            <span class="n">tokenizer</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">onnx_path</span> <span class="o">=</span> <span class="n">onnx_model_path</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">onnx_path</span></div>
+
+<div class="viewcode-block" id="QEFFAutoModelForCausalLM.compile"><a class="viewcode-back" href="../../../../source/hl_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.compile">[docs]</a>    <span class="k">def</span> <span class="nf">compile</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">num_cores</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">device_group</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="n">prompt_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span>
+        <span class="n">ctx_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>
+        <span class="n">mxfp6</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">mxint8</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">mos</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">aic_enable_depth_first</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.</span>
+<span class="sd">        If the model has not been exported yet, this method will handle the export process.</span>
+<span class="sd">        The generated ``qpc`` can be found under the directory ``efficient-transformers/qeff_models/{self.model_card_name}/qpc``.</span>
+
+<span class="sd">        ``Mandatory`` Args:</span>
+<span class="sd">            :num_cores (int): Number of cores used to compile the model.</span>
+<span class="sd">            :device_group (List[int]): If this is a list of more that one integers, tensor-slicing is invoked, defaults to None, and automatically chooses suitable device.</span>
+<span class="sd">        ``Optional`` Args:</span>
+<span class="sd">            :model_card_name (Optional[str], optional): Name of the model, Mandatory if ``self.pretrained_model_name_or_path`` is a path. ``Defaults to None``.</span>
+<span class="sd">            :batch_size (int, optional): Batch size. ``Defaults to 1``.</span>
+<span class="sd">            :prompt_len (int, optional): The length of the Prefill prompt should be less that ``prompt_len``. ``Defaults to 32``.</span>
+<span class="sd">            :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.</span>
+<span class="sd">            :mxfp6 (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.</span>
+<span class="sd">            :mxint8 (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.</span>
+<span class="sd">            :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.</span>
+<span class="sd">            :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            :str: Path of the compiled ``qpc`` package.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Export first if self.ort_runtime_args are not populated</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">onnx_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Exporting the </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> model to ONNX for compilation!&quot;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
+
+        <span class="c1"># Prepare qpc dir path</span>
+        <span class="n">qpc_dir_path</span> <span class="o">=</span> <span class="n">get_qpc_dir_path</span><span class="p">(</span>
+            <span class="n">model_card_name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_card_name</span><span class="p">,</span>
+            <span class="n">num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
+            <span class="n">mos</span><span class="o">=</span><span class="n">mos</span><span class="p">,</span>
+            <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+            <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt_len</span><span class="p">,</span>
+            <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
+            <span class="n">mxfp6</span><span class="o">=</span><span class="n">mxfp6</span><span class="p">,</span>
+            <span class="n">mxint8</span><span class="o">=</span><span class="n">mxint8</span><span class="p">,</span>
+            <span class="n">device_group</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Compile</span>
+        <span class="n">QEfficient</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+            <span class="n">onnx_path</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">onnx_path</span><span class="p">,</span>
+            <span class="n">qpc_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">qpc_dir_path</span><span class="p">),</span>
+            <span class="n">num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
+            <span class="n">device_group</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
+            <span class="n">aic_enable_depth_first</span><span class="o">=</span><span class="n">aic_enable_depth_first</span><span class="p">,</span>
+            <span class="n">mos</span><span class="o">=</span><span class="n">mos</span><span class="p">,</span>
+            <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+            <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt_len</span><span class="p">,</span>
+            <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
+            <span class="n">mxfp6</span><span class="o">=</span><span class="n">mxfp6</span><span class="p">,</span>
+            <span class="n">mxint8</span><span class="o">=</span><span class="n">mxint8</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">qpc_path</span> <span class="o">=</span> <span class="n">qpc_dir_path</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">qpc_path</span></div>
+
+<div class="viewcode-block" id="QEFFAutoModelForCausalLM.export_and_compile"><a class="viewcode-back" href="../../../../source/hl_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.export_and_compile">[docs]</a>    <span class="k">def</span> <span class="nf">export_and_compile</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">num_cores</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">device_group</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+        <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="n">prompt_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span>
+        <span class="n">ctx_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>
+        <span class="n">mxfp6</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">mxint8</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">mos</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">aic_enable_depth_first</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">qpc_dir_suffix</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        This API is specific to Internal VLLM use-case and is not recommended to be used in your application unless your are using VLLM.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">transformed</span> <span class="o">=</span> <span class="n">CBTransform</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">transformed</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;Could not apply Continuous batch transform on the model&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span> <span class="o">=</span> <span class="n">full_batch_size</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
+
+        <span class="c1"># Prepare qpc dir path</span>
+        <span class="n">qpc_base_dir_name</span> <span class="o">=</span> <span class="n">get_qpc_dir_name_infer</span><span class="p">(</span>
+            <span class="n">num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
+            <span class="n">mos</span><span class="o">=</span><span class="n">mos</span><span class="p">,</span>
+            <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+            <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt_len</span><span class="p">,</span>
+            <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
+            <span class="n">mxfp6</span><span class="o">=</span><span class="n">mxfp6</span><span class="p">,</span>
+            <span class="n">mxint8</span><span class="o">=</span><span class="n">mxint8</span><span class="p">,</span>
+            <span class="n">device_group</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">qpc_base_dir_name</span> <span class="o">=</span> <span class="n">qpc_base_dir_name</span> <span class="o">+</span> <span class="s2">&quot;_&quot;</span> <span class="o">+</span> <span class="n">qpc_dir_suffix</span> <span class="k">if</span> <span class="n">qpc_dir_suffix</span> <span class="k">else</span> <span class="n">qpc_base_dir_name</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">qpc_dir_path</span> <span class="o">=</span> <span class="n">qpc_exists</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">model_card_name</span><span class="p">,</span> <span class="n">qpc_base_dir_name</span><span class="o">=</span><span class="n">qpc_base_dir_name</span><span class="p">)</span>
+
+        <span class="c1"># Compile</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">qpc_path</span> <span class="o">=</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+            <span class="n">onnx_path</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">onnx_path</span><span class="p">,</span>
+            <span class="n">qpc_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">qpc_dir_path</span><span class="p">),</span>
+            <span class="n">num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
+            <span class="n">device_group</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
+            <span class="n">aic_enable_depth_first</span><span class="o">=</span><span class="n">aic_enable_depth_first</span><span class="p">,</span>
+            <span class="n">mos</span><span class="o">=</span><span class="n">mos</span><span class="p">,</span>
+            <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+            <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt_len</span><span class="p">,</span>
+            <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
+            <span class="n">mxfp6</span><span class="o">=</span><span class="n">mxfp6</span><span class="p">,</span>
+            <span class="n">mxint8</span><span class="o">=</span><span class="n">mxint8</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">qpc_path</span></div>
+
+<div class="viewcode-block" id="QEFFAutoModelForCausalLM.generate"><a class="viewcode-back" href="../../../../source/hl_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.generate">[docs]</a>    <span class="k">def</span> <span class="nf">generate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prompts</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">device_id</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">runtime</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;AI_100&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.</span>
+<span class="sd">        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.</span>
+<span class="sd">        If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.</span>
+
+<span class="sd">        ``Mandatory`` Args:</span>
+<span class="sd">            :prompts (List[str]): List of prompts to run the execution.</span>
+<span class="sd">            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model</span>
+<span class="sd">        ``optional`` Args:</span>
+<span class="sd">            :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to &quot;AI_100&quot;.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">assert</span> <span class="n">Runtime</span><span class="p">(</span><span class="n">runtime</span><span class="p">)</span> <span class="o">==</span> <span class="n">Runtime</span><span class="o">.</span><span class="n">AI_100</span><span class="p">,</span> <span class="s2">&quot;Only AI_100 runtime is supported right now via generate API&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">run_cloud_ai_100</span><span class="p">(</span><span class="n">prompts</span><span class="o">=</span><span class="n">prompts</span><span class="p">,</span> <span class="n">device_id</span><span class="o">=</span><span class="n">device_id</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></div>
+
+    <span class="k">def</span> <span class="nf">run_cloud_ai_100</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prompts</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">device_id</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">qpc_path</span><span class="p">,</span> <span class="nb">str</span><span class="p">),</span> <span class="s2">&quot;Please run compile API first!&quot;</span>
+        <span class="n">generation_len</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;generation_len&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">cloud_ai_100_exec_kv</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">qpc_path</span><span class="p">,</span>
+            <span class="n">prompt</span><span class="o">=</span><span class="n">prompts</span><span class="p">,</span>
+            <span class="n">device_id</span><span class="o">=</span><span class="n">device_id</span><span class="p">,</span>
+            <span class="n">generation_len</span><span class="o">=</span><span class="n">generation_len</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">full_batch_size</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+<span class="k">class</span> <span class="nc">QEffAutoModel</span><span class="p">(</span><span class="n">QEFFTransformersBase</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>  <span class="c1"># type: ignore</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Reached too far!!&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Reached too far!!&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">compile</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Reached too far!!&quot;</span><span class="p">)</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, Qualcomm.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+    <span class="rst-current-version" data-toggle="rst-current-version">
+      Version: Current version here
+      <span class="fa fa-caret-down"></span>
+    </span>
+    <div class="rst-other-versions">
+      Versions
+      <dl>
+        <dd><a href="index.html">main</a></dd>
+        <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
+      </dl>
+    </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
