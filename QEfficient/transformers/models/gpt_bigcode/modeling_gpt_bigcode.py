@@ -11,7 +11,6 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.utils.checkpoint
-from torch import nn
 from torch.nn import CrossEntropyLoss
 from transformers.cache_utils import Cache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
@@ -61,50 +60,6 @@ def masked_softmax(x: torch.Tensor, mask: torch.Tensor, mask_value: torch.Tensor
 
 
 class QEffGPTBigCodeAttention(GPTBigCodeAttention):
-    def __init__(self, config, is_cross_attention=False, layer_idx=None):
-        super().__init__()
-        self.config = config
-
-        self.mask_value = torch.tensor(-10000.0, dtype=torch.float32)
-        self.multi_query = config.multi_query
-        self.embed_dim = config.hidden_size
-        self.num_heads = config.num_attention_heads
-        self.head_dim = self.embed_dim // self.num_heads
-        self.kv_heads = 1 if self.multi_query else self.num_heads
-        self.kv_dim = self.kv_heads * self.head_dim
-        self.split_size = self.embed_dim
-        self.is_causal = True
-
-        if self.head_dim * self.num_heads != self.embed_dim:
-            raise ValueError(
-                f"`embed_dim` must be divisible by num_heads (got `embed_dim`: {self.embed_dim} and `num_heads`:"
-                f" {self.num_heads})."
-            )
-
-        self.scale_attn_weights = config.scale_attn_weights
-        self.is_cross_attention = is_cross_attention
-
-        self.layer_idx = layer_idx
-        self.attention_softmax_in_fp32 = config.attention_softmax_in_fp32
-        self.scale_attention_softmax_in_fp32 = (
-            config.scale_attention_softmax_in_fp32 and config.attention_softmax_in_fp32
-        )
-        self.attn_pdrop = config.attn_pdrop
-
-        if self.is_cross_attention:
-            if self.multi_query:
-                raise NotImplementedError("Multi-Query Attention not supported for cross_attention")
-
-            self.c_attn = nn.Linear(self.embed_dim, 2 * self.embed_dim)
-            self.q_attn = nn.Linear(self.embed_dim, self.embed_dim)
-        else:
-            self.c_attn = nn.Linear(self.embed_dim, self.embed_dim + 2 * self.kv_dim)
-
-        self.c_proj = nn.Linear(self.embed_dim, self.embed_dim)
-
-        self.attn_dropout = nn.Dropout(config.attn_pdrop)
-        self.resid_dropout = nn.Dropout(config.resid_pdrop)
-
     def _attn(self, query, key, value, attention_mask=None, head_mask=None):
         dtype = query.dtype
         softmax_dtype = torch.float32 if self.attention_softmax_in_fp32 else dtype
