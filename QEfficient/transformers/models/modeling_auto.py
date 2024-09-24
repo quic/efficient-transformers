@@ -168,7 +168,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         """
         if self.is_transformed:
             return
-
         if self.full_batch_size is not None:
             if KVCacheTransform in self._pytorch_transforms:
                 self._pytorch_transforms[self._pytorch_transforms.index(KVCacheTransform)] = CBTransform
@@ -187,6 +186,19 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
             if isinstance(self.model.config.quantization_config, QEffGPTQConfig):
                 self._pytorch_transforms.insert(0, GPTQToMatmulNbitsTransform)
+
+        num_speculative_tokens = kwargs.get("num_speculative_tokens", None)
+        is_dlm = kwargs.get("is_dlm", False)
+        assert (
+            not isinstance(num_speculative_tokens, int)
+        ) or not is_dlm, "number of speculative tokens are only to be specified for Target LM"
+        if num_speculative_tokens:
+            assert isinstance(num_speculative_tokens, int) and num_speculative_tokens > 0, (
+                "argument num_speculative_tokens" " should be of type integer and" " be positive if specified"
+            )
+            setattr(self.model, "num_speculative_tokens", num_speculative_tokens)
+        elif is_dlm:
+            setattr(self.model, "is_dlm", True)
 
         for transform in self._pytorch_transforms:
             transform.apply(self.model)
@@ -289,6 +301,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxfp6=mxfp6,
             mxint8=mxint8,
             full_batch_size=self.full_batch_size,
+            num_speculative_tokens=getattr(self.model, "num_speculative_tokens", None),
+            is_dlm=getattr(self.model, "is_dlm", False),
         )
         self.qpc_path = qpc_dir_path
         return self.qpc_path

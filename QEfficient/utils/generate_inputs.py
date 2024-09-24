@@ -12,7 +12,9 @@ from QEfficient.utils import get_num_layers_from_config, get_padding_shape_from_
 
 
 class InputHandler:
-    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size):
+    def __init__(
+        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size, num_speculative_tokens
+    ):
         """
         Initialization
 
@@ -24,6 +26,7 @@ class InputHandler:
             :prompt_len (int): Prompt length for the model to compile.
             :ctx_len (int): Maximum context length to compile the model.
             :full_batch_size (int): Continuous batching batch size
+            :num_speculative_tokens (Optional[int]): used to determine whether this is a TLM model or not
         """
         # check and fix tokenizer viability
         padding_check_and_fix(tokenizer)
@@ -32,6 +35,7 @@ class InputHandler:
         self.prompt_len = prompt_len
         self.ctx_len = ctx_len
         self.full_batch_size = full_batch_size
+        self.num_speculative_tokens = num_speculative_tokens
         self.n_layer = get_num_layers_from_config(config)
         self.padding_shape = get_padding_shape_from_config(
             config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
@@ -99,8 +103,10 @@ class InputHandler:
         updated_inputs = {}
         if self.full_batch_size:
             batch_index = torch.arange(1).view(-1, 1)
-
-            input_ids = pt_outputs.logits.detach().argmax(2)
+            if self.num_speculative_tokens:
+                input_ids = pt_outputs.logits.detach()[:, -1].argmax(1, keepdim=True)
+            else:
+                input_ids = pt_outputs.logits.detach().argmax(2)
             updated_inputs["input_ids"] = torch.full((self.full_batch_size, 1), self.tokenizer.pad_token_id)
             updated_inputs["input_ids"][batch_index.view(-1)] = input_ids
 
@@ -111,7 +117,12 @@ class InputHandler:
             updated_inputs["batch_index"] = torch.arange(self.full_batch_size).view(-1, 1)
 
         else:
-            updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
+            if self.num_speculative_tokens:
+                # assume spec decoding logits
+                input_ids = pt_outputs["logits"][:, -1].argmax(-1).reshape(-1, 1)
+            else:
+                input_ids = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
+            pt_outputs["input_ids"] = input_ids
             updated_inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
 
         updated_inputs["past_key_values"] = tuple(

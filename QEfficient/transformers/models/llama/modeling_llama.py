@@ -31,6 +31,7 @@ from transformers.models.llama.modeling_llama import (
 )
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.modeling_spd_utils import filter_hidden_states
 
 
 class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding):
@@ -288,8 +289,7 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
         )
 
         # Cast to INT32 to avoid issue while running in ONNXRT
-        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        hidden_states = filter_hidden_states(outputs[0], position_ids, getattr(self, "num_speculative_tokens", None))
         if self.config.pretraining_tp > 1:
             lm_head_slices = self.lm_head.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
             logits = [F.linear(hidden_states, lm_head_slices[i]) for i in range(self.config.pretraining_tp)]
