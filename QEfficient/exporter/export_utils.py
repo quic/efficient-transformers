@@ -43,7 +43,6 @@ def export_onnx(
     # Inspect the model's forward method arguments
     pt_model_code = pt_model.forward.__code__
     pt_input_names = pt_model_code.co_varnames[1 : pt_model_code.co_argcount]
-
     # Arrange the inputs in proper order to make tracing work properly
     pt_inputs = []
     input_names = []
@@ -69,13 +68,16 @@ def export_onnx(
     }
     decoder_seq_inputs = {"decoder_input_ids", "decoder_attention_mask"}
     dynamic_axis_past_key = "full_batch_size" if "batch_index" in input_names else "batch_size"
-
+    kv_cache_3d = len(inputs["past_key_values"][0][0].shape) == 3
     dynamic_axes = {}
     for iname in input_names:
         if iname in seq_len_inputs:
             dynamic_axes[iname] = {0: "batch_size", 1: "seq_len"}
         elif iname in decoder_seq_inputs:
             dynamic_axes[iname] = {0: "batch_size", 1: "decoder_seq_len"}
+        elif kv_cache_3d and iname.startswith("past_"):
+            # KV-cache (batch_size, ctx_len, d_head)
+            dynamic_axes[iname] = {0: dynamic_axis_past_key, 1: "ctx_len"}
         elif iname.startswith("past_"):
             # KV-cache (batch_size, num_heads, past_len, embed_dim)
             dynamic_axes[iname] = {0: dynamic_axis_past_key, 2: "ctx_len"}

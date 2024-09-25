@@ -1,6 +1,5 @@
 (validated_models)=
 # Validated Models
-
 | Model Name | Model Support |
 | --- | --- |
 | [GPT2](https://huggingface.co/openai-community/gpt2) | ✔️ |
@@ -35,9 +34,6 @@
 (coming_soon_models)=
 # Models Coming Soon
 
-* [Starcoder1-15B](https://huggingface.co/bigcode/starcoder)
-* [granite-20b-code-base-8k](https://huggingface.co/ibm-granite/granite-20b-code-base-8k)
-* [granite-20b-code-instruct-8k](https://huggingface.co/ibm-granite/granite-20b-code-instruct-8k)
 * [CohereForAI/c4ai-command-r-v01](https://huggingface.co/CohereForAI/c4ai-command-r-v01)
 * [databricks/dbrx-base](https://huggingface.co/databricks/dbrx-base)
 * [Chatglm2-6b](https://huggingface.co/THUDM/chatglm2-6b)
