@@ -7,7 +7,7 @@
 
 *Latest news* :fire: <br>
 
-- [coming soon] Support for more popular [models](coming_soon_models) and inference optimization technique speculative decoding <br>
+- [coming soon] Support for more popular [models](https://quic.github.io/efficient-transformers/source/validate.html#models-coming-soon) and inference optimization technique speculative decoding <br>
 - [09/2024] Added support for [Meta-Llama-3.1-8B](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B)
 - [09/2024] Added support for [Meta-Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct)
 - [09/2024] Added support for [Meta-Llama-3.1-70B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-70B-Instruct)
@@ -77,7 +77,7 @@ For more details about using ``QEfficient`` via Cloud AI 100 Apps SDK, visit [Li
 * [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html#)
 * [Python API](https://quic.github.io/efficient-transformers/source/hl_api.html)
 * [Validated Models](https://quic.github.io/efficient-transformers/source/validate.html)
-* [Models coming soon](https://quic.github.io/efficient-transformers/source/validate.html#models-coming-soon)
+* [Models coming soon](models-coming-soon)
 
 > Note: More details are here: https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Model-Architecture-Support/Large-Language-Models/llm/
 

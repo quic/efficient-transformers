@@ -37,3 +37,5 @@
  
 * [Chatglm2-6b](https://huggingface.co/THUDM/chatglm2-6b)
 * [Baichuan2-7B-Base](https://huggingface.co/baichuan-inc/Baichuan2-7B-Base)
+* [CohereForAI/c4ai-command-r-v01](https://huggingface.co/CohereForAI/c4ai-command-r-v01)
+* [databricks/dbrx-base](https://huggingface.co/databricks/dbrx-base)
