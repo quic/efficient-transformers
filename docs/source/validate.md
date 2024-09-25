@@ -29,9 +29,13 @@
 | [Jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b) | ✔️ | ✔️ |
 | [Jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat) | ✔️ | ✔️ |
 | [Jais-adapted-7b](https://huggingface.co/inceptionai/jais-adapted-7b) | ✔️ | ✔️ |
-
+| [granite-20b-code-base](https://huggingface.co/ibm-granite/granite-20b-code-base-8k) | ✔️ | ✔️ |
+| [granite-20b-code-instruct-8k](https://huggingface.co/ibm-granite/granite-20b-code-instruct-8k) | ✔️ | ✔️ |
+| [Starcoder1-15B](https://huggingface.co/bigcode/starcoder) | ✔️ | ✔️ |
 (coming_soon_models)=
 # Models Coming Soon
  
 * [Chatglm2-6b](https://huggingface.co/THUDM/chatglm2-6b)
 * [Baichuan2-7B-Base](https://huggingface.co/baichuan-inc/Baichuan2-7B-Base)
+* [CohereForAI/c4ai-command-r-v01](https://huggingface.co/CohereForAI/c4ai-command-r-v01)
+* [databricks/dbrx-base](https://huggingface.co/databricks/dbrx-base)
