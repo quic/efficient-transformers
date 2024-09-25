@@ -11,16 +11,24 @@ import transformers
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
+    CodeGenBlock,
     CodeGenForCausalLM,
     CodeGenModel,
 )
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
+    FalconDecoderLayer,
     FalconForCausalLM,
     FalconModel,
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
-from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
+from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
+    GPTBigCodeAttention,
+    GPTBigCodeBlock,
+    GPTBigCodeForCausalLM,
+    GPTBigCodeModel,
+)
+from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
@@ -71,11 +79,13 @@ from QEfficient.customop import CustomRMSNormAIC
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
+    QeffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
+    QEffFalconDecoderLayer,
     QEffFalconForCausalLM,
     QEffFalconModel,
 )
@@ -85,7 +95,18 @@ from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2LMHeadModel,
     QEffGPT2Model,
 )
-from QEfficient.transformers.models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJForCausalLM, QEffGPTJModel
+from QEfficient.transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
+    QEffGPTBigCodeAttention,
+    QEffGPTBigCodeBlock,
+    QEffGPTBigCodeForCausalLM,
+    QEffGPTBigCodeModel,
+)
+from QEfficient.transformers.models.gptj.modeling_gptj import (
+    QEffGPTJAttention,
+    QEffGPTJBlock,
+    QEffGPTJForCausalLM,
+    QEffGPTJModel,
+)
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
@@ -200,6 +221,11 @@ class KVCacheTransform(ModuleMappingTransform):
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2Model: QEffStarcoder2Model,
         Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
+        # GptBigcode
+        GPTBigCodeAttention: QEffGPTBigCodeAttention,
+        GPTBigCodeBlock: QEffGPTBigCodeBlock,
+        GPTBigCodeModel: QEffGPTBigCodeModel,
+        GPTBigCodeForCausalLM: QEffGPTBigCodeForCausalLM,
     }
 
     @classmethod
@@ -227,4 +253,10 @@ class CBTransform(KVCacheTransform):
         Phi3DecoderLayer: QEffPhi3DecoderLayer,
         # Qwen2
         Qwen2DecoderLayer: QEffQwen2DecoderLayer,
+        # Codegen
+        CodeGenBlock: QeffCodeGenBlock,
+        # Falcon
+        FalconDecoderLayer: QEffFalconDecoderLayer,
+        # GPT-J
+        GPTJBlock: QEffGPTJBlock,
     }

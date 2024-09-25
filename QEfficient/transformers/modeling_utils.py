@@ -11,6 +11,7 @@ from typing import Dict, Type
 import torch.nn as nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
+    CodeGenBlock,
     CodeGenForCausalLM,
     CodeGenModel,
 )
@@ -20,6 +21,12 @@ from transformers.models.falcon.modeling_falcon import (
     FalconModel,
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
+from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
+    GPTBigCodeAttention,
+    GPTBigCodeBlock,
+    GPTBigCodeForCausalLM,
+    GPTBigCodeModel,
+)
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
@@ -58,6 +65,7 @@ from QEfficient.customop import CustomRMSNormAIC
 
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
+    QeffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
@@ -67,6 +75,12 @@ from .models.falcon.modeling_falcon import (
     QEffFalconModel,
 )
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
+from .models.gpt_bigcode.modeling_gpt_bigcode import (
+    QEffGPTBigCodeAttention,
+    QEffGPTBigCodeBlock,
+    QEffGPTBigCodeForCausalLM,
+    QEffGPTBigCodeModel,
+)
 from .models.gptj.modeling_gptj import QEffGPTJAttention, QEffGPTJForCausalLM, QEffGPTJModel
 from .models.llama.modeling_llama import (
     QEffLlamaAttention,
@@ -111,6 +125,12 @@ get_lists_of_cb_qeff_models = ModelArchitectures(
         Qwen2ForCausalLM.__name__,
         Phi3ForCausalLM.__name__,
         PhiForCausalLM.__name__,
+        CodeGenForCausalLM.__name__,
+        GPT2LMHeadModel.__name__,
+        GPTJForCausalLM.__name__,
+        MptForCausalLM.__name__,
+        FalconForCausalLM.__name__,
+        GPTBigCodeForCausalLM.__name__,
     ]
 )
 # Create an instance of the named tuple
@@ -128,6 +148,7 @@ qeff_supported_architectures = ModelArchitectures(
         FalconForCausalLM.__name__,
         Qwen2ForCausalLM.__name__,
         Starcoder2ForCausalLM.__name__,
+        GPTBigCodeForCausalLM.__name__,
     ]
 )
 
@@ -158,6 +179,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     CodeGenAttention: QEffCodeGenAttention,
     CodeGenModel: QEffCodeGenModel,
     CodeGenForCausalLM: QEffCodeGenForCausalLM,
+    CodeGenBlock: QeffCodeGenBlock,
     # Mistral model layers
     MistralAttention: QEffMistralAttention,
     MistralDecoderLayer: QEffMistralDecoderLayer,
@@ -194,4 +216,9 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
     Starcoder2Model: QEffStarcoder2Model,
     Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
+    # Gpt_bigcode model layers
+    GPTBigCodeForCausalLM: QEffGPTBigCodeForCausalLM,
+    GPTBigCodeAttention: QEffGPTBigCodeAttention,
+    GPTBigCodeBlock: QEffGPTBigCodeBlock,
+    GPTBigCodeModel: QEffGPTBigCodeModel,
 }

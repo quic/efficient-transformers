@@ -36,6 +36,7 @@ class QEffMptAttention(MptAttention):
         hidden_states: torch.Tensor,
         position_bias: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = None,
@@ -50,7 +51,7 @@ class QEffMptAttention(MptAttention):
 
         if past_key_value is not None:
             if len(past_key_value) != 0:
-                cache_kwargs = {"position_ids": position_ids}
+                cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
                 pkv = DynamicCache()
                 pkv.key_cache.append(past_key_value[0])
                 pkv.value_cache.append(past_key_value[1])
@@ -105,6 +106,7 @@ class QEffMptBlock(MptBlock):
         position_bias: torch.Tensor,
         attention_mask: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache: bool = False,
         output_attentions: bool = False,
@@ -120,6 +122,7 @@ class QEffMptBlock(MptBlock):
             layernorm_output,
             position_bias=position_bias,
             position_ids=position_ids,
+            batch_index=batch_index,
             attention_mask=attention_mask,
             past_key_value=layer_past,
             use_cache=use_cache,
@@ -158,6 +161,7 @@ class QEFfMptModel(MptModel):
         past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -230,6 +234,17 @@ class QEFfMptModel(MptModel):
                     use_cache,
                     output_attentions,
                 )
+            elif batch_index is not None:
+                outputs = block(
+                    hidden_states,
+                    layer_past=layer_past,
+                    attention_mask=causal_mask,
+                    position_ids=position_ids,
+                    batch_index=batch_index,
+                    use_cache=use_cache,
+                    output_attentions=output_attentions,
+                    position_bias=alibi,
+                )
             else:
                 outputs = block(
                     hidden_states,
@@ -278,6 +293,7 @@ class QEffMptForCausalLM(MptForCausalLM):
         past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = None,
@@ -298,6 +314,7 @@ class QEffMptForCausalLM(MptForCausalLM):
             past_key_values=past_key_values,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             output_attentions=output_attentions,
