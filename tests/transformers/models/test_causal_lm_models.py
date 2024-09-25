@@ -76,7 +76,7 @@ def load_causal_lm_model(model_config):
     return model_hf, params
 
 
-@pytest.mark.causal_lm
+@pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models)
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
