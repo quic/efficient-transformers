@@ -54,12 +54,12 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="installation.html">Pre-requisites</a></li>
-<li class="toctree-l1"><a class="reference internal" href="installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html#installation">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="installation.html#sanity-check">Sanity Check</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Upgrade Efficient-Transformers</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="upgrade_efficient_transfromers.html">Using GitHub Repository</a></li>
+<li class="toctree-l1"><a class="reference internal" href="upgrade.html">Using GitHub Repository</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -98,6 +98,7 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner"><code class="docutils literal notranslate"><span class="pre">ApiRunner</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_hf_model_on_pytorch()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch_CB"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_hf_model_on_pytorch_CB()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_kv_model_on_cloud_ai_100()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_kv_model_on_ort()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch"><code class="docutils literal notranslate"><span class="pre">ApiRunner.run_kv_model_on_pytorch()</span></code></a></li>
@@ -353,7 +354,7 @@ Bertstyle Approach:</p>
 
 <span class="target" id="module-QEfficient.utils.run_utils"></span><dl class="py class">
 <dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.run_utils.</span></span><span class="sig-name descname"><span class="pre">ApiRunner</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner" title="Permalink to this definition"></a></dt>
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.run_utils.</span></span><span class="sig-name descname"><span class="pre">ApiRunner</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">full_batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner" title="Permalink to this definition"></a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
 <section id="apirunner-class-is-responsible-for-running">
 <h3>ApiRunner class is responsible for running:<a class="headerlink" href="#apirunner-class-is-responsible-for-running" title="Permalink to this heading"></a></h3>
@@ -366,6 +367,26 @@ Bertstyle Approach:</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch">
 <span class="sig-name descname"><span class="pre">run_hf_model_on_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_hf</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_hf_model_on_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for running HuggingFace <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> model and return the output tokens</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">model_hf (torch.nn.module)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Original <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> model</p>
+</dd>
+</dl>
+</dd>
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">numpy.ndarray<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Generated output tokens</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch_CB">
+<span class="sig-name descname"><span class="pre">run_hf_model_on_pytorch_CB</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_hf</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner.run_hf_model_on_pytorch_CB"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch_CB" title="Permalink to this definition"></a></dt>
 <dd><p>Function responsible for running HuggingFace <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> model and return the output tokens</p>
 <dl class="simple">
 <dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
@@ -493,7 +514,19 @@ Bertstyle Approach:</p>
       </div>
     </section>
   </div>
-  <script>
+  <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+    <span class="rst-current-version" data-toggle="rst-current-version">
+      Version: Main
+      <span class="fa fa-caret-down"></span>
+    </span>
+    <div class="rst-other-versions">
+      Versions
+      <dl>
+        <dd><a href="../index.html">main</a></dd>
+        <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
+      </dl>
+    </div>
+</div><script>
       jQuery(function () {
           SphinxRtdTheme.Navigation.enable(true);
       });
