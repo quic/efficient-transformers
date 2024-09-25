@@ -16,7 +16,7 @@ And then, change directory to docs folder to build the docs.
 cd docs/
 # To build docs specific to branch
 sphinx-build -M html . build/html
-# [Optional] To build docs for all the supporting branch
+# [Optional] To build docs for all the supporting branches
 sphinx-multiversion . build/html
 ```
 ## Preview the docs locally
