@@ -13,7 +13,7 @@ This script calculates the perplexity for ONNX, QPC, or Torch models using the W
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.8+
 - Required Python packages:
   - `QEfficient`
   - `datasets==2.20`

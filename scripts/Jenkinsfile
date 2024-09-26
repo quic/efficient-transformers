@@ -16,7 +16,7 @@ pipeline
             steps
             {
                 sh '''
-                    python3.10 -m venv preflight_qeff
+                    python3.8 -m venv preflight_qeff
                     . preflight_qeff/bin/activate
                     pip install --upgrade pip setuptools
                     pip install .[test] --extra-index-url https://download.pytorch.org/whl/cpu
