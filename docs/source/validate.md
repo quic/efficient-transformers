@@ -1,5 +1,6 @@
 (validated_models)=
 # Validated Models
+``Note- All validated models support CB functionality.``
 | Model Name | Model Support |
 | --- | --- |
 | [GPT2](https://huggingface.co/openai-community/gpt2) | ✔️ |
@@ -28,8 +29,6 @@
 | [Jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b) | ✔️ |
 | [Jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat) | ✔️ |
 | [Jais-adapted-7b](https://huggingface.co/inceptionai/jais-adapted-7b) | ✔️ |
-
-``Note- All validated models support CB functionality.``
 
 (coming_soon_models)=
 # Models Coming Soon
