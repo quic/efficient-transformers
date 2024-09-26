@@ -52,6 +52,7 @@ configs = [
         additional_params,
     ) in configs
 ]
+config_ids = [x.model_type for x in configs]
 
 model_kwargs = {"attn_implementation": "eager"}
 
@@ -63,12 +64,8 @@ def test_causal_lm_unsupported(cb):
         QEFFAutoModelForCausalLM(model, cb)
 
 
-def config_id(config):
-    return config.model_type
-
-
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
-@pytest.mark.parametrize("config", configs, ids=config_id)
+@pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_causal_lm_init(config, cb):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
@@ -78,7 +75,7 @@ def test_causal_lm_init(config, cb):
 
 
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
-@pytest.mark.parametrize("config", configs, ids=config_id)
+@pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_causal_lm_pretrained(config, cb, tmp_path):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     model.save_pretrained(tmp_path)
@@ -88,7 +85,7 @@ def test_causal_lm_pretrained(config, cb, tmp_path):
 
 
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
-@pytest.mark.parametrize("config", configs, ids=config_id)
+@pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_causal_lm_hash(config, cb):
     hash_0_0 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb).model_hash
     hash_0_1 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb).model_hash
@@ -113,7 +110,7 @@ def test_causal_lm_hash(config, cb):
 
 
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
-@pytest.mark.parametrize("config", configs, ids=config_id)
+@pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_causal_lm_export(config, cb, tmp_path):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
@@ -145,7 +142,7 @@ def tmp_cache(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
-@pytest.mark.parametrize("config", configs, ids=config_id)
+@pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_causal_lm_compile(config, cb, tmp_cache):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
