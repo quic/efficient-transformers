@@ -142,6 +142,16 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self.continuous_batching = continuous_batching
         return self
 
+    @property
+    def model_hash(self) -> str:
+        # Compute the hash with: model_config, continuous_batching, transforms
+        mhash = hashlib.sha256()
+        mhash.update(to_hashable(self.model.config.to_diff_dict()))
+        mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
+        mhash.update(to_hashable(self._transform_names()))
+        mhash = mhash.hexdigest()[:16]
+        return mhash
+
     def export(self, export_dir: Optional[str] = None) -> str:
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
