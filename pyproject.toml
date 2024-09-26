@@ -14,10 +14,10 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Education",
     "Operating System :: Linux",
-    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.10",
     "Topic :: Scientific/Engineering :: Artificial Intelligence for Inference Accelerator",
 ]
-requires-python = "==3.8.*"
+requires-python = "==3.10.*"
 dependencies = [
     "transformers==4.44.2",
     "torch==2.0.0+cpu",

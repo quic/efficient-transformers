@@ -24,9 +24,9 @@ source  /opt/qti-aic/dev/python/qeff/bin/activate
 
 ```bash
 
-# Create Python virtual env and activate it. (Required Python 3.8)
+# Create Python virtual env and activate it. (Required Python 3.10)
 
-python3.8 -m venv qeff_env
+python3.10 -m venv qeff_env
 source qeff_env/bin/activate
 pip install -U pip
 
