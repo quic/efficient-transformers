@@ -105,6 +105,12 @@ def test_causal_lm_hash(config, cb):
 
     assert hash_0_0 != hash_1_0
 
+    if cb:
+        hash_0_no_cb = QEFFAutoModelForCausalLM(
+            AutoModelForCausalLM.from_config(config, **model_kwargs), False
+        ).model_hash
+        assert hash_0_0 != hash_0_no_cb
+
 
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_id)
