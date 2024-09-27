@@ -65,6 +65,15 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralRMSNorm,
     MixtralSparseMoeBlock,
 )
+from transformers.models.mllama.modeling_mllama import (
+    MllamaCrossAttentionDecoderLayer,
+    MllamaForCausalLM,
+    MllamaSelfAttentionDecoderLayer,
+    MllamaTextCrossAttention,
+    MllamaTextModel,
+    MllamaTextRMSNorm,
+    MllamaTextSelfAttention,
+)
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 from transformers.models.phi.modeling_phi import PhiAttention, PhiDecoderLayer, PhiForCausalLM, PhiModel
 from transformers.models.phi3.modeling_phi3 import (
@@ -152,6 +161,14 @@ from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
 )
+from QEfficient.transformers.models.mllama.modeling_mllama import (
+    QEffMllamaCrossAttentionDecoderLayer,
+    QEffMllamaForCausalLM,
+    QEffMllamaSelfAttentionDecoderLayer,
+    QEffMllamaTextCrossAttention,
+    QEffMllamaTextModel,
+    QEffMllamaTextSelfAttention,
+)
 from QEfficient.transformers.models.mpt.modeling_mpt import (
     QEffMptAttention,
     QEffMptBlock,
@@ -193,6 +210,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         MixtralRMSNorm: CustomRMSNormAIC,
         Phi3RMSNorm: CustomRMSNormAIC,
         Qwen2RMSNorm: CustomRMSNormAIC,
+        MllamaTextRMSNorm: CustomRMSNormAIC,
     }
 
 
@@ -233,6 +251,11 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
         Gemma2Model: QEffGemma2Model,
         Gemma2ForCausalLM: QEffGemma2ForCausalLM,
+        # mllama
+        MllamaForCausalLM: QEffMllamaForCausalLM,
+        MllamaTextModel: QEffMllamaTextModel,
+        MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
+        MllamaTextCrossAttention: QEffMllamaTextCrossAttention,
         # Mistral
         MistralAttention: QEffMistralAttention,
         MistralDecoderLayer: QEffMistralDecoderLayer,
