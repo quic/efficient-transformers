@@ -28,6 +28,12 @@ source/validate
 source/installation
 ```
 
+```{toctree}
+:caption: 'Upgrade Efficient-Transformers'
+:maxdepth: 2
+
+source/upgrade
+```
 
 ```{toctree}
 :caption: 'Quick start'
