@@ -103,6 +103,9 @@ class QEFFTransformersBase(QEFFBaseModel):
 
         full_batch_size = kwargs.pop("full_batch_size", None)
 
+        num_speculative_tokens = kwargs.pop("num_speculative_tokens", None)
+        is_dlm = kwargs.pop("is_dlm", False)
+
         attn_implementation = kwargs.get("attn_implementation", None)
         if attn_implementation != "eager":
             logger.warning(f"Updating attn_implementation to be 'eager', got {attn_implementation}")
@@ -120,6 +123,8 @@ class QEFFTransformersBase(QEFFBaseModel):
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             model_card_name=model_card_name,
             full_batch_size=full_batch_size,
+            num_speculative_tokens=num_speculative_tokens,
+            is_dlm=is_dlm,
             **kwargs,
         )
 
@@ -192,7 +197,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         assert (
             not isinstance(num_speculative_tokens, int)
         ) or not is_dlm, "number of speculative tokens are only to be specified for Target LM"
-        if num_speculative_tokens:
+        if num_speculative_tokens is not None:
             assert isinstance(num_speculative_tokens, int) and num_speculative_tokens > 0, (
                 "argument num_speculative_tokens" " should be of type integer and" " be positive if specified"
             )
@@ -365,6 +370,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxfp6=mxfp6,
             mxint8=mxint8,
             full_batch_size=full_batch_size,
+            num_speculative_tokens=getattr(self.model, "num_speculative_tokens", None),
+            is_dlm=getattr(self.model, "is_dlm", False),
         )
         return self.qpc_path
 

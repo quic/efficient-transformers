@@ -181,7 +181,7 @@ def compile(
         ctx_len=ctx_len,
         path=specialization_json_path,
         full_batch_size=full_batch_size,
-        is_dlm=kwargs.get("is_dlm", None),
+        is_dlm=kwargs.get("is_dlm", False),
         num_speculative_tokens=kwargs.get("num_speculative_tokens", None),
     )
 
