@@ -32,8 +32,7 @@ test_models = [
     "hakurei/gpt-j-random-tinier",
     "mistralai/Mixtral-8x7B-Instruct-v0.1",
     "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
-    #    "TheBloke/Llama-2-7B-Chat-GPTQ",  # GPTQ model -> Enable once GPTQ+ROPE
-    #    issue is resolved
+    "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
     "ibm-granite/granite-20b-code-base",
 ]
 

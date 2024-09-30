@@ -1,6 +1,6 @@
 (validated_models)=
 # Validated Models
-``Note- All validated models support CB functionality.``
+``Note- All validated models support Continuous Batching functionality.``
 | Model Name | Model Support |
 | --- | --- |
 | [GPT2](https://huggingface.co/openai-community/gpt2) | ✔️ |
@@ -29,7 +29,9 @@
 | [Jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b) | ✔️ |
 | [Jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat) | ✔️ |
 | [Jais-adapted-7b](https://huggingface.co/inceptionai/jais-adapted-7b) | ✔️ |
-
+| [granite-20b-code-base](https://huggingface.co/ibm-granite/granite-20b-code-base-8k) | ✔️ | ✔️ |
+| [granite-20b-code-instruct-8k](https://huggingface.co/ibm-granite/granite-20b-code-instruct-8k) | ✔️ | ✔️ |
+| [Starcoder1-15B](https://huggingface.co/bigcode/starcoder) | ✔️ | ✔️ |
 (coming_soon_models)=
 # Models Coming Soon
 
