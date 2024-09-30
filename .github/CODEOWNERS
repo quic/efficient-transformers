@@ -7,12 +7,6 @@
 
 # Default owners
 # review when someone opens a pull request.
-* @anujgupt-github @vbaddi @ochougul
-/QEfficient/transformers @irajagop @quic-akuruvil
-/docs @quic-amitraj
-/examples @quic-mamta
-/tests @abukhoy
-/QEfficient/customop @irajagop
-/QEfficient/generation @quic-mamta
-/QEfficient/utils @quic-mamta
+* @quic-rishinr @ochougul
 pyproject.toml @carlstreeter-quic
+
