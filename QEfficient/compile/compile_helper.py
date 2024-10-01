@@ -24,27 +24,15 @@ def create_and_dump_specializations(
     num_speculative_tokens: Optional[int] = None,
 ):
     # Create specialization cfgs
-    prefill_specialization = {"batch_size": str(batch_size), "seq_len": str(prompt_len), "ctx_len": str(ctx_len)}
-    if num_speculative_tokens is None:
-        decode_specialization = {
-            "batch_size": str(batch_size),
-            "seq_len": "1",
-            "ctx_len": str(ctx_len),
-        }
-    else:
-        decode_specialization = {
-            "batch_size": str(batch_size),
-            "seq_len": str(num_speculative_tokens + 1),
-            "ctx_len": str(ctx_len),
-        }
-    specialization_cfgs = [prefill_specialization, decode_specialization]
+    decode_seq_len = 1 if num_speculative_tokens is None else num_speculative_tokens+1
+    specialization_cfgs = [
+        dict(batch_size=str(batch_size), seq_len=str(prompt_len), ctx_len=str(ctx_len)), # prefill
+        dict(batch_size=str(batch_size), seq_len=str(decode_seq_len), ctx_len=str(ctx_len)) # decode
+    ]
     if is_dlm:
-        dlm_specialization = {
-            "batch_size": str(batch_size),
-            "seq_len": "2",
-            "ctx_len": str(ctx_len),
-        }
-        specialization_cfgs.append(dlm_specialization)
+        specialization_cfgs.append(
+            dict(batch_size=str(batch_size), seq_len="2", ctx_len=str(ctx_len)) 
+        )
 
     specializations = dict(specializations=specialization_cfgs)
 

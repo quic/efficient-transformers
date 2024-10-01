@@ -122,7 +122,7 @@ class InputHandler:
                 input_ids = pt_outputs["logits"][:, -1].argmax(-1).reshape(-1, 1)
             else:
                 input_ids = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
-            pt_outputs["input_ids"] = input_ids
+            updated_inputs["input_ids"] = input_ids
             updated_inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
 
         updated_inputs["past_key_values"] = tuple(

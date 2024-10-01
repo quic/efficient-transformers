@@ -163,10 +163,18 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
     _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
 
-    def transform(self, **kwargs):
+    def transform(
+        self, 
+        num_speculative_tokens: Optional[int] = None,
+        is_dlm: bool = False,
+        **kwargs):
         """
         This method applies all relevant optimization transforms on the model and toggles the ``self.is_transformed`` attribute to True. If the model is already transformed, the method will simply return.
         Please note that this method does not require any input arguments."
+
+        ``Optional`` Args:
+            :num_speculative_tokens (int, optional): Number of speculative tokens, specified only for TLM SpD model.
+            :is_dlm (bool): True if this is a DLM SpD model.
 
         Returns:
             :obj: Same object with transformed ``self.model``
@@ -192,15 +200,11 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             if isinstance(self.model.config.quantization_config, QEffGPTQConfig):
                 self._pytorch_transforms.insert(0, GPTQToMatmulNbitsTransform)
 
-        num_speculative_tokens = kwargs.get("num_speculative_tokens", None)
-        is_dlm = kwargs.get("is_dlm", False)
-        assert (
-            not isinstance(num_speculative_tokens, int)
-        ) or not is_dlm, "number of speculative tokens are only to be specified for Target LM"
+        if isinstance(num_speculative_tokens, int) and is_dlm:
+            raise ValueError("`num_speculative_tokens` arg should not be specified along with `is_dlm` flag.")
         if num_speculative_tokens is not None:
-            assert isinstance(num_speculative_tokens, int) and num_speculative_tokens > 0, (
-                "argument num_speculative_tokens" " should be of type integer and" " be positive if specified"
-            )
+            if not isinstance(num_speculative_tokens, int) or num_speculative_tokens < 0:
+                ValueError("`num_speculative_tokens` arg should be of type positive integer.")
             setattr(self.model, "num_speculative_tokens", num_speculative_tokens)
         elif is_dlm:
             setattr(self.model, "is_dlm", True)
