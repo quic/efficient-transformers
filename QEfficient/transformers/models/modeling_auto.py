@@ -203,7 +203,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         if isinstance(num_speculative_tokens, int) and is_dlm:
             raise ValueError("`num_speculative_tokens` arg should not be specified along with `is_dlm` flag.")
         if num_speculative_tokens is not None:
-            if not isinstance(num_speculative_tokens, int) or num_speculative_tokens < 0:
+            if not isinstance(num_speculative_tokens, int) or num_speculative_tokens <= 0:
                 ValueError("`num_speculative_tokens` arg should be of type positive integer.")
             setattr(self.model, "num_speculative_tokens", num_speculative_tokens)
         elif is_dlm:

@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import List
+from typing import List, Optional
 
 from transformers import AutoTokenizer
 import numpy as np
@@ -17,7 +17,11 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 configs = [
     pytest.param(
         # device_group, num_speculative_tokens, prompt_len, ctx_len, prefill_bsz, full_batch_size, model_name, id
-        [0], 5, 32, 128, 1, 8, "TinyLlama/TinyLlama-1.1B-Chat-v1.0", id="llama"
+        [0], 5, 32, 128, 1, 8, "TinyLlama/TinyLlama-1.1B-Chat-v1.0", id="CB llama",
+    ),
+    pytest.param(
+        # device_group, num_speculative_tokens, prompt_len, ctx_len, prefill_bsz, full_batch_size, model_name, id
+        [0], 5, 32, 128, 1, None, "TinyLlama/TinyLlama-1.1B-Chat-v1.0", id="non-CB llama"
     ),
 ]
 
@@ -28,7 +32,7 @@ def test_llama_tlm_logit_dims(
     prompt_len: int,
     ctx_len: int,
     prefill_bsz: int,
-    full_batch_size: int,
+    full_batch_size: Optional[int],
     model_name: str
 ):
 
@@ -65,14 +69,15 @@ def test_llama_tlm_logit_dims(
         batch_index= np.arange(prefill_bsz, dtype=np.int64).reshape(prefill_bsz,1)
     )
     # decode dummy inputs
+    decode_bsz = full_batch_size if full_batch_size is not None else prefill_bsz
     decode_inputs = dict(
-        input_ids = np.zeros((full_batch_size, num_speculative_tokens+1), dtype=np.int64),
-        position_ids = np.full((full_batch_size, num_speculative_tokens+1), -1, dtype=np.int64),
-        batch_index=np.arange(full_batch_size, dtype=np.int64).reshape(-1,1)
+        input_ids = np.zeros((decode_bsz, num_speculative_tokens+1), dtype=np.int64),
+        position_ids = np.full((decode_bsz, num_speculative_tokens+1), -1, dtype=np.int64),
+        batch_index=np.arange(decode_bsz, dtype=np.int64).reshape(-1,1)
     )
     # create dummy logits
     prefill_logits = dict(logits=np.random.randn(prefill_bsz, prompt_len, vocab_size).astype(np.float32))
-    decode_logits = dict(logits=np.random.randn(full_batch_size, num_speculative_tokens+1, vocab_size).astype(np.float32))
+    decode_logits = dict(logits=np.random.randn(decode_bsz, num_speculative_tokens+1, vocab_size).astype(np.float32))
     # get prefill/decode logits
     session.set_buffers(prefill_logits)
     prefill_outputs = session.run(prefill_inputs)
@@ -92,7 +97,7 @@ def test_llama_dlm_logit_dims(
     prompt_len: int,
     ctx_len: int,
     prefill_bsz: int,
-    full_batch_size: int,
+    full_batch_size: Optional[int],
     model_name: str
 ):
 
@@ -129,20 +134,21 @@ def test_llama_dlm_logit_dims(
         batch_index=np.arange(prefill_bsz, dtype=np.int64).reshape(-1,1)
     )
     # decode-1 dummy inputs
+    decode_bsz = full_batch_size if full_batch_size is not None else prefill_bsz
     decode1_inputs = dict(
-        input_ids = np.zeros((full_batch_size, 1), dtype=np.int64),
-        position_ids = np.full((full_batch_size, 1), -1, dtype=np.int64),
-        batch_index=np.arange(full_batch_size, dtype=np.int64).reshape(-1,1)
+        input_ids = np.zeros((decode_bsz, 1), dtype=np.int64),
+        position_ids = np.full((decode_bsz, 1), -1, dtype=np.int64),
+        batch_index=np.arange(decode_bsz, dtype=np.int64).reshape(-1,1)
     )
     # decode-2 dummy inputs
     decode2_inputs = dict(
-        input_ids = np.zeros((full_batch_size, 2), dtype=np.int64),
-        position_ids = np.full((full_batch_size, 2), -1, dtype=np.int64),
-        batch_index=np.arange(full_batch_size, dtype=np.int64).reshape(-1,1)
+        input_ids = np.zeros((decode_bsz, 2), dtype=np.int64),
+        position_ids = np.full((decode_bsz, 2), -1, dtype=np.int64),
+        batch_index=np.arange(decode_bsz, dtype=np.int64).reshape(-1,1)
     )
     # create dummy logits
     prefill_logits = dict(logits=np.random.randn(prefill_bsz, 1, vocab_size).astype(np.float32))
-    decode_logits = dict(logits=np.random.randn(full_batch_size, 1, vocab_size).astype(np.float32))
+    decode_logits = dict(logits=np.random.randn(decode_bsz, 1, vocab_size).astype(np.float32))
     # get prefill/decode logits
     session.set_buffers(prefill_logits)
     prefill_outputs = session.run(prefill_inputs) 
