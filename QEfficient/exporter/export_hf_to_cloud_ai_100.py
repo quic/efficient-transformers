@@ -149,6 +149,7 @@ def convert_to_cloud_kvstyle(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     onnx_dir_path: str,
     seq_len: int,
+    max_num_adapters: int,
 ) -> str:
     """
     API to convert model with kv retention and export to ONNX.
@@ -181,7 +182,7 @@ def convert_to_cloud_kvstyle(
 
     # Decide path for saving exported ONNX files.
     model_name = export_kvstyle_transformed_model_to_onnx(
-        model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len
+        model_name, qeff_model.model, tokenizer, onnx_dir_path, seq_len, max_num_adapters
     )  # type: ignore
 
     # return the model path for automation.
@@ -195,6 +196,7 @@ def export_kvstyle_transformed_model_to_onnx(
     onnx_dir_path: str,
     seq_len: int,
     full_batch_size: Optional[int] = None,
+    max_num_adapters: Optional[int] = None,
 ) -> str:
     # Disabling requires_grad on all parameters
     for _, p in enumerate(transformed_model.parameters()):
@@ -213,6 +215,7 @@ def export_kvstyle_transformed_model_to_onnx(
         prompt_len=Constants.PROMPT_LEN,
         ctx_len=seq_len,
         full_batch_size=full_batch_size,
+        max_num_adapters=max_num_adapters,
     )
 
     inputs = input_handler.prepare_pytorch_inputs()
@@ -318,6 +321,7 @@ def export_for_cloud(
     onnx_dir_path: str,
     seq_length: int = Constants.SEQ_LEN,
     full_batch_size: Optional[int] = None,
+    max_num_adapters: Optional[int] = None,
 ) -> str:
     # Check if model architecture is supported for continuous batching.
     if full_batch_size and qeff_model.model.config.architectures[0] not in get_lists_of_cb_qeff_models.architectures:
@@ -326,19 +330,20 @@ def export_for_cloud(
         )
 
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
-    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
-        return export_lm_model_for_cloud(
-            model_name=model_name,
-            qeff_model=qeff_model,  # type: ignore
-            tokenizer=tokenizer,
-            onnx_dir_path=onnx_dir_path,
-            seq_length=seq_length,
-            full_batch_size=full_batch_size,
-        )
-    else:
-        raise NotImplementedError(
-            f"Only model type {QEFFAutoModelForCausalLM.__class__.__name__} is supported for export, got {type(qeff_model)}"
-        )
+    # if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
+    return export_lm_model_for_cloud(
+        model_name=model_name,
+        qeff_model=qeff_model,  # type: ignore
+        tokenizer=tokenizer,
+        onnx_dir_path=onnx_dir_path,
+        seq_length=seq_length,
+        full_batch_size=full_batch_size,
+        max_num_adapters=max_num_adapters,
+    )
+    # else:
+    #     raise NotImplementedError(
+    #         f"Only model type {QEFFAutoModelForCausalLM.__class__.__name__} is supported for export, got {type(qeff_model)}"
+    #     )
 
 
 def export_lm_model_for_cloud(
@@ -348,6 +353,7 @@ def export_lm_model_for_cloud(
     onnx_dir_path: str,
     seq_length: int,
     full_batch_size: Optional[int] = None,
+    max_num_adapters: Optional[int] = None,
 ) -> str:
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
@@ -361,6 +367,7 @@ def export_lm_model_for_cloud(
             onnx_dir_path=onnx_dir_path,
             seq_len=seq_length,
             full_batch_size=full_batch_size,
+            max_num_adapters=max_num_adapters,
         )  # type: ignore
 
     else:
@@ -386,6 +393,7 @@ def qualcomm_efficient_converter(
     kv: bool = True,
     form_factor: str = "cloud",
     full_batch_size: Optional[int] = None,
+    max_num_adapters: Optional[int] = None,
 ) -> Tuple[str, str]:
     """
     This method is an alias for ``QEfficient.export``.
@@ -466,6 +474,7 @@ def qualcomm_efficient_converter(
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length,
             full_batch_size=full_batch_size,
+            max_num_adapters=max_num_adapters,
         )
         return onnx_dir_path, generated_onnx_model_path
     else:

@@ -190,9 +190,9 @@ class QEffLlamaAttention(LlamaAttention):
             value_states = torch.cat(value_states, dim=-1)
 
         else:
-            query_states = self.q_proj(hidden_states)
+            query_states = self.q_proj(hidden_states, **kwargs)
             key_states = self.k_proj(hidden_states)
-            value_states = self.v_proj(hidden_states)
+            value_states = self.v_proj(hidden_states, **kwargs)
 
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
@@ -273,6 +273,7 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
@@ -318,6 +319,7 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
+            **kwargs,
         )
 
         # Cast to INT32 to avoid issue while running in ONNXRT
@@ -374,6 +376,7 @@ class QEffLlamaDecoderLayer(LlamaDecoderLayer):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -403,6 +406,7 @@ class QEffLlamaDecoderLayer(LlamaDecoderLayer):
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
+            **kwargs,
         )
         hidden_states = residual + hidden_states
 
@@ -443,6 +447,7 @@ class QEffLlamaModel(LlamaModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -515,6 +520,7 @@ class QEffLlamaModel(LlamaModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
+                    **kwargs,
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -525,6 +531,7 @@ class QEffLlamaModel(LlamaModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
+                    **kwargs,
                 )
 
             hidden_states = layer_outputs[0]
