@@ -49,7 +49,7 @@ For other models, there is comprehensive documentation to inspire upon the chang
 ## Quick Installation
 ```bash
 
-# Create Python virtual env and activate it. (Required Python 3.8)
+# Create Python virtual env and activate it. (Recommended Python 3.8)
 
 python3.8 -m venv qeff_env
 source qeff_env/bin/activate
