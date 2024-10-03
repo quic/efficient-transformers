@@ -60,12 +60,12 @@ source qeff_env/bin/activate
 pip install -U pip
 
 # Clone and Install the QEfficient Repo.
-pip install git+https://github.com/quic/efficient-transformers --extra-index-url https://download.pytorch.org/whl/cpu
+pip install git+https://github.com/quic/efficient-transformers
 
 # Or build wheel package using the below command.
 pip install build wheel
 python -m build --wheel --outdir dist
-pip install dist/QEfficient-0.0.1.dev0-py3-none-any.whl --extra-index-url https://download.pytorch.org/whl/cpu
+pip install dist/QEfficient-0.0.1.dev0-py3-none-any.whl
 
 ``` 
 
