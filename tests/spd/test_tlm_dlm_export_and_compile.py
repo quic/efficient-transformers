@@ -7,9 +7,9 @@
 
 from typing import List, Optional
 
-from transformers import AutoTokenizer
 import numpy as np
 import pytest
+from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -17,15 +17,32 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 configs = [
     pytest.param(
         # device_group, num_speculative_tokens, prompt_len, ctx_len, prefill_bsz, full_batch_size, model_name, id
-        [0], 5, 32, 128, 1, 8, "TinyLlama/TinyLlama-1.1B-Chat-v1.0", id="CB llama",
+        [0],
+        5,
+        32,
+        128,
+        1,
+        8,
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        id="CB llama",
     ),
     pytest.param(
         # device_group, num_speculative_tokens, prompt_len, ctx_len, prefill_bsz, full_batch_size, model_name, id
-        [0], 5, 32, 128, 1, None, "TinyLlama/TinyLlama-1.1B-Chat-v1.0", id="non-CB llama"
+        [0],
+        5,
+        32,
+        128,
+        1,
+        None,
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        id="non-CB llama",
     ),
 ]
 
-@pytest.mark.parametrize("device_group,num_speculative_tokens,prompt_len,ctx_len,prefill_bsz,full_batch_size,model_name", configs)
+
+@pytest.mark.parametrize(
+    "device_group,num_speculative_tokens,prompt_len,ctx_len,prefill_bsz,full_batch_size,model_name", configs
+)
 def test_llama_tlm_logit_dims(
     device_group: List[int],
     num_speculative_tokens: int,
@@ -33,9 +50,8 @@ def test_llama_tlm_logit_dims(
     ctx_len: int,
     prefill_bsz: int,
     full_batch_size: Optional[int],
-    model_name: str
+    model_name: str,
 ):
-
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     vocab_size = len(tokenizer)
@@ -50,47 +66,44 @@ def test_llama_tlm_logit_dims(
         ctx_len=ctx_len,
         mxfp6=True,
         mxint8=True,
-        full_batch_size=full_batch_size
+        full_batch_size=full_batch_size,
     )
 
-    # init qaic session 
+    # init qaic session
     session = QAICInferenceSession(qpc_path, device_ids=device_group)
     # skip inputs/outputs buffers
-    session.skip_buffers(
-        set([x for x in session.input_names if x.startswith("past_")])
-    )
-    session.skip_buffers(
-        set([x for x in session.output_names if x.endswith("_RetainedState")])
-    )
+    session.skip_buffers(set([x for x in session.input_names if x.startswith("past_")]))
+    session.skip_buffers(set([x for x in session.output_names if x.endswith("_RetainedState")]))
     # prefill dummy inputs
     prefill_inputs = dict(
-        input_ids = np.zeros((prefill_bsz, prompt_len), dtype=np.int64),
-        position_ids = np.arange(prompt_len, dtype=np.int64).reshape(-1,1).repeat(prefill_bsz,1).transpose(),
-        batch_index= np.arange(prefill_bsz, dtype=np.int64).reshape(prefill_bsz,1)
+        input_ids=np.zeros((prefill_bsz, prompt_len), dtype=np.int64),
+        position_ids=np.arange(prompt_len, dtype=np.int64).reshape(-1, 1).repeat(prefill_bsz, 1).transpose(),
+        batch_index=np.arange(prefill_bsz, dtype=np.int64).reshape(prefill_bsz, 1),
     )
     # decode dummy inputs
     decode_bsz = full_batch_size if full_batch_size is not None else prefill_bsz
     decode_inputs = dict(
-        input_ids = np.zeros((decode_bsz, num_speculative_tokens+1), dtype=np.int64),
-        position_ids = np.full((decode_bsz, num_speculative_tokens+1), -1, dtype=np.int64),
-        batch_index=np.arange(decode_bsz, dtype=np.int64).reshape(-1,1)
+        input_ids=np.zeros((decode_bsz, num_speculative_tokens + 1), dtype=np.int64),
+        position_ids=np.full((decode_bsz, num_speculative_tokens + 1), -1, dtype=np.int64),
+        batch_index=np.arange(decode_bsz, dtype=np.int64).reshape(-1, 1),
     )
     # create dummy logits
     prefill_logits = dict(logits=np.random.randn(prefill_bsz, prompt_len, vocab_size).astype(np.float32))
-    decode_logits = dict(logits=np.random.randn(decode_bsz, num_speculative_tokens+1, vocab_size).astype(np.float32))
+    decode_logits = dict(logits=np.random.randn(decode_bsz, num_speculative_tokens + 1, vocab_size).astype(np.float32))
     # get prefill/decode logits
     session.set_buffers(prefill_logits)
     prefill_outputs = session.run(prefill_inputs)
     session.set_buffers(decode_logits)
     decode_outputs = session.run(decode_inputs)
 
-
     # assert expected logit dims
     assert prefill_logits["logits"].shape == prefill_outputs["logits"].shape
     assert decode_logits["logits"].shape == decode_outputs["logits"].shape
 
 
-@pytest.mark.parametrize("device_group,num_speculative_tokens,prompt_len,ctx_len,prefill_bsz,full_batch_size,model_name", configs)
+@pytest.mark.parametrize(
+    "device_group,num_speculative_tokens,prompt_len,ctx_len,prefill_bsz,full_batch_size,model_name", configs
+)
 def test_llama_dlm_logit_dims(
     device_group: List[int],
     num_speculative_tokens: int,
@@ -98,9 +111,8 @@ def test_llama_dlm_logit_dims(
     ctx_len: int,
     prefill_bsz: int,
     full_batch_size: Optional[int],
-    model_name: str
+    model_name: str,
 ):
-
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     vocab_size = len(tokenizer)
@@ -115,47 +127,42 @@ def test_llama_dlm_logit_dims(
         ctx_len=ctx_len,
         mxfp6=True,
         mxint8=True,
-        full_batch_size=full_batch_size
+        full_batch_size=full_batch_size,
     )
 
-    # init qaic session 
+    # init qaic session
     session = QAICInferenceSession(qpc_path, device_ids=device_group)
     # skip inputs/outputs buffers
-    session.skip_buffers(
-        set([x for x in session.input_names if x.startswith("past_")])
-    )
-    session.skip_buffers(
-        set([x for x in session.output_names if x.endswith("_RetainedState")])
-    )
+    session.skip_buffers(set([x for x in session.input_names if x.startswith("past_")]))
+    session.skip_buffers(set([x for x in session.output_names if x.endswith("_RetainedState")]))
     # prefill dummy inputs
     prefill_inputs = dict(
-        input_ids = np.zeros((prefill_bsz, prompt_len), dtype=np.int64),
-        position_ids = np.arange(prompt_len, dtype=np.int64).reshape(-1,1).repeat(prefill_bsz,1).transpose(),
-        batch_index=np.arange(prefill_bsz, dtype=np.int64).reshape(-1,1)
+        input_ids=np.zeros((prefill_bsz, prompt_len), dtype=np.int64),
+        position_ids=np.arange(prompt_len, dtype=np.int64).reshape(-1, 1).repeat(prefill_bsz, 1).transpose(),
+        batch_index=np.arange(prefill_bsz, dtype=np.int64).reshape(-1, 1),
     )
     # decode-1 dummy inputs
     decode_bsz = full_batch_size if full_batch_size is not None else prefill_bsz
     decode1_inputs = dict(
-        input_ids = np.zeros((decode_bsz, 1), dtype=np.int64),
-        position_ids = np.full((decode_bsz, 1), -1, dtype=np.int64),
-        batch_index=np.arange(decode_bsz, dtype=np.int64).reshape(-1,1)
+        input_ids=np.zeros((decode_bsz, 1), dtype=np.int64),
+        position_ids=np.full((decode_bsz, 1), -1, dtype=np.int64),
+        batch_index=np.arange(decode_bsz, dtype=np.int64).reshape(-1, 1),
     )
     # decode-2 dummy inputs
     decode2_inputs = dict(
-        input_ids = np.zeros((decode_bsz, 2), dtype=np.int64),
-        position_ids = np.full((decode_bsz, 2), -1, dtype=np.int64),
-        batch_index=np.arange(decode_bsz, dtype=np.int64).reshape(-1,1)
+        input_ids=np.zeros((decode_bsz, 2), dtype=np.int64),
+        position_ids=np.full((decode_bsz, 2), -1, dtype=np.int64),
+        batch_index=np.arange(decode_bsz, dtype=np.int64).reshape(-1, 1),
     )
     # create dummy logits
     prefill_logits = dict(logits=np.random.randn(prefill_bsz, 1, vocab_size).astype(np.float32))
     decode_logits = dict(logits=np.random.randn(decode_bsz, 1, vocab_size).astype(np.float32))
     # get prefill/decode logits
     session.set_buffers(prefill_logits)
-    prefill_outputs = session.run(prefill_inputs) 
+    prefill_outputs = session.run(prefill_inputs)
     session.set_buffers(decode_logits)
-    decode1_outputs = session.run(decode1_inputs) 
+    decode1_outputs = session.run(decode1_inputs)
     decode2_outputs = session.run(decode2_inputs)
-
 
     # assert expected logit dims
     assert prefill_logits["logits"].shape == prefill_outputs["logits"].shape
