@@ -230,6 +230,7 @@ def cloud_ai_100_exec_kv(
     write_io_dir: Optional[str] = None,
     automation=False,
     full_batch_size: Optional[int] = None,
+    prompt_to_lora_id_mapping: Optional[List[int]] = None,
 ):
     """
     This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -277,6 +278,7 @@ def cloud_ai_100_exec_kv(
         stream=stream,
         write_io_dir=write_io_dir,
         full_batch_size=full_batch_size,
+        prompt_to_lora_id_mapping=prompt_to_lora_id_mapping,
     )
     if full_batch_size is None:
         exec_info = [
@@ -313,6 +315,7 @@ class TextGeneration:
         qpc_path: str,
         prompt: List[str],
         full_batch_size: Optional[int] = None,
+        prompt_to_lora_id_mapping: Optional[List[int]] = None,
         ctx_len: Optional[int] = None,
         generation_len: Optional[int] = None,
         device_id: Optional[List[int]] = None,
@@ -341,6 +344,9 @@ class TextGeneration:
         self.full_batch_size = (
             full_batch_size if full_batch_size else self._fetch_full_batch_size()
         )  # Check and fetch full batch size if CB is enabled
+
+        self.prompt_to_lora_id_mapping_prefill = deque(prompt_to_lora_id_mapping)
+        self.prompt_to_lora_id_mapping_decode = prompt_to_lora_id_mapping
 
         self.set_tokenizer_params()  # set tokenizer params
 
@@ -459,6 +465,10 @@ class TextGeneration:
         decode_inputs["position_ids"] = self.decode_pos_ids
         if self.batch_index is not None:
             decode_inputs["batch_index"] = self.batch_index
+        
+        if self.prompt_to_lora_id_mapping_decode and self.full_batch_size is not None:
+            first_batch_lora_ids = [self.prompt_to_lora_id_mapping_decode[i] for i in range(self.full_batch_size)]
+            decode_inputs["lora_ids"] = np.array(first_batch_lora_ids, dtype=np.int64).reshape(self.full_batch_size, 1)
 
         return decode_inputs
 
@@ -547,6 +557,9 @@ class TextGeneration:
         if decode_batch_id is not None:
             inputs["batch_index"] = decode_batch_id
 
+        if self.prompt_to_lora_id_mapping_prefill:
+            inputs["lora_ids"] = np.array(self.prompt_to_lora_id_mapping_prefill.popleft(), dtype=np.int64).reshape(1, 1)
+
         for i in range(num_chunks):
             chunk_inputs = inputs.copy()
             chunk_inputs["input_ids"] = inputs["input_ids"][
@@ -634,6 +647,10 @@ class TextGeneration:
                     )
 
                     generated_id_current_index[decode_batch_id] += 1
+
+                    if self.prompt_to_lora_id_mapping_decode:
+                        decode_inputs["lora_ids"][decode_batch_id] = self.prompt_to_lora_id_mapping_decode[batch_id_map[decode_batch_id]]
+        
         return decode_pause_time
 
     def run_decode(self, decode_inputs, generation_len):

@@ -19,6 +19,7 @@ from QEfficient.lora.pytorch_transforms import TargetModulesTransform, LoraModel
 from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTransform, KVCacheTransform
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
 from QEfficient.utils.constants import QEFF_MODELS_DIR
+from QEfficient.base.modeling_qeff import Runtime
 
 from QEfficient.utils.logging_utils import logger
 
@@ -61,6 +62,20 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         self.adapter_weights[adapter_name] = {k: v.numpy().astype("float16") for k, v in load_peft_weights(adapter_model_id).items()}
         self.adapter_configs[adapter_name] = PeftConfig.from_pretrained(adapter_model_id)
 
+    def unload_adapter(self, adapter_name: str):
+        if adapter_name not in self.adapter_weights.keys() and adapter_name not in self.adapter_configs.keys(): 
+            print(f"Adapter name {adapter_name} is not loaded yet")
+            return False
+
+        if adapter_name in self.active_adapters: 
+            print(f"Adapter name {adapter_name} is stil in active list, do delete_adapter() before unloading")
+            return False
+
+        self.adapter_weights.pop(adapter_name)
+        self.adapter_configs.pop(adapter_name)
+        logger.warning(f"Unloading {adapter_name} from CPU cache.")
+        return True
+    
     def set_adapter(self, adapter_name: str):
         "Sets active adapter from one of the loaded adapters"
 
@@ -79,6 +94,25 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
         return self.active_adapter_to_id[adapter_name]
         
+    def delete_adapter(self, adapter_name: str):
+        if adapter_name not in self.active_adapters:
+            print(f"Adapter name {adapter_name} is not set active yet")
+            return False
+
+        self.active_adapters.discard(adapter_name)
+        self.max_num_adapters -= 1
+        self.active_adapter_to_id.pop(adapter_name)
+
+        # renumbering of active adapter id
+        for index, (key, value) in enumerate(self.active_adapter_to_id.items()):
+            self.active_adapter_to_id[key] = index
+
+        logger.warning(f"Deleting {adapter_name} from active adapters.")
+        if self.onnx_path or self.qpc_path:
+            logger.warning(f"Please redo compile_and_export() to reflect the active adapters changes.")
+        
+        return True
+
     def get_adapter_id(self, adapter_name):
         "get the adapter_id that maps to the adapter_name"
 
@@ -89,27 +123,23 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
         num_hidden_layers = len(self.model.model.layers)
         for i in range(num_hidden_layers):
-
             for target_module in self.target_modules_for_all_adapters: 
-
                 # stack all adapters weights
-                a_tensor_list = []
-                b_tensor_list = []
-                c_tensor_list = []
+                a_tensor_list = list(range(self.max_num_adapters))
+                b_tensor_list = list(range(self.max_num_adapters))
+                c_tensor_list = list(range(self.max_num_adapters))
 
-                # TODO: turn this to be in accordance with active_adapter_to_id's
-                for lora_id, lora_name in enumerate(self.adapter_weights):
-
+                for lora_name, lora_id in self.active_adapter_to_id.items():
                     if target_module == "q_proj" or target_module == "k_proj" or target_module == "v_proj" or target_module == "up_proj":
-                        a_tensor_list.append(torch.from_numpy(self.adapter_weights[lora_name][f'base_model.model.model.layers.{i}.self_attn.{target_module}.lora_A.weight']))
-                        b_tensor_list.append(torch.from_numpy(self.adapter_weights[lora_name][f'base_model.model.model.layers.{i}.self_attn.{target_module}.lora_B.weight']))
+                        a_tensor_list[lora_id] = torch.from_numpy(self.adapter_weights[lora_name][f'base_model.model.model.layers.{i}.self_attn.{target_module}.lora_A.weight'])
+                        b_tensor_list[lora_id] = torch.from_numpy(self.adapter_weights[lora_name][f'base_model.model.model.layers.{i}.self_attn.{target_module}.lora_B.weight'])
                     elif target_module == "up_proj" or target_module == "gate_proj" or target_module == "down_proj":
-                        a_tensor_list.append(torch.from_numpy(self.adapter_weights[lora_name][f'base_model.model.model.layers.{i}.mlp.{target_module}.lora_A.weight']))
-                        b_tensor_list.append(torch.from_numpy(self.adapter_weights[lora_name][f'base_model.model.model.layers.{i}.mlp.{target_module}.lora_B.weight']))
+                        a_tensor_list[lora_id] = torch.from_numpy(self.adapter_weights[lora_name][f'base_model.model.model.layers.{i}.mlp.{target_module}.lora_A.weight'])
+                        b_tensor_list[lora_id] = torch.from_numpy(self.adapter_weights[lora_name][f'base_model.model.model.layers.{i}.mlp.{target_module}.lora_B.weight'])
                     else:
                         raise NotImplementedError("Target module not supported!!")
                     
-                    c_tensor_list.append(torch.tensor(self.adapter_configs[lora_name].lora_alpha / self.adapter_configs[lora_name].r, dtype=torch.float16))
+                    c_tensor_list[lora_id] = torch.tensor(self.adapter_configs[lora_name].lora_alpha / self.adapter_configs[lora_name].r, dtype=torch.float16)
             
                 stacked_lora_A = torch.stack(a_tensor_list, dim=0).unsqueeze(1).transpose(2,3) # <num_adapters, 1, in_feature, r>
                 stacked_lora_B = torch.stack(b_tensor_list, dim=0).unsqueeze(1).transpose(2,3) # <num_adapters, 1, r, out_feature>
@@ -195,3 +225,17 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         self.onnx_path = onnx_model_path
 
         return self.onnx_path
+
+    def run_cloud_ai_100(self, prompts: List[str], device_id: List[int] = None, **kwargs):
+        assert isinstance(self.qpc_path, str), "Please run compile API first!"
+        generation_len = kwargs.pop("generation_len", None)
+        prompt_to_lora_id_mapping = kwargs.pop("prompt_to_lora_id_mapping", None)
+        return QEfficient.cloud_ai_100_exec_kv(
+            self.tokenizer,
+            self.qpc_path,
+            prompt=prompts,
+            device_id=device_id,
+            generation_len=generation_len,
+            full_batch_size=self.full_batch_size,
+            prompt_to_lora_id_mapping=prompt_to_lora_id_mapping,
+        )
