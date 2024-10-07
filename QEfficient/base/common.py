@@ -82,6 +82,7 @@ class QEFFCommonLoader:
             model_card_name = kwargs.pop("model_card_name", pretrained_model_name_or_path)
             kwargs.update({"model_card_name": model_card_name})
             pretrained_model_name_or_path = login_and_download_hf_lm(pretrained_model_name_or_path, *args, **kwargs)
+        kwargs.pop("hf_token")
         model_type = get_hf_model_type(hf_model_path=pretrained_model_name_or_path)
         qeff_auto_model_class = MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP[model_type]
         assert issubclass(
