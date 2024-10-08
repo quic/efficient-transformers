@@ -67,7 +67,7 @@ class QAICInferenceSession:
             self.queue = qaicrt.Queue(self.context, 0)  # Async API
         if enable_debug_logs:
             if self.context.setLogLevel(qaicrt.QLogLevel.QL_DEBUG) != qaicrt.QStatus.QS_SUCCESS:
-                raise Exception("Failed to setLogLevel")
+                raise RuntimeError("Failed to setLogLevel")
             
         qpc = qaicrt.Qpc(qpc_path)
         # Load IO Descriptor
