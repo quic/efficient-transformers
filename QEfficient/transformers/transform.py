@@ -75,9 +75,9 @@ def transform_lm(model: nn.Module) -> nn.Module:
 
     # Check with new params hash
     later_params_hash = get_params_hash(model)
-    assert (
-        prior_params_hash == later_params_hash
-    ), "Weights were changed in the transform process, please report an issue"
+    if prior_params_hash != later_params_hash:
+        raise RuntimeError("Weights were changed in the transform process, please report an issue")
+    
 
     # Replace the Dyanmic cache utils update api
     transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update
@@ -94,7 +94,8 @@ def transform(model: QEFFBaseModel, form_factor="cloud"):
     model (torch.nn.Module): object of any instance of class that is child of `QEFFBaseAutoModelFactory`
     form_factor (str): form factor configuration for optimizing the model, available options=["cloud", "edge"].
     """
-    assert form_factor == "cloud", "Only form_factor='cloud' is supported as of now!"
+    if form_factor != "cloud":
+        raise ValueError("Only form_factor='cloud' is supported as of now!")
     # FIXME: move this to class and use model.transform()
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:
         transform_lm(model.model)  # type: ignore
