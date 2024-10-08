@@ -211,8 +211,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         Returns:
             :str: Path of the generated ``ONNX`` graph.
         """
-        if not self.is_transformed:
-            raise Exception("Please first run transform on the QEFFAutoModelForCausalLM object")
 
 
         # Export
@@ -373,7 +371,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             raise ValueError("Only AI_100 runtime is supported right now via generate API")
         self.run_cloud_ai_100(prompts=prompts, device_id=device_id, **kwargs)
 
-    def run_cloud_ai_100(self, prompts: List[str], **kwargs):
+    def run_cloud_ai_100(self, prompts: List[str],  device_id: List[int] = None, **kwargs):
         if not isinstance(self.qpc_path, str):
             raise TypeError("Please run compile API first!")
         if isinstance(self.device_id, type(None)):
