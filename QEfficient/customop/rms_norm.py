@@ -59,11 +59,6 @@ class GemmaCustomRMSNormAIC(CustomRMSNormAIC):
     Modify the init function to add +1 to the weights
     """
 
-    def __init__(self, hidden_size, eps=1e-05):
-        super().__init__(hidden_size, eps)
-        # QEff Init
-        self.__qeff_init__()
-
     def __qeff_init__(self):
         with torch.no_grad():
             self.weight.copy_(self.weight + 1.0)
