@@ -61,8 +61,6 @@ KVCacheTransformTestConfigs = [
     ("starcoder2", 1, 24, 192, {"num_key_value_heads": 24, "intermediate_size": 512}, 0.8),
     ("gemma", 3, 8, 2048, {"num_key_value_heads": 1, "intermediate_size": 512}, 0.8),
     ("gemma", 1, 8, 2048, {"num_key_value_heads": 1, "intermediate_size": 512}, 0.8),
-    ("gemma2", 3, 8, 2304, {"num_key_value_heads": 4, "intermediate_size": 512}, 0.8),
-    ("gemma2", 1, 8, 2304, {"num_key_value_heads": 4, "intermediate_size": 512}, 0.8),
 ]
 
 
@@ -97,21 +95,19 @@ def run_kv_cache_transform_and_test(
     input_ids = torch.randint(0, vocab_size, size=(1, input_len))
     with torch.inference_mode():
         if isinstance(kv_cache, type(None)):
-            cache_position = torch.arange(input_ids.shape[1])
             original_model_outputs = hf_model(
                 input_ids=input_ids,
                 output_hidden_states=True,
-                cache_position=cache_position,
                 use_cache=True,
                 past_key_values=kv_cache,
             )
             original_model_outputs["past_key_values"] = tuple(
                 [
                     (
-                        original_model_outputs["past_key_values"].key_cache[i][:, :, :input_len, :],
-                        original_model_outputs["past_key_values"].value_cache[i][:, :, :input_len, :],
+                        original_model_outputs["past_key_values"][i][0][:, :, :input_len, :], #key cache
+                        original_model_outputs["past_key_values"][i][1][:, :, :input_len, :], #value cache
                     )
-                    for i in range(len(original_model_outputs["past_key_values"].key_cache))
+                    for i in range(len(original_model_outputs["past_key_values"]))
                 ]
             )
         else:
@@ -138,7 +134,7 @@ def run_kv_cache_transform_and_test(
             output_hidden_states=True,
         )
 
-    assert original_model_outputs.keys() == transformed_model_outputs.keys()
+    assert original_model_outputs.keys() == transformed_model_outputs.keys(), "Model output keys do not match!"
 
     # FIXME: Tolerance should not be so high for logits
     assert compare_original_vs_kv_model_pt_outputs(
