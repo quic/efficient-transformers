@@ -34,6 +34,7 @@ class QEffGPT2LMHeadModel(GPT2LMHeadModel):
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
@@ -58,6 +59,7 @@ class QEffGPT2LMHeadModel(GPT2LMHeadModel):
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
+            batch_index=batch_index,
             head_mask=head_mask,
             inputs_embeds=inputs_embeds,
             encoder_hidden_states=encoder_hidden_states,
@@ -117,6 +119,7 @@ class QEffGPT2Block(GPT2Block):
         layer_past: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
@@ -133,6 +136,7 @@ class QEffGPT2Block(GPT2Block):
             layer_past=layer_past,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            batch_index=batch_index,
             head_mask=head_mask,
             use_cache=use_cache,
             output_attentions=output_attentions,
@@ -192,6 +196,7 @@ class QEffGPT2Model(GPT2Model):
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
@@ -330,6 +335,19 @@ class QEffGPT2Model(GPT2Model):
                     use_cache,
                     output_attentions,
                 )
+            elif batch_index is not None:
+                outputs = block(
+                    hidden_states,
+                    layer_past=layer_past,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    batch_index=batch_index,
+                    head_mask=head_mask[i],
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_attention_mask=encoder_attention_mask,
+                    use_cache=use_cache,
+                    output_attentions=output_attentions,
+                )
             else:
                 outputs = block(
                     hidden_states,
@@ -434,6 +452,7 @@ class QEffGPT2Attention(GPT2Attention):
         layer_past: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
@@ -460,7 +479,7 @@ class QEffGPT2Attention(GPT2Attention):
         if layer_past is not None:
             # Added for optimized GPT Attention for AI 100 KV Retention
             # Update the cache_kwargs with position_ids for Cloud AI 100
-            cache_kwargs = {"position_ids": position_ids}
+            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
             pkv = DynamicCache()
             pkv.key_cache.append(layer_past[0])
             pkv.value_cache.append(layer_past[1])
