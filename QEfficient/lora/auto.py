@@ -5,22 +5,15 @@
 #
 # ----------------------------------------------------------------------------
 
-import hashlib
-import os
-from typing import Any, List, Optional, Union
+from typing import List
 
-from peft import load_peft_weights, PeftConfig
-import torch.nn as nn
 import torch
+import torch.nn as nn
+from peft import PeftConfig, load_peft_weights
 
 import QEfficient
 from QEfficient import QEFFAutoModelForCausalLM
-from QEfficient.lora.pytorch_transforms import TargetModulesTransform, LoraModelInputsTransform
-from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTransform, KVCacheTransform
-from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
-from QEfficient.utils.constants import QEFF_MODELS_DIR
-from QEfficient.base.modeling_qeff import Runtime
-
+from QEfficient.lora.pytorch_transforms import LoraModelInputsTransform, TargetModulesTransform
 from QEfficient.utils.logging_utils import logger
 
 
@@ -39,6 +32,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         from QEfficient import QEffAutoLoraModelForCausalLM
 
     """
+
     # inherit __init__() from QEFFAutoModelForCausalLM
     def __init__(self, model: nn.Module, pretrained_model_name_or_path: str, **kwargs) -> None:
         super().__init__(model, pretrained_model_name_or_path)
@@ -58,16 +52,18 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         """
         if (adapter_name in self.adapter_weights.keys()) and (adapter_name in self.adapter_configs.keys()):
             logger.warning(f"Overwrite weights and configs for adapter name {adapter_name}")
-        
-        self.adapter_weights[adapter_name] = {k: v.numpy().astype("float16") for k, v in load_peft_weights(adapter_model_id).items()}
+
+        self.adapter_weights[adapter_name] = {
+            k: v.numpy().astype("float16") for k, v in load_peft_weights(adapter_model_id).items()
+        }
         self.adapter_configs[adapter_name] = PeftConfig.from_pretrained(adapter_model_id)
 
     def unload_adapter(self, adapter_name: str):
-        if adapter_name not in self.adapter_weights.keys() and adapter_name not in self.adapter_configs.keys(): 
+        if adapter_name not in self.adapter_weights.keys() and adapter_name not in self.adapter_configs.keys():
             print(f"Adapter name {adapter_name} is not loaded yet")
             return False
 
-        if adapter_name in self.active_adapters: 
+        if adapter_name in self.active_adapters:
             print(f"Adapter name {adapter_name} is stil in active list, do delete_adapter() before unloading")
             return False
 
@@ -75,16 +71,25 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         self.adapter_configs.pop(adapter_name)
         logger.warning(f"Unloading {adapter_name} from CPU cache.")
         return True
-    
+
     def set_adapter(self, adapter_name: str):
         "Sets active adapter from one of the loaded adapters"
 
-        assert (adapter_name in self.adapter_weights.keys()) and (adapter_name in self.adapter_configs.keys()), f"Adapter name {adapter_name} has not been loaded yet"
+        assert (adapter_name in self.adapter_weights.keys()) and (
+            adapter_name in self.adapter_configs.keys()
+        ), f"Adapter name {adapter_name} has not been loaded yet"
 
-        assert list(self.adapter_configs.values())[0] and self.adapter_configs[adapter_name].target_modules == list(self.adapter_configs.values())[0].target_modules, "Not all adapters have the same target modules"
-        
-        assert list(self.adapter_configs.values())[0] and self.adapter_configs[adapter_name].r == list(self.adapter_configs.values())[0].r, "Not all adapters have the same ranks"
-        
+        assert (
+            list(self.adapter_configs.values())[0]
+            and self.adapter_configs[adapter_name].target_modules
+            == list(self.adapter_configs.values())[0].target_modules
+        ), "Not all adapters have the same target modules"
+
+        assert (
+            list(self.adapter_configs.values())[0]
+            and self.adapter_configs[adapter_name].r == list(self.adapter_configs.values())[0].r
+        ), "Not all adapters have the same ranks"
+
         # set active adapter id to current max
         self.active_adapter_to_id[adapter_name] = self.max_num_adapters
 
@@ -93,7 +98,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         self.max_num_adapters = len(self.active_adapters)
 
         return self.active_adapter_to_id[adapter_name]
-        
+
     def delete_adapter(self, adapter_name: str):
         if adapter_name not in self.active_adapters:
             print(f"Adapter name {adapter_name} is not set active yet")
@@ -109,8 +114,8 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
         logger.warning(f"Deleting {adapter_name} from active adapters.")
         if self.onnx_path or self.qpc_path:
-            logger.warning(f"Please redo compile_and_export() to reflect the active adapters changes.")
-        
+            logger.warning("Please redo compile_and_export() to reflect the active adapters changes.")
+
         return True
 
     def get_adapter_id(self, adapter_name):
@@ -123,27 +128,57 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
         num_hidden_layers = len(self.model.model.layers)
         for i in range(num_hidden_layers):
-            for target_module in self.target_modules_for_all_adapters: 
+            for target_module in self.target_modules_for_all_adapters:
                 # stack all adapters weights
                 a_tensor_list = list(range(self.max_num_adapters))
                 b_tensor_list = list(range(self.max_num_adapters))
                 c_tensor_list = list(range(self.max_num_adapters))
 
                 for lora_name, lora_id in self.active_adapter_to_id.items():
-                    if target_module == "q_proj" or target_module == "k_proj" or target_module == "v_proj" or target_module == "up_proj":
-                        a_tensor_list[lora_id] = torch.from_numpy(self.adapter_weights[lora_name][f'base_model.model.model.layers.{i}.self_attn.{target_module}.lora_A.weight'])
-                        b_tensor_list[lora_id] = torch.from_numpy(self.adapter_weights[lora_name][f'base_model.model.model.layers.{i}.self_attn.{target_module}.lora_B.weight'])
+                    if (
+                        target_module == "q_proj"
+                        or target_module == "k_proj"
+                        or target_module == "v_proj"
+                        or target_module == "up_proj"
+                    ):
+                        a_tensor_list[lora_id] = torch.from_numpy(
+                            self.adapter_weights[lora_name][
+                                f"base_model.model.model.layers.{i}.self_attn.{target_module}.lora_A.weight"
+                            ]
+                        )
+                        b_tensor_list[lora_id] = torch.from_numpy(
+                            self.adapter_weights[lora_name][
+                                f"base_model.model.model.layers.{i}.self_attn.{target_module}.lora_B.weight"
+                            ]
+                        )
                     elif target_module == "up_proj" or target_module == "gate_proj" or target_module == "down_proj":
-                        a_tensor_list[lora_id] = torch.from_numpy(self.adapter_weights[lora_name][f'base_model.model.model.layers.{i}.mlp.{target_module}.lora_A.weight'])
-                        b_tensor_list[lora_id] = torch.from_numpy(self.adapter_weights[lora_name][f'base_model.model.model.layers.{i}.mlp.{target_module}.lora_B.weight'])
+                        a_tensor_list[lora_id] = torch.from_numpy(
+                            self.adapter_weights[lora_name][
+                                f"base_model.model.model.layers.{i}.mlp.{target_module}.lora_A.weight"
+                            ]
+                        )
+                        b_tensor_list[lora_id] = torch.from_numpy(
+                            self.adapter_weights[lora_name][
+                                f"base_model.model.model.layers.{i}.mlp.{target_module}.lora_B.weight"
+                            ]
+                        )
                     else:
                         raise NotImplementedError("Target module not supported!!")
-                    
-                    c_tensor_list[lora_id] = torch.tensor(self.adapter_configs[lora_name].lora_alpha / self.adapter_configs[lora_name].r, dtype=torch.float16)
-            
-                stacked_lora_A = torch.stack(a_tensor_list, dim=0).unsqueeze(1).transpose(2,3) # <num_adapters, 1, in_feature, r>
-                stacked_lora_B = torch.stack(b_tensor_list, dim=0).unsqueeze(1).transpose(2,3) # <num_adapters, 1, r, out_feature>
-                stacked_lora_C = torch.stack(c_tensor_list, dim=0).unsqueeze(1).unsqueeze(2).unsqueeze(3) # <num_loras, 1, 1, 1>
+
+                    c_tensor_list[lora_id] = torch.tensor(
+                        self.adapter_configs[lora_name].lora_alpha / self.adapter_configs[lora_name].r,
+                        dtype=torch.float16,
+                    )
+
+                stacked_lora_A = (
+                    torch.stack(a_tensor_list, dim=0).unsqueeze(1).transpose(2, 3)
+                )  # <num_adapters, 1, in_feature, r>
+                stacked_lora_B = (
+                    torch.stack(b_tensor_list, dim=0).unsqueeze(1).transpose(2, 3)
+                )  # <num_adapters, 1, r, out_feature>
+                stacked_lora_C = (
+                    torch.stack(c_tensor_list, dim=0).unsqueeze(1).unsqueeze(2).unsqueeze(3)
+                )  # <num_loras, 1, 1, 1>
 
                 # stored weight to corresponding ops
                 if target_module == "q_proj":
@@ -162,30 +197,36 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
                     module = self.model.model.layers[i].mlp.down_proj
                 else:
                     raise NotImplementedError("Target module not supported!!")
-                
+
                 module.lora_weight_A.copy_(stacked_lora_A)
                 module.lora_weight_B.copy_(stacked_lora_B)
                 module.lora_weight_C.copy_(stacked_lora_C)
-                    
+
     def init_adapter_model(self):
         "Initialize the fixed lora model with multiple adapter weigths standby"
 
         # assume all adapters have same target_modules and ranks
         assert self.max_num_adapters == len(self.active_adapters), "Inconsistent max_num_adapters and active_adapters"
-        
-        assert list(self.adapter_configs.values())[0] and all(list(self.adapter_configs.values())[i].target_modules == list(self.adapter_configs.values())[0].target_modules for i in range(self.max_num_adapters)), "Not all adapters have the same target modules"
-        
-        assert list(self.adapter_configs.values())[0] and all(list(self.adapter_configs.values())[i].r == list(self.adapter_configs.values())[0].r for i in range(self.max_num_adapters)), "Not all adapters have the same ranks"
+
+        assert list(self.adapter_configs.values())[0] and all(
+            list(self.adapter_configs.values())[i].target_modules
+            == list(self.adapter_configs.values())[0].target_modules
+            for i in range(self.max_num_adapters)
+        ), "Not all adapters have the same target modules"
+
+        assert list(self.adapter_configs.values())[0] and all(
+            list(self.adapter_configs.values())[i].r == list(self.adapter_configs.values())[0].r
+            for i in range(self.max_num_adapters)
+        ), "Not all adapters have the same ranks"
         self.lora_rank = list(self.adapter_configs.values())[0].r
 
         # do the module replacement
         _, transformed = LoraModelInputsTransform.apply(self.model)
 
         self.target_modules_for_all_adapters = list(self.adapter_configs.values())[0].target_modules
-        _, transformed = TargetModulesTransform.apply(self.model, 
-                                                      self.target_modules_for_all_adapters,
-                                                      self.lora_rank,
-                                                      self.max_num_adapters)
+        _, transformed = TargetModulesTransform.apply(
+            self.model, self.target_modules_for_all_adapters, self.lora_rank, self.max_num_adapters
+        )
 
         # load_weight to model
         self.load_adapter_weights_to_model()
@@ -209,7 +250,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
         self.full_batch_size = kwargs.get("full_batch_size", self.full_batch_size)
 
-        # obtain all necessary information to initialize the model 
+        # obtain all necessary information to initialize the model
         self.init_adapter_model()
 
         assert self.is_transformed, "Please first run transform on the QEFFAutoModelForCausalLM object"

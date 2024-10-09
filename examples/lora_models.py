@@ -6,11 +6,11 @@
 # -----------------------------------------------------------------------------
 
 ## This example works on continuous batching with different lora adapters in the same batch ##
-    
-import QEfficient
-from QEfficient import QEffAutoLoraModelForCausalLM
 
 import sys
+
+from QEfficient import QEffAutoLoraModelForCausalLM
+
 INTMAX = sys.maxsize
 
 base_model_name = "mistralai/Mistral-7B-v0.1"
@@ -77,11 +77,11 @@ prompts = [
     """Please answer the following question: Harry slept 9 hours last night. His friend James slept only 2/3 of what Harry slept. How many more hours did Harry sleep than James?\n\nAnswer:""",
     """The following headline is the headline of a news report. Please write the content of the news passage based on only this headline.\n\nHeadline: Latest success from Google’s AI group: Controlling a fusion reactor\n\nContent:""",
     """Please answer the following question: Gene is sewing a quilt out of old souvenir t-shirts. He has one shirt from each vacation he has been on. Every shirt is its own quilt block. Each row is made of blocks from a different year of vacations. He goes on four vacations a year and has been vacationing since he was 23 years old. He is now 34. How many quilt blocks does he have in total?\n\nAnswer:""",
-    """The following headline is the headline of a news report. Please write the content of the news passage based on only this headline.\n\nHeadline: TikTok Picks Streaming Service Audius to Power New ‘Sounds’ Library\n\nContent:"""
+    """The following headline is the headline of a news report. Please write the content of the news passage based on only this headline.\n\nHeadline: TikTok Picks Streaming Service Audius to Power New ‘Sounds’ Library\n\nContent:""",
 ]
-qeff_model.generate(prompts, device_group, prompt_to_lora_id_mapping=[0,1,0,INTMAX,0,1,0,1])
+qeff_model.generate(prompts, device_group, prompt_to_lora_id_mapping=[0, 1, 0, INTMAX, 0, 1, 0, 1])
 
-'''
+"""
 expected response:
 
 He runs 3*3=<<3*3=9>>9 sprints a week
@@ -107,4 +107,4 @@ He has 11*4=<<11*4=44>>44 blocks.
 AI group has developed a system that can control a fusion reactor. The system uses a deep reinforcement learning
 
 TikTok has partnered with Audius to power its new Sounds library. The Sounds library will allow users to discover and share sounds from a wide range of creators. Audius is a music streaming platform that allows artists to upload their music and share it with fans. It has a community of over 1.5 million users. TikTok has been working on the Sounds library for over a year. The library will be available in the US, Canada, and Australia.
-'''
+"""

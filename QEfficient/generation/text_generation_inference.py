@@ -465,7 +465,7 @@ class TextGeneration:
         decode_inputs["position_ids"] = self.decode_pos_ids
         if self.batch_index is not None:
             decode_inputs["batch_index"] = self.batch_index
-        
+
         if self.prompt_to_lora_id_mapping_decode and self.full_batch_size is not None:
             first_batch_lora_ids = [self.prompt_to_lora_id_mapping_decode[i] for i in range(self.full_batch_size)]
             decode_inputs["lora_ids"] = np.array(first_batch_lora_ids, dtype=np.int64).reshape(self.full_batch_size, 1)
@@ -558,7 +558,9 @@ class TextGeneration:
             inputs["batch_index"] = decode_batch_id
 
         if self.prompt_to_lora_id_mapping_prefill:
-            inputs["lora_ids"] = np.array(self.prompt_to_lora_id_mapping_prefill.popleft(), dtype=np.int64).reshape(1, 1)
+            inputs["lora_ids"] = np.array(self.prompt_to_lora_id_mapping_prefill.popleft(), dtype=np.int64).reshape(
+                1, 1
+            )
 
         for i in range(num_chunks):
             chunk_inputs = inputs.copy()
@@ -649,8 +651,10 @@ class TextGeneration:
                     generated_id_current_index[decode_batch_id] += 1
 
                     if self.prompt_to_lora_id_mapping_decode:
-                        decode_inputs["lora_ids"][decode_batch_id] = self.prompt_to_lora_id_mapping_decode[batch_id_map[decode_batch_id]]
-        
+                        decode_inputs["lora_ids"][decode_batch_id] = self.prompt_to_lora_id_mapping_decode[
+                            batch_id_map[decode_batch_id]
+                        ]
+
         return decode_pause_time
 
     def run_decode(self, decode_inputs, generation_len):

@@ -5,17 +5,16 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Tuple, Optional, List, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
-from QEfficient import QEFFAutoModelForCausalLM
 from transformers.modeling_outputs import (
-    BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
 
-from QEfficient.transformers.models.mistral.modeling_mistral import QEffMistralForCausalLM
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaForCausalLM
+from QEfficient.transformers.models.mistral.modeling_mistral import QEffMistralForCausalLM
+
 
 class QEffLoraModelMistralForCausalLM(QEffMistralForCausalLM):
     def forward(
@@ -35,8 +34,7 @@ class QEffLoraModelMistralForCausalLM(QEffMistralForCausalLM):
         lora_ids: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-
-        kwargs['lora_ids'] = lora_ids
+        kwargs["lora_ids"] = lora_ids
 
         return super().forward(
             input_ids=input_ids,
@@ -52,6 +50,7 @@ class QEffLoraModelMistralForCausalLM(QEffMistralForCausalLM):
             cache_position=cache_position,
             **kwargs,
         )
+
 
 class QEffLoraModelLlamaForCausalLM(QEffLlamaForCausalLM):
     def forward(
@@ -71,8 +70,7 @@ class QEffLoraModelLlamaForCausalLM(QEffLlamaForCausalLM):
         lora_ids: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-
-        kwargs['lora_ids'] = lora_ids
+        kwargs["lora_ids"] = lora_ids
 
         return super().forward(
             input_ids=input_ids,
