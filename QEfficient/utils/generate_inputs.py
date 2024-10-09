@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+from typing import Optional
 
 import numpy as np
 import torch
@@ -12,7 +13,17 @@ from QEfficient.utils import get_num_layers_from_config, get_padding_shape_from_
 
 
 class InputHandler:
-    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size, max_num_adapters):
+    def __init__(
+        self,
+        batch_size,
+        tokenizer,
+        config,
+        prompt,
+        prompt_len,
+        ctx_len,
+        full_batch_size,
+        max_num_adapters: Optional[int] = None,
+    ):
         """
         Initialization
 

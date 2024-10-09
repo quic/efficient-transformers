@@ -345,8 +345,12 @@ class TextGeneration:
             full_batch_size if full_batch_size else self._fetch_full_batch_size()
         )  # Check and fetch full batch size if CB is enabled
 
-        self.prompt_to_lora_id_mapping_prefill = deque(prompt_to_lora_id_mapping)
-        self.prompt_to_lora_id_mapping_decode = prompt_to_lora_id_mapping
+        if prompt_to_lora_id_mapping:
+            self.prompt_to_lora_id_mapping_prefill = deque(prompt_to_lora_id_mapping)
+            self.prompt_to_lora_id_mapping_decode = prompt_to_lora_id_mapping
+        else:
+            self.prompt_to_lora_id_mapping_prefill = None
+            self.prompt_to_lora_id_mapping_decode = None
 
         self.set_tokenizer_params()  # set tokenizer params
 
