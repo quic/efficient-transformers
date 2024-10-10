@@ -24,7 +24,7 @@ pipeline
                     cd /efficient-transformers &&
                     . /opt/qeff-env/bin/activate &&
                     pip install --upgrade pip setuptools &&
-                    pip install .[test] --extra-index-url https://download.pytorch.org/whl/cpu &&
+                    pip install .[test] &&
                     pip install junitparser pytest-xdist &&
                     rm -rf QEfficient "
                     '''
