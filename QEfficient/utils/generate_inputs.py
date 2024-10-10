@@ -53,6 +53,7 @@ class InputHandler:
         input_ids = inputs["input_ids"]
         batch_size, input_len = input_ids.shape
         inputs.pop("attention_mask")
+        inputs.pop("token_type_ids", None)
         position_ids = torch.arange(input_len).view(1, -1)
         inputs["input_ids"] = torch.concat(
             [
