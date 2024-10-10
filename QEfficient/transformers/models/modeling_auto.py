@@ -27,6 +27,7 @@ from QEfficient.utils.logging_utils import logger
 QEFFAutoModelToTransformersAutoModelMap = {
     "QEFFAutoModelForCausalLM": AutoModelForCausalLM,
     "QEFFAutoModel": AutoModel,
+    "QEffAutoLoraModelForCausalLM": AutoModelForCausalLM,
 }
 
 
