@@ -9,7 +9,7 @@ import onnxscript
 import torch
 from torch import nn
 
-ops = onnxscript.opset14
+ops = onnxscript.opset13
 
 
 @onnxscript.script(onnxscript.values.Opset(domain="com.qti.aisw.onnx", version=1))

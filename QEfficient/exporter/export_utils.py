@@ -97,7 +97,7 @@ def export_onnx(
             input_names=input_names,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
-            opset_version=14,
+            opset_version=13,
             custom_opsets={"com.qti.aisw.onnx": 1},
         )
     except Exception as e:
