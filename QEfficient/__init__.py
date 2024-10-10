@@ -24,5 +24,6 @@ __all__ = [
     "QEffAutoModel",
     "QEFFAutoModelForCausalLM",
     "QEffAutoPeftModelForCausalLM",
+    "QEffAutoLoraModelForCausalLM",
     "QEFFCommonLoader",
 ]
