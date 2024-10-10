@@ -25,10 +25,15 @@ def create_and_dump_specializations(
                 "batch_size": str(batch_size),
                 "seq_len": str(prompt_len),
                 "ctx_len": str(ctx_len),
-            },
-            {"batch_size": str(batch_size), "seq_len": "1", "ctx_len": str(ctx_len)},
+            }
         ]
     }
+
+    # To handle repetative input in specializations when prompt_len is 1
+    if prompt_len != 1:
+        specializations["specializations"].append(
+            {"batch_size": str(batch_size), "seq_len": "1", "ctx_len": str(ctx_len)}
+        )
     # If continuous batching is enabled by proving full_batch_size we need to add FBS to the specialization file and update the batch size of decoder part to FBS
     if full_batch_size is not None:
         specializations["specializations"][0]["full_batch_size"] = str(full_batch_size)
