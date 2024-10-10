@@ -241,6 +241,7 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        num_logits_to_keep: Optional[int] = 0,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
@@ -289,7 +290,7 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
         )
 
         # Cast to INT32 to avoid issue while running in ONNXRT
-        hidden_states = filter_hidden_states(outputs[0], position_ids, getattr(self, "num_speculative_tokens", None))
+        hidden_states = filter_hidden_states(outputs[0], position_ids, num_logits_to_keep)
         if self.config.pretraining_tp > 1:
             lm_head_slices = self.lm_head.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
             logits = [F.linear(hidden_states, lm_head_slices[i]) for i in range(self.config.pretraining_tp)]

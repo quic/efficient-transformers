@@ -12,6 +12,7 @@ import subprocess
 from typing import List, Optional, Tuple
 
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.constants import NUM_LOGITS_TO_KEEP
 
 
 def create_and_dump_specializations(
@@ -21,10 +22,10 @@ def create_and_dump_specializations(
     path: str,
     is_dlm: bool,
     full_batch_size: Optional[int] = None,
-    num_speculative_tokens: Optional[int] = None,
+    num_logits_to_keep: Optional[int] = NUM_LOGITS_TO_KEEP,
 ):
     # Create specialization cfgs
-    decode_seq_len = 1 if num_speculative_tokens is None else num_speculative_tokens+1
+    decode_seq_len = 1 if num_logits_to_keep is None else num_logits_to_keep+1
     specialization_cfgs = [
         dict(batch_size=str(batch_size), seq_len=str(prompt_len), ctx_len=str(ctx_len)), # prefill
         dict(batch_size=str(batch_size), seq_len=str(decode_seq_len), ctx_len=str(ctx_len)) # decode
@@ -170,7 +171,7 @@ def compile(
         path=specialization_json_path,
         full_batch_size=full_batch_size,
         is_dlm=kwargs.get("is_dlm", False),
-        num_speculative_tokens=kwargs.get("num_speculative_tokens", None),
+        num_logits_to_keep=kwargs.get("num_logits_to_keep", NUM_LOGITS_TO_KEEP),
     )
 
     # Select the customIO config based on the mx flag.

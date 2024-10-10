@@ -9,11 +9,10 @@ from typing import Optional
 
 import torch
 
-
 def filter_hidden_states(
     hidden_states: torch.Tensor,
     position_ids: torch.Tensor,
-    num_speculative_tokens: Optional[int] = None,
+    num_logits_to_keep: Optional[torch.LongTensor] = None,
 ) -> torch.Tensor:
     """
     Filter hidden states based on whether this is a TLM SpD model
@@ -22,15 +21,26 @@ def filter_hidden_states(
         :hidden_states (torch.Tensor): Hidden states tensor.
         :position_ids (torch.Tensor): Position ids tensor.
     ``Optional`` Args:
-        :num_speculative_tokens (int, optional): Number of speculative tokens, specified only for TLM SpD model
+        :num_logits_to_keep (int, optional): Number of speculative tokens, specified only for TLM SpD model
 
     Returns:
         :torch.Tensor: Filtered hidden states.
     """
-    batch_indices = torch.arange(position_ids.shape[0])
-    if num_speculative_tokens is not None:
-        # all logits need to be computed
-        return hidden_states[batch_indices].squeeze(1)
+    batch_size = position_ids.size(0)
+    batch_indices = torch.arange(batch_size)
     # Cast to INT32 to avoid issue while running in ONNXRT
     logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-    return hidden_states[batch_indices.view(-1, 1), logit_index]
+    if num_logits_to_keep is None:
+        # return the last logit
+        return hidden_states[batch_indices.view(-1, 1), logit_index]
+    # last valid `num_logits_to_keep` need to be computed
+    num_logits = num_logits_to_keep.size(0)
+    if not num_logits:
+        num_logits = position_ids.size(1)
+    upper_idx = torch.max(logit_index[0]+1, torch.tensor([num_logits], dtype=torch.int32))  
+    lower_idx = upper_idx - (num_logits) 
+    #offset = logit_index[0] - (num_logits-1)
+    #lower_idx = torch.max(offset, torch.tensor(0, dtype=torch.int32))
+    #upper_idx = lower_idx + num_logits
+    breakpoint()
+    return hidden_states[:, lower_idx:upper_idx]
