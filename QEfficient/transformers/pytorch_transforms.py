@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 from typing import Tuple
+from types import MethodType
 
 import transformers
 from torch import nn
@@ -156,6 +157,7 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
 )
+from QEfficient.transformers.models.spd.modeling_tlm import tlm_forward
 
 
 class CustomOpsTransform(ModuleMappingTransform):
@@ -260,3 +262,20 @@ class CBTransform(KVCacheTransform):
         # GPT-J
         GPTJBlock: QEffGPTJBlock,
     }
+
+class SpDTransform:
+    _module_mapping = {
+        # Llama
+        QEffLlamaForCausalLM,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        transformed = False
+        if (mcls:=model.__class__) in cls._module_mapping:
+            model.forward = MethodType(tlm_forward, model)
+            transformed = True
+        else:
+            raise NotImplementedError(f"model class {mcls} does not yet support returning multiple logits to keep.")
+
+        return model, transformed
