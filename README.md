@@ -53,19 +53,19 @@ For other models, there is comprehensive documentation to inspire upon the chang
 ## Quick Installation
 ```bash
 
-# Create Python virtual env and activate it. (Required Python 3.8)
+# Create Python virtual env and activate it. (Recommended Python 3.8)
 
 python3.8 -m venv qeff_env
 source qeff_env/bin/activate
 pip install -U pip
 
 # Clone and Install the QEfficient Repo.
-pip install git+https://github.com/quic/efficient-transformers --extra-index-url https://download.pytorch.org/whl/cpu
+pip install git+https://github.com/quic/efficient-transformers
 
 # Or build wheel package using the below command.
 pip install build wheel
 python -m build --wheel --outdir dist
-pip install dist/QEfficient-0.0.1.dev0-py3-none-any.whl --extra-index-url https://download.pytorch.org/whl/cpu
+pip install dist/QEfficient-0.0.1.dev0-py3-none-any.whl
 
 ``` 
 
