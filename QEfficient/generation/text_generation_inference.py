@@ -543,6 +543,7 @@ class TextGeneration:
 
         inputs = self.tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+        inputs.pop("token_type_ids", None)
 
         if decode_batch_id is not None:
             inputs["batch_index"] = decode_batch_id
