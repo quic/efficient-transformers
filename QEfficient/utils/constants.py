@@ -7,7 +7,7 @@
 
 import os
 
-NUM_LOGITS_TO_KEEP = 1
+NUM_LOGITS_TO_KEEP = None
 UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
 QEFF_DIR = os.path.dirname(UTILS_DIR)
 ROOT_DIR = os.path.dirname(QEFF_DIR)

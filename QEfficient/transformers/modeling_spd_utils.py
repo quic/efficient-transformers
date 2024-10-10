@@ -39,8 +39,6 @@ def filter_hidden_states(
         num_logits = position_ids.size(1)
     upper_idx = torch.max(logit_index[0]+1, torch.tensor([num_logits], dtype=torch.int32))  
     lower_idx = upper_idx - (num_logits) 
-    #offset = logit_index[0] - (num_logits-1)
-    #lower_idx = torch.max(offset, torch.tensor(0, dtype=torch.int32))
-    #upper_idx = lower_idx + num_logits
-    breakpoint()
-    return hidden_states[:, lower_idx:upper_idx]
+    #return hidden_states[:, lower_idx:upper_idx]
+    indices = torch.arange(lower_idx[0], upper_idx[0])
+    return hidden_states[:, indices]

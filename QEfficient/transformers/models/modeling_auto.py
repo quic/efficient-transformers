@@ -200,11 +200,12 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
             if isinstance(self.model.config.quantization_config, QEffGPTQConfig):
                 self._pytorch_transforms.insert(0, GPTQToMatmulNbitsTransform)
-        if (num_logits_to_keep>1 or num_logits_to_keep==0) and is_dlm:
-            raise ValueError("`num_speculative_tokens` arg should not be specified along with `is_dlm` flag.")
-        if num_logits_to_keep>1 or num_logits_to_keep==0:
-            if not isinstance(num_logits_to_keep, int) or num_logits_to_keep <= 0:
-                ValueError("`num_logits_to_keep` arg should be of integer type and be non-negative.")
+        
+        if num_logits_to_keep is not None:
+            if not isinstance(num_logits_to_keep, int) or num_logits_to_keep<2:
+                ValueError("`num_logits_to_keep` arg should be an integer greater than 1.")
+            if is_dlm:
+                raise ValueError("`num_logits_to_keep` arg and `is_dlm` flag are mutually exclusive.")
             self._pytorch_transforms.append(SpDTransform)
         elif is_dlm:
             setattr(self.model, "is_dlm", True)
@@ -311,7 +312,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxfp6=mxfp6,
             mxint8=mxint8,
             full_batch_size=self.full_batch_size,
-            num_speculative_tokens=getattr(self.model, "num_speculative_tokens", None),
+            num_logits_to_keep=getattr(self.model, "num_logits_to_keep", None),
             is_dlm=getattr(self.model, "is_dlm", False),
         )
         self.qpc_path = qpc_dir_path
@@ -375,7 +376,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxfp6=mxfp6,
             mxint8=mxint8,
             full_batch_size=full_batch_size,
-            num_speculative_tokens=getattr(self.model, "num_speculative_tokens", None),
+            num_logits_to_keep=self.num_logits_to_keep,
             is_dlm=getattr(self.model, "is_dlm", False),
         )
         return self.qpc_path

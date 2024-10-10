@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+from typing import Optional
+
 import numpy as np
 import torch
 
@@ -14,7 +16,7 @@ from QEfficient.utils.constants import NUM_LOGITS_TO_KEEP
 
 class InputHandler:
     def __init__(
-        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size, num_logits_to_keep: int = NUM_LOGITS_TO_KEEP
+        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size, num_logits_to_keep: Optional[int] = NUM_LOGITS_TO_KEEP
     ):
         """
         Initialization
@@ -83,7 +85,7 @@ class InputHandler:
             inputs["position_ids"] = torch.arange(input_len).view(1, input_len)
             inputs["batch_index"] = torch.arange(1).view(-1, 1)
 
-        if self.num_logits_to_keep==0 or self.num_logits_to_keep>1:
+        if self.num_logits_to_keep is not None:
             inputs["num_logits_to_keep"] = torch.zeros(self.num_logits_to_keep, dtype=torch.int64)
 
         past_key_values = []
@@ -110,7 +112,7 @@ class InputHandler:
         updated_inputs = {}
         if self.full_batch_size:
             batch_index = torch.arange(1).view(-1, 1)
-            if self.num_logits_to_keep==0 or self.num_logits_to_keep>1:
+            if self.num_logits_to_keep is not None:
                 input_ids = pt_outputs.logits.detach()[:, -1].argmax(1, keepdim=True)
                 updated_inputs["num_logits_to_keep"] = torch.zeros(1, dtype=torch.int64)
             else:
@@ -125,7 +127,7 @@ class InputHandler:
             updated_inputs["batch_index"] = torch.arange(self.full_batch_size).view(-1, 1)
 
         else:
-            if self.num_logits_to_keep:
+            if self.num_logits_to_keep is not None:
                 # assume spec decoding logits
                 input_ids = pt_outputs["logits"][:, -1].argmax(-1).reshape(-1, 1)
                 updated_inputs["num_logits_to_keep"] = torch.zeros(1, dtype=torch.int64)

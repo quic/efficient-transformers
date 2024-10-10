@@ -240,9 +240,10 @@ class SpDTransform:
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         transformed = False
-        if model.__class__ in cls._module_mapping:
-            #model.forward = tlm_forward
+        if (mcls:=model.__class__) in cls._module_mapping:
             model.forward = MethodType(tlm_forward, model)
             transformed = True
+        else:
+            raise NotImplementedError(f"model class {mcls} does not yet support returning multiple logits to keep.")
 
         return model, transformed

@@ -84,7 +84,6 @@ def export_onnx(
         elif iname == "num_logits_to_keep":
             dynamic_axes[iname] = {0: "num_logits_to_keep"}
 
-    breakpoint()
     if "past_key.0" in input_names and "attention_mask" in input_names:
         dynamic_axes["attention_mask"] = {0: "batch_size", 1: "ctx_len"}
 
