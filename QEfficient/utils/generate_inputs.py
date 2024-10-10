@@ -137,7 +137,7 @@ class InputHandler:
         input_ids = inputs["input_ids"]
         batch_size, input_len = input_ids.shape
         inputs.pop("attention_mask")
-        uts.pop("token_type_ids", None)
+        inputs.pop("token_type_ids", None)
         position_ids = np.arange(input_len).reshape(1, -1)
         inputs["input_ids"] = np.concatenate(
             [input_ids, np.full((batch_size, self.prompt_len - input_len), self.tokenizer.pad_token_id)],
