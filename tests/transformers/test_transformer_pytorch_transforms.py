@@ -104,8 +104,8 @@ def run_kv_cache_transform_and_test(
             original_model_outputs["past_key_values"] = tuple(
                 [
                     (
-                        original_model_outputs["past_key_values"][i][0][:, :, :input_len, :], #key cache
-                        original_model_outputs["past_key_values"][i][1][:, :, :input_len, :], #value cache
+                        original_model_outputs["past_key_values"][i][0][:, :, :input_len, :],  # key cache
+                        original_model_outputs["past_key_values"][i][1][:, :, :input_len, :],  # value cache
                     )
                     for i in range(len(original_model_outputs["past_key_values"]))
                 ]
