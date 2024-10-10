@@ -239,7 +239,7 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
         config, "num_attention_heads"
     ):  # Check for num_key_value_heads (Llama/Mistral)
         n_heads = config.num_key_value_heads
-        d_head = config.hidden_size // config.num_attention_heads
+        d_head = config.head_dim if hasattr(config, "head_dim") else config.hidden_size // config.num_attention_heads
     elif hasattr(config, "n_heads"):  # Check for n_heads and d_model in the config (MPT Model)
         n_heads = config.n_heads
         d_head = config.d_model // config.n_heads
