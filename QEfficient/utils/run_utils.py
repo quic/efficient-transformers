@@ -28,7 +28,7 @@ class ApiRunner:
     4. ``ONNX`` model on Cloud AI 100
     """
 
-    def __init__(self, batch_size, tokenizer,embeddings, config, prompt, prompt_len, ctx_len, full_batch_size=None):
+    def __init__(self, batch_size, tokenizer, embeddings, config, prompt, prompt_len, ctx_len, full_batch_size=None):
         """
         Initialization
 
@@ -197,7 +197,7 @@ class ApiRunner:
         session = onnxruntime.InferenceSession(model_path, session_options)
 
         generated_ids = []
-        inputs = self.input_handler.prepare_ort_inputs()     
+        inputs = self.input_handler.prepare_ort_inputs()
         ort_outputs = self.run_ort_session(inputs, session)
         ort_outputs = self.input_handler.update_ort_outputs(ort_outputs)
 

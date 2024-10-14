@@ -183,19 +183,22 @@ def load_hf_tokenizer(
 
     return tokenizer
 
+
 def get_embeddings(
     model_name: str,
     hf_token: Optional[str] = None,
-    cache_dir: Optional[str] = None, 
+    cache_dir: Optional[str] = None,
     local_model_dir: Optional[str] = None,
 ):
-    from QEfficient.base.common import  QEFFCommonLoader
+    from QEfficient.base.common import QEFFCommonLoader
+
     model_kv = QEFFCommonLoader.from_pretrained(
-            pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-            token=hf_token,
-            cache_dir=cache_dir,
-        )
+        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+        token=hf_token,
+        cache_dir=cache_dir,
+    )
     return model_kv.model.get_input_embeddings(), model_kv.model.config
+
 
 def get_qpc_dir_path(
     model_card_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size

@@ -12,30 +12,26 @@ import torch
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
-from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
-from transformers.models.cohere.modeling_cohere import (
-    repeat_kv,
-    rotate_half,
-    logger
-)
-from transformers.models.cohere.modeling_cohere import(
-    CohereRotaryEmbedding,
-    CohereAttention,
-    CohereConfig,
-    CohereForCausalLM,
-    CohereModel,
-    CohereLayerNorm,
-    CohereDecoderLayer,
-)
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
+from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+from transformers.models.cohere.modeling_cohere import (
+    CohereAttention,
+    CohereConfig,
+    CohereDecoderLayer,
+    CohereForCausalLM,
+    CohereModel,
+    CohereRotaryEmbedding,
+    logger,
+    repeat_kv,
+    rotate_half,
+)
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-
 
 
 class QEffCohereRotaryEmbedding(CohereRotaryEmbedding):
@@ -82,10 +78,11 @@ class QEffCohereRotaryEmbedding(CohereRotaryEmbedding):
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device, **self.rope_kwargs)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.original_inv_freq = self.inv_freq
-        
+
         self._set_cos_sin_cache(
             seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
         )
+
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
         t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
@@ -95,7 +92,7 @@ class QEffCohereRotaryEmbedding(CohereRotaryEmbedding):
         emb = torch.repeat_interleave(freqs, 2, dim=1)  # This line differs from Llama's implementation
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-    
+
     @torch.no_grad()
     def forward(self, x, seq_len=None):
         # x: [bs, num_attention_heads, seq_len, head_size]
@@ -106,8 +103,6 @@ class QEffCohereRotaryEmbedding(CohereRotaryEmbedding):
             self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
             self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
         )
-
-
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -130,16 +125,12 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    
+
     cos = cos[position_ids].unsqueeze(unsqueeze_dim)
     sin = sin[position_ids].unsqueeze(unsqueeze_dim)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
-
-
-
-
 
 
 class QEffCohereAttention(CohereAttention):
@@ -150,11 +141,9 @@ class QEffCohereAttention(CohereAttention):
         self.config = config
         self.__qeff_init__()
 
- 
     def __qeff_init__(self):
         self.config.rope_scaling = None
         self.rotary_emb = QEffCohereRotaryEmbedding(config=self.config)
-        
 
     # Ignore copy
     def forward(
@@ -187,9 +176,11 @@ class QEffCohereAttention(CohereAttention):
         kv_seq_len = key_states.shape[-2]
         past_key_value = getattr(self, "past_key_value", past_key_value)
         if past_key_value is not None:
-             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+            kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin,position_ids=position_ids)
+        query_states, key_states = qeff_apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, position_ids=position_ids
+        )
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; position_ids needed for the static cache
@@ -225,8 +216,9 @@ class QEffCohereAttention(CohereAttention):
 
         return attn_output, attn_weights, past_key_value
 
+
 class QEffCohereDecoderLayer(CohereDecoderLayer):
-     def forward(
+    def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
@@ -292,7 +284,6 @@ class QEffCohereDecoderLayer(CohereDecoderLayer):
 
 
 class QEffCohereModel(CohereModel):
-    
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -326,7 +317,7 @@ class QEffCohereModel(CohereModel):
             use_cache = False
 
         if input_ids is not None:
-           batch_size, seq_length = input_ids.shape
+            batch_size, seq_length = input_ids.shape
         elif inputs_embeds is not None:
             batch_size, seq_length, _ = inputs_embeds.shape
         if inputs_embeds is None:
@@ -349,7 +340,7 @@ class QEffCohereModel(CohereModel):
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, position_ids,past_key_values, output_attentions
+            attention_mask, inputs_embeds, cache_position, position_ids, past_key_values, output_attentions
         )
 
         # embed positions
@@ -380,7 +371,7 @@ class QEffCohereModel(CohereModel):
                     hidden_states,
                     attention_mask=causal_mask,
                     position_ids=position_ids,
-                    batch_index= batch_index,
+                    batch_index=batch_index,
                     past_key_value=past_key_values,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
@@ -455,11 +446,7 @@ class QEffCohereModel(CohereModel):
         if using_static_cache:
             target_length = past_key_values.get_max_length()
         else:
-            target_length = (
-                attention_mask.shape[-1]
-                if isinstance(attention_mask, torch.Tensor)
-                else past_seen_tokens 
-            )
+            target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
 
         # In case the provided `attention` mask is 2D, we generate a causal mask here (4D).
         if attention_mask is not None and attention_mask.dim() == 4:
@@ -498,15 +485,13 @@ class QEffCohereModel(CohereModel):
         return causal_mask
 
 
-
 class QEffCohereForCausalLM(CohereForCausalLM):
     _tied_weights_keys = ["lm_head.weight"]
 
-    def __init__(self, config: CohereConfig ):
+    def __init__(self, config: CohereConfig):
         super().__init__()
         self.__qeff_init__()
 
- 
     def __qeff_init__(self):
         lm_head_weights = self.lm_head.weight.data.split(64000)
         self.lm_heads = torch.nn.ModuleList()
@@ -514,11 +499,10 @@ class QEffCohereForCausalLM(CohereForCausalLM):
             lm_head_i = torch.nn.Linear(8192, 64000, bias=False)  # hiddensize-8192
             lm_head_i.weight.data = lm_head_weights[i]
             self.lm_heads.append(lm_head_i)
-        return 
-        
-    
+        return
+
     # Ignore copy
-  
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -534,7 +518,6 @@ class QEffCohereForCausalLM(CohereForCausalLM):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-       
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -586,6 +569,3 @@ class QEffCohereForCausalLM(CohereForCausalLM):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
-    
-        

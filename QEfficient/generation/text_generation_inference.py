@@ -15,8 +15,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import torch
 import transformers
-from transformers import AutoConfig
-from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers import AutoConfig, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import padding_check_and_fix
@@ -478,8 +477,8 @@ class TextGeneration:
         decode_inputs["position_ids"] = self.decode_pos_ids
         if self.batch_index is not None:
             decode_inputs["batch_index"] = self.batch_index
-        if self.config.architectures[0] == 'CohereForCausalLM':
-            decode_inputs['inputs_embeds'] = self.embeddings(torch.tensor(decode_inputs['input_ids'])).detach().numpy()
+        if self.config.architectures[0] == "CohereForCausalLM":
+            decode_inputs["inputs_embeds"] = self.embeddings(torch.tensor(decode_inputs["input_ids"])).detach().numpy()
         return decode_inputs
 
     def _update_decode_input(self, outputs, position_ids, generation_len, decode_batch_id=None):
@@ -576,8 +575,10 @@ class TextGeneration:
             chunk_inputs["position_ids"] = inputs["position_ids"][
                 :, i * self.prefill_seq_len : (i + 1) * self.prefill_seq_len
             ]
-            if self.config.architectures[0] == 'CohereForCausalLM':
-                chunk_inputs['inputs_embeds'] = self.embeddings(torch.tensor(chunk_inputs.pop('input_ids'))).detach().numpy()
+            if self.config.architectures[0] == "CohereForCausalLM":
+                chunk_inputs["inputs_embeds"] = (
+                    self.embeddings(torch.tensor(chunk_inputs.pop("input_ids"))).detach().numpy()
+                )
             outputs = self.session.run(chunk_inputs)
             if self.write_io_dir is not None:
                 write_io_files(inputs, outputs, self.write_io_dir, "prefill", "aic_batch_io", True, False)
@@ -677,8 +678,10 @@ class TextGeneration:
         for num_token in range(1, generation_len):
             if self.stream:
                 self.streamer.put(decode_inputs["input_ids"][0])
-            if self.config.architectures[0] == 'CohereForCausalLM':
-                decode_inputs['inputs_embeds'] = self.embeddings(torch.tensor(decode_inputs.pop("input_ids"))).detach().numpy()
+            if self.config.architectures[0] == "CohereForCausalLM":
+                decode_inputs["inputs_embeds"] = (
+                    self.embeddings(torch.tensor(decode_inputs.pop("input_ids"))).detach().numpy()
+                )
             outputs = self.session.run(decode_inputs)
 
             if self.write_io_dir is not None:

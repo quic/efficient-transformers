@@ -15,6 +15,13 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
+from transformers.models.cohere.modeling_cohere import (
+    CohereAttention,
+    CohereDecoderLayer,
+    CohereForCausalLM,
+    CohereModel,
+    CohereRotaryEmbedding,
+)
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconForCausalLM,
@@ -40,13 +47,6 @@ from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeBlock,
     GPTBigCodeForCausalLM,
     GPTBigCodeModel,
-)
-from transformers.models.cohere.modeling_cohere import (
-    CohereRotaryEmbedding,
-    CohereAttention,
-    CohereModel,
-    CohereForCausalLM,
-    CohereDecoderLayer,
 )
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJForCausalLM, GPTJModel
 from transformers.models.llama.modeling_llama import (
@@ -89,6 +89,13 @@ from .models.codegen.modeling_codegen import (
     QeffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
+)
+from .models.cohere.modeling_cohere import (
+    QEffCohereAttention,
+    QEffCohereDecoderLayer,
+    QEffCohereForCausalLM,
+    QEffCohereModel,
+    QEffCohereRotaryEmbedding,
 )
 from .models.falcon.modeling_falcon import (
     QEffFalconAttention,

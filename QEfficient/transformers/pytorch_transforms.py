@@ -15,6 +15,13 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
+from transformers.models.cohere.modeling_cohere import (
+    CohereAttention,
+    CohereDecoderLayer,
+    CohereForCausalLM,
+    CohereModel,
+    CohereRotaryEmbedding,
+)
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconDecoderLayer,
@@ -49,13 +56,6 @@ from transformers.models.llama.modeling_llama import (
     LlamaForCausalLM,
     LlamaModel,
     LlamaRMSNorm,
-)
-from transformers.models.cohere.modeling_cohere import (
-    CohereRotaryEmbedding,
-    CohereAttention,
-    CohereModel,
-    CohereForCausalLM,
-    CohereDecoderLayer,
 )
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
@@ -104,6 +104,13 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
+from QEfficient.transformers.models.cohere.modeling_cohere import (
+    QEffCohereAttention,
+    QEffCohereDecoderLayer,
+    QEffCohereForCausalLM,
+    QEffCohereModel,
+    QEffCohereRotaryEmbedding,
+)
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
     QEffFalconDecoderLayer,
@@ -145,13 +152,6 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
-)
-from QEfficient.transformers.models.cohere.modeling_cohere import (
-    QEffCohereAttention,
-    QEffCohereForCausalLM,
-    QEffCohereModel,
-    QEffCohereRotaryEmbedding,
-    QEffCohereDecoderLayer,
 )
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
