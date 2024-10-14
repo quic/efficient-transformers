@@ -61,6 +61,7 @@ def export_onnx(
     # Create dynamic axes dict for inputs that need to have dynamic input shapes
     seq_len_inputs = {
         "input_ids",
+        "inputs_embeds",
         "attention_mask",
         "position_ids",
         "token_type_ids",

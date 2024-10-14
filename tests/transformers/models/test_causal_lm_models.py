@@ -38,6 +38,8 @@ test_models = [
     "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
     "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
     "ibm-granite/granite-20b-code-base",
+    
+    "CohereForAI/c4ai-command-r-v01",
 ]
 
 
@@ -90,13 +92,14 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     model_config["n_layer"] = n_layer
 
     model_hf, _ = load_causal_lm_model(model_config)
-
+    embeds = model_hf.get_input_embeddings() if model_name == "CohereForAI/c4ai-command-r-v01" else None
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
     batch_size = len(Constants.INPUT_STR)
     api_runner = ApiRunner(
         batch_size,
         tokenizer,
+        embeds,
         config,
         Constants.INPUT_STR,
         Constants.PROMPT_LEN,
@@ -142,6 +145,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     api_runner = ApiRunner(
         batch_size,
         tokenizer,
+        embeds,
         config,
         fbs_prompts,
         Constants.PROMPT_LEN,

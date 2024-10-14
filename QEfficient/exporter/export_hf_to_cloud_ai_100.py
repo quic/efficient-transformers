@@ -199,18 +199,23 @@ def export_kvstyle_transformed_model_to_onnx(
         raise ValueError(f"Need seq_len to be greater than zero, got seq_len={seq_len}")
 
     # Preprocess inputs
+    embeds=None
+    if model_name == "CohereForAI/c4ai-command-r-v01":
+        embeds = transformed_model.get_input_embeddings()
+        # inputs['inputs_embeds']=embeds(inputs.pop('input_ids'))
     # Build inputs for prefill
     input_handler = InputHandler(
         batch_size=len(Constants.INPUT_STR),
         tokenizer=tokenizer,
+        embeddings=embeds,
         config=transformed_model.config,
         prompt=Constants.INPUT_STR,
         prompt_len=Constants.PROMPT_LEN,
         ctx_len=seq_len,
         full_batch_size=full_batch_size,
     )
-
     inputs = input_handler.prepare_pytorch_inputs()
+    
     pt_outputs = transformed_model(**inputs)
     output_names = list(pt_outputs.keys())
 
@@ -260,7 +265,7 @@ def export_kvstyle_transformed_model_to_onnx(
     for i, (key, value) in enumerate(pkv):
         inputs[f"past_key.{i}"] = key
         inputs[f"past_value.{i}"] = value
-
+        
     # Run onnxrt inference
     input_names, ort_outputs = run_model_on_ort(
         onnx_path=os.path.join(onnx_dir_path, f"{model_name}.onnx"),

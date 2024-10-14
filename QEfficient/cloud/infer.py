@@ -13,7 +13,7 @@ from typing import List, Optional
 import QEfficient
 from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
+from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists, get_embeddings
 from QEfficient.utils.logging_utils import logger
 
 
@@ -72,11 +72,12 @@ def main(
         cache_dir=cache_dir,
         hf_token=hf_token,
     )
+    embeds,config = get_embeddings(model_name, hf_token,cache_dir,local_model_dir)
 
     qpc_dir_path = get_qpc_dir_path(
         model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
     )
-
+    
     # Handle qpc generation
     if qpc_exists(qpc_dir_path):
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
@@ -111,6 +112,8 @@ def main(
     #########
     cloud_ai_100_exec_kv(
         tokenizer=tokenizer,
+        config=config,
+        embeddings=embeds,
         qpc_path=qpc_dir_path,
         device_id=device_group,
         prompt=prompt,

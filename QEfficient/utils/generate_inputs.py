@@ -12,7 +12,7 @@ from QEfficient.utils import get_num_layers_from_config, get_padding_shape_from_
 
 
 class InputHandler:
-    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size):
+    def __init__(self, batch_size, tokenizer, embeddings, config, prompt, prompt_len, ctx_len, full_batch_size):
         """
         Initialization
 
@@ -28,10 +28,13 @@ class InputHandler:
         # check and fix tokenizer viability
         padding_check_and_fix(tokenizer)
         self.tokenizer = tokenizer
+        self.embeddings = embeddings
+        self.config = config
         self.prompt = prompt
         self.prompt_len = prompt_len
         self.ctx_len = ctx_len
         self.full_batch_size = full_batch_size
+        # breakpoint()
         self.n_layer = get_num_layers_from_config(config)
         self.padding_shape = get_padding_shape_from_config(
             config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
@@ -51,6 +54,7 @@ class InputHandler:
             padding=True,
         )
         input_ids = inputs["input_ids"]
+        
         batch_size, input_len = input_ids.shape
         inputs.pop("attention_mask")
         inputs.pop("token_type_ids", None)
@@ -75,7 +79,8 @@ class InputHandler:
             inputs["input_ids"] = input_ids
             inputs["position_ids"] = torch.arange(input_len).view(1, input_len)
             inputs["batch_index"] = torch.arange(1).view(-1, 1)
-
+        if self.config.architectures[0] == "CohereForCausalLM":
+            inputs['inputs_embeds']= self.embeddings(inputs.pop('input_ids'))
         past_key_values = []
         for i in range(self.n_layer):
             past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
@@ -114,7 +119,8 @@ class InputHandler:
         else:
             updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
             updated_inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-
+        if self.config.architectures[0] == "CohereForCausalLM":
+            updated_inputs['inputs_embeds']= self.embeddings(updated_inputs.pop('input_ids'))
         updated_inputs["past_key_values"] = tuple(
             [(key.detach(), value.detach()) for key, value in pt_outputs["past_key_values"]]
         )
@@ -147,7 +153,9 @@ class InputHandler:
             [position_ids, np.full((batch_size, self.prompt_len - input_len), -1)],
             axis=1,
         ).astype(np.int64)
-
+        if self.config.architectures[0] == "CohereForCausalLM":
+            # breakpoint()
+            inputs['inputs_embeds']= self.embeddings(torch.tensor(inputs.pop('input_ids'))).numpy()
         for i in range(self.n_layer):
             inputs["past_key." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
             inputs["past_value." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
@@ -169,6 +177,8 @@ class InputHandler:
         updated_inputs = {}
         updated_inputs["input_ids"] = ort_outputs["logits"].argmax(-1)
         updated_inputs["position_ids"] = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
+        if self.config.architectures[0] == "CohereForCausalLM":
+            updated_inputs['inputs_embeds']= self.embeddings(torch.tensor(updated_inputs.pop('input_ids'))).numpy()
         for i in range(self.n_layer):
             updated_inputs["past_key." + str(i)] = ort_outputs["past_key_values"][i * 2]
             updated_inputs["past_value." + str(i)] = ort_outputs["past_key_values"][i * 2 + 1]
