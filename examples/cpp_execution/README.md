@@ -2,11 +2,12 @@
 # Text Generation using CPP Inference
 
 ## Overview
-This example contains a single C++ file, an example text generation inferencing python file and a CMakeLists.txt that can be used for compiling.
+This example demonstrates how to execute a model on AI 100 using Efficient Transformers and C++ APIs. The Efficient Transformers library is utilized for transforming and compiling the model, while the QPC is executed using C++ APIs. It is tested on x86 platform.
 
-## Requirements
+## Prerequisite
 1. PyBind11
-2. Cpp17 and above
+2. Cpp17 or above
+3. QEfficient [Quick Installation Guide]( https://github.com/quic/efficient-transformers?tab=readme-ov-file#quick-installation)
 
 ## Running Guide
 ```bash
@@ -24,6 +25,9 @@ python -m examples.cpp_execution.text_inference_using_cpp --model_name gpt2 --ba
 
 ```
 
-## Limitations
-1. Currently this is working for Batch size = 1
-2. Not supporting DMA Buffer Handling
+## Future Enhancements
+1. Batch size > 1 support currently under evaluation.
+2. Chunking
+3. DMA Buffer Handling
+4. Continuous Batching
+5. Handling streamer

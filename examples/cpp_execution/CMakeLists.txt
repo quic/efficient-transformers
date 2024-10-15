@@ -5,32 +5,31 @@
 #
 # -----------------------------------------------------------------------------
 
-project(InferenceSetIOBufferExample)
+project(InferenceSetIOBuffer)
 cmake_minimum_required (VERSION 3.15)
 set(CMAKE_CXX_STANDARD 17)
 
 find_package(pybind11 REQUIRED)
 
-pybind11_add_module(InferenceSetIOBufferExample MODULE InferenceSetIOBufferExample.cpp)
+pybind11_add_module(InferenceSetIOBuffer MODULE InferenceSetIOBuffer.cpp)
 
 
 include_directories("/opt/qti-aic/dev/inc")
 include_directories("examples/cpp_execution")
 
-target_link_libraries(InferenceSetIOBufferExample PRIVATE ${PYTHON_LIBRARIES} pybind11::module pthread dl)
+target_link_libraries(InferenceSetIOBuffer PRIVATE ${PYTHON_LIBRARIES} pybind11::module pthread dl)
 
-target_include_directories(InferenceSetIOBufferExample PRIVATE ${PYTHON_INCLUDE_DIRS} ${pybind11_INCLUDE_DIRS})
+target_include_directories(InferenceSetIOBuffer PRIVATE ${PYTHON_INCLUDE_DIRS} ${pybind11_INCLUDE_DIRS})
 
 set_target_properties(
-    InferenceSetIOBufferExample
+    InferenceSetIOBuffer
     PROPERTIES
     LINK_FLAGS "-Wl,--no-as-needed"
-    CFLAGS "-g -Wall -Wextra"
 )
 
 set(CMAKE_BUILD_TYPE Debug)
 
-target_compile_options(InferenceSetIOBufferExample PRIVATE
+target_compile_options(InferenceSetIOBuffer PRIVATE
                     -fstack-protector-all
                     -fstack-protector-all
                     -Werror

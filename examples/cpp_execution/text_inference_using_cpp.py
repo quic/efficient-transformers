@@ -19,7 +19,7 @@ from QEfficient.utils.logging_utils import logger
 
 so_folder_path = os.path.abspath("examples/cpp_execution/build")
 sys.path.append(so_folder_path)
-import InferenceSetIOBufferExample  # noqa: E402
+import InferenceSetIOBuffer  # noqa: E402
 
 
 def main(
@@ -91,6 +91,7 @@ def main(
     cloud_ai_100_exec_kv(
         tokenizer=tokenizer,
         qpc_path=generated_qpc_path,
+        prompt_len=prompt_len,
         prompt=prompt,
         device_id=device_group,
         prompts_txt_file_path=prompts_txt_file_path,
@@ -117,10 +118,14 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
 
 def read_prompts_txt_file(prompts_txt_file_path: str):
     prompt = []
-    with open(prompts_txt_file_path, "r") as file:
-        for line in file:
-            prompt.append(line.strip())
-    return prompt
+    try:
+        with open(prompts_txt_file_path, "r") as file:
+            for line in file:
+                prompt.append(line.strip())
+        return prompt
+    except OSError:
+        print("Error: File not found.")
+
 
 
 def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
@@ -167,6 +172,7 @@ def fix_prompts(prompt: List[str], batch_size: int, full_batch_size: int = None)
 def cloud_ai_100_exec_kv(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc_path: str,
+    prompt_len: int,
     prompt: Optional[List[str]] = None,
     prompts_txt_file_path: Optional[str] = None,
     device_id: Optional[List[int]] = None,
@@ -180,15 +186,17 @@ def cloud_ai_100_exec_kv(
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
 
     # ********* CPP Calling ********
-    InferenceSetIOBufferExample.generatePrompt(
-        tokenizer, qpc_path, batch_size, ctx_len, prompt, generation_len, device_id
+    InferenceSetIOBuffer.generatePrompt(
+        tokenizer, qpc_path, prompt_len, batch_size, ctx_len, prompt, generation_len, device_id
     )
 
-
-def tokenize_for_prefill(prompt, tokenizer, padded_len):
-    inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
+def tokenize_for_prefill(prompt, tokenizer):
+    inputs = tokenizer(prompt, return_tensors="np", padding=True)
     return inputs
 
+def tokenize_for_prefill_with_padded_len(prompt, tokenizer, padded_len):
+    inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
+    return inputs
 
 def tokenize_decode_output(tokenizer, generated_ids):
     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
