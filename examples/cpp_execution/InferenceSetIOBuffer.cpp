@@ -75,21 +75,20 @@ namespace
      * @param outputBuffers Vector to use in case this is an output instance
      * @param nextTokenIds Vector to store output[logits]
      */
-    std::vector<int64_t> get_logits_from_output_buffers(
+    int64_t get_logits_from_output_buffers(
         std::vector<QBuffer> &outputBuffers,
         std::vector<int64_t> &nextTokenIds)
     {
         auto rawOPBufPtr = outputBuffers[outputBuffers.size() - 1].buf;
-        const float *bufferOT = reinterpret_cast<const float *>(rawOPBufPtr);
+        const float *buffer = reinterpret_cast<const float *>(rawOPBufPtr);
         int size_of_logits = outputBuffers[outputBuffers.size() - 1].size / sizeof(float);
 
         // Calculate the index of the maximum element
-        auto maxElementIter = std::max_element(bufferOT, bufferOT + size_of_logits);
-        int maxElementIndex = std::distance(bufferOT, maxElementIter);
+        auto maxElementIter = std::max_element(buffer, buffer + size_of_logits);
+        int maxElementIndex = std::distance(buffer, maxElementIter);
 
         nextTokenIds.push_back(maxElementIndex);
-        std::vector<int64_t> logits({maxElementIndex});
-        return logits;
+        return maxElementIndex;
     }
 
     /**
@@ -109,12 +108,6 @@ namespace
         }
         std::copy_n(reinterpret_cast<const uint8_t *>(tokenVector.data()),
                     token_size_bytes, inputBuffer.buf);
-
-        if (inputBuffer.size > token_size_bytes)
-        {
-            std::memset(inputBuffer.buf + token_size_bytes, 0,
-                        inputBuffer.size - token_size_bytes);
-        }
     }
 
     // template <typename T>
@@ -188,9 +181,8 @@ int generatePrompt(
     py::object tokenizer,
     const std::string &qpcPath,
     int prompt_len,
-    // int batch_size,
     int ctx_len,
-    std::optional<std::vector<std::string>> prompt = std::nullopt, // prompt_len
+    std::optional<std::vector<std::string>> prompt = std::nullopt,
     std::optional<int> generation_len = std::nullopt,
     std::optional<std::vector<int>> device_id = std::nullopt)
 {
@@ -292,16 +284,6 @@ int generatePrompt(
         {
             generation_len = ctx_len - std::accumulate(attention_mask.begin(), attention_mask.end(), 0);
         }
-        auto startPrefill = std::chrono::system_clock::now();
-        //*** RUN PREFILL *** //TODO: Adding chunks
-        const auto &bufferMappings = qpc->getBufferMappings();
-        const auto &bufferMappings2 = qpc->getBufferMappingsV2();
-
-        auto inputIdBuffer = createBuffer("input_ids", bufferMappings, false);
-        populateBuffer(inputIdBuffer->getQBuffer(), token_input_ids);
-
-        auto positionIdBuffer = createBuffer("position_ids", bufferMappings, false);
-        populateBuffer(positionIdBuffer->getQBuffer(), position_ids);
 
         // *** INFERENCE SET ***
         constexpr uint32_t setSize = 1;
@@ -317,17 +299,10 @@ int generatePrompt(
             std::cerr << "Error obtaining Inference Handle\n";
             return -1;
         }
-        std::vector<QBuffer> inputBuffers;
-        std::vector<QBuffer> outputBuffers;
 
-        populateBuffersWithInputs(bufferMappings,
-                                  inputBuffers,
-                                  outputBuffers,
-                                  inputIdBuffer->getQBuffer(),
-                                  positionIdBuffer->getQBuffer());
-
-        submitHandle->setInputBuffers(inputBuffers);
-        submitHandle->setOutputBuffers(outputBuffers);
+        // Making _past values as NULL
+        const auto &bufferMappings = qpc->getBufferMappings();
+        const auto &bufferMappings2 = qpc->getBufferMappingsV2();
 
         qaic::rt::BufferIdentifiers bufferIdentifiers(bufferMappings2);
         std::vector<std::pair<uint32_t, std::vector<uint32_t>>> bufDim = bufferIdentifiers.getBufferSizeDimensionPair();
@@ -339,8 +314,31 @@ int generatePrompt(
                 bufDim[bufid.getBufferIndex()].second = std::vector{0U};
             }
         }
-
         submitHandle->setBufferDimensions(bufDim);
+
+        // *** BUFFER CREATION ***
+        auto inputIdBuffer = createBuffer("input_ids", bufferMappings, false);
+        auto positionIdBuffer = createBuffer("position_ids", bufferMappings, false);
+
+        //*** RUN PREFILL *** //TODO: Adding chunks
+        auto startPrefill = std::chrono::system_clock::now();
+
+        // *** POPULATE BUFFERS ***
+        populateBuffer(inputIdBuffer->getQBuffer(), token_input_ids);
+        populateBuffer(positionIdBuffer->getQBuffer(), position_ids);
+
+        std::vector<QBuffer> inputBuffers;
+        std::vector<QBuffer> outputBuffers;
+
+        populateBuffersWithInputs(bufferMappings,
+                                  inputBuffers,
+                                  outputBuffers,
+                                  inputIdBuffer->getQBuffer(),
+                                  positionIdBuffer->getQBuffer());
+
+        // *** SET BUFFERS ***
+        submitHandle->setInputBuffers(inputBuffers);
+        submitHandle->setOutputBuffers(outputBuffers);
 
         // *** SUBMIT ***
         constexpr uint32_t inferenceId = 0; // also named as request ID
@@ -365,67 +363,68 @@ int generatePrompt(
             std::cerr << "Error in putting completed handle through InferenceSet\n";
             return -1;
         }
-
+        auto prefillEnd = std::chrono::high_resolution_clock::now();
         // *** GET OUTPUT ***
         //
         // At this point, the output is available in "outputBuffers" and can be
         // consumed.
         //
 
-        // DECODE LOOP
-        auto startDecode = std::chrono::high_resolution_clock::now();
-        std::vector<std::vector<int64_t>> generated_ids;
-
-        std::vector<int64_t> nextTokenIds;
-        for (int num_tokens = 1; num_tokens < generation_len.value(); num_tokens++)
+        // *** BUFFER DIMS UPDATE ***
+        for (auto &bufid : bufferIdentifiers.getBufferIdentifierVec())
         {
-            std::vector<int64_t> logits = get_logits_from_output_buffers(outputBuffers, nextTokenIds);
-            std::vector<int64_t> position_id_for_decode({*max_input_len_value + num_tokens});
-
-            // Making past_ values Null
-            for (auto &bufid : bufferIdentifiers.getBufferIdentifierVec())
+            if (bufid.getBufferName().find("input_ids") == 0)
             {
-                // Making dim of input buffer to be (1,1)
-                if (bufid.getBufferName().find("input_ids") == 0)
+                int size = bufDim[bufid.getBufferIndex()].second.size();
+                bufDim[bufid.getBufferIndex()].first = 8;
+                for (int i = 0; i < size; i++)
                 {
-                    int size = bufDim[bufid.getBufferIndex()].second.size();
-                    bufDim[bufid.getBufferIndex()].first = 8;
-                    for (int i = 0; i < size; i++)
-                    {
-                        bufDim[bufid.getBufferIndex()].second[i] = 1;
-                    }
-                }
-                if (bufid.getBufferName().find("position_ids") == 0)
-                {
-                    int size = bufDim[bufid.getBufferIndex()].second.size();
-                    bufDim[bufid.getBufferIndex()].first = 8;
-                    for (int i = 0; i < size; i++)
-                        bufDim[bufid.getBufferIndex()].second[i] = 1;
+                    bufDim[bufid.getBufferIndex()].second[i] = 1;
                 }
             }
-            submitHandle->setBufferDimensions(bufDim);
+            if (bufid.getBufferName().find("position_ids") == 0)
+            {
+                int size = bufDim[bufid.getBufferIndex()].second.size();
+                bufDim[bufid.getBufferIndex()].first = 8;
+                for (int i = 0; i < size; i++)
+                    bufDim[bufid.getBufferIndex()].second[i] = 1;
+            }
+        }
+        submitHandle->setBufferDimensions(bufDim);
 
-            auto inputIdBufferDecode = createBuffer("input_ids", bufferMappings, true);
+        // *** DECODE BUFFER CREATION ***
+        auto inputIdBufferDecode = createBuffer("input_ids", bufferMappings, true);
+        auto positionIdBufferDecode = createBuffer("position_ids", bufferMappings, true);
+        std::vector<std::vector<int64_t>> generated_ids;
+        std::vector<int64_t> nextTokenIds;
+
+        // *** DECODE LOOP ***
+        auto startDecode = std::chrono::high_resolution_clock::now();
+        
+        for (int num_tokens = 1; num_tokens < generation_len.value(); num_tokens++)
+        {
+            // *** POPULATE DECODE BUFFERS ***
+            std::vector<int64_t> logits({get_logits_from_output_buffers(outputBuffers, nextTokenIds)});
+            std::vector<int64_t> position_id_for_decode({*max_input_len_value + num_tokens});
+
             populateBuffer(inputIdBufferDecode->getQBuffer(), logits);
-            auto positionIdBufferDecode = createBuffer("position_ids", bufferMappings, true);
             populateBuffer(positionIdBufferDecode->getQBuffer(), position_id_for_decode);
-
-            populateBuffersWithInputs(bufferMappings,
-                                        inputBuffers,
-                                        outputBuffers,
-                                        inputIdBufferDecode->getQBuffer(),
-                                        positionIdBufferDecode->getQBuffer());
+            
+            // Fill last 2 index of inputBuffers with inputIds and positionIds
+            inputBuffers[inputBuffers.size() - 1] = positionIdBufferDecode->getQBuffer();
+            inputBuffers[inputBuffers.size() - 2] = inputIdBufferDecode->getQBuffer();
+            
             submitHandle->setInputBuffers(inputBuffers);
             submitHandle->setOutputBuffers(outputBuffers);
 
             // *** SUBMIT ***
-            constexpr uint32_t inferenceId = 0; // also named as request ID
             status = inferenceSet->submit(submitHandle, inferenceId);
             if (status != QS_SUCCESS)
             {
                 std::cerr << "Error in submitting handle through InferenceSet\n";
                 return -1;
             }
+
             // *** COMPLETION ***
             qaic::rt::shInferenceHandle completedHandle;
             status = inferenceSet->getCompletedId(completedHandle, inferenceId);
@@ -445,11 +444,9 @@ int generatePrompt(
         get_logits_from_output_buffers(outputBuffers, nextTokenIds); // For last token id
         generated_ids.push_back(nextTokenIds);
         nextTokenIds.clear();
-
-        // *** Release user allocated buffers ***
-        std::chrono::duration<double> elapsedPrefill = startDecode - startPrefill;
+        
+        std::chrono::duration<double> elapsedPrefill = prefillEnd - startPrefill;
         std::cout << "Prefill time a.k.a TTFT is= " << (elapsedPrefill.count()) << "\n";
-        std::chrono::duration<double> elapsedDecode = (endDecode - startDecode);
         std::cout << "Decode Tokens/sec is= " << ((generated_ids[0].size()-1)/elapsedDecode.count()) << "\n";
         std::chrono::duration<double> elapsedTotal = endDecode - startPrefill;
         std::cout << "Total Tokens/sec is= " << ((generated_ids[0].size())/elapsedTotal.count()) << "\n";
