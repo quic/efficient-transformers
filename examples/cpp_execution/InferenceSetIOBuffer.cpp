@@ -32,28 +32,6 @@ namespace
         return bufmap.ioType == BUFFER_IO_TYPE_INPUT;
     }
 
-    /**
-     * Populate input, output vectors with QBuffer information
-     * @param bufmap Buffer mapping instance
-     * @param buf Actual QBufffer that was generated at callsite/caller.
-     * @param inputBuffers Vector to use in case this is input instance
-     * @param outputBuffers Vector to use in case this is an output instance
-     */
-    void populateVector(const qaic::rt::BufferMapping &bufmap, const QBuffer &buf,
-                        std::vector<QBuffer> &inputBuffers,
-                        std::vector<QBuffer> &outputBuffers)
-    {
-
-        if (isInputBuffer(bufmap))
-        {
-            inputBuffers.push_back(buf);
-        }
-        else
-        {
-            outputBuffers.push_back(buf);
-        }
-    }
-
     class QBufferWrapper
     {
     public:
@@ -186,12 +164,19 @@ namespace
         outputBuffers.clear();
         for (const auto &bufmap : bufferMappings)
         {
+            QBuffer buf{bufmap.size, new uint8_t[bufmap.size]};
             if (notInputOrOutput(bufmap))
             {
                 continue;
             }
-            QBuffer buf{bufmap.size, new uint8_t[bufmap.size]};
-            populateVector(bufmap, buf, inputBuffers, outputBuffers);
+            else if (isInputBuffer(bufmap))
+            {
+                inputBuffers.push_back(buf);
+            }
+            else
+            {
+                outputBuffers.push_back(buf);
+            }
         }
         // Filling last 2 index of inputBuffers with inputIds and positionIds
         inputBuffers[inputBuffers.size() - 1] = positionIdBuffer;
@@ -241,7 +226,6 @@ int generatePrompt(
             // need to use auto device picker
             qidList.push_back(0);
         }
-
         // *** CONTEXT ***
         constexpr QAicContextProperties_t *NullProp = nullptr;
         auto context = qaic::rt::Context::Factory(NullProp, qidList); // session == context
@@ -308,7 +292,7 @@ int generatePrompt(
         {
             generation_len = ctx_len - std::accumulate(attention_mask.begin(), attention_mask.end(), 0);
         }
-
+        auto startPrefill = std::chrono::system_clock::now();
         //*** RUN PREFILL *** //TODO: Adding chunks
         const auto &bufferMappings = qpc->getBufferMappings();
         const auto &bufferMappings2 = qpc->getBufferMappingsV2();
@@ -389,7 +373,7 @@ int generatePrompt(
         //
 
         // DECODE LOOP
-        auto start = std::chrono::high_resolution_clock::now();
+        auto startDecode = std::chrono::high_resolution_clock::now();
         std::vector<std::vector<int64_t>> generated_ids;
 
         std::vector<int64_t> nextTokenIds;
@@ -399,15 +383,8 @@ int generatePrompt(
             std::vector<int64_t> position_id_for_decode({*max_input_len_value + num_tokens});
 
             // Making past_ values Null
-            qaic::rt::BufferIdentifiers bufferIdentifiers(bufferMappings2);
-            std::vector<std::pair<uint32_t, std::vector<uint32_t>>> bufDim = bufferIdentifiers.getBufferSizeDimensionPair();
-
             for (auto &bufid : bufferIdentifiers.getBufferIdentifierVec())
             {
-                if (bufid.getBufferName().find("past_") == 0)
-                {
-                    bufDim[bufid.getBufferIndex()].second = std::vector{0U};
-                }
                 // Making dim of input buffer to be (1,1)
                 if (bufid.getBufferName().find("input_ids") == 0)
                 {
@@ -464,15 +441,19 @@ int generatePrompt(
                 return -1;
             }
         }
-        auto end = std::chrono::high_resolution_clock::now();
+        auto endDecode = std::chrono::high_resolution_clock::now();
         get_logits_from_output_buffers(outputBuffers, nextTokenIds); // For last token id
         generated_ids.push_back(nextTokenIds);
         nextTokenIds.clear();
 
         // *** Release user allocated buffers ***
-
-        std::chrono::duration<double> elapsed = end - start;
-        std::cout << "Decode Tokens/sec: " << (generated_ids[0].size()-1/elapsed.count()) << "\n";
+        std::chrono::duration<double> elapsedPrefill = startDecode - startPrefill;
+        std::cout << "Prefill time a.k.a TTFT is= " << (elapsedPrefill.count()) << "\n";
+        std::chrono::duration<double> elapsedDecode = (endDecode - startDecode);
+        std::cout << "Decode Tokens/sec is= " << ((generated_ids[0].size()-1)/elapsedDecode.count()) << "\n";
+        std::chrono::duration<double> elapsedTotal = endDecode - startPrefill;
+        std::cout << "Total Tokens/sec is= " << ((generated_ids[0].size())/elapsedTotal.count()) << "\n";
+        std::cout << "Total (E2E) inference time is= " << (elapsedTotal.count()) << "\n";
 
         // Sending Generated Ids to Python to Generated Text using Tokenizer
         text_generation_inference.attr("tokenize_decode_output")(tokenizer, generated_ids).cast<py::array>();
