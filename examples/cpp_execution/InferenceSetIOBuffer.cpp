@@ -324,7 +324,7 @@ int generatePrompt(
         std::vector<QBuffer> inputBuffers;
         std::vector<QBuffer> outputBuffers;
 
-        //*** RUN PREFILL *** //TODO: Adding chunks
+        //*** RUN PREFILL ***
         auto startPrefill = std::chrono::system_clock::now();
 
         for(int i=0;i < num_chunks; i++)
