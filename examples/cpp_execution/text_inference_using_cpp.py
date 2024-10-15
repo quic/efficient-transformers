@@ -117,9 +117,7 @@ def cloud_ai_100_exec_kv(
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
 
     # ********* CPP Calling ********
-    InferenceSetIOBuffer.generatePrompt(
-        tokenizer, qpc_path, prompt_len, ctx_len, prompt, generation_len, device_id
-    )
+    InferenceSetIOBuffer.generatePrompt(tokenizer, qpc_path, prompt_len, ctx_len, prompt, generation_len, device_id)
 
 
 def tokenize_for_prefill(prompt, tokenizer):

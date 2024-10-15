@@ -2,7 +2,7 @@
 # Text Generation using CPP Inference
 
 ## Overview
-This example demonstrates how to execute a model on AI 100 using Efficient Transformers and C++ APIs. The Efficient Transformers library is utilized for transforming and compiling the model, while the QPC is executed using C++ APIs. It is tested on x86 platform.
+This example demonstrates how to execute a model on AI 100 using Efficient Transformers and C++ APIs. The Efficient Transformers library is utilized for transforming and compiling the model, while the QPC is executed using C++ APIs. It is tested on both x86 and ARM platform.
 
 ## Prerequisite
 1. PyBind11
