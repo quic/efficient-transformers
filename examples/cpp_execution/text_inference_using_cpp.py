@@ -6,8 +6,8 @@
 # -----------------------------------------------------------------------------
 import argparse
 import logging
-import os
 import sys
+from pathlib import Path
 from typing import List, Optional, Union
 
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
@@ -17,9 +17,17 @@ from QEfficient.generation.text_generation_inference import fix_prompts, get_com
 from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
-so_folder_path = os.path.abspath("examples/cpp_execution/build")
-sys.path.append(so_folder_path)
-import InferenceSetIOBuffer  # noqa: E402
+script_dir = Path(__file__).resolve().parent
+so_folder_path = script_dir / "build"
+
+if so_folder_path.is_dir():
+    sys.path.append(str(so_folder_path))
+    try:
+        import InferenceSetIOBuffer  # noqa: E402
+    except ImportError:
+        logger.info("Error importing InferenceSetIOBuffer Module")
+else:
+    logger.info("so file's folder not found")
 
 
 def main(
@@ -88,7 +96,7 @@ def main(
     #########
     # Execute
     #########
-    cloud_ai_100_exec_kv(
+    cloud_ai_100_exec_kv_cpp(
         tokenizer=tokenizer,
         qpc_path=generated_qpc_path,
         prompt_len=prompt_len,
@@ -100,7 +108,7 @@ def main(
     )
 
 
-def cloud_ai_100_exec_kv(
+def cloud_ai_100_exec_kv_cpp(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc_path: str,
     prompt_len: int,
@@ -207,13 +215,6 @@ if __name__ == "__main__":
         "-v",
         action="store_true",
         help="pass to print info logs",
-    )
-    parser.add_argument(
-        "--full_batch_size",
-        "--full_batch_size",
-        type=int,
-        default=None,
-        help="Set full batch size to enable continuous batching mode, default is None",
     )
 
     args = parser.parse_args()
