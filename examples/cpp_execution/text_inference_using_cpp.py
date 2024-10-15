@@ -5,17 +5,16 @@
 #
 # -----------------------------------------------------------------------------
 import argparse
-import json
 import logging
 import os
 import sys
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
+from QEfficient.generation.text_generation_inference import fix_prompts, get_compilation_dims, get_input_prompts
 from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
-from QEfficient.generation.text_generation_inference import get_input_prompts, get_compilation_dims, fix_prompts
 from QEfficient.utils.logging_utils import logger
 
 so_folder_path = os.path.abspath("examples/cpp_execution/build")
