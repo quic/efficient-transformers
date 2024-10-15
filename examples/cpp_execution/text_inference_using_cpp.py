@@ -127,7 +127,6 @@ def read_prompts_txt_file(prompts_txt_file_path: str):
         print("Error: File not found.")
 
 
-
 def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
     assert (
         prompt is not None or prompts_txt_file_path is not None
@@ -190,13 +189,16 @@ def cloud_ai_100_exec_kv(
         tokenizer, qpc_path, prompt_len, batch_size, ctx_len, prompt, generation_len, device_id
     )
 
+
 def tokenize_for_prefill(prompt, tokenizer):
     inputs = tokenizer(prompt, return_tensors="np", padding=True)
     return inputs
 
+
 def tokenize_for_prefill_with_padded_len(prompt, tokenizer, padded_len):
     inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
     return inputs
+
 
 def tokenize_decode_output(tokenizer, generated_ids):
     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
