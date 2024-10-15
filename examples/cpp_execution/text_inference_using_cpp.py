@@ -100,17 +100,6 @@ def main(
     )
 
 
-def read_prompts_txt_file(prompts_txt_file_path: str):
-    prompt = []
-    try:
-        with open(prompts_txt_file_path, "r") as file:
-            for line in file:
-                prompt.append(line.strip())
-        return prompt
-    except OSError:
-        print("Error: File not found.")
-
-
 def cloud_ai_100_exec_kv(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
     qpc_path: str,
