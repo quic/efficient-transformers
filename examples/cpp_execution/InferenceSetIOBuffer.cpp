@@ -254,13 +254,13 @@ int generatePrompt(
         }
         py::array input_ids_py = inputs["input_ids"].cast<py::array>();
         py::buffer_info inp_id_buf = input_ids_py.request();
-        std::vector<int64_t> token_input_ids;
+        std::vector<int64_t> input_ids;
         int64_t *input_id_ptr = static_cast<int64_t *>(inp_id_buf.ptr);
         for (ssize_t i = 0; i < inp_id_buf.shape[0]; ++i)
         {
             for (ssize_t j = 0; j < inp_id_buf.shape[1]; ++j)
             {
-                token_input_ids.push_back(input_id_ptr[i * (inp_id_buf.shape[1]) + j]);
+                input_ids.push_back(input_id_ptr[i * (inp_id_buf.shape[1]) + j]);
             }
         }
 
@@ -300,6 +300,8 @@ int generatePrompt(
             return -1;
         }
 
+        constexpr uint32_t inferenceId = 0; // also named as request ID
+
         // Making _past values as NULL
         const auto &bufferMappings = qpc->getBufferMappings();
         const auto &bufferMappings2 = qpc->getBufferMappingsV2();
@@ -319,50 +321,58 @@ int generatePrompt(
         // *** BUFFER CREATION ***
         auto inputIdBuffer = createBuffer("input_ids", bufferMappings, false);
         auto positionIdBuffer = createBuffer("position_ids", bufferMappings, false);
+        std::vector<QBuffer> inputBuffers;
+        std::vector<QBuffer> outputBuffers;
 
         //*** RUN PREFILL *** //TODO: Adding chunks
         auto startPrefill = std::chrono::system_clock::now();
 
-        // *** POPULATE BUFFERS ***
-        populateBuffer(inputIdBuffer->getQBuffer(), token_input_ids);
-        populateBuffer(positionIdBuffer->getQBuffer(), position_ids);
-
-        std::vector<QBuffer> inputBuffers;
-        std::vector<QBuffer> outputBuffers;
-
-        populateBuffersWithInputs(bufferMappings,
-                                  inputBuffers,
-                                  outputBuffers,
-                                  inputIdBuffer->getQBuffer(),
-                                  positionIdBuffer->getQBuffer());
-
-        // *** SET BUFFERS ***
-        submitHandle->setInputBuffers(inputBuffers);
-        submitHandle->setOutputBuffers(outputBuffers);
-
-        // *** SUBMIT ***
-        constexpr uint32_t inferenceId = 0; // also named as request ID
-        status = inferenceSet->submit(submitHandle, inferenceId);
-        if (status != QS_SUCCESS)
+        for(int i=0;i < num_chunks; i++)
         {
-            std::cerr << "Error in submitting handle through InferenceSet\n";
-            return -1;
+            //*** CHUNKING ***
+            std::vector<int64_t> sliced_input_ids(input_ids.begin() + i * prefill_seq_len,
+                                                    input_ids.begin() + (i + 1) * prefill_seq_len);
+            std::vector<int64_t> sliced_position_ids(position_ids.begin() + i * prefill_seq_len,
+                                                    position_ids.begin() + (i + 1) * prefill_seq_len);
+
+            // *** POPULATE BUFFERS ***
+            populateBuffer(inputIdBuffer->getQBuffer(), sliced_input_ids);
+            populateBuffer(positionIdBuffer->getQBuffer(), sliced_position_ids);
+
+            populateBuffersWithInputs(bufferMappings,
+                                    inputBuffers,
+                                    outputBuffers,
+                                    inputIdBuffer->getQBuffer(),
+                                    positionIdBuffer->getQBuffer());
+
+            // *** SET BUFFERS ***
+            submitHandle->setInputBuffers(inputBuffers);
+            submitHandle->setOutputBuffers(outputBuffers);
+
+            // *** SUBMIT ***
+            status = inferenceSet->submit(submitHandle, inferenceId);
+            if (status != QS_SUCCESS)
+            {
+                std::cerr << "Error in submitting handle through InferenceSet\n";
+                return -1;
+            }
+
+            // *** COMPLETION ***
+            qaic::rt::shInferenceHandle completedHandle;
+            status = inferenceSet->getCompletedId(completedHandle, inferenceId);
+            if (status != QS_SUCCESS)
+            {
+                std::cerr << "Error in getting completed handle through InferenceSet\n";
+                return -1;
+            }
+            status = inferenceSet->putCompleted(std::move(completedHandle));
+            if (status != QS_SUCCESS)
+            {
+                std::cerr << "Error in putting completed handle through InferenceSet\n";
+                return -1;
+            }
         }
 
-        // *** COMPLETION ***
-        qaic::rt::shInferenceHandle completedHandle;
-        status = inferenceSet->getCompletedId(completedHandle, inferenceId);
-        if (status != QS_SUCCESS)
-        {
-            std::cerr << "Error in getting completed handle through InferenceSet\n";
-            return -1;
-        }
-        status = inferenceSet->putCompleted(std::move(completedHandle));
-        if (status != QS_SUCCESS)
-        {
-            std::cerr << "Error in putting completed handle through InferenceSet\n";
-            return -1;
-        }
         auto prefillEnd = std::chrono::high_resolution_clock::now();
         // *** GET OUTPUT ***
         //
