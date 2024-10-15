@@ -17,6 +17,13 @@
 #include "/opt/qti-aic/dev/inc/QAicApi.hpp"
 #include "/opt/qti-aic/dev/inc/qaicapihpp/QAicApiDataTypes.hpp"
 
+#define WARN_IF(condition, message) \
+    do { \
+        if (condition) { \
+            std::cerr << "Warning: " << message << std::endl; \
+        } \
+    } while (0)
+
 namespace py = pybind11;
 
 namespace
@@ -73,22 +80,27 @@ namespace
     /**
      * Consuming output from output Buffers into token vector
      * @param outputBuffers Vector to use in case this is an output instance
-     * @param nextTokenIds Vector to store output[logits]
+     * @param logits Vector to store output["logits"].argmax
+     * @param generated_ids Vector to store generated ids
+     * @param batch_size Batch size
+     * @param size_of_logits Total tokens in 1 batch
      */
-    int64_t get_logits_from_output_buffers(
-        std::vector<QBuffer> &outputBuffers,
-        std::vector<int64_t> &nextTokenIds)
+    void get_logits_from_output_buffers(
+    std::vector<QBuffer> &outputBuffers,
+    std::vector<std::vector<int64_t>> &logits,
+    std::vector<std::vector<int64_t>> &generated_ids,
+    int batch_size,
+    int size_of_logits)
     {
-        auto rawOPBufPtr = outputBuffers[outputBuffers.size() - 1].buf;
-        const float *buffer = reinterpret_cast<const float *>(rawOPBufPtr);
-        int size_of_logits = outputBuffers[outputBuffers.size() - 1].size / sizeof(float);
+        for (int i = 0; i < batch_size; ++i) {
+            auto rawOPBufPtr = outputBuffers.back().buf + (size_of_logits * sizeof(float) * i);
+            const float *buffer = reinterpret_cast<const float *>(rawOPBufPtr);
+            auto maxElementIter = std::max_element(buffer, buffer + size_of_logits);
+            int maxElementIndex = std::distance(buffer, maxElementIter);
 
-        // Calculate the index of the maximum element
-        auto maxElementIter = std::max_element(buffer, buffer + size_of_logits);
-        int maxElementIndex = std::distance(buffer, maxElementIter);
-
-        nextTokenIds.push_back(maxElementIndex);
-        return maxElementIndex;
+            logits[i] = {maxElementIndex};
+            generated_ids[i].push_back(maxElementIndex);
+        }
     }
 
     /**
@@ -97,17 +109,25 @@ namespace
      * @param tokenVector vector to fill input Buffer
      */
     void populateBuffer(QBuffer &inputBuffer,
-                        const std::vector<int64_t> &tokenVector)
+                        const std::vector<std::vector<int64_t>> &tokenVector)
     {
-        size_t token_size_bytes = tokenVector.size() * sizeof(int64_t);
+        size_t token_size_bytes = (tokenVector.size() * tokenVector[0].size() * sizeof(int64_t));
         if (inputBuffer.size < token_size_bytes)
         {
             delete[] inputBuffer.buf;
             inputBuffer.buf = new uint8_t[token_size_bytes];
             inputBuffer.size = token_size_bytes;
         }
-        std::copy_n(reinterpret_cast<const uint8_t *>(tokenVector.data()),
-                    token_size_bytes, inputBuffer.buf);
+
+        auto startPtr = inputBuffer.buf;
+        for (const auto& row : tokenVector)
+        {
+            std::copy_n(reinterpret_cast<const uint8_t *>(row.data()),
+                        (row.size() * sizeof(int64_t)),
+                        inputBuffer.buf);
+            inputBuffer.buf += row.size() * sizeof(int64_t);
+        }
+        inputBuffer.buf = startPtr;
     }
 
     // template <typename T>
@@ -171,6 +191,7 @@ namespace
                 outputBuffers.push_back(buf);
             }
         }
+
         // Filling last 2 index of inputBuffers with inputIds and positionIds
         inputBuffers[inputBuffers.size() - 1] = positionIdBuffer;
         inputBuffers[inputBuffers.size() - 2] = inputIdBuffer;
@@ -182,6 +203,7 @@ int generatePrompt(
     const std::string &qpcPath,
     int prompt_len,
     int ctx_len,
+    int batch_size,
     std::optional<std::vector<std::string>> prompt = std::nullopt,
     std::optional<int> generation_len = std::nullopt,
     std::optional<std::vector<int>> device_id = std::nullopt)
@@ -228,9 +250,25 @@ int generatePrompt(
         // TODO: prefill_seq_len  from context
         int prefill_seq_len = prompt_len;
         py::dict inputs = text_generation_inference.attr("tokenize_for_prefill")(prompt, tokenizer).cast<py::dict>();
-        py::array input_ids_array = inputs["input_ids"].cast<py::array>();
 
-        ssize_t padded_len = input_ids_array.size();
+        py::array attention_mask_py = inputs["attention_mask"].cast<py::array>();
+        auto attn_mask_buff = attention_mask_py.request();
+        int64_t *attn_mask_ptr = static_cast<int64_t *>(attn_mask_buff.ptr);
+        std::vector<int64_t> attention_mask_sum; //Equal to position_ids in python
+        for (ssize_t i = 0; i < attn_mask_buff.shape[0]; ++i)
+        {
+            int axis_1_sum = 0;
+            for (ssize_t j = 0; j < attn_mask_buff.shape[1]; j++)
+            {
+                axis_1_sum += attn_mask_ptr[i * (attn_mask_buff.shape[1]) + j];
+            }
+
+            attention_mask_sum.push_back(axis_1_sum);
+        }
+
+        py::array input_ids_array = inputs["input_ids"].cast<py::array>();
+        auto input_ids_array_buff = input_ids_array.request();
+        ssize_t padded_len = input_ids_array_buff.shape[1];
         int num_chunks = static_cast<int>(std::ceil(static_cast<double>(padded_len) / prefill_seq_len));
         padded_len = num_chunks * prefill_seq_len; // Convert to a multiple of prompt_len
 
@@ -239,30 +277,15 @@ int generatePrompt(
             throw std::runtime_error("Error: Generation Len is <= 0");
         }
 
-        inputs = text_generation_inference.attr("tokenize_for_prefill_with_padded_len")(prompt, tokenizer, padded_len).cast<py::dict>();
-        py::array attention_mask_py = inputs["attention_mask"].cast<py::array>();
-        auto attn_mask_buff = attention_mask_py.request();
-        int64_t *attn_mask_ptr = static_cast<int64_t *>(attn_mask_buff.ptr);
-        std::vector<int64_t> attention_mask;
+        // Calculate the max generation length.
+        int max_gen_len = ctx_len - *(std::max_element(attention_mask_sum.begin(), attention_mask_sum.end()));;
+        if (!generation_len.has_value())
+        {
+            generation_len = max_gen_len;
+        }
+        WARN_IF(generation_len.value() > max_gen_len, "Passed generation_len is greater than allowed length.");
 
-        for (ssize_t i = 0; i < attn_mask_buff.shape[0]; ++i)
-        {
-            for (ssize_t j = 0; j < attn_mask_buff.shape[1]; j++)
-            {
-                attention_mask.push_back(attn_mask_ptr[i * (attn_mask_buff.shape[1]) + j]);
-            }
-        }
-        py::array input_ids_py = inputs["input_ids"].cast<py::array>();
-        py::buffer_info inp_id_buf = input_ids_py.request();
-        std::vector<int64_t> input_ids;
-        int64_t *input_id_ptr = static_cast<int64_t *>(inp_id_buf.ptr);
-        for (ssize_t i = 0; i < inp_id_buf.shape[0]; ++i)
-        {
-            for (ssize_t j = 0; j < inp_id_buf.shape[1]; ++j)
-            {
-                input_ids.push_back(input_id_ptr[i * (inp_id_buf.shape[1]) + j]);
-            }
-        }
+        inputs = text_generation_inference.attr("tokenize_for_prefill_with_padded_len")(prompt, tokenizer, padded_len).cast<py::dict>();
 
         // PREPARE INPUTS FOR PREFILL
         std::vector<u_int64_t> arrange_vector(padded_len);
@@ -272,21 +295,49 @@ int generatePrompt(
         }
 
         // Create position_ids vector
-        std::vector<int64_t> position_ids(padded_len);
-
-        for (int64_t i = 0; i < padded_len; ++i)
+        std::vector<std::vector<int64_t>> position_ids;
+        for(ssize_t i = 0; i < attn_mask_buff.shape[0]; ++i)
         {
-            position_ids[i] = attn_mask_ptr[i] ? arrange_vector[i] : -1;
+            std::vector<int64_t> position_ids_value;
+            for (int64_t j = 0; j< padded_len; ++j)
+            {
+                if((j < attn_mask_buff.shape[1]) && attn_mask_ptr[i * (attn_mask_buff.shape[1]) + j] == 1)
+                {
+                    position_ids_value.push_back(arrange_vector[j]);
+                }
+                else
+                {
+                    position_ids_value.push_back(-1);
+                }
+            }
+            position_ids.push_back(position_ids_value);
+            position_ids_value.clear();
         }
 
-        auto max_input_len_value = std::max_element(position_ids.begin(), position_ids.end());
-        if (!generation_len.has_value())
+        py::array input_ids_py = inputs["input_ids"].cast<py::array>();
+        py::buffer_info inp_id_buf = input_ids_py.request();
+        std::vector<std::vector<int64_t>> input_ids;
+        int64_t *input_id_ptr = static_cast<int64_t *>(inp_id_buf.ptr);
+        for (ssize_t i = 0; i < inp_id_buf.shape[0]; ++i)
         {
-            generation_len = ctx_len - std::accumulate(attention_mask.begin(), attention_mask.end(), 0);
+            std::vector<int64_t> input_ids_value;
+            for (ssize_t j = 0; j < inp_id_buf.shape[1]; ++j)
+            {
+                input_ids_value.push_back(input_id_ptr[i * (inp_id_buf.shape[1]) + j]);
+            }
+            input_ids.push_back(input_ids_value);
+            input_ids_value.clear();
+        }
+
+        std::vector<int64_t> max_input_len_value_array;
+        for(int i=0;i<batch_size;i++)
+        {
+            auto max_input_len_value = std::max_element(position_ids[i].begin(), position_ids[i].end());
+            max_input_len_value_array.push_back(*max_input_len_value);
         }
 
         // *** INFERENCE SET ***
-        constexpr uint32_t setSize = 1;
+        constexpr uint32_t setSize = 10;
         constexpr uint32_t numActivations = 1;
         auto inferenceSet = qaic::rt::InferenceSet::Factory(
             context, qpc, qidList.at(0), setSize, numActivations);
@@ -301,6 +352,7 @@ int generatePrompt(
         }
 
         constexpr uint32_t inferenceId = 0; // also named as request ID
+        qaic::rt::shInferenceHandle completedHandle;
 
         // Making _past values as NULL
         const auto &bufferMappings = qpc->getBufferMappings();
@@ -330,10 +382,21 @@ int generatePrompt(
         for(int i=0;i < num_chunks; i++)
         {
             //*** CHUNKING ***
-            std::vector<int64_t> sliced_input_ids(input_ids.begin() + i * prefill_seq_len,
-                                                    input_ids.begin() + (i + 1) * prefill_seq_len);
-            std::vector<int64_t> sliced_position_ids(position_ids.begin() + i * prefill_seq_len,
-                                                    position_ids.begin() + (i + 1) * prefill_seq_len);
+            std::vector<std::vector<int64_t>> sliced_input_ids;
+            for(int j=0;j<(int)input_ids.size();j++)
+            {
+                std::vector<int64_t> sliced_input_ids_value(input_ids[j].begin() + i * prefill_seq_len,
+                                                        input_ids[j].begin() + (i + 1) * prefill_seq_len);
+                sliced_input_ids.push_back(sliced_input_ids_value);
+            }
+
+            std::vector<std::vector<int64_t>> sliced_position_ids;
+            for(int j=0;j<(int)position_ids.size();j++)
+            {
+                std::vector<int64_t> sliced_position_ids_value(position_ids[j].begin() + i * prefill_seq_len,
+                                                        position_ids[j].begin() + (i + 1) * prefill_seq_len);
+                sliced_position_ids.push_back(sliced_position_ids_value);
+            }
 
             // *** POPULATE BUFFERS ***
             populateBuffer(inputIdBuffer->getQBuffer(), sliced_input_ids);
@@ -358,7 +421,6 @@ int generatePrompt(
             }
 
             // *** COMPLETION ***
-            qaic::rt::shInferenceHandle completedHandle;
             status = inferenceSet->getCompletedId(completedHandle, inferenceId);
             if (status != QS_SUCCESS)
             {
@@ -378,7 +440,6 @@ int generatePrompt(
         //
         // At this point, the output is available in "outputBuffers" and can be
         // consumed.
-        //
 
         // *** BUFFER DIMS UPDATE ***
         for (auto &bufid : bufferIdentifiers.getBufferIdentifierVec())
@@ -386,18 +447,14 @@ int generatePrompt(
             if (bufid.getBufferName().find("input_ids") == 0)
             {
                 int size = bufDim[bufid.getBufferIndex()].second.size();
-                bufDim[bufid.getBufferIndex()].first = 8;
-                for (int i = 0; i < size; i++)
-                {
-                    bufDim[bufid.getBufferIndex()].second[i] = 1;
-                }
+                bufDim[bufid.getBufferIndex()].first = sizeof(int64_t);
+                bufDim[bufid.getBufferIndex()].second[size-1] = 1;
             }
             if (bufid.getBufferName().find("position_ids") == 0)
             {
                 int size = bufDim[bufid.getBufferIndex()].second.size();
-                bufDim[bufid.getBufferIndex()].first = 8;
-                for (int i = 0; i < size; i++)
-                    bufDim[bufid.getBufferIndex()].second[i] = 1;
+                bufDim[bufid.getBufferIndex()].first = sizeof(int64_t);
+                bufDim[bufid.getBufferIndex()].second[size-1] = 1;
             }
         }
         submitHandle->setBufferDimensions(bufDim);
@@ -405,30 +462,36 @@ int generatePrompt(
         // *** DECODE BUFFER CREATION ***
         auto inputIdBufferDecode = createBuffer("input_ids", bufferMappings, true);
         auto positionIdBufferDecode = createBuffer("position_ids", bufferMappings, true);
-        std::vector<std::vector<int64_t>> generated_ids;
-        std::vector<int64_t> nextTokenIds;
+
+        std::vector<std::vector<int64_t>> generated_ids(batch_size);
+        std::vector<std::vector<int64_t>> logits(batch_size);
+        std::vector<std::vector<int64_t>> position_id_for_decode(batch_size);
+        int size_of_logits = outputBuffers[outputBuffers.size() - 1].size / (sizeof(float) *batch_size);
 
         // *** DECODE LOOP ***
-        auto startDecode = std::chrono::high_resolution_clock::now();
-        
-        for (int num_tokens = 1; num_tokens < generation_len.value(); num_tokens++)
+        std::chrono::duration<double> elapsedDecode(0);
+        for (int num_tokens = 1; num_tokens < generation_len.value() ; num_tokens++)
         {
             // *** POPULATE DECODE BUFFERS ***
-            std::vector<int64_t> logits({get_logits_from_output_buffers(outputBuffers, nextTokenIds)});
-            std::vector<int64_t> position_id_for_decode({*max_input_len_value + num_tokens});
+            get_logits_from_output_buffers(outputBuffers, logits, generated_ids, batch_size, size_of_logits);
 
+            for(int bs=0;bs<batch_size;bs++){
+                position_id_for_decode[bs] = {max_input_len_value_array[bs] + num_tokens};
+            }
+
+            auto startDecode = std::chrono::high_resolution_clock::now();
             populateBuffer(inputIdBufferDecode->getQBuffer(), logits);
             populateBuffer(positionIdBufferDecode->getQBuffer(), position_id_for_decode);
-            
+
             // Fill last 2 index of inputBuffers with inputIds and positionIds
             inputBuffers[inputBuffers.size() - 1] = positionIdBufferDecode->getQBuffer();
             inputBuffers[inputBuffers.size() - 2] = inputIdBufferDecode->getQBuffer();
-            
+
             submitHandle->setInputBuffers(inputBuffers);
             submitHandle->setOutputBuffers(outputBuffers);
 
             // *** SUBMIT ***
-            status = inferenceSet->submit(submitHandle, inferenceId);
+            status = inferenceSet->submit(submitHandle);
             if (status != QS_SUCCESS)
             {
                 std::cerr << "Error in submitting handle through InferenceSet\n";
@@ -436,8 +499,7 @@ int generatePrompt(
             }
 
             // *** COMPLETION ***
-            qaic::rt::shInferenceHandle completedHandle;
-            status = inferenceSet->getCompletedId(completedHandle, inferenceId);
+            status = inferenceSet->getCompleted(completedHandle);
             if (status != QS_SUCCESS)
             {
                 std::cerr << "Error in getting completed handle through InferenceSet\n";
@@ -449,22 +511,27 @@ int generatePrompt(
                 std::cerr << "Error in putting completed handle through InferenceSet\n";
                 return -1;
             }
+            auto endDecode = std::chrono::high_resolution_clock::now();
+            elapsedDecode += (endDecode - startDecode);
         }
-        auto endDecode = std::chrono::high_resolution_clock::now();
-        get_logits_from_output_buffers(outputBuffers, nextTokenIds); // For last token id
-        generated_ids.push_back(nextTokenIds);
-        nextTokenIds.clear();
-        
+
+        get_logits_from_output_buffers(outputBuffers, logits,generated_ids, batch_size, size_of_logits);
+        int totalGeneratedIds = 0;
+        for(ssize_t i=0;i<(int)generated_ids.size();i++){
+            totalGeneratedIds += generated_ids[i].size();
+        }
+
+        std::cout<<"========================= Performance Stats =========================\n";
         std::chrono::duration<double> elapsedPrefill = prefillEnd - startPrefill;
         std::cout << "Prefill time a.k.a TTFT is= " << (elapsedPrefill.count()) << "\n";
-        std::chrono::duration<double> elapsedDecode = endDecode - startDecode;
-        std::cout << "Decode Tokens/sec is= " << ((generated_ids[0].size()-1)/elapsedDecode.count()) << "\n";
-        std::chrono::duration<double> elapsedTotal = endDecode - startPrefill;
-        std::cout << "Total Tokens/sec is= " << ((generated_ids[0].size())/elapsedTotal.count()) << "\n";
+        std::cout << "Decode Tokens/sec is= " << ((totalGeneratedIds-generated_ids.size())/elapsedDecode.count()) << "\n";
+        std::chrono::duration<double> elapsedTotal = elapsedDecode + elapsedPrefill;
+        std::cout << "Total Tokens/sec is= " << ((totalGeneratedIds)/elapsedTotal.count()) << "\n";
         std::cout << "Total (E2E) inference time is= " << (elapsedTotal.count()) << "\n";
+        std::cout<<"=====================================================================\n";
 
         // Sending Generated Ids to Python to Generated Text using Tokenizer
-        text_generation_inference.attr("tokenize_decode_output")(tokenizer, generated_ids).cast<py::array>();
+        text_generation_inference.attr("tokenize_decode_output")(tokenizer, generated_ids, prompt).cast<py::array>();
     }
 
     catch (const py::error_already_set &e)

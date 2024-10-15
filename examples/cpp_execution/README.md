@@ -26,8 +26,6 @@ python -m examples.cpp_execution.text_inference_using_cpp --model_name gpt2 --ba
 ```
 
 ## Future Enhancements
-1. Batch size > 1 support currently under evaluation.
-2. Chunking
-3. DMA Buffer Handling
-4. Continuous Batching
-5. Handling streamer
+1. DMA Buffer Handling
+2. Continuous Batching
+3. Handling streamer

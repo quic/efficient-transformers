@@ -7,14 +7,17 @@
 import argparse
 import logging
 import sys
+import os
 from pathlib import Path
 from typing import List, Optional, Union
 
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
+import QEfficient
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
+from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import fix_prompts, get_compilation_dims, get_input_prompts
-from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
+from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
 from QEfficient.utils.logging_utils import logger
 
 script_dir = Path(__file__).resolve().parent
@@ -86,19 +89,39 @@ def main(
         hf_token=hf_token,
     )
 
-    qeff_model = AutoModelForCausalLM.from_pretrained(model_name)
-    generated_qpc_path = qeff_model.compile(
-        num_cores=14,
-        mxfp6=True,
-        device_group=[0],
+    qpc_dir_path = get_qpc_dir_path(
+        model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
     )
+    if qpc_exists(qpc_dir_path):
+        logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
+    else:
+        # Handle onnx model generation
+        onnx_model_path = get_onnx_model_path(
+            model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size
+        )
+        _ = QEfficient.compile(
+            onnx_path=onnx_model_path,
+            qpc_path=os.path.dirname(
+                qpc_dir_path
+            ),  # We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation
+            num_cores=num_cores,
+            batch_size=batch_size,
+            prompt_len=prompt_len,
+            ctx_len=ctx_len,
+            mxfp6=mxfp6,
+            mxint8=mxint8,
+            aic_enable_depth_first=aic_enable_depth_first,
+            mos=mos,
+            device_group=device_group,
+            full_batch_size=full_batch_size,
+        )
 
     #########
     # Execute
     #########
     cloud_ai_100_exec_kv_cpp(
         tokenizer=tokenizer,
-        qpc_path=generated_qpc_path,
+        qpc_path=qpc_dir_path,
         prompt_len=prompt_len,
         prompt=prompt,
         device_id=device_group,
@@ -125,7 +148,7 @@ def cloud_ai_100_exec_kv_cpp(
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
 
     # ********* CPP Calling ********
-    InferenceSetIOBuffer.generatePrompt(tokenizer, qpc_path, prompt_len, ctx_len, prompt, generation_len, device_id)
+    InferenceSetIOBuffer.generatePrompt(tokenizer, qpc_path, prompt_len, ctx_len, batch_size, prompt, generation_len, device_id)
 
 
 def tokenize_for_prefill(prompt, tokenizer):
@@ -138,10 +161,12 @@ def tokenize_for_prefill_with_padded_len(prompt, tokenizer, padded_len):
     return inputs
 
 
-def tokenize_decode_output(tokenizer, generated_ids):
+def tokenize_decode_output(tokenizer, generated_ids, prompt):
     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-    print("Generated Text From CPP Inference: ")
-    print(generated_texts)
+    for (g,p)  in zip(generated_texts, prompt):
+        print("Prompt: ", p)
+        print("Generated Text: ", g)
+        print()
     return generated_texts
 
 
