@@ -118,7 +118,7 @@ def cloud_ai_100_exec_kv(
 
     # ********* CPP Calling ********
     InferenceSetIOBuffer.generatePrompt(
-        tokenizer, qpc_path, prompt_len, batch_size, ctx_len, prompt, generation_len, device_id
+        tokenizer, qpc_path, prompt_len, ctx_len, prompt, generation_len, device_id
     )
 
 

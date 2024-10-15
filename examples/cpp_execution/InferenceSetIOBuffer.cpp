@@ -203,7 +203,7 @@ int generatePrompt(
     py::object tokenizer,
     const std::string &qpcPath,
     int prompt_len,
-    int batch_size,
+    // int batch_size,
     int ctx_len,
     std::optional<std::vector<std::string>> prompt = std::nullopt, // prompt_len
     std::optional<int> generation_len = std::nullopt,
@@ -239,7 +239,7 @@ int generatePrompt(
         else
         {
             // need to use auto device picker
-            qidList.push_back(1);
+            qidList.push_back(0);
         }
 
         // *** CONTEXT ***
@@ -392,89 +392,87 @@ int generatePrompt(
         auto start = std::chrono::high_resolution_clock::now();
         std::vector<std::vector<int64_t>> generated_ids;
 
-        for (int bs = 0; bs < batch_size; bs++)
+        std::vector<int64_t> nextTokenIds;
+        for (int num_tokens = 1; num_tokens < generation_len.value(); num_tokens++)
         {
-            std::vector<int64_t> nextTokenIds;
-            for (int num_tokens = 1; num_tokens < generation_len; num_tokens++)
+            std::vector<int64_t> logits = get_logits_from_output_buffers(outputBuffers, nextTokenIds);
+            std::vector<int64_t> position_id_for_decode({*max_input_len_value + num_tokens});
+
+            // Making past_ values Null
+            qaic::rt::BufferIdentifiers bufferIdentifiers(bufferMappings2);
+            std::vector<std::pair<uint32_t, std::vector<uint32_t>>> bufDim = bufferIdentifiers.getBufferSizeDimensionPair();
+
+            for (auto &bufid : bufferIdentifiers.getBufferIdentifierVec())
             {
-                std::vector<int64_t> logits = get_logits_from_output_buffers(outputBuffers, nextTokenIds);
-                std::vector<int64_t> position_id_for_decode({*max_input_len_value + num_tokens});
-
-                // Making past_ values Null
-                qaic::rt::BufferIdentifiers bufferIdentifiers(bufferMappings2);
-                std::vector<std::pair<uint32_t, std::vector<uint32_t>>> bufDim = bufferIdentifiers.getBufferSizeDimensionPair();
-
-                for (auto &bufid : bufferIdentifiers.getBufferIdentifierVec())
+                if (bufid.getBufferName().find("past_") == 0)
                 {
-                    if (bufid.getBufferName().find("past_") == 0)
+                    bufDim[bufid.getBufferIndex()].second = std::vector{0U};
+                }
+                // Making dim of input buffer to be (1,1)
+                if (bufid.getBufferName().find("input_ids") == 0)
+                {
+                    int size = bufDim[bufid.getBufferIndex()].second.size();
+                    bufDim[bufid.getBufferIndex()].first = 8;
+                    for (int i = 0; i < size; i++)
                     {
-                        bufDim[bufid.getBufferIndex()].second = std::vector{0U};
-                    }
-                    // Making dim of input buffer to be (1,1)
-                    if (bufid.getBufferName().find("input_ids") == 0)
-                    {
-                        int size = bufDim[bufid.getBufferIndex()].second.size();
-                        bufDim[bufid.getBufferIndex()].first = 8;
-                        for (int i = 0; i < size; i++)
-                        {
-                            bufDim[bufid.getBufferIndex()].second[i] = 1;
-                        }
-                    }
-                    if (bufid.getBufferName().find("position_ids") == 0)
-                    {
-                        int size = bufDim[bufid.getBufferIndex()].second.size();
-                        bufDim[bufid.getBufferIndex()].first = 8;
-                        for (int i = 0; i < size; i++)
-                            bufDim[bufid.getBufferIndex()].second[i] = 1;
+                        bufDim[bufid.getBufferIndex()].second[i] = 1;
                     }
                 }
-                submitHandle->setBufferDimensions(bufDim);
-
-                auto inputIdBufferDecode = createBuffer("input_ids", bufferMappings, true);
-                populateBuffer(inputIdBufferDecode->getQBuffer(), logits);
-                auto positionIdBufferDecode = createBuffer("position_ids", bufferMappings, true);
-                populateBuffer(positionIdBufferDecode->getQBuffer(), position_id_for_decode);
-
-                populateBuffersWithInputs(bufferMappings,
-                                          inputBuffers,
-                                          outputBuffers,
-                                          inputIdBufferDecode->getQBuffer(),
-                                          positionIdBufferDecode->getQBuffer());
-                submitHandle->setInputBuffers(inputBuffers);
-                submitHandle->setOutputBuffers(outputBuffers);
-
-                // *** SUBMIT ***
-                constexpr uint32_t inferenceId = 0; // also named as request ID
-                status = inferenceSet->submit(submitHandle, inferenceId);
-                if (status != QS_SUCCESS)
+                if (bufid.getBufferName().find("position_ids") == 0)
                 {
-                    std::cerr << "Error in submitting handle through InferenceSet\n";
-                    return -1;
-                }
-                // *** COMPLETION ***
-                qaic::rt::shInferenceHandle completedHandle;
-                status = inferenceSet->getCompletedId(completedHandle, inferenceId);
-                if (status != QS_SUCCESS)
-                {
-                    std::cerr << "Error in getting completed handle through InferenceSet\n";
-                    return -1;
-                }
-                status = inferenceSet->putCompleted(std::move(completedHandle));
-                if (status != QS_SUCCESS)
-                {
-                    std::cerr << "Error in putting completed handle through InferenceSet\n";
-                    return -1;
+                    int size = bufDim[bufid.getBufferIndex()].second.size();
+                    bufDim[bufid.getBufferIndex()].first = 8;
+                    for (int i = 0; i < size; i++)
+                        bufDim[bufid.getBufferIndex()].second[i] = 1;
                 }
             }
-            get_logits_from_output_buffers(outputBuffers, nextTokenIds); // For last token id
-            generated_ids.push_back(nextTokenIds);
-            nextTokenIds.clear();
+            submitHandle->setBufferDimensions(bufDim);
+
+            auto inputIdBufferDecode = createBuffer("input_ids", bufferMappings, true);
+            populateBuffer(inputIdBufferDecode->getQBuffer(), logits);
+            auto positionIdBufferDecode = createBuffer("position_ids", bufferMappings, true);
+            populateBuffer(positionIdBufferDecode->getQBuffer(), position_id_for_decode);
+
+            populateBuffersWithInputs(bufferMappings,
+                                        inputBuffers,
+                                        outputBuffers,
+                                        inputIdBufferDecode->getQBuffer(),
+                                        positionIdBufferDecode->getQBuffer());
+            submitHandle->setInputBuffers(inputBuffers);
+            submitHandle->setOutputBuffers(outputBuffers);
+
+            // *** SUBMIT ***
+            constexpr uint32_t inferenceId = 0; // also named as request ID
+            status = inferenceSet->submit(submitHandle, inferenceId);
+            if (status != QS_SUCCESS)
+            {
+                std::cerr << "Error in submitting handle through InferenceSet\n";
+                return -1;
+            }
+            // *** COMPLETION ***
+            qaic::rt::shInferenceHandle completedHandle;
+            status = inferenceSet->getCompletedId(completedHandle, inferenceId);
+            if (status != QS_SUCCESS)
+            {
+                std::cerr << "Error in getting completed handle through InferenceSet\n";
+                return -1;
+            }
+            status = inferenceSet->putCompleted(std::move(completedHandle));
+            if (status != QS_SUCCESS)
+            {
+                std::cerr << "Error in putting completed handle through InferenceSet\n";
+                return -1;
+            }
         }
+        auto end = std::chrono::high_resolution_clock::now();
+        get_logits_from_output_buffers(outputBuffers, nextTokenIds); // For last token id
+        generated_ids.push_back(nextTokenIds);
+        nextTokenIds.clear();
 
         // *** Release user allocated buffers ***
-        auto end = std::chrono::high_resolution_clock::now();
+
         std::chrono::duration<double> elapsed = end - start;
-        std::cout << "Decode Elapsed time: " << elapsed.count() << " seconds\n";
+        std::cout << "Decode Tokens/sec: " << (generated_ids[0].size()-1/elapsed.count()) << "\n";
 
         // Sending Generated Ids to Python to Generated Text using Tokenizer
         text_generation_inference.attr("tokenize_decode_output")(tokenizer, generated_ids).cast<py::array>();
