@@ -6,15 +6,14 @@
 # -----------------------------------------------------------------------------
 import argparse
 import logging
-import sys
 import os
+import sys
 from pathlib import Path
 from typing import List, Optional, Union
 
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 import QEfficient
-from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import fix_prompts, get_compilation_dims, get_input_prompts
 from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
@@ -148,7 +147,9 @@ def cloud_ai_100_exec_kv_cpp(
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
 
     # ********* CPP Calling ********
-    InferenceSetIOBuffer.generatePrompt(tokenizer, qpc_path, prompt_len, ctx_len, batch_size, prompt, generation_len, device_id)
+    InferenceSetIOBuffer.generatePrompt(
+        tokenizer, qpc_path, prompt_len, ctx_len, batch_size, prompt, generation_len, device_id
+    )
 
 
 def tokenize_for_prefill(prompt, tokenizer):
@@ -163,7 +164,7 @@ def tokenize_for_prefill_with_padded_len(prompt, tokenizer, padded_len):
 
 def tokenize_decode_output(tokenizer, generated_ids, prompt):
     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-    for (g,p)  in zip(generated_texts, prompt):
+    for g, p in zip(generated_texts, prompt):
         print("Prompt: ", p)
         print("Generated Text: ", g)
         print()
