@@ -90,6 +90,7 @@ def main(
 
     if full_batch_size is not None:
         logger.warning("Continous batching support is not enabled on cpp execution. Switching to regular execution.")
+        full_batch_size = None
 
     qpc_dir_path = get_qpc_dir_path(
         model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
