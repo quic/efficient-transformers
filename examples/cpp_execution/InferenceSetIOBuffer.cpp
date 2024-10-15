@@ -447,6 +447,7 @@ int generatePrompt(
         
         std::chrono::duration<double> elapsedPrefill = prefillEnd - startPrefill;
         std::cout << "Prefill time a.k.a TTFT is= " << (elapsedPrefill.count()) << "\n";
+        std::chrono::duration<double> elapsedDecode = endDecode - startDecode;
         std::cout << "Decode Tokens/sec is= " << ((generated_ids[0].size()-1)/elapsedDecode.count()) << "\n";
         std::chrono::duration<double> elapsedTotal = endDecode - startPrefill;
         std::cout << "Total Tokens/sec is= " << ((generated_ids[0].size())/elapsedTotal.count()) << "\n";
