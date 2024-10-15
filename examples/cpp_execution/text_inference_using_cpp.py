@@ -15,6 +15,7 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
+from QEfficient.generation.text_generation_inference import get_input_prompts, get_compilation_dims, fix_prompts
 from QEfficient.utils.logging_utils import logger
 
 so_folder_path = os.path.abspath("examples/cpp_execution/build")
@@ -100,22 +101,6 @@ def main(
     )
 
 
-def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
-    qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
-    specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
-    logger.info(f"specialization_file_path : {specialization_file_path}")
-
-    if os.path.exists(specialization_file_path):
-        with open(specialization_file_path, "r") as file:
-            data = json.load(file)
-    else:
-        raise FileNotFoundError(f"expected specializations.json file at path, {qpc_base_path}")
-
-    compilation_batch_size = int(data["specializations"][0]["batch_size"])
-    compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
-    return compilation_batch_size, compilation_ctx_len
-
-
 def read_prompts_txt_file(prompts_txt_file_path: str):
     prompt = []
     try:
@@ -125,47 +110,6 @@ def read_prompts_txt_file(prompts_txt_file_path: str):
         return prompt
     except OSError:
         print("Error: File not found.")
-
-
-def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
-    assert (
-        prompt is not None or prompts_txt_file_path is not None
-    ), "Please pass at least one argument either using --prompt or --prompts_txt_file_path"
-    if prompts_txt_file_path is not None:
-        if prompt is not None:
-            logger.warning("Found inputs passed using txt file as well as CLI, taking inputs from given txt file")
-        prompt = read_prompts_txt_file(prompts_txt_file_path)
-    if isinstance(prompt, str):
-        prompt = [prompt]
-    return prompt
-
-
-def fix_prompts(prompt: List[str], batch_size: int, full_batch_size: int = None):
-    """
-    Adjusts the list of prompts to match the required batch size.
-
-    ``Mandatory`` Args:
-        prompt (List[str]): List of input prompts.
-        batch_size (int): The batch size to process at a time.
-
-    ``Optional`` Args:
-        full_batch_size (Optional[int]): The full batch size if different from batch_size.
-
-    Returns:
-        List[str]: Adjusted list of prompts.
-    """
-    exec_batch_size = full_batch_size if full_batch_size is not None else batch_size
-
-    if len(prompt) < exec_batch_size:
-        logger.warning("Number of prompts are less than batch size/full batch size, repeating to required batch size")
-        prompt = (prompt * (exec_batch_size // len(prompt) + 1))[:exec_batch_size]
-    elif full_batch_size is None and len(prompt) % batch_size != 0:
-        logger.warning(
-            "Number of prompts are not multiple of batch size, dropping last incomplete batch from given input prompts"
-        )
-        prompt = prompt[: batch_size * (len(prompt) // batch_size)]
-
-    return prompt
 
 
 def cloud_ai_100_exec_kv(
