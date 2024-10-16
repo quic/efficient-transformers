@@ -20,9 +20,9 @@ pipeline
                     sh '''
                     . ~/.bashrc
                     docker run --privileged -dit --name ${BRANCH_NAME} -v ./:/efficient-transformers -v  ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
-                    export QEFF_HOME = .
                     docker exec ${BRANCH_NAME} bash -c "
                     cd /efficient-transformers &&
+                    export QEFF_HOME = .
                     . /opt/qeff-env/bin/activate &&
                     pip install --upgrade pip setuptools &&
                     pip install .[test] &&
