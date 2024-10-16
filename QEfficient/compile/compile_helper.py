@@ -37,8 +37,10 @@ def create_and_dump_specializations(
     # If continuous batching is enabled by proving full_batch_size we need to add FBS to the specialization file and update the batch size of decoder part to FBS
     if full_batch_size is not None:
         specializations["specializations"][0]["full_batch_size"] = str(full_batch_size)
-        specializations["specializations"][1]["full_batch_size"] = str(full_batch_size)
-        specializations["specializations"][1]["batch_size"] = str(full_batch_size)
+        
+        if prompt_len !=1:
+            specializations["specializations"][1]["full_batch_size"] = str(full_batch_size)
+            specializations["specializations"][1]["batch_size"] = str(full_batch_size)
 
     # Dump
     with open(path, "w") as file:
