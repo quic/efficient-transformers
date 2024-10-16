@@ -320,7 +320,9 @@ def export_for_cloud(
     full_batch_size: Optional[int] = None,
 ) -> str:
     # Check if model architecture is supported for continuous batching.
-    if full_batch_size and qeff_model.model.config.architectures[0] not in get_lists_of_cb_qeff_models.architectures:
+    if full_batch_size and qeff_model.model.config.architectures[0].lower() not in {
+        x.lower() for x in get_lists_of_cb_qeff_models.architectures
+    }:
         raise NotImplementedError(
             f"Continuous batching is not supported for {qeff_model.model.config.architectures[0]}"
         )
@@ -431,7 +433,7 @@ def qualcomm_efficient_converter(
         if model_kv
         else QEFFCommonLoader.from_pretrained(
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-            token=hf_token,
+            hf_token=hf_token,
             cache_dir=cache_dir,
             full_batch_size=full_batch_size,
         )

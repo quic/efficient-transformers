@@ -11,6 +11,7 @@ from typing import Dict, Type
 import torch.nn as nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
+    CodeGenBlock,
     CodeGenForCausalLM,
     CodeGenModel,
 )
@@ -58,6 +59,7 @@ from QEfficient.customop import CustomRMSNormAIC
 
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
+    QeffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
 )
@@ -111,6 +113,11 @@ get_lists_of_cb_qeff_models = ModelArchitectures(
         Qwen2ForCausalLM.__name__,
         Phi3ForCausalLM.__name__,
         PhiForCausalLM.__name__,
+        CodeGenForCausalLM.__name__,
+        GPT2LMHeadModel.__name__,
+        GPTJForCausalLM.__name__,
+        MptForCausalLM.__name__,
+        FalconForCausalLM.__name__,
     ]
 )
 # Create an instance of the named tuple
@@ -158,6 +165,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     CodeGenAttention: QEffCodeGenAttention,
     CodeGenModel: QEffCodeGenModel,
     CodeGenForCausalLM: QEffCodeGenForCausalLM,
+    CodeGenBlock: QeffCodeGenBlock,
     # Mistral model layers
     MistralAttention: QEffMistralAttention,
     MistralDecoderLayer: QEffMistralDecoderLayer,

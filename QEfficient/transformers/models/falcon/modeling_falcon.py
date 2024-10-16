@@ -15,7 +15,7 @@ import torch
 import torch.utils.checkpoint
 from torch.nn import CrossEntropyLoss
 from torch.nn import functional as F
-from transformers.cache_utils import DynamicCache
+from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter, _prepare_4d_causal_attention_mask
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
@@ -23,11 +23,13 @@ from transformers.modeling_outputs import (
 )
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
+    FalconDecoderLayer,
     FalconForCausalLM,
     FalconModel,
     _prepare_4d_causal_attention_mask_for_sdpa,
     apply_rotary_pos_emb,
     build_alibi_tensor,
+    dropout_add,
     logger,
 )
 
@@ -85,6 +87,7 @@ class QEffFalconAttention(FalconAttention):
         attention_mask: torch.Tensor,
         alibi: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         head_mask: Optional[torch.Tensor] = None,
         use_cache: bool = False,
@@ -116,7 +119,10 @@ class QEffFalconAttention(FalconAttention):
 
         if layer_past is not None:
             past_key_value = layer_past
-            cache_kwargs = {"position_ids": position_ids}
+            cache_kwargs = {
+                "position_ids": position_ids,
+                "batch_index": batch_index,
+            }
             pkv = DynamicCache()
             pkv.key_cache.append(past_key_value[0])
             pkv.value_cache.append(past_key_value[1])
@@ -227,6 +233,7 @@ class QEffFalconModel(FalconModel):
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
         head_mask: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.LongTensor] = None,
@@ -373,6 +380,18 @@ class QEffFalconModel(FalconModel):
                     use_cache,
                     output_attentions,
                 )
+            elif batch_index is not None:
+                outputs = block(
+                    hidden_states,
+                    layer_past=layer_past,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    batch_index=batch_index,
+                    head_mask=head_mask[i],
+                    use_cache=use_cache,
+                    output_attentions=output_attentions,
+                    alibi=alibi,
+                )
             else:
                 outputs = block(
                     hidden_states,
@@ -422,6 +441,7 @@ class QEffFalconForCausalLM(FalconForCausalLM):
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None,
         head_mask: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
@@ -445,6 +465,7 @@ class QEffFalconForCausalLM(FalconForCausalLM):
             past_key_values=past_key_values,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            batch_index=batch_index,
             head_mask=head_mask,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
@@ -482,3 +503,76 @@ class QEffFalconForCausalLM(FalconForCausalLM):
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
         )
+
+
+class QEffFalconDecoderLayer(FalconDecoderLayer):
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        alibi: Optional[torch.Tensor],
+        attention_mask: torch.Tensor,
+        position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        layer_past: Optional[Union[Cache, Tuple[torch.Tensor, torch.Tensor]]] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        use_cache: bool = False,
+        output_attentions: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
+    ):
+        residual = hidden_states
+
+        if self.config.new_decoder_architecture and self.config.num_ln_in_parallel_attn == 2:
+            attention_layernorm_out = self.ln_attn(hidden_states)
+            mlp_layernorm_out = self.ln_mlp(hidden_states)
+        else:
+            attention_layernorm_out = self.input_layernorm(hidden_states)
+
+        # Self attention.
+        attn_outputs = self.self_attention(
+            attention_layernorm_out,
+            layer_past=layer_past,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            batch_index=batch_index,
+            alibi=alibi,
+            head_mask=head_mask,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            cache_position=cache_position,
+        )
+
+        attention_output = attn_outputs[0]
+
+        if not self.config.new_decoder_architecture:
+            if self.config.parallel_attn:
+                mlp_layernorm_out = attention_layernorm_out
+            else:
+                residual = dropout_add(
+                    attention_output, residual, self.config.attention_dropout, training=self.training
+                )
+                mlp_layernorm_out = self.post_attention_layernorm(residual)
+
+        if (
+            self.config.new_decoder_architecture
+            and self.config.parallel_attn
+            and self.config.num_ln_in_parallel_attn == 1
+        ):
+            mlp_layernorm_out = attention_layernorm_out
+
+        outputs = attn_outputs[1:]
+
+        # MLP.
+        mlp_output = self.mlp(mlp_layernorm_out)
+
+        if self.config.new_decoder_architecture or self.config.parallel_attn:
+            mlp_output += attention_output
+
+        output = dropout_add(mlp_output, residual, self.config.hidden_dropout, training=self.training)
+
+        if use_cache:
+            outputs = (output,) + outputs
+        else:
+            outputs = (output,) + outputs[1:]
+
+        return outputs  # hidden_states, past_kv, attentions

@@ -140,7 +140,7 @@ class ModelSetup:
             return str(os.path.join(self.onnx_dir_path(), "custom_io_fp16.yaml"))
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def setup(
     model_name,
     num_cores,
@@ -165,7 +165,7 @@ def setup(
     Args: same as set up initialization
     Return: model_setup class object
     """
-    yield ModelSetup(
+    model_setup = ModelSetup(
         model_name,
         num_cores,
         prompt,
@@ -182,6 +182,9 @@ def setup(
         full_batch_size,
         device_group,
     )
+
+    yield model_setup
+    del model_setup
 
 
 def pytest_generate_tests(metafunc):
