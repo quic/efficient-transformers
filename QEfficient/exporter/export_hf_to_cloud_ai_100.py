@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import os
+import math
 import shutil
 import warnings
 from typing import Optional, Tuple, Union
@@ -20,7 +21,7 @@ from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generat
 from QEfficient.transformers.modeling_utils import get_lists_of_cb_qeff_models
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import load_hf_tokenizer
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils.constants import QEFF_MODELS_DIR, NUM_LOGITS_TO_KEEP, Constants
 from QEfficient.utils.generate_inputs import InputHandler
 from QEfficient.utils.logging_utils import logger
 
@@ -195,6 +196,7 @@ def export_kvstyle_transformed_model_to_onnx(
     onnx_dir_path: str,
     seq_len: int,
     full_batch_size: Optional[int] = None,
+    num_logits_to_keep: Optional[int] = NUM_LOGITS_TO_KEEP,
 ) -> str:
     # Disabling requires_grad on all parameters
     for _, p in enumerate(transformed_model.parameters()):
@@ -203,6 +205,14 @@ def export_kvstyle_transformed_model_to_onnx(
     if seq_len <= 0:
         raise ValueError(f"Need seq_len to be greater than zero, got seq_len={seq_len}")
 
+    # Implicitly pass "num_logits_to_keep" if defined and \
+    # assert prompt_len >= num_logits_to_keep
+    prompt_len = Constants.PROMPT_LEN
+    if num_logits_to_keep is not None:
+        setattr(transformed_model, "num_logits_to_keep", num_logits_to_keep+1)
+        if prompt_len < num_logits_to_keep+1:
+            prompt_len *= math.ceil((num_logits_to_keep+1) / prompt_len)
+
     # Preprocess inputs
     # Build inputs for prefill
     input_handler = InputHandler(
@@ -210,9 +220,10 @@ def export_kvstyle_transformed_model_to_onnx(
         tokenizer=tokenizer,
         config=transformed_model.config,
         prompt=Constants.INPUT_STR,
-        prompt_len=Constants.PROMPT_LEN,
+        prompt_len=prompt_len,
         ctx_len=seq_len,
         full_batch_size=full_batch_size,
+        num_logits_to_keep=num_logits_to_keep,
     )
 
     inputs = input_handler.prepare_pytorch_inputs()
@@ -227,7 +238,9 @@ def export_kvstyle_transformed_model_to_onnx(
     # Build inputs for decode
     inputs = input_handler.update_pytorch_inputs(inputs, pt_outputs)
     # To avoid issues in onnx export
-    inputs["position_ids"] = torch.full((full_batch_size if full_batch_size else 1, 1), seq_len - 1)
+    bsz = full_batch_size if full_batch_size else 1
+    pos_len = inputs["position_ids"].size(1)
+    inputs["position_ids"] = torch.full((bsz, pos_len), seq_len - 1)
 
     # Run PyTorch inference with past
     pt_outputs = transformed_model(**inputs)
@@ -318,6 +331,7 @@ def export_for_cloud(
     onnx_dir_path: str,
     seq_length: int = Constants.SEQ_LEN,
     full_batch_size: Optional[int] = None,
+    num_logits_to_keep: Optional[int] = NUM_LOGITS_TO_KEEP,
 ) -> str:
     # Check if model architecture is supported for continuous batching.
     if full_batch_size and qeff_model.model.config.architectures[0] not in get_lists_of_cb_qeff_models.architectures:
@@ -334,6 +348,7 @@ def export_for_cloud(
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length,
             full_batch_size=full_batch_size,
+            num_logits_to_keep=num_logits_to_keep
         )
     else:
         raise NotImplementedError(
@@ -348,6 +363,7 @@ def export_lm_model_for_cloud(
     onnx_dir_path: str,
     seq_length: int,
     full_batch_size: Optional[int] = None,
+    num_logits_to_keep: Optional[int] = NUM_LOGITS_TO_KEEP,
 ) -> str:
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
@@ -361,6 +377,7 @@ def export_lm_model_for_cloud(
             onnx_dir_path=onnx_dir_path,
             seq_len=seq_length,
             full_batch_size=full_batch_size,
+            num_logits_to_keep=num_logits_to_keep,
         )  # type: ignore
 
     else:
@@ -386,6 +403,7 @@ def qualcomm_efficient_converter(
     kv: bool = True,
     form_factor: str = "cloud",
     full_batch_size: Optional[int] = None,
+    num_logits_to_keep: Optional[int] = NUM_LOGITS_TO_KEEP,
 ) -> Tuple[str, str]:
     """
     This method is an alias for ``QEfficient.export``.
@@ -466,6 +484,7 @@ def qualcomm_efficient_converter(
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length,
             full_batch_size=full_batch_size,
+            num_logits_to_keep=num_logits_to_keep,
         )
         return onnx_dir_path, generated_onnx_model_path
     else:

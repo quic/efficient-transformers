@@ -5,14 +5,19 @@
 #
 # -----------------------------------------------------------------------------
 
+from typing import Optional
+
 import numpy as np
 import torch
 
 from QEfficient.utils import get_num_layers_from_config, get_padding_shape_from_config, padding_check_and_fix
+from QEfficient.utils.constants import NUM_LOGITS_TO_KEEP
 
 
 class InputHandler:
-    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size):
+    def __init__(
+        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size, num_logits_to_keep: Optional[int] = NUM_LOGITS_TO_KEEP
+    ):
         """
         Initialization
 
@@ -24,6 +29,10 @@ class InputHandler:
             :prompt_len (int): Prompt length for the model to compile.
             :ctx_len (int): Maximum context length to compile the model.
             :full_batch_size (int): Continuous batching batch size
+            :num_logits_to_keep (Optional[int]): 
+                Calculate logits for the last valid `num_logits_to_keep` tokens. If `0`, calculate logits for all
+                `input_ids` (special case). Only last token logits are needed for generation, and calculating them only for that
+                token can save memory, which becomes pretty significant for long sequences or large vocabulary size.
         """
         # check and fix tokenizer viability
         padding_check_and_fix(tokenizer)
@@ -32,6 +41,7 @@ class InputHandler:
         self.prompt_len = prompt_len
         self.ctx_len = ctx_len
         self.full_batch_size = full_batch_size
+        self.num_logits_to_keep = num_logits_to_keep+1 if num_logits_to_keep is not None else None
         self.n_layer = get_num_layers_from_config(config)
         self.padding_shape = get_padding_shape_from_config(
             config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
@@ -72,9 +82,14 @@ class InputHandler:
         )
 
         if self.full_batch_size:
-            inputs["input_ids"] = input_ids
-            inputs["position_ids"] = torch.arange(input_len).view(1, input_len)
             inputs["batch_index"] = torch.arange(1).view(-1, 1)
+            if self.num_logits_to_keep is not None:
+                length = inputs["position_ids"].size(1)
+                inputs["position_ids"] = torch.arange(length).view(1, -1)
+                #inputs["num_logits_to_keep"] = torch.tensor(self.num_logits_to_keep, dtype=torch.int64)
+            else:
+                inputs["input_ids"] = input_ids
+                inputs["position_ids"] = torch.arange(input_len).view(1, input_len)
 
         past_key_values = []
         for i in range(self.n_layer):
@@ -100,19 +115,32 @@ class InputHandler:
         updated_inputs = {}
         if self.full_batch_size:
             batch_index = torch.arange(1).view(-1, 1)
+            batch_idx_input_ids = pt_outputs.logits.detach().argmax(2)
+            input_ids = torch.full((self.full_batch_size, self.num_logits_to_keep), self.tokenizer.pad_token_id)
+            input_ids[batch_index.view(-1)] = batch_idx_input_ids
+            updated_inputs["input_ids"] = input_ids
 
-            input_ids = pt_outputs.logits.detach().argmax(2)
-            updated_inputs["input_ids"] = torch.full((self.full_batch_size, 1), self.tokenizer.pad_token_id)
-            updated_inputs["input_ids"][batch_index.view(-1)] = input_ids
-
-            position_ids = inputs["position_ids"].max(1, keepdim=True).values + 1
-            updated_inputs["position_ids"] = torch.full((self.full_batch_size, 1), 0)
-            updated_inputs["position_ids"][batch_index.view(-1)] = position_ids
+            if self.num_logits_to_keep is not None:
+                position_ids = torch.arange(self.num_logits_to_keep).view(1,-1)
+                max_position_ids = inputs["position_ids"].max(1, keepdim=True).values + 1
+                position_ids += max_position_ids
+                updated_inputs["position_ids"] = torch.full((self.full_batch_size, self.num_logits_to_keep), 0)
+                updated_inputs["position_ids"][batch_index.view(-1)] = position_ids
+                #updated_inputs["num_logits_to_keep"] = torch.tensor(self.num_logits_to_keep, dtype=torch.int64)
+            else:
+                position_ids = inputs["position_ids"].max(1, keepdim=True).values + 1
+                updated_inputs["position_ids"] = torch.full((self.full_batch_size, 1), 0)
+                updated_inputs["position_ids"][batch_index.view(-1)] = position_ids
 
             updated_inputs["batch_index"] = torch.arange(self.full_batch_size).view(-1, 1)
 
         else:
-            updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
+            if self.num_logits_to_keep is not None:
+                # assume spec decoding logits
+                input_ids = pt_outputs["logits"][:, -1].argmax(-1).reshape(-1, 1)
+            else:
+                input_ids = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
+            updated_inputs["input_ids"] = input_ids
             updated_inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
 
         updated_inputs["past_key_values"] = tuple(
