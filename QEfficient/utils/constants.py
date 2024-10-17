@@ -55,3 +55,4 @@ class Constants:
     INPUT_STR = ["My name is"]
     GB = 2**30
     MAX_QPC_LIMIT = 30
+    MAX_RETRIES = 5  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
