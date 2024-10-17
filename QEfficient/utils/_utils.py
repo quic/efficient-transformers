@@ -13,7 +13,7 @@ from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.utils.constants import QEFF_MODELS_DIR
+from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -42,7 +42,7 @@ def hf_download(
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
-    max_retries = 5
+    max_retries = Constants.MAX_RETRIES
     retry_count = 0
     while retry_count < max_retries:
         try:
@@ -64,6 +64,15 @@ def hf_download(
             retry_count = max_retries
             if e.response.status_code == 401:
                 logger.info("You need to pass a valid `--hf_token=...` to download private checkpoints.")
+            else:
+                raise e
+
+        except OSError as e:
+            logger.error(f"OSError: {e}")
+            if "Consistency check failed" in str(e):
+                logger.info(
+                    "OSError: Consistency check failed: file should not be incomplete, Resuming the downloading..."
+                )
             else:
                 raise e
 

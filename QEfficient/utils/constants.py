@@ -55,3 +55,4 @@ class Constants:
     INPUT_STR = ["My name is"]
     GB = 2**30
     MAX_QPC_LIMIT = 30
+    MAX_RETRIES = 5
