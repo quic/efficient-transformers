@@ -28,22 +28,17 @@ device_group = [0]
 # **Option2**: Initialize the model using from_pretrained() method
 qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name)
 
-## STEP 2 -- load adapter & set adapter
-qeff_model.load_adapter("predibase/gsm8k", "gsm8k")
-adapter_id_gsm8k = qeff_model.set_adapter("gsm8k")
+## STEP 2 -- load adapter adapter
+adapter_id_gsm8k = qeff_model.load_adapter("predibase/gsm8k", "gsm8k")
 print(f"Activating gsm8k as adapter_id {adapter_id_gsm8k}")
 
-qeff_model.load_adapter("predibase/tldr_content_gen", "tldr_content_gen")
-adapter_id_tldr = qeff_model.set_adapter("tldr_content_gen")
+adapter_id_tldr = qeff_model.load_adapter("predibase/tldr_content_gen", "tldr_content_gen")
 print(f"Activating tldr_content_gen as adapter_id {adapter_id_tldr}")
 
-# STEP 2 (optional) -- delete adapter & unload adapter
-qeff_model.load_adapter("predibase/dbpedia", "dbpedia")
-adapter_id_dbpedia = qeff_model.set_adapter("dbpedia")
+adapter_id_dbpedia = qeff_model.load_adapter("predibase/dbpedia", "dbpedia")
 print(f"Activating dbpedia as adapter_id {adapter_id_dbpedia}")
 
-delete_status = qeff_model.delete_adapter("dbpedia")
-print(f"Deleting dbpedia success: {delete_status}")
+# STEP 2 (optional) -- unload adapter
 unload_status = qeff_model.unload_adapter("dbpedia")
 print(f"Unloading dbpedia success: {unload_status}")
 

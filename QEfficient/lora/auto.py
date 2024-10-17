@@ -9,7 +9,7 @@ import hashlib
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import torch
 import torch.nn as nn
@@ -61,6 +61,10 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
     # inherit __init__() from QEFFAutoModelForCausalLM
     def __init__(self, model: nn.Module, pretrained_model_name_or_path: str, **kwargs) -> None:
         super().__init__(model, pretrained_model_name_or_path)
+        assert (
+            type(self.model).__name__ == "QEffMistralForCausalLM" or type(self.model).__name__ == "QEffLlamaForCausalLM"
+        ), f"Only QEffMistralForCausalLM and QEffLlamaForCausalLM model are supported but get {type(self.model).__name__}"
+
         self.base_model_name = pretrained_model_name_or_path
         self.adapter_weights = {}
         self.adapter_configs = {}
@@ -84,13 +88,19 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
             active_adapter_configs[adpt] = self.adapter_configs[adpt].to_dict()
         mhash.update(to_hashable(active_adapter_configs))
 
+        # create active adapter weight dict
+        active_adapter_weights = {}
+        for adpt in self.active_adapters:
+            active_adapter_weights[adpt] = {key: value.tolist() for key, value in self.adapter_weights[adpt].items()}
+        mhash.update(to_hashable(active_adapter_weights))
+
         # ensure model will be exported again if order of adapters changes
         mhash.update(to_hashable(self.active_adapter_to_id))
 
         mhash = mhash.hexdigest()[:16]
         return mhash
 
-    def load_adapter(self, adapter_model_id: str, adapter_name: str):
+    def download_adapter(self, adapter_model_id: str, adapter_name: str):
         """Loads a new adapter from huggingface hub or local path into CPU cache
 
         Args:
@@ -105,27 +115,26 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         }
         self.adapter_configs[adapter_name] = PeftConfig.from_pretrained(adapter_model_id)
 
-    def unload_adapter(self, adapter_name: str):
-        if adapter_name not in self.adapter_weights.keys() and adapter_name not in self.adapter_configs.keys():
-            print(f"Adapter name {adapter_name} is not loaded yet")
-            return False
+    def load_adapter(self, adapter_model_id: str, adapter_name: str, **kwargs: Any):
+        "Load adapter into CPU cache and Sets active adapter from one of the loaded adapters"
 
-        if adapter_name in self.active_adapters:
-            print(f"Adapter name {adapter_name} is stil in active list, do delete_adapter() before unloading")
-            return False
+        # check if adapter name already exist, if so, overwrite it
+        if (adapter_name in self.adapter_weights.keys()) and (adapter_name in self.adapter_configs.keys()):
+            logger.warning(f"Overwrite weights and configs for adapter name {adapter_name}")
 
-        self.adapter_weights.pop(adapter_name)
-        self.adapter_configs.pop(adapter_name)
-        logger.warning(f"Unloading {adapter_name} from CPU cache.")
-        return True
+        adapter_weight = kwargs.pop("adapter_weight", None)
+        adapter_config = kwargs.pop("adapter_config", None)
 
-    def set_adapter(self, adapter_name: str):
-        "Sets active adapter from one of the loaded adapters"
+        if adapter_weight and adapter_config:  # if sufficiently get adapter weight and adpater config
+            self.adapter_weights[adapter_name] = adapter_weight
+            self.adapter_configs[adapter_name] = adapter_config
+        else:  # load from hugging face
+            self.adapter_weights[adapter_name] = {
+                k: v.numpy().astype("float16") for k, v in load_peft_weights(adapter_model_id).items()
+            }
+            self.adapter_configs[adapter_name] = PeftConfig.from_pretrained(adapter_model_id)
 
-        assert (adapter_name in self.adapter_weights.keys()) and (
-            adapter_name in self.adapter_configs.keys()
-        ), f"Adapter name {adapter_name} has not been loaded yet"
-
+        # check if adapters has same target module and rank
         assert (
             list(self.adapter_configs.values())[0]
             and self.adapter_configs[adapter_name].target_modules
@@ -137,16 +146,18 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
             and self.adapter_configs[adapter_name].r == list(self.adapter_configs.values())[0].r
         ), "Not all adapters have the same ranks"
 
-        # set active adapter id to current max
-        self.active_adapter_to_id[adapter_name] = self.max_num_adapters
+        # set active adapter id to current max if adapter_name is new
+        if adapter_name not in self.active_adapter_to_id.keys():
+            self.active_adapter_to_id[adapter_name] = self.max_num_adapters
 
-        # add active adapter to set
-        self.active_adapters.add(adapter_name)
-        self.max_num_adapters = len(self.active_adapters)
+            # add active adapter to set
+            self.active_adapters.add(adapter_name)
+            self.max_num_adapters = len(self.active_adapters)
 
         return self.active_adapter_to_id[adapter_name]
 
-    def delete_adapter(self, adapter_name: str):
+    def unload_adapter(self, adapter_name: str):
+        # remove from active list
         if adapter_name not in self.active_adapters:
             print(f"Adapter name {adapter_name} is not set active yet")
             return False
@@ -162,6 +173,21 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         logger.warning(f"Deleting {adapter_name} from active adapters.")
         if self.onnx_path or self.qpc_path:
             logger.warning("Please redo compile_and_export() to reflect the active adapters changes.")
+            self.onnx_path = None
+            self.qpc_path = None
+
+        # delete from cache
+        if adapter_name not in self.adapter_weights.keys() and adapter_name not in self.adapter_configs.keys():
+            print(f"Adapter name {adapter_name} is not loaded yet")
+            return False
+
+        if adapter_name in self.active_adapters:
+            print(f"Adapter name {adapter_name} is stil in active list, do delete_adapter() before unloading")
+            return False
+
+        self.adapter_weights.pop(adapter_name)
+        self.adapter_configs.pop(adapter_name)
+        logger.warning(f"Unloading {adapter_name} from CPU cache.")
 
         return True
 
