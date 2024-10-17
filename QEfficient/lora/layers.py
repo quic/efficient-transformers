@@ -21,14 +21,14 @@ class LinearMultiLoRA(nn.Linear):
         self.lora_rank = lora_rank
 
         self.lora_weight_A = nn.Parameter(
-            self.weight.new_zeros(self.max_num_adapters, 1, self.in_features, self.lora_rank)
+            self.weight.new_zeros(self.max_num_adapters + 1, 1, self.in_features, self.lora_rank)
         )
         self.lora_weight_A.requires_grad = False
         self.lora_weight_B = nn.Parameter(
-            self.weight.new_zeros(self.max_num_adapters, 1, self.lora_rank, self.out_features)
+            self.weight.new_zeros(self.max_num_adapters + 1, 1, self.lora_rank, self.out_features)
         )
         self.lora_weight_B.requires_grad = False
-        self.lora_weight_C = torch.full((self.max_num_adapters, 1, 1, 1), 1.0, dtype=torch.float)
+        self.lora_weight_C = torch.full((self.max_num_adapters + 1, 1, 1, 1), 1.0, dtype=torch.float)
 
         nn.init.kaiming_uniform_(self.lora_weight_A, a=math.sqrt(5))
         nn.init.zeros_(self.lora_weight_B)

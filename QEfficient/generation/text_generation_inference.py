@@ -657,10 +657,10 @@ class TextGeneration:
 
                     generated_id_current_index[decode_batch_id] += 1
 
-                    if self.prompt_to_lora_id_mapping_decode:
-                        decode_inputs["lora_ids"][decode_batch_id] = self.prompt_to_lora_id_mapping_decode[
-                            batch_id_map[decode_batch_id]
-                        ]
+                if self.prompt_to_lora_id_mapping_decode:
+                    decode_inputs["lora_ids"][decode_batch_id] = self.prompt_to_lora_id_mapping_decode[
+                        batch_id_map[decode_batch_id]
+                    ]
 
         return decode_pause_time
 

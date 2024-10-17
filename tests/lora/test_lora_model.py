@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-import sys
 from pathlib import Path
 from time import perf_counter
 
@@ -14,8 +13,6 @@ from peft import LoraConfig
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient import QEffAutoLoraModelForCausalLM
-
-INTMAX = sys.maxsize
 
 configs = [
     pytest.param(
@@ -226,4 +223,4 @@ def test_auto_lora_model_for_causal_lm_export_compile_generate(base_model_name, 
 
     # test generate
     prompts = ["hello!", "hi", "hello, my name is", "hey"]
-    qeff_model.generate(prompts, [0], prompt_to_lora_id_mapping=[id_0, id_1, id_0, INTMAX])
+    qeff_model.generate(prompts, [0], prompt_to_lora_id_mapping=[id_0, id_1, id_0, 0])
