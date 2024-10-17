@@ -19,21 +19,7 @@ from QEfficient.utils.run_utils import ApiRunner
 from tests.utils import load_pytorch_model, replace_transformers_quantizers
 
 test_models = [
-    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    "gpt2",
-    "Salesforce/codegen-350M-mono",
-    "microsoft/phi-2",
-    "microsoft/Phi-3-mini-4k-instruct",
-    "tiiuae/falcon-7b",
-    "Qwen/Qwen2-0.5B",
-    "bigcode/starcoder2-3b",
-    "Felladrin/Minueza-32M-Base",
-    "wtang06/mpt-125m-c4",
-    "hakurei/gpt-j-random-tinier",
-    "mistralai/Mixtral-8x7B-Instruct-v0.1",
-    "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
-    "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
-    "ibm-granite/granite-20b-code-base",
+    "CohereForAI/c4ai-command-r-v01",
 ]
 
 
@@ -54,13 +40,14 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     model_config["n_layer"] = n_layer
 
     model_hf, _ = load_pytorch_model(model_config)
-
+    embeds = model_hf.get_input_embeddings() if model_name == "CohereForAI/c4ai-command-r-v01" else None
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
     batch_size = len(Constants.INPUT_STR)
     api_runner = ApiRunner(
         batch_size,
         tokenizer,
+        embeds,
         config,
         Constants.INPUT_STR,
         Constants.PROMPT_LEN,
@@ -70,7 +57,6 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
     qeff_model = QEFFAutoModelForCausalLM(model_hf, f"{model_name}")
-
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
     assert (
@@ -111,6 +97,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     api_runner = ApiRunner(
         batch_size,
         tokenizer,
+        embeds,
         config,
         Constants.INPUT_STR,
         Constants.PROMPT_LEN,

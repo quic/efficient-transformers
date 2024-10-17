@@ -15,6 +15,13 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
+from transformers.models.cohere.modeling_cohere import (
+    CohereAttention,
+    CohereDecoderLayer,
+    CohereForCausalLM,
+    CohereModel,
+    CohereRotaryEmbedding,
+)
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconDecoderLayer,
@@ -82,6 +89,13 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
     QeffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
+)
+from QEfficient.transformers.models.cohere.modeling_cohere import (
+    QEffCohereAttention,
+    QEffCohereDecoderLayer,
+    QEffCohereForCausalLM,
+    QEffCohereModel,
+    QEffCohereRotaryEmbedding,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
@@ -191,6 +205,12 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaAttention: QEffLlamaAttention,
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
+        # Cohere
+        CohereForCausalLM: QEffCohereForCausalLM,
+        CohereAttention: QEffCohereAttention,
+        CohereModel: QEffCohereModel,
+        CohereRotaryEmbedding: QEffCohereRotaryEmbedding,
+        CohereDecoderLayer: QEffCohereDecoderLayer,
         # Mistral
         MistralAttention: QEffMistralAttention,
         MistralModel: QEffMistralModel,
@@ -241,6 +261,8 @@ class CBTransform(KVCacheTransform):
         **KVCacheTransform._module_mapping,  # Unpack existing KV mapping
         # Llama
         LlamaDecoderLayer: QEffLlamaDecoderLayer,
+        # Cohere
+        CohereDecoderLayer: QEffCohereDecoderLayer,
         # Mistral
         MistralDecoderLayer: QEffMistralDecoderLayer,
         # Mixtral
