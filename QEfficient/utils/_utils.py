@@ -42,9 +42,8 @@ def hf_download(
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
-    max_retries = Constants.MAX_RETRIES
     retry_count = 0
-    while retry_count < max_retries:
+    while retry_count < Constants.MAX_RETRIES:
         try:
             model_path = snapshot_download(
                 repo_id,
@@ -61,7 +60,7 @@ def hf_download(
             retry_count += 1
 
         except HTTPError as e:
-            retry_count = max_retries
+            retry_count = Constants.MAX_RETRIES
             if e.response.status_code == 401:
                 logger.info("You need to pass a valid `--hf_token=...` to download private checkpoints.")
             else:
