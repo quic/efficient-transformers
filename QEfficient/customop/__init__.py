@@ -12,7 +12,7 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
 )
-from QEfficient.customop.rms_norm import CustomRMSNormAIC
+from QEfficient.customop.rms_norm import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 
 __all__ = [
     "CtxGatherFunc",
@@ -20,6 +20,7 @@ __all__ = [
     "CtxGatherFunc3D",
     "CtxScatterFunc3D",
     "CustomRMSNormAIC",
+    "GemmaCustomRMSNormAIC",
     "CtxGatherFuncCB",
     "CtxScatterFuncCB",
     "CtxGatherFuncCB3D",
