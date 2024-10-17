@@ -205,8 +205,10 @@ def export_kvstyle_transformed_model_to_onnx(
     if seq_len <= 0:
         raise ValueError(f"Need seq_len to be greater than zero, got seq_len={seq_len}")
 
-    if num_logits_to_keep>1:
-        num_logits_to_keep=2
+    prompt_len = Constants.PROMPT_LEN
+    if (num_logits_to_keep is not None) and \
+            prompt_len < num_logits_to_keep+1:
+        prompt_len *= math.ceil((num_logits_to_keep+1) / prompt_len)
 
     # Preprocess inputs
     # Build inputs for prefill
@@ -233,7 +235,9 @@ def export_kvstyle_transformed_model_to_onnx(
     # Build inputs for decode
     inputs = input_handler.update_pytorch_inputs(inputs, pt_outputs)
     # To avoid issues in onnx export
-    inputs["position_ids"] = torch.full((full_batch_size if full_batch_size else 1, 1), seq_len - 1)
+    bsz = full_batch_size if full_batch_size else 1
+    pos_len = inputs["position_ids"].size(1)
+    inputs["position_ids"] = torch.full((bsz, pos_len), seq_len - 1)
 
     # Run PyTorch inference with past
     pt_outputs = transformed_model(**inputs)
