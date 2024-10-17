@@ -59,6 +59,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
         self.full_batch_size = kwargs.get("full_batch_size", None)
         self.num_logits_to_keep = kwargs.get("num_logits_to_keep", NUM_LOGITS_TO_KEEP)
+        self.is_dlm = kwargs.get("is_dlm", False)
         self.kwargs = kwargs
         self._tokenizer = None
         self.is_transformed = False
@@ -207,8 +208,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             if is_dlm:
                 raise ValueError("`num_logits_to_keep` arg and `is_dlm` flag are mutually exclusive.")
             self._pytorch_transforms.append(SpDTransform)
-        elif is_dlm:
-            setattr(self.model, "is_dlm", True)
 
         for transform in self._pytorch_transforms:
             transform.apply(self.model)
@@ -312,7 +311,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxfp6=mxfp6,
             mxint8=mxint8,
             full_batch_size=self.full_batch_size,
-            num_logits_to_keep=getattr(self.model, "num_logits_to_keep", None),
+            num_logits_to_keep=self.num_logits_to_keep,
             is_dlm=getattr(self.model, "is_dlm", False),
         )
         self.qpc_path = qpc_dir_path

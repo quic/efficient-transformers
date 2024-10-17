@@ -29,7 +29,7 @@ def tlm_forward(
     output_hidden_states: Optional[bool] = None,
     return_dict: Optional[bool] = None,
     cache_position: Optional[torch.LongTensor] = None,
-    num_logits_to_keep: Optional[torch.LongTensor] = None,
+    #num_logits_to_keep: Optional[torch.LongTensor] = None,
 ) -> Union[Tuple, CausalLMOutputWithPast]:
     r"""
     Args:
@@ -78,6 +78,7 @@ def tlm_forward(
     )
 
     # Cast to INT32 to avoid issue while running in ONNXRT
+    num_logits_to_keep = getattr(self, "num_logits_to_keep", None)
     hidden_states = filter_hidden_states(outputs[0], position_ids, num_logits_to_keep)
     if self.config.pretraining_tp > 1:
         lm_head_slices = self.lm_head.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)

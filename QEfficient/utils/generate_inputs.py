@@ -85,7 +85,7 @@ class InputHandler:
             if self.num_logits_to_keep is not None:
                 length = inputs["position_ids"].size(1)
                 inputs["position_ids"] = torch.arange(length).view(1, -1)
-                inputs["num_logits_to_keep"] = torch.tensor(self.num_logits_to_keep, dtype=torch.int64)
+                #inputs["num_logits_to_keep"] = torch.tensor(self.num_logits_to_keep, dtype=torch.int64)
             else:
                 inputs["input_ids"] = input_ids
                 inputs["position_ids"] = torch.arange(input_len).view(1, input_len)
@@ -125,7 +125,7 @@ class InputHandler:
                 position_ids += max_position_ids
                 updated_inputs["position_ids"] = torch.full((self.full_batch_size, self.num_logits_to_keep), 0)
                 updated_inputs["position_ids"][batch_index.view(-1)] = position_ids
-                updated_inputs["num_logits_to_keep"] = torch.tensor(self.num_logits_to_keep, dtype=torch.int64)
+                #updated_inputs["num_logits_to_keep"] = torch.tensor(self.num_logits_to_keep, dtype=torch.int64)
             else:
                 position_ids = inputs["position_ids"].max(1, keepdim=True).values + 1
                 updated_inputs["position_ids"] = torch.full((self.full_batch_size, 1), 0)

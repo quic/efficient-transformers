@@ -205,10 +205,13 @@ def export_kvstyle_transformed_model_to_onnx(
     if seq_len <= 0:
         raise ValueError(f"Need seq_len to be greater than zero, got seq_len={seq_len}")
 
+    # Implicitly pass "num_logits_to_keep" if defined and \
+    # assert prompt_len >= num_logits_to_keep
     prompt_len = Constants.PROMPT_LEN
-    if (num_logits_to_keep is not None) and \
-            prompt_len < num_logits_to_keep+1:
-        prompt_len *= math.ceil((num_logits_to_keep+1) / prompt_len)
+    if num_logits_to_keep is not None:
+        setattr(transformed_model, "num_logits_to_keep", num_logits_to_keep+1)
+        if prompt_len < num_logits_to_keep+1:
+            prompt_len *= math.ceil((num_logits_to_keep+1) / prompt_len)
 
     # Preprocess inputs
     # Build inputs for prefill
@@ -217,7 +220,7 @@ def export_kvstyle_transformed_model_to_onnx(
         tokenizer=tokenizer,
         config=transformed_model.config,
         prompt=Constants.INPUT_STR,
-        prompt_len=Constants.PROMPT_LEN,
+        prompt_len=prompt_len,
         ctx_len=seq_len,
         full_batch_size=full_batch_size,
         num_logits_to_keep=num_logits_to_keep,
