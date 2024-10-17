@@ -7,7 +7,6 @@
 
 import hashlib
 import os
-import sys
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -23,8 +22,6 @@ from QEfficient.utils import get_qpc_dir_path, qpc_exists
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
-
-INTMAX = sys.maxsize
 
 
 class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
@@ -54,7 +51,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         m.compile(num_cores=16, device_group=[0])
 
         prompts=["code prompt", "math prompt", "generic"]
-        m.generate(prompts, device_group=[0], prompt_to_lora_id_mapping=[magicoder_id,gsm8k_id,INTMAX])
+        m.generate(prompts, device_group=[0], prompt_to_lora_id_mapping=[magicoder_id,gsm8k_id,0])
 
     """
 
@@ -148,7 +145,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
         # set active adapter id to current max if adapter_name is new
         if adapter_name not in self.active_adapter_to_id.keys():
-            self.active_adapter_to_id[adapter_name] = self.max_num_adapters
+            self.active_adapter_to_id[adapter_name] = self.max_num_adapters + 1  # reserve 0 for base
 
             # add active adapter to set
             self.active_adapters.add(adapter_name)
@@ -168,7 +165,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
         # renumbering of active adapter id
         for index, (key, value) in enumerate(self.active_adapter_to_id.items()):
-            self.active_adapter_to_id[key] = index
+            self.active_adapter_to_id[key] = index + 1
 
         logger.warning(f"Deleting {adapter_name} from active adapters.")
         if self.onnx_path or self.qpc_path:
@@ -203,9 +200,9 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         for i in range(num_hidden_layers):
             for target_module in self.target_modules_for_all_adapters:
                 # stack all adapters weights
-                a_tensor_list = list(range(self.max_num_adapters))
-                b_tensor_list = list(range(self.max_num_adapters))
-                c_tensor_list = list(range(self.max_num_adapters))
+                a_tensor_list = list(range(self.max_num_adapters + 1))
+                b_tensor_list = list(range(self.max_num_adapters + 1))
+                c_tensor_list = list(range(self.max_num_adapters + 1))
 
                 for lora_name, lora_id in self.active_adapter_to_id.items():
                     if (
@@ -232,12 +229,18 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
                         dtype=torch.float16,
                     )
 
+                # dummy zero tensor for base model
+                a_tensor_list[0] = torch.zeros_like(a_tensor_list[1])
+                b_tensor_list[0] = torch.zeros_like(b_tensor_list[1])
+                c_tensor_list[0] = torch.zeros_like(c_tensor_list[1])
+
+                # stack weight tensors
                 stacked_lora_A = (
                     torch.stack(a_tensor_list, dim=0).unsqueeze(1).transpose(2, 3)
-                )  # <num_adapters, 1, in_feature, r>
+                )  # <num_loras, 1, in_feature, r>
                 stacked_lora_B = (
                     torch.stack(b_tensor_list, dim=0).unsqueeze(1).transpose(2, 3)
-                )  # <num_adapters, 1, r, out_feature>
+                )  # <num_loras, 1, r, out_feature>
                 stacked_lora_C = (
                     torch.stack(c_tensor_list, dim=0).unsqueeze(1).unsqueeze(2).unsqueeze(3)
                 )  # <num_loras, 1, 1, 1>
@@ -308,6 +311,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         export_dir = kwargs.get("export_dir", None)
 
         # obtain all necessary information to initialize the model
+        assert self.max_num_adapters, "Please use load_adapter() to add at least one adapter; otherwise, refer to QEFFAutoModelForCausalLM for base model usage"
         self.init_adapter_model()
 
         assert self.is_transformed, "Please first run transform on the QEFFAutoModelForCausalLM object"
@@ -411,7 +415,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
     def run_cloud_ai_100(self, prompts: List[str], device_id: List[int] = None, **kwargs):
         assert isinstance(self.qpc_path, str), "Please run compile API first!"
         generation_len = kwargs.pop("generation_len", None)
-        default_mapping = [INTMAX for _ in range(len(prompts))]
+        default_mapping = [0 for _ in range(len(prompts))]
         prompt_to_lora_id_mapping = kwargs.pop("prompt_to_lora_id_mapping", default_mapping)
         return QEfficient.cloud_ai_100_exec_kv(
             self.tokenizer,

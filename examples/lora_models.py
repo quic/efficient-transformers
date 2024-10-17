@@ -7,11 +7,8 @@
 
 ## This example works on continuous batching with different lora adapters in the same batch ##
 
-import sys
 
 from QEfficient import QEffAutoLoraModelForCausalLM
-
-INTMAX = sys.maxsize
 
 base_model_name = "mistralai/Mistral-7B-v0.1"
 seq_len = 128
@@ -67,7 +64,7 @@ qpc_path = qeff_model.export_and_compile(**args)
 # prompt_to_lora_id_mapping is a list of lora_id of which the size matches num of prompts
 # and is a one-on-one mapping for the prompt-to-loraid
 # e.g., prompt_to_lora_id_mapping = [{adapter_id_0}, {adapter_id_1}, {adapter_id_0}, {adapter_id_1}, ...]
-# setting INTMAX means using base model
+# setting 0 means using base model
 prompts = [
     """Please answer the following question: James decides to run 3 sprints 3 times a week.  He runs 60 meters each sprint.  How many total meters does he run a week?\n\nAnswer:""",
     """The following headline is the headline of a news report. Please write the content of the news passage based on only this headline.\n\nHeadline: Harvard shrank its insect-inspired microrobot to the size of a penny\n\nContent:""",
@@ -81,8 +78,10 @@ prompts = [
 qeff_model.generate(
     prompts,
     device_group,
-    prompt_to_lora_id_mapping=[gsm8k_id, tldr_id, gsm8k_id, INTMAX, gsm8k_id, tldr_id, gsm8k_id, tldr_id],
+    prompt_to_lora_id_mapping=[0, 0, 0, 0, 0, 0, 0, 0],
 )
+
+# [gsm8k_id, tldr_id, gsm8k_id, 0, gsm8k_id, tldr_id, gsm8k_id, tldr_id]
 
 """
 expected response:
