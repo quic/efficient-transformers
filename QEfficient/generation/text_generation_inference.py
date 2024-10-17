@@ -199,10 +199,13 @@ def fix_prompts(prompt: List[str], batch_size: int, full_batch_size: int = None)
 
 def read_prompts_txt_file(prompts_txt_file_path: str):
     prompt = []
-    with open(prompts_txt_file_path, "r") as file:
-        for line in file:
-            prompt.append(line.strip())
-    return prompt
+    try:
+        with open(prompts_txt_file_path, "r") as file:
+            for line in file:
+                prompt.append(line.strip())
+        return prompt
+    except OSError:
+        print("Error: File not found.")
 
 
 def print_latency_stats_kv(prompt, exec_info, automation: bool = False):
