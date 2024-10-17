@@ -71,7 +71,7 @@ def hf_download(
             logger.error(f"OSError: {e}")
             if "Consistency check failed" in str(e):
                 logger.info(
-                    "OSError: Consistency check failed: file should not be incomplete, Resuming the downloading..."
+                    "Consistency check failed during model download. The file appears to be incomplete. Resuming the download..."
                 )
             else:
                 raise e
