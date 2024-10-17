@@ -7,9 +7,15 @@
 
 *Latest news* :fire: <br>
 
-- [coming soon] Support for more popular [models](coming_soon_models) and inference optimization technique speculative decoding <br>
+- [coming soon] Support for more popular [models](https://quic.github.io/efficient-transformers/source/validate.html#models-coming-soon) and inference optimization technique speculative decoding <br>
 - [09/2024] [AWQ](https://arxiv.org/abs/2306.00978)/[GPTQ](https://arxiv.org/abs/2210.17323) 4-bit quantized models are supported
 - [09/2024] Now we support PEFT(https://huggingface.co/docs/peft/index) models
+- [09/2024] Added support for [Meta-Llama-3.1-8B](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B)
+- [09/2024] Added support for [Meta-Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct)
+- [09/2024] Added support for [Meta-Llama-3.1-70B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-70B-Instruct)
+- [09/2024] Added support for [granite-20b-code-base](https://huggingface.co/ibm-granite/granite-20b-code-base-8k)
+- [09/2024] Added support for [granite-20b-code-instruct-8k](https://huggingface.co/ibm-granite/granite-20b-code-instruct-8k)
+- [09/2024] Added support for [Starcoder1-15B](https://huggingface.co/bigcode/starcoder)
 - [08/2024] Added Support for inference optimization technique ```continuous batching```
 - [08/2024] Added support for [Jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b)
 - [08/2024] Added support for [Jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat)
