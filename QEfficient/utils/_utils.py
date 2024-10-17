@@ -17,6 +17,12 @@ from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
 
 
+class DownloadRetryLimitExceeded(Exception):
+    """
+    Used for raising error when hf_download fails to download the model after given max_retries.
+    """
+
+
 def login_and_download_hf_lm(model_name, *args, **kwargs):
     logger.info(f"loading HuggingFace model for {model_name}")
     hf_token = kwargs.pop("hf_token", None)
@@ -37,13 +43,14 @@ def hf_download(
     hf_token: Optional[str] = None,
     allow_patterns: Optional[List[str]] = None,
     ignore_patterns: Optional[List[str]] = None,
+    max_retries: Optional[int] = Constants.MAX_RETRIES,
 ):
     # Setup cache_dir
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
     retry_count = 0
-    while retry_count < Constants.MAX_RETRIES:
+    while retry_count < max_retries:
         try:
             model_path = snapshot_download(
                 repo_id,
@@ -58,23 +65,23 @@ def hf_download(
         except requests.ReadTimeout as e:
             logger.info(f"Read timeout: {e}")
             retry_count += 1
-
         except HTTPError as e:
-            retry_count = Constants.MAX_RETRIES
             if e.response.status_code == 401:
                 logger.info("You need to pass a valid `--hf_token=...` to download private checkpoints.")
-            else:
-                raise e
-
+            raise e
         except OSError as e:
-            logger.error(f"OSError: {e}")
             if "Consistency check failed" in str(e):
                 logger.info(
                     "Consistency check failed during model download. The file appears to be incomplete. Resuming the download..."
                 )
+                retry_count += 1
             else:
                 raise e
 
+    if retry_count >= max_retries:
+        raise DownloadRetryLimitExceeded(
+            f"Unable to download full model after {max_retries} tries. If the model fileS are huge in size, please try again."
+        )
     return model_path
 
 
