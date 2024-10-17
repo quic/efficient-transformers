@@ -33,31 +33,24 @@ class LinearMultiLoRA(nn.Linear):
         nn.init.kaiming_uniform_(self.lora_weight_A, a=math.sqrt(5))
         nn.init.zeros_(self.lora_weight_B)
 
-    def forward(self, x: torch.Tensor, **kwargs: Any):
-        lora_ids = kwargs.pop("lora_ids", torch.zeros((x.shape[0]), dtype=torch.int64).view(-1, 1))
+    def forward(self, x: torch.Tensor, lora_ids: torch.Tensor):
+        result = F.linear(x, self.weight, bias=self.bias)
 
-        with torch.no_grad():
-            result = F.linear(x, self.weight, bias=self.bias)
+        # multilora implementation: lora_ids <batch_size, 1>
+        other_indices_A = torch.arange(self.lora_weight_A.shape[2]).view(1, 1, -1)
+        A_embedding = CtxGatherFuncCB.apply(self.lora_weight_A, lora_ids, other_indices_A)  # <num_loras, 1, feature, r>
+        other_indices_B = torch.arange(self.lora_weight_B.shape[2]).view(1, 1, -1)
+        B_embedding = CtxGatherFuncCB.apply(self.lora_weight_B, lora_ids, other_indices_B)  # <num_loras, 1, r, feature>
+        other_indices_C = torch.arange(self.lora_weight_C.shape[2]).view(1, 1, -1)
+        C_embedding = CtxGatherFuncCB.apply(self.lora_weight_C, lora_ids, other_indices_C)  # <num_loras, 1, 1, 1>
 
-            # multilora implementation: lora_ids <batch_size, 1>
-            other_indices_A = torch.arange(self.lora_weight_A.shape[2]).view(1, 1, -1)
-            A_embedding = CtxGatherFuncCB.apply(
-                self.lora_weight_A, lora_ids, other_indices_A
-            )  # <num_loras, 1, feature, r>
-            other_indices_B = torch.arange(self.lora_weight_B.shape[2]).view(1, 1, -1)
-            B_embedding = CtxGatherFuncCB.apply(
-                self.lora_weight_B, lora_ids, other_indices_B
-            )  # <num_loras, 1, r, feature>
-            other_indices_C = torch.arange(self.lora_weight_C.shape[2]).view(1, 1, -1)
-            C_embedding = CtxGatherFuncCB.apply(self.lora_weight_C, lora_ids, other_indices_C)  # <num_loras, 1, 1, 1>
+        A_embedding = A_embedding.squeeze(1)
+        B_embedding = B_embedding.squeeze(1)
+        C_embedding = C_embedding.squeeze(1)
 
-            A_embedding = A_embedding.squeeze(1)
-            B_embedding = B_embedding.squeeze(1)
-            C_embedding = C_embedding.squeeze(1)
+        result = result + x @ A_embedding @ B_embedding * C_embedding
 
-            result = result + x @ A_embedding @ B_embedding * C_embedding
-
-            return result
+        return result
 
 
 class LinearBase(nn.Linear):
