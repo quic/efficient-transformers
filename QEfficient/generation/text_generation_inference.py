@@ -422,7 +422,10 @@ class TextGeneration:
         Returns:
             vocab_size: The vocabulary size fetched from the session's allowed shapes.
         """
-        return [x[self.session.binding_index_map["logits"]] for x in self.session.allowed_shapes][0][1][2]
+        if self.session.allowed_shapes:
+            return [x[self.session.binding_index_map["logits"]] for x in self.session.allowed_shapes][0][1][2]
+
+        return self.session.bindings[self.session.binding_index_map["logits"]].dims[2]
 
     def _fetch_generation_len(self, generation_len, max_gen_len):
         """
