@@ -59,7 +59,6 @@ def test_auto_lora_model_for_causal_lm_init(base_model_name, adapter_id_0, adapt
     assert qeff_model.base_model_name == base_model_name
     assert len(qeff_model.adapter_weights) == 0
     assert len(qeff_model.adapter_configs) == 0
-    assert len(qeff_model.active_adapters) == 0
     assert qeff_model.max_num_adapters == 0
     assert len(qeff_model.active_adapter_to_id) == 0
 
@@ -72,7 +71,6 @@ def test_auto_lora_model_for_causal_lm_from_pretrained(base_model_name, adapter_
     assert qeff_model.base_model_name == base_model_name
     assert len(qeff_model.adapter_weights) == 0
     assert len(qeff_model.adapter_configs) == 0
-    assert len(qeff_model.active_adapters) == 0
     assert qeff_model.max_num_adapters == 0
     assert len(qeff_model.active_adapter_to_id) == 0
 
@@ -151,6 +149,7 @@ def test_auto_lora_model_for_causal_lm_hash():
     assert model_hash_1_1 != model_hash_1_0
 
     # check if same adapter name, but different config, result in different hash
+    qeff_model_0.unload_adapter("adapter_1")
     qeff_model_0.load_adapter(
         "dummy_id", "adapter_1", adapter_config=adapter_config_0, adapter_weight={"weights": np.ones((3, 3))}
     )
