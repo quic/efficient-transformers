@@ -16,6 +16,12 @@
    :members:
 ```
 
+## `QEffAutoLoraModelForCausalLM`
+```{eval-rst}
+.. autoclass:: QEfficient.lora.auto.QEffAutoLoraModelForCausalLM
+   :members:
+```
+
 ## `export`
 ```{eval-rst}
 .. automodule:: QEfficient.exporter.export_hf_to_cloud_ai_100
