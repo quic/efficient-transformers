@@ -177,7 +177,8 @@ def convert_to_cloud_kvstyle(
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
 
-    assert qeff_model.is_transformed, f"please pass the {qeff_model.__class__.__name__} after transform API"
+    if not qeff_model.is_transformed:
+        raise Exception(f"please pass the {qeff_model.__class__.__name__} after transform API")
 
     # Decide path for saving exported ONNX files.
     model_name = export_kvstyle_transformed_model_to_onnx(
@@ -220,8 +221,10 @@ def export_kvstyle_transformed_model_to_onnx(
     output_names = list(pt_outputs.keys())
 
     # Raise error if expected outputs are not present
-    assert "logits" in output_names, "logits not found in output"
-    assert "past_key_values" in output_names, "past_key_values not found in output"
+    if "logits" not in output_names:
+        raise KeyError("logits not found in output")
+    if "past_key_values" not in output_names:
+        raise KeyError("past_key_values not found in output")
 
     # Build inputs for next iteration from outputs
     # Build inputs for decode
