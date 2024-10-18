@@ -1,11 +1,13 @@
 {
 	"specializations": [
 		{
+			"full_batch_size": "4",
 			"batch_size": "1",
 			"seq_len": "8",
 			"ctx_len": "32"
 		},
 		{
+			"full_batch_size": "4",
 			"batch_size": "1",
 			"seq_len": "1",
 			"ctx_len": "32"
