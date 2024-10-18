@@ -17,38 +17,47 @@ from QEfficient.customop import CtxGatherFuncCB
 
 class LinearMultiLoRA(nn.Linear):
     def multilora_init(self, lora_rank, max_num_adapters):
+        if lora_rank < 1 or max_num_adapters < 1:
+            raise ValueError("lora_rank and max_num_adapters must be greater or equal to 1")
+
         self.max_num_adapters = max_num_adapters
         self.lora_rank = lora_rank
 
-        self.lora_weight_A = nn.Parameter(
+        self.lora_a_weights = nn.Parameter(
             self.weight.new_zeros(self.max_num_adapters + 1, 1, self.in_features, self.lora_rank)
         )
-        self.lora_weight_A.requires_grad = False
-        self.lora_weight_B = nn.Parameter(
+        self.lora_a_weights.requires_grad = False
+        self.lora_b_weights = nn.Parameter(
             self.weight.new_zeros(self.max_num_adapters + 1, 1, self.lora_rank, self.out_features)
         )
-        self.lora_weight_B.requires_grad = False
-        self.lora_weight_C = torch.full((self.max_num_adapters + 1, 1, 1, 1), 1.0, dtype=torch.float)
+        self.lora_b_weights.requires_grad = False
+        self.lora_scalings = torch.full((self.max_num_adapters + 1, 1, 1, 1), 1.0, dtype=torch.float)
 
-        nn.init.kaiming_uniform_(self.lora_weight_A, a=math.sqrt(5))
-        nn.init.zeros_(self.lora_weight_B)
+        nn.init.kaiming_uniform_(self.lora_a_weights, a=math.sqrt(5))
+        nn.init.zeros_(self.lora_b_weights)
 
     def forward(self, x: torch.Tensor, lora_ids: torch.Tensor):
         result = F.linear(x, self.weight, bias=self.bias)
 
         # multilora implementation: lora_ids <batch_size, 1>
-        other_indices_A = torch.arange(self.lora_weight_A.shape[2]).view(1, 1, -1)
-        A_embedding = CtxGatherFuncCB.apply(self.lora_weight_A, lora_ids, other_indices_A)  # <num_loras, 1, feature, r>
-        other_indices_B = torch.arange(self.lora_weight_B.shape[2]).view(1, 1, -1)
-        B_embedding = CtxGatherFuncCB.apply(self.lora_weight_B, lora_ids, other_indices_B)  # <num_loras, 1, r, feature>
-        other_indices_C = torch.arange(self.lora_weight_C.shape[2]).view(1, 1, -1)
-        C_embedding = CtxGatherFuncCB.apply(self.lora_weight_C, lora_ids, other_indices_C)  # <num_loras, 1, 1, 1>
+        other_indices_a = torch.arange(self.lora_a_weights.shape[2]).view(1, 1, -1)
+        selected_lora_a_weights = CtxGatherFuncCB.apply(
+            self.lora_a_weights, lora_ids, other_indices_a
+        )  # <num_loras, 1, feature, r>
+        other_indices_b = torch.arange(self.lora_b_weights.shape[2]).view(1, 1, -1)
+        selected_lora_b_weights = CtxGatherFuncCB.apply(
+            self.lora_b_weights, lora_ids, other_indices_b
+        )  # <num_loras, 1, r, feature>
+        other_indices_s = torch.arange(self.lora_scalings.shape[2]).view(1, 1, -1)
+        selected_lora_scalings = CtxGatherFuncCB.apply(
+            self.lora_scalings, lora_ids, other_indices_s
+        )  # <num_loras, 1, 1, 1>
 
-        A_embedding = A_embedding.squeeze(1)
-        B_embedding = B_embedding.squeeze(1)
-        C_embedding = C_embedding.squeeze(1)
+        selected_lora_a_weights = selected_lora_a_weights.squeeze(1)
+        selected_lora_b_weights = selected_lora_b_weights.squeeze(1)
+        selected_lora_scalings = selected_lora_scalings.squeeze(1)
 
-        result = result + x @ A_embedding @ B_embedding * C_embedding
+        result = result + x @ selected_lora_a_weights @ selected_lora_b_weights * selected_lora_scalings
 
         return result
 
