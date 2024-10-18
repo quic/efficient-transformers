@@ -14,13 +14,13 @@ from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, P
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
-from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTransform, KVCacheTransform
+from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig
 from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig
 from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
-from QEfficient.utils.constants import QEFF_MODELS_DIR
+from QEfficient.utils.constants import QEFF_MODELS_DIR, NUM_LOGITS_TO_KEEP
 from QEfficient.utils.logging_utils import logger
 
 # Dictionary that defines the interface from transformers to be used underneath the QEFF interface
@@ -58,6 +58,8 @@ class QEFFTransformersBase(QEFFBaseModel):
             self.model_card_name = self.pretrained_model_name_or_path
 
         self.full_batch_size = kwargs.get("full_batch_size", None)
+        self.num_logits_to_keep = kwargs.get("num_logits_to_keep", NUM_LOGITS_TO_KEEP)
+        self.is_dlm = kwargs.get("is_dlm", False)
         self.kwargs = kwargs
         self._tokenizer = None
         self.is_transformed = False
@@ -103,6 +105,9 @@ class QEFFTransformersBase(QEFFBaseModel):
 
         full_batch_size = kwargs.pop("full_batch_size", None)
 
+        num_logits_to_keep = kwargs.pop("num_logits_to_keep", NUM_LOGITS_TO_KEEP)
+        is_dlm = kwargs.pop("is_dlm", False)
+
         attn_implementation = kwargs.get("attn_implementation", None)
         if attn_implementation != "eager":
             logger.warning(f"Updating attn_implementation to be 'eager', got {attn_implementation}")
@@ -120,6 +125,8 @@ class QEFFTransformersBase(QEFFBaseModel):
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             model_card_name=model_card_name,
             full_batch_size=full_batch_size,
+            num_logits_to_keep=num_logits_to_keep,
+            is_dlm=is_dlm,
             **kwargs,
         )
 
@@ -158,17 +165,24 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
     _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
 
-    def transform(self, **kwargs):
+    def transform(
+        self, 
+        num_logits_to_keep: Optional[int] = NUM_LOGITS_TO_KEEP,
+        is_dlm: bool = False,
+        **kwargs):
         """
         This method applies all relevant optimization transforms on the model and toggles the ``self.is_transformed`` attribute to True. If the model is already transformed, the method will simply return.
         Please note that this method does not require any input arguments."
+
+        ``Optional`` Args:
+            :num_logits_to_keep (int, optional): Number of speculative tokens, specified only for TLM SpD model.
+            :is_dlm (bool): True if this is a DLM SpD model.
 
         Returns:
             :obj: Same object with transformed ``self.model``
         """
         if self.is_transformed:
             return
-
         if self.full_batch_size is not None:
             if KVCacheTransform in self._pytorch_transforms:
                 self._pytorch_transforms[self._pytorch_transforms.index(KVCacheTransform)] = CBTransform
@@ -187,6 +201,13 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
             if isinstance(self.model.config.quantization_config, QEffGPTQConfig):
                 self._pytorch_transforms.insert(0, GPTQToMatmulNbitsTransform)
+        
+        if num_logits_to_keep is not None:
+            if not isinstance(num_logits_to_keep, int) or num_logits_to_keep<2:
+                ValueError("`num_logits_to_keep` arg should be an integer greater than 1.")
+            if is_dlm:
+                raise ValueError("`num_logits_to_keep` arg and `is_dlm` flag are mutually exclusive.")
+            self._pytorch_transforms.append(SpDTransform)
 
         for transform in self._pytorch_transforms:
             transform.apply(self.model)
@@ -218,6 +239,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             model_kv=self,
             tokenizer=self.tokenizer,
             full_batch_size=self.full_batch_size,
+            num_logits_to_keep=self.num_logits_to_keep,
         )
         self.onnx_path = onnx_model_path
 
@@ -289,6 +311,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxfp6=mxfp6,
             mxint8=mxint8,
             full_batch_size=self.full_batch_size,
+            num_logits_to_keep=self.num_logits_to_keep,
+            is_dlm=getattr(self.model, "is_dlm", False),
         )
         self.qpc_path = qpc_dir_path
         return self.qpc_path
@@ -351,6 +375,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxfp6=mxfp6,
             mxint8=mxint8,
             full_batch_size=full_batch_size,
+            num_logits_to_keep=self.num_logits_to_keep,
+            is_dlm=getattr(self.model, "is_dlm", False),
         )
         return self.qpc_path
 
