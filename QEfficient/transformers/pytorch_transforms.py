@@ -22,6 +22,12 @@ from transformers.models.falcon.modeling_falcon import (
     FalconModel,
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
+from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
+    GPTBigCodeAttention,
+    GPTBigCodeBlock,
+    GPTBigCodeForCausalLM,
+    GPTBigCodeModel,
+)
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
@@ -88,6 +94,12 @@ from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Block,
     QEffGPT2LMHeadModel,
     QEffGPT2Model,
+)
+from QEfficient.transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
+    QEffGPTBigCodeAttention,
+    QEffGPTBigCodeBlock,
+    QEffGPTBigCodeForCausalLM,
+    QEffGPTBigCodeModel,
 )
 from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJAttention,
@@ -209,6 +221,11 @@ class KVCacheTransform(ModuleMappingTransform):
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2Model: QEffStarcoder2Model,
         Starcoder2ForCausalLM: QEffStarcoder2ForCausalLM,
+        # GptBigcode
+        GPTBigCodeAttention: QEffGPTBigCodeAttention,
+        GPTBigCodeBlock: QEffGPTBigCodeBlock,
+        GPTBigCodeModel: QEffGPTBigCodeModel,
+        GPTBigCodeForCausalLM: QEffGPTBigCodeForCausalLM,
     }
 
     @classmethod
