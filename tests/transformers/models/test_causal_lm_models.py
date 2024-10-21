@@ -229,4 +229,5 @@ def test_causal_lm_pl_1():
     prompt_len = 1
     ctx_len = Constants.CTX_LEN
     n_layer = 1
+
     test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, input_str, prompt_len, ctx_len, n_layer)
