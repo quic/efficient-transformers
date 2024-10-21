@@ -157,7 +157,7 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
 
 
 def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
-    if prompt == None and prompts_txt_file_path == None:
+    if prompt is None and prompts_txt_file_path is None:
         raise ValueError("Please pass at least one argument either using --prompt or --prompts_txt_file_path")
     if prompts_txt_file_path is not None:
         if prompt is not None:
