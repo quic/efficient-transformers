@@ -34,6 +34,7 @@ class CloudAI100ExecInfo:
         :decode_perf (float): Decoding performance.
         :total_perf (float): Total performance.
         :total_time (float): Total time.
+        :total_decode_tokens (int): Total decode tokens.
     """
 
     batch_size: int
@@ -43,6 +44,7 @@ class CloudAI100ExecInfo:
     decode_perf: float
     total_perf: float
     total_time: float
+    total_decode_tokens: float
 
     def __repr__(self):
         return f"Average Prefill time a.k.a TTFT is= {round(self.prefill_time, 2)}\
@@ -276,7 +278,7 @@ def cloud_ai_100_exec_kv(
         total_time = np.average([info.total_time for info in exec_info])
         generated_texts = [info.generated_texts for info in exec_info]
         generated_ids = [info.generated_ids for info in exec_info]
-
+        total_decode_tokens = np.average([info.total_decode_tokens for info in exec_info])
         exec_info = CloudAI100ExecInfo(
             batch_size=batch_size,
             generated_texts=generated_texts,
@@ -285,6 +287,7 @@ def cloud_ai_100_exec_kv(
             decode_perf=decode_perf,
             total_perf=total_perf,
             total_time=total_time,
+            total_decode_tokens=total_decode_tokens,
         )
     else:
         exec_info = generate_text.cloud_ai_100_exec_kv_helper(prompt=prompt, generation_len=generation_len)
@@ -687,7 +690,7 @@ class TextGeneration:
         prefill_time, decode_perf, total_perf, total_time = self.calculate_latency(
             total_decode_tokens, loop_start, start, end
         )
-        return prefill_time, decode_perf, total_perf, total_time, generated_texts
+        return prefill_time, decode_perf, total_perf, total_time, generated_texts, total_decode_tokens
 
     def continuous_batching_execution(self, prompt, prompt_queue, generation_len):
         """
@@ -718,7 +721,7 @@ class TextGeneration:
             total_decode_tokens, loop_start, start, end, decode_pause_time
         )
         prefill_time /= len(prompt)  # Average prefill time for continuous batching
-        return prefill_time, decode_perf, total_perf, total_time, generated_texts
+        return prefill_time, decode_perf, total_perf, total_time, generated_texts, total_decode_tokens
 
     def cloud_ai_100_exec_kv_helper(self, prompt: List[str], generation_len: Optional[int] = None):
         """
@@ -753,14 +756,14 @@ class TextGeneration:
 
         if self.full_batch_size is not None:
             logger.warning("Streamer is currently unavailable for continuous batch execution.")
-            prefill_time, decode_perf, total_perf, total_time, generated_texts = self.continuous_batching_execution(
-                prompt, prompt_queue, generation_len
+            prefill_time, decode_perf, total_perf, total_time, generated_texts, total_decode_tokens = (
+                self.continuous_batching_execution(prompt, prompt_queue, generation_len)
             )
         else:
             if self.stream:
                 self.streamer.on_finalized_text("\nPrompt : " + prompt[0] + "\nCompletion :")
-            prefill_time, decode_perf, total_perf, total_time, generated_texts = self.regular_model_execution(
-                prompt, generation_len
+            prefill_time, decode_perf, total_perf, total_time, generated_texts, total_decode_tokens = (
+                self.regular_model_execution(prompt, generation_len)
             )
 
         if self.stream:
@@ -779,5 +782,6 @@ class TextGeneration:
             decode_perf=decode_perf,
             total_perf=total_perf,
             total_time=total_time,
+            total_decode_tokens=total_decode_tokens,
         )
         return latency_stats

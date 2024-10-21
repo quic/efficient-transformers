@@ -14,9 +14,14 @@ from typing import List, Optional
 import QEfficient
 from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
-from QEfficient.utils.constants import QEFF_MODELS_DIR
-from QEfficient.utils.logging_utils import logger, tabulate_measurements
+from QEfficient.utils import (
+    check_and_assign_cache_dir,
+    get_qpc_dir_path,
+    load_hf_tokenizer,
+    qpc_exists,
+    tabulate_measurements,
+)
+from QEfficient.utils.logging_utils import logger
 
 
 def main(
@@ -84,8 +89,7 @@ def main(
 
     if qpc_exists(qpc_dir_path):
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
-
-        compile_time = "NA"
+        compile_time = "pre-compiled"
 
     else:
         # Handle onnx model generation
@@ -97,8 +101,7 @@ def main(
         # Compile
         #########
 
-        if benchmark:
-            mem_tracker_start = time.perf_counter()
+        compile_start_time = time.perf_counter()
 
         _ = QEfficient.compile(
             onnx_path=onnx_model_path,
@@ -117,8 +120,7 @@ def main(
             full_batch_size=full_batch_size,
         )
 
-        if benchmark:
-            compile_time = (time.perf_counter() - mem_tracker_start) // 1
+        compile_time = (time.perf_counter() - compile_start_time) // 1
 
     #########
     # Execute
@@ -139,35 +141,21 @@ def main(
     #########
 
     if benchmark:
-        input_len = max([len(x) for x in tokenizer(prompt, return_tensors="np").input_ids])
-        num_chunks = -(input_len // -prompt_len)
-        input_len = num_chunks * prompt_len
-
-        fields = {
-            "MODEL\nNAME": model_name,
-            "BATCH\nSIZE": batch_size,
-            "FULL\nBATCH_SIZE": full_batch_size,
-            "CPL": prompt_len,
-            "PL": input_len,
-            "GL": generation_len,
-            "CL": ctx_len,
-            "CORES": num_cores,
-            "NUM\nSOCS": len(device_group),
-            "DEVICE\nID": device_group,
-            "MXFP6\nW": mxfp6,
-            "MXINT8\n$KV": mxint8,
-            "COMPILE\nTIME (S)": compile_time,
-            "PREFILL\nTIME (S)": round(execinfo.prefill_time, 2),
-            "DECODE\nTOK/S": round(execinfo.decode_perf, 2),
-            "TOTAL\nTOK/S": round(execinfo.total_perf, 2),
-            "TOTAL\nTIME (S)": round(execinfo.total_time, 2),
-        }
-
-        model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
-        os.makedirs(model_card_dir, exist_ok=True)
-        model_name = model_name.replace("/", "-")
-        file = f"{model_card_dir}/{model_name}_benchmarking.csv"
-        tabulate_measurements(fields, file)
+        file_name = tabulate_measurements(
+            model_name=model_name,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            batch_size=batch_size,
+            full_batch_size=full_batch_size,
+            prompt_len=prompt_len,
+            ctx_len=ctx_len,
+            num_cores=num_cores,
+            device_group=device_group,
+            mxfp6=mxfp6,
+            mxint8=mxint8,
+            compile_time=compile_time,
+            execinfo=execinfo,
+        )
 
 
 if __name__ == "__main__":

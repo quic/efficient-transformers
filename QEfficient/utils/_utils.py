@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import csv
 import os
 from typing import List, Optional, Tuple, Union
 
@@ -277,3 +278,56 @@ def get_num_layers_from_config(config):
         raise ValueError("Invalid model configuration: n_layer/n_layers or num_hidden_layers not found.")
 
     return n_layer
+
+
+def tabulate_measurements(
+    model_name,
+    tokenizer,
+    prompt,
+    batch_size,
+    full_batch_size,
+    prompt_len,
+    ctx_len,
+    num_cores,
+    device_group,
+    mxfp6,
+    mxint8,
+    compile_time,
+    execinfo,
+):
+    input_len = max([len(x) for x in tokenizer(prompt, return_tensors="np").input_ids])
+
+    fields = {
+        "MODEL\nNAME": model_name,
+        "BATCH\nSIZE": batch_size,
+        "FULL\nBATCH_SIZE": full_batch_size,
+        "CPL": prompt_len,
+        "PL": input_len,
+        "GL": int(execinfo.total_decode_tokens + 1),
+        "CL": ctx_len,
+        "CORES": num_cores,
+        "NUM\nSOCS": len(device_group) if device_group else 1,
+        "DEVICE\nID": device_group,
+        "MXFP6\nW": mxfp6,
+        "MXINT8\n$KV": mxint8,
+        "COMPILE\nTIME (S)": compile_time,
+        "PREFILL\nTIME (S)": round(execinfo.prefill_time, 2),
+        "DECODE\nTOK/S": round(execinfo.decode_perf, 2),
+        "TOTAL\nTOK/S": round(execinfo.total_perf, 2),
+        "TOTAL\nTIME (S)": round(execinfo.total_time, 2),
+    }
+
+    model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
+    os.makedirs(model_card_dir, exist_ok=True)
+    model_name = model_name.replace("/", "-")
+    file_name = f"{model_card_dir}/{model_name}_benchmarking.csv"
+
+    if not os.path.exists(file_name):
+        with open(file_name, "w") as csvfile:
+            csvwriter = csv.writer(csvfile)
+            csvwriter.writerow(list(fields.keys()))
+    with open(file_name, "a", newline="") as csvfile:
+        csvwriter = csv.writer(csvfile)
+        csvwriter.writerow(list(fields.values()))
+
+    return file_name
