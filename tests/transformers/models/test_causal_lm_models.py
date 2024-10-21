@@ -76,12 +76,20 @@ def load_causal_lm_model(model_config):
 
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models)
-def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+    model_name: str,
+    prompt_len: int = Constants.PROMPT_LEN,
+    ctx_len: int = Constants.CTX_LEN,
+    n_layer: int = 1,
+):
     """
-    Test function to validate the model before and after KV changes on Pytorch
-    :param model_name: Name of model.
+    Validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+        :prompt_len (int): Prompt length for the model to compile.
+        :ctx_len (int): Maximum context length to compile the model.
+        :n_layers (int): Number of layers for the Model.
     """
-def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, input_str, prompt_len, ctx_len, n_layer):
     replace_transformers_quantizers()
     model_config = {"model_name": model_name}
     model_config["n_layer"] = n_layer
@@ -90,7 +98,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, input_str, prompt_l
 
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
-    batch_size = len(input_str)
+    batch_size = len(Constants.INPUT_STR)
     api_runner = ApiRunner(
         batch_size,
         tokenizer,
@@ -206,28 +214,24 @@ def test_causal_lm_export_with_deprecated_api(model_name):
 @pytest.mark.parametrize("model_name", test_models)
 def test_causal_lm(model_name):
     """
-    Test function to validate the model before and after KV changes on Pytorch
-    :param model_name: Name of model.
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
-    input_str = Constants.INPUT_STR
-    prompt_len = Constants.PROMPT_LEN
-    ctx_len = Constants.CTX_LEN
-
     if model_name == "microsoft/Phi-3-mini-4k-instruct":
         n_layer = 2  # test only 2 layer models
     else:
         n_layer = 1
 
-    test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, input_str, prompt_len, ctx_len, n_layer)
+    test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer)
 
 
 @pytest.mark.causal_lm_prompt_len_1
 def test_causal_lm_pl_1():
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and without continuous batching.
+    """
     model_name = "gpt2"
-
-    input_str = Constants.INPUT_STR
     prompt_len = 1
-    ctx_len = Constants.CTX_LEN
-    n_layer = 1
 
-    test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, input_str, prompt_len, ctx_len, n_layer)
+    test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, prompt_len)
