@@ -11,6 +11,7 @@ from transformers import AutoModelForCausalLM
 from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
+from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100, create_and_dump_specializations
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, QEffAwqQuantizer
 from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig, QEffGPTQQuantizer
@@ -80,12 +81,8 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     Test function to validate the model before and after KV changes on Pytorch
     :param model_name: Name of model.
     """
+def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, input_str, prompt_len, ctx_len, n_layer):
     replace_transformers_quantizers()
-    if model_name == "microsoft/Phi-3-mini-4k-instruct":
-        n_layer = 2  # test only 2 layer models
-    else:
-        n_layer = 1
-
     model_config = {"model_name": model_name}
     model_config["n_layer"] = n_layer
 
@@ -93,7 +90,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
-    batch_size = len(Constants.INPUT_STR)
+    batch_size = len(input_str)
     api_runner = ApiRunner(
         batch_size,
         tokenizer,
@@ -204,3 +201,32 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     assert (
         new_api_ort_tokens == old_api_ort_tokens
     ).all(), "New API output does not match old API output for ONNX export function"
+
+@pytest.mark.causal_lm
+@pytest.mark.parametrize("model_name", test_models)
+def test_causal_lm(model_name):
+    """
+    Test function to validate the model before and after KV changes on Pytorch
+    :param model_name: Name of model.
+    """
+    input_str = Constants.INPUT_STR
+    prompt_len = Constants.PROMPT_LEN
+    ctx_len = Constants.CTX_LEN
+
+    if model_name == "microsoft/Phi-3-mini-4k-instruct":
+        n_layer = 2  # test only 2 layer models
+    else:
+        n_layer = 1
+
+    test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, input_str, prompt_len, ctx_len, n_layer)
+
+
+@pytest.mark.causal_lm_prompt_len_1
+def test_causal_lm_pl_1():
+    model_name = "gpt2"
+
+    input_str = Constants.INPUT_STR
+    prompt_len = 1
+    ctx_len = Constants.CTX_LEN
+    n_layer = 1
+    test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, input_str, prompt_len, ctx_len, n_layer)
