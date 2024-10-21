@@ -47,7 +47,9 @@ def get_hf_model_type(hf_model_path: str) -> QEFF_MODEL_TYPE:
     Loads model config file and returns the type of the model (i.e. LLMs, SD, quantized etc.) as supported by the library.
     """
     if not os.path.isdir(hf_model_path):
-        raise FileNotFoundError("Please pass local dir path where the model is downloaded; use `QEfficient.utils.login_and_download_hf_lm` for downloading hf model")
+        raise FileNotFoundError(
+            "Please pass local dir path where the model is downloaded; use `QEfficient.utils.login_and_download_hf_lm` for downloading hf model"
+        )
     config, kwargs = AutoConfig.from_pretrained(
         hf_model_path,
         return_unused_kwargs=True,
@@ -85,7 +87,7 @@ class QEFFCommonLoader:
         qeff_auto_model_class = MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP[model_type]
         if not issubclass(qeff_auto_model_class, QEFFBaseModel):
             raise Exception(f"Expected class that inherits {QEFFBaseModel}, got {type(qeff_auto_model_class)}")
-        
+
         return qeff_auto_model_class.from_pretrained(
             pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs
         )

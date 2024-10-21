@@ -77,7 +77,6 @@ def transform_lm(model: nn.Module) -> nn.Module:
     later_params_hash = get_params_hash(model)
     if prior_params_hash != later_params_hash:
         raise RuntimeError("Weights were changed in the transform process, please report an issue")
-    
 
     # Replace the Dyanmic cache utils update api
     transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update

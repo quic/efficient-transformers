@@ -209,7 +209,7 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
         tokenizer.padding_side = "right"
 
     if tokenizer.pad_token_id is None:
-        if not isinstance(tokenizer.eos_token_id,int):
+        if not isinstance(tokenizer.eos_token_id, int):
             raise TypeError("Found tokenizer.eos_token_id to be None, expected int")
         # If Pad token is out of range of vocab size
         if tokenizer.eos_token_id < tokenizer.vocab_size:
