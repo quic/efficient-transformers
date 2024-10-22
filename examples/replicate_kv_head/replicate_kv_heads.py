@@ -20,7 +20,7 @@ def main(args):
 
     # Generate original outputs and tokens
     with torch.inference_mode():
-        _ = model(**inputs) # original output 
+        _ = model(**inputs)  # original output
         orig_tokens = model.generate(**inputs, max_new_tokens=10, num_beams=1, do_sample=False)
 
     # Modify the number of key-value heads
@@ -46,7 +46,7 @@ def main(args):
 
     # Generate modified outputs and tokens
     with torch.inference_mode():
-        _ = model(**inputs) # Modified output
+        _ = model(**inputs)  # Modified output
         mod_tokens = model.generate(**inputs, max_new_tokens=10, num_beams=1, do_sample=False)
 
     # Print the original and modified token outputs
