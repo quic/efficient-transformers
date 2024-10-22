@@ -5,8 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
+import json
 import os
-from typing import List, Optional, Tuple, Union
+import subprocess
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
 from huggingface_hub import login, snapshot_download
@@ -171,10 +173,21 @@ def load_hf_tokenizer(
 
 
 def get_qpc_dir_name_infer(
-    num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
+    num_cores,
+    mos,
+    batch_size,
+    prompt_len,
+    ctx_len,
+    mxfp6,
+    mxint8,
+    device_group,
+    full_batch_size,
+    enable_qnn: Optional[bool] = False,
 ):
     qpc_base_dir_name = (
-        f"qpc_{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos"
+        "qpc"
+        + f"{'_qnn_' if enable_qnn else '_'}"
+        + f"{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos"
         + f"{f'_{full_batch_size}fbs_' if full_batch_size is not None else '_'}"
         + f"{len(device_group) if device_group is not None else 1}"
         + "devices"
@@ -185,7 +198,17 @@ def get_qpc_dir_name_infer(
 
 
 def get_qpc_dir_path(
-    model_card_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
+    model_card_name,
+    num_cores,
+    mos,
+    batch_size,
+    prompt_len,
+    ctx_len,
+    mxfp6,
+    mxint8,
+    device_group,
+    full_batch_size,
+    enable_qnn: Optional[bool] = False,
 ):
     # Create a unique directory name for the QPC model based on all parameters
     qpc_base_dir_name = get_qpc_dir_name_infer(
@@ -198,6 +221,7 @@ def get_qpc_dir_path(
         mxint8=mxint8,
         device_group=device_group,
         full_batch_size=full_batch_size,
+        enable_qnn=enable_qnn,
     )
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_card_name))
     os.makedirs(model_card_dir, exist_ok=True)
@@ -304,3 +328,59 @@ def get_num_layers_from_config(config):
         raise ValueError("Invalid model configuration: n_layer/n_layers or num_hidden_layers not found.")
 
     return n_layer
+
+
+def execute(process: str, command: str, output_file_path: Optional[str] = None):
+    """
+    Executes the give command using subprocess.
+
+    ``Mandatory`` Args:
+        :process (str): Process name for which command is executed.
+        :command (str): Command to be executed on shell.
+    ``Optional`` Args:
+        :output_file_path (str): If provided stdout & stderr for the executed command will be dumped to a file. ``Defaults to None.``
+
+    """
+    print(f"Running {process} command : \n {command}")
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, shell=True)
+    except Exception as e:
+        print("Execution failed: %s", e)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"{process} failed Failed!!\n\nSTDOUT\n{result.stdout}\n\nSTDERR\n{result.stderr}")
+    else:
+        if output_file_path:
+            stdout_path = os.path.join(output_file_path, f"{process}_stdout.txt")
+            stderr_path = os.path.join(output_file_path, f"{process}_stderr.txt")
+            # Write the output to a file
+            try:
+                with open(stdout_path, "w") as file:
+                    file.write(result.stdout)
+            except Exception as e:
+                print(f"Failed to create {stdout_path}: {e}")
+            try:
+                with open(stderr_path, "w") as file:
+                    file.write(result.stderr)
+            except Exception as e:
+                print(f"Failed to create {stderr_path}: {e}")
+
+
+def load_json(file_path: str) -> Dict[Any, Any]:
+    """
+    Opens the given JSON file, load and return the JSON object.
+
+    ``Mandatory`` Args:
+        :file_path (str): JSON File to be opened.
+
+    Return:
+        JSON Object from the given file.
+
+    """
+    try:
+        # Load the JSON config file
+        with open(file_path, "r") as file:
+            config_data = json.load(file)
+    except Exception as e:
+        ValueError(f"Failed to load json object from {file_path}: {e}")
+    return config_data
