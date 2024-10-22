@@ -318,16 +318,19 @@ def tabulate_measurements(
     }
 
     model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
-    os.makedirs(model_card_dir, exist_ok=True)
     model_name = model_name.replace("/", "-")
     file_name = f"{model_card_dir}/{model_name}_benchmarking.csv"
 
-    if not os.path.exists(file_name):
-        with open(file_name, "w") as csvfile:
+    try:
+        os.makedirs(model_card_dir, exist_ok=True)
+        if not os.path.exists(file_name):
+            with open(file_name, "w") as csvfile:
+                csvwriter = csv.writer(csvfile)
+                csvwriter.writerow(list(fields.keys()))
+        with open(file_name, "a", newline="") as csvfile:
             csvwriter = csv.writer(csvfile)
-            csvwriter.writerow(list(fields.keys()))
-    with open(file_name, "a", newline="") as csvfile:
-        csvwriter = csv.writer(csvfile)
-        csvwriter.writerow(list(fields.values()))
+            csvwriter.writerow(list(fields.values()))
+    except OSError as e:
+        print(f"An error occurred while handling file {file_name}: {e}")
 
     return file_name

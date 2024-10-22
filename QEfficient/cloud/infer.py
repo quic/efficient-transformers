@@ -141,7 +141,7 @@ def main(
     #########
 
     if benchmark:
-        file_name = tabulate_measurements(
+        _ = tabulate_measurements(
             model_name=model_name,
             tokenizer=tokenizer,
             prompt=prompt,
