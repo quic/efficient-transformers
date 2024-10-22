@@ -76,6 +76,7 @@ def load_causal_lm_model(model_config):
 
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models)
+@pytest.mark.skip(reason="This is not a test function")
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     prompt_len: int = Constants.PROMPT_LEN,
@@ -223,7 +224,7 @@ def test_causal_lm(model_name):
     else:
         n_layer = 1
 
-    test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer)
+    test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
 
 
 @pytest.mark.causal_lm_prompt_len_1
@@ -234,4 +235,4 @@ def test_causal_lm_pl_1():
     model_name = "gpt2"
     prompt_len = 1
 
-    test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, prompt_len)
+    test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
