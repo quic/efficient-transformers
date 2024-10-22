@@ -1,4 +1,4 @@
-# KV-Head Replication for Llama-3-8B-Instruct Model
+# KV-Head Replication
 
 This example contains a sample script for replicating key-value (KV) heads for the Llama-3-8B-Instruct model. The script performs the following steps:
 1. Runs inference with the original model.

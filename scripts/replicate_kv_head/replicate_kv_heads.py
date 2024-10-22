@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 import argparse
 
 import torch
@@ -53,7 +60,7 @@ def main(args):
     print("Original:", tokenizer.batch_decode(orig_tokens))
     print("Modified:", tokenizer.batch_decode(mod_tokens))
 
-    # Quantize and export the modified model
+    # Export the modified model
     q_model = QEFFAutoModelForCausalLM(model, model_name)
     export(
         model_name,
