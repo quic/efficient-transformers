@@ -1,0 +1,11 @@
+{
+    "convertor_args_extension": "",
+    "context_binary_generator_args_extension": "--log_level debug",
+    "qnn_compilation_backend":
+    {
+        "compiler_printDDRStats": false,
+        "compiler_printPerfMetrics": false,
+        "compiler_stat_level": 10
+    },
+    "SKIP_QNN_CONVERTOR_STEP": false
+}

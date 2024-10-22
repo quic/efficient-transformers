@@ -52,6 +52,7 @@ def test_infer(setup, mocker):
         mxfp6=ms.mxfp6,
         mxint8=ms.mxint8,
         full_batch_size=ms.full_batch_size,
+        enable_qnn=ms.enable_qnn,
     )
     # tokenizer check
     load_hf_tokenizer_spy.assert_called_once()

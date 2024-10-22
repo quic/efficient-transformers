@@ -5,8 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
+import json
 import os
-from typing import List, Optional, Tuple, Union
+import subprocess
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
 from huggingface_hub import login, snapshot_download
@@ -196,10 +198,13 @@ def get_qpc_dir_path(
     device_group,
     full_batch_size,
     num_speculative_tokens: Optional[int] = None,
+    enable_qnn: Optional[bool] = False,
 ):
     # Create a unique directory name for the QPC model based on all parameters
     qpc_base_dir_name = (
-        f"qpc_{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos"
+        "qpc"
+        + f"{'_qnn_' if enable_qnn else '_'}"
+        + f"{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos"
         + f"{f'_{full_batch_size}fbs_' if full_batch_size is not None else '_'}"
         + f"{f'_{num_speculative_tokens}nst_' if num_speculative_tokens is not None else ''}"
         + f"{len(device_group) if device_group is not None else 1}"
@@ -317,3 +322,75 @@ def get_num_layers_from_config(config):
         raise ValueError("Invalid model configuration: n_layer/n_layers or num_hidden_layers not found.")
 
     return n_layer
+
+
+def execute_command(process: str, command: str, output_file_path: Optional[str] = None):
+    """
+    Executes the give command using subprocess.
+
+    ``Mandatory`` Args:
+        :process (str): Process name for which command is executed.
+        :command (str): Command to be executed on shell.
+    ``Optional`` Args:
+        :output_file_path (str): If provided stdout & stderr for the executed command will be dumped to a file. ``Defaults to None.``
+
+    """
+    print(f"Running {process} command : \n {command}")
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, shell=True)
+    except Exception as e:
+        print("Execution failed: %s", e)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"{process} failed Failed!!\n\nSTDOUT\n{result.stdout}\n\nSTDERR\n{result.stderr}")
+    else:
+        if output_file_path:
+            stdout_path = os.path.join(output_file_path, f"{process}_stdout.txt")
+            stderr_path = os.path.join(output_file_path, f"{process}_stderr.txt")
+            # Write the output to a file
+            try:
+                with open(stdout_path, "w") as file:
+                    file.write(result.stdout)
+            except Exception as e:
+                print(f"Failed to create {stdout_path}: {e}")
+            try:
+                with open(stderr_path, "w") as file:
+                    file.write(result.stderr)
+            except Exception as e:
+                print(f"Failed to create {stderr_path}: {e}")
+
+
+def load_json(file_path: str) -> Dict[Any, Any]:
+    """
+    Opens the given JSON file, load and return the JSON object.
+
+    ``Mandatory`` Args:
+        :file_path (str): JSON File to be opened.
+
+    Return:
+        JSON Object from the given file.
+
+    """
+    try:
+        # Load the JSON config file
+        with open(file_path, "r") as file:
+            config_data = json.load(file)
+    except Exception as e:
+        raise ValueError(f"Failed to load json object from {file_path}: {e}")
+    return config_data
+
+
+def create_json(file_path: str, json_data: object):
+    """
+    Creates a JSON file with provided JSON data.
+
+    ``Mandatory`` Args:
+        :file_path (str): JSON File to be created.
+        :json_data (object): JSON Data Object to be populated inside the created file.
+
+    """
+    try:
+        with open(file_path, "w") as file:
+            json.dump(json_data, file, indent=4)
+    except Exception as e:
+        print(f"Failed to create JSON File {file_path}: {e}")
