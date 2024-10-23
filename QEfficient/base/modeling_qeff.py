@@ -100,13 +100,8 @@ class QEFFBaseModel(ABC):
                 - convert_to_fp16=True -> -convert-to-fp16
 
         ``QEffAutoModelForCausalLM`` Args:
-            :batch_size (int): Batch size to compile for. ``Defaults to 1``.
-            :prefill_seq_len (int): Prefill sequence length to compile for. Prompt will be chunked according to this length.
-            :ctx_len (int): Context length to allocate space for KV-cache tensors.
-
-        ``QEffAutoModelForCausalLMwithCB`` Args:
             :full_batch_size (int): Full batch size to allocate cache lines.
-            :decode_batch_size (int): Batch size to run decode iteration. ``Defaults to full_batch_size``.
+            :batch_size (int): Batch size to compile for. ``Defaults to 1``.
             :prefill_seq_len (int): Prefill sequence length to compile for. Prompt will be chunked according to this length.
             :ctx_len (int): Context length to allocate space for KV-cache tensors.
 
@@ -119,8 +114,8 @@ class QEFFBaseModel(ABC):
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
-        export_kwargs: Dict[str, any] = {},
-        onnx_transform_kwargs: Dict[str, any] = {},
+        export_kwargs: Optional[Dict[str, any]] = None,
+        onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
     ) -> str:
         """
@@ -157,6 +152,7 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
 
         try:
+            export_kwargs = {} if export_kwargs is None else export_kwargs
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -170,13 +166,15 @@ class QEFFBaseModel(ABC):
             logger.info("Pytorch export successful")
 
             model = onnx.load(tmp_onnx_path, load_external_data=False)
-            onnx_transform_kwargs = {
+            transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
                 **onnx_transform_kwargs,
             }
+            if onnx_transform_kwargs is not None:
+                transform_kwargs.update(onnx_transform_kwargs)
             for transform in self._onnx_transforms:
-                model, transformed = transform.apply(model, **onnx_transform_kwargs)
+                model, transformed = transform.apply(model, **transform_kwargs)
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
@@ -213,7 +211,7 @@ class QEFFBaseModel(ABC):
             :compile_dir (str): Directory path to compile the qpc. A suffix is added to the directory path to avoid reusing same qpc for different parameters.
             :specializations (list): List of specializations to compile for
             :custom_io (dict): Custom IO to specify the input and outputs in different formats than default
-            :mdp_ts_num_devices (int): Number of devices to paratition to use Multi-Device Partitioning with tensor-slicing.
+            :mdp_ts_num_devices (int): Number of devices to partition to use Multi-Device Partitioning with tensor-slicing.
             :compiler_options: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
