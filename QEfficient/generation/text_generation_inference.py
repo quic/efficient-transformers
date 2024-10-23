@@ -157,9 +157,8 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
 
 
 def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
-    assert (
-        prompt is not None or prompts_txt_file_path is not None
-    ), "Please pass at least one argument either using --prompt or --prompts_txt_file_path"
+    if prompt is None and prompts_txt_file_path is None:
+        raise ValueError("Please pass at least one argument either using --prompt or --prompts_txt_file_path")
     if prompts_txt_file_path is not None:
         if prompt is not None:
             logger.warning("Found inputs passed using txt file as well as CLI, taking inputs from given txt file")
@@ -444,7 +443,8 @@ class TextGeneration:
                 "Passed generation_len is greater than allowed length. "
                 "Make sure this model supports sliding window, such as Mistral"
             )
-        assert generation_len > 0, "generation length should be greater than zero"
+        if generation_len <= 0:
+            raise ValueError("generation length should be greater than zero")
         return generation_len
 
     def prepare_decode_inputs(self):
