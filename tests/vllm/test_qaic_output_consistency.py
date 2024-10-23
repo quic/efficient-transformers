@@ -5,44 +5,46 @@
 #
 # -----------------------------------------------------------------------------
 
-import pytest
-import gc
 import random
 
+import pytest
 from vllm import LLM, SamplingParams
 
-from argparse import ArgumentParser
-import subprocess, time
-
-import math
 
 @pytest.fixture(scope="session")
 def model_name(pytestconfig):
     return pytestconfig.getoption("model_name")
 
+
 @pytest.fixture(scope="session")
 def seq_len(pytestconfig):
     return pytestconfig.getoption("seq_len")
+
 
 @pytest.fixture(scope="session")
 def ctx_len(pytestconfig):
     return pytestconfig.getoption("ctx_len")
 
+
 @pytest.fixture(scope="session")
 def decode_bsz(pytestconfig):
     return pytestconfig.getoption("decode_bsz")
+
 
 @pytest.fixture(scope="session")
 def dtype(pytestconfig):
     return pytestconfig.getoption("dtype")
 
+
 @pytest.fixture(scope="session")
 def kv_dtype(pytestconfig):
     return pytestconfig.getoption("kv_dtype")
 
+
 @pytest.fixture(scope="session")
 def dataset(pytestconfig):
     return pytestconfig.getoption("dataset")
+
 
 model_name = None
 seq_len = None
@@ -55,9 +57,9 @@ device_group = None
 sampling_params = None
 qllm = None
 
+
 @pytest.fixture(autouse=True, scope="session")
 def init(pytestconfig):
-
     global model_name
     global seq_len
     global ctx_len
@@ -69,14 +71,14 @@ def init(pytestconfig):
     global sampling_params
     global qllm
 
-    model_name = pytestconfig.getoption('model_name')
-    seq_len = pytestconfig.getoption('seq_len')
-    ctx_len = pytestconfig.getoption('ctx_len')
-    decode_bsz = pytestconfig.getoption('decode_bsz')
-    dtype = pytestconfig.getoption('dtype')
-    kv_dtype = pytestconfig.getoption('kv_dtype')
-    dataset = pytestconfig.getoption('dataset')
-    device_group_num = pytestconfig.getoption('device_group')
+    model_name = pytestconfig.getoption("model_name")
+    seq_len = pytestconfig.getoption("seq_len")
+    ctx_len = pytestconfig.getoption("ctx_len")
+    decode_bsz = pytestconfig.getoption("decode_bsz")
+    dtype = pytestconfig.getoption("dtype")
+    kv_dtype = pytestconfig.getoption("kv_dtype")
+    dataset = pytestconfig.getoption("dataset")
+    device_group_num = pytestconfig.getoption("device_group")
     if device_group_num == 1:
         device_group = [0]
     elif device_group_num == 4:
@@ -107,8 +109,9 @@ def test_output_consistency():
     for i, op in enumerate(output):
         check_output.append(op.outputs[0].text)
 
-    #print(check_output)
+    # print(check_output)
     assert len(set(check_output)) == 1, "Outputs from different slots for same prompt does not match!!"
+
 
 def test_generate():
     outputDict = dict()
@@ -141,7 +144,8 @@ def test_generate():
 
     for key in outputDict.keys():
         assert len(set(outputDict[key])) == 1, "Outputs from different slots for same prompt does not match!!"
-    
+
+
 def test_generated_tokens():
     prompt = [
         "My name is",
