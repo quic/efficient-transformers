@@ -64,7 +64,7 @@ class QEFFTransformersBase(QEFFBaseModel):
     @property
     def model_name(self) -> str:
         mname = self.model.__class__.__name__
-        if mname.startswith("QEff"):
+        if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
 

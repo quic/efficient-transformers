@@ -11,7 +11,6 @@ import json
 import logging
 import shutil
 import subprocess
-import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -59,7 +58,7 @@ class QEFFBaseModel(ABC):
             any_transformed = any_transformed or transformed
 
         if not any_transformed:
-            warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
+            logger.warning(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
@@ -165,7 +164,7 @@ class QEFFBaseModel(ABC):
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=13,
+                opset_version=constants.ONNX_EXPORT_OPSET,
                 **export_kwargs,
             )
             logger.info("Pytorch export successful")
@@ -187,7 +186,7 @@ class QEFFBaseModel(ABC):
             logger.info("Transformed onnx saved")
 
         except Exception as e:
-            logger.error(f"ONNX export failed: {e}")
+            logger.error(f"ONNX export (or) ONNXTransforms failed: {e}")
             raise e
 
         finally:
@@ -238,6 +237,25 @@ class QEFFBaseModel(ABC):
             command.append(f"{option}={value}")
         compile_hash = hashlib.sha256(to_hashable(command))
 
+        if specializations is not None:
+            compile_hash.update(to_hashable(specializations))
+
+        if custom_io is not None:
+            compile_hash.update(to_hashable(custom_io))
+
+        if mdp_ts_num_devices > 1:
+            compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
+
+        # Check if already compiled
+        compile_hash = compile_hash.hexdigest()[:16]
+        qpc_path = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
+        if qpc_path.is_dir():
+            if (qpc_path / "programqpc.bin").is_file():
+                self.qpc_path = qpc_path
+                return qpc_path
+            # Probably compilation failure last time, delete directory to start over
+            shutil.rmtree(qpc_path)
+
         # Write specializations.json file
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
@@ -248,16 +266,14 @@ class QEFFBaseModel(ABC):
                     indent=4,
                 )
             command.append(f"-network-specialization-config={specializations_json}")
-            compile_hash.update(to_hashable(specializations))
 
         # Write custom_io.yaml file
-        if custom_io:
+        if custom_io is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"
             with open(custom_io_yaml, "w") as fp:
                 for io_name, dtype in custom_io.items():
                     fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
             command.append(f"-custom-IO-list-file={custom_io_yaml}")
-            compile_hash.update(to_hashable(custom_io))
 
         # Write mdp_config.json file
         if mdp_ts_num_devices > 1:
@@ -278,17 +294,6 @@ class QEFFBaseModel(ABC):
                     indent=4,
                 )
             command.append(f"-mdp-load-partition-config={mdp_ts_json}")
-            compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
-
-        # Check if already compiled
-        compile_hash = compile_hash.hexdigest()[:16]
-        qpc_path = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
-        if qpc_path.is_dir():
-            if (qpc_path / "programqpc.bin").is_file():
-                self.qpc_path = qpc_path
-                return qpc_path
-            # Probably compilation failure last time, delete directory to start over
-            shutil.rmtree(qpc_path)
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
