@@ -13,8 +13,14 @@ from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.utils.constants import QEFF_MODELS_DIR
+from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
+
+
+class DownloadRetryLimitExceeded(Exception):
+    """
+    Used for raising error when hf_download fails to download the model after given max_retries.
+    """
 
 
 def login_and_download_hf_lm(model_name, *args, **kwargs):
@@ -37,12 +43,12 @@ def hf_download(
     hf_token: Optional[str] = None,
     allow_patterns: Optional[List[str]] = None,
     ignore_patterns: Optional[List[str]] = None,
+    max_retries: Optional[int] = Constants.MAX_RETRIES,
 ):
     # Setup cache_dir
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
-    max_retries = 5
     retry_count = 0
     while retry_count < max_retries:
         try:
@@ -59,14 +65,23 @@ def hf_download(
         except requests.ReadTimeout as e:
             logger.info(f"Read timeout: {e}")
             retry_count += 1
-
         except HTTPError as e:
-            retry_count = max_retries
             if e.response.status_code == 401:
                 logger.info("You need to pass a valid `--hf_token=...` to download private checkpoints.")
+            raise e
+        except OSError as e:
+            if "Consistency check failed" in str(e):
+                logger.info(
+                    "Consistency check failed during model download. The file appears to be incomplete. Resuming the download..."
+                )
+                retry_count += 1
             else:
                 raise e
 
+    if retry_count >= max_retries:
+        raise DownloadRetryLimitExceeded(
+            f"Unable to download full model after {max_retries} tries. If the model fileS are huge in size, please try again."
+        )
     return model_path
 
 
@@ -240,7 +255,10 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
         config, "num_attention_heads"
     ):  # Check for num_key_value_heads (Llama/Mistral)
         n_heads = config.num_key_value_heads
-        d_head = config.hidden_size // config.num_attention_heads
+        if hasattr(config, "head_dim"):
+            d_head = config.head_dim
+        else:
+            d_head = config.hidden_size // config.num_attention_heads
     elif hasattr(config, "n_heads"):  # Check for n_heads and d_model in the config (MPT Model)
         n_heads = config.n_heads
         d_head = config.d_model // config.n_heads
