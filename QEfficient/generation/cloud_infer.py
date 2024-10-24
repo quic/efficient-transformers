@@ -93,7 +93,7 @@ class QAICInferenceSession:
         if activate:
             self.activate()
         # Create input qbuffers and buf_dims
-        self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
+        self.qbuffers = [qaicrt.QBuffer(bytes(0)) for binding in self.bindings]
         self.buf_dims = qaicrt.BufferDimensionsVecRef(
             [(aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
         )
