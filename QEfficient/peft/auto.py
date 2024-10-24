@@ -542,7 +542,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         # Decode loop
         for num_token in range(1, generation_config.max_new_tokens):
-            if stopping_criteria(torch.from_numpy(inputs["input_ids"]), torch.from_numpy(outputs["logits"])):
+            if stopping_criteria(torch.from_numpy(inputs["input_ids"]), torch.from_numpy(outputs["logits"])).all():
                 break
 
             outputs = self.qpc_session.run(inputs)
