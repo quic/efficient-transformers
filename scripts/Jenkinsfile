@@ -16,7 +16,6 @@ pipeline
             steps
             {
                 sh '''
-		    sudo apt install python3.10-venv
                     python3.10 -m venv preflight_qeff
                     . preflight_qeff/bin/activate
                     pip install --upgrade pip setuptools
