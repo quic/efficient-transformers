@@ -10,7 +10,7 @@ import torch
 
 from QEfficient.utils import constants
 
-ops = getattr(onnxscript, "opset" + constants.ONNX_EXPORT_OPSET)
+ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
