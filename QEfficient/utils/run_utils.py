@@ -227,16 +227,14 @@ class ApiRunner:
         """
         execinfo = TextGeneration(
             tokenizer=self.input_handler.tokenizer,
-            prompt=self.input_handler.prompt,
             qpc_path=qpc_path,
             device_id=device_group,
             ctx_len=self.input_handler.ctx_len,
-            generation_len=self.gen_len,
-            stream=False,
             full_batch_size=self.input_handler.full_batch_size,
         ).cloud_ai_100_exec_kv_helper(
             prompt=self.input_handler.prompt,
             generation_len=self.gen_len,
+            stream=False
         )
 
         predicted_string = self.input_handler.tokenizer.batch_decode(execinfo.generated_ids, skip_special_tokens=True)
