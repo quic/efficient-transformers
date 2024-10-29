@@ -9,7 +9,9 @@ import onnxscript
 import torch
 from torch import nn
 
-ops = onnxscript.opset13
+from QEfficient.utils import constants
+
+ops = getattr(onnxscript, "opset" + constants.ONNX_EXPORT_OPSET)
 
 
 @onnxscript.script(onnxscript.values.Opset(domain="com.qti.aisw.onnx", version=1))
