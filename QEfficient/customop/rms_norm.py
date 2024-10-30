@@ -45,7 +45,20 @@ class CustomRMSNormAIC(nn.Module):
     def __init__(self, hidden_size, eps=1e-05):
         super(CustomRMSNormAIC, self).__init__()
         self.variance_epsilon = eps
+        self.eps = eps  # Added to support GemmaRMSNorm
         self.weight = torch.nn.Parameter(torch.ones(hidden_size))
 
     def forward(self, hidden_states):
-        return CustomRMSNormFunc.apply(hidden_states, self.weight, self.variance_epsilon)
+        return CustomRMSNormFunc.apply(
+            hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+        )
+
+
+class GemmaCustomRMSNormAIC(CustomRMSNormAIC):
+    """
+    Modify the init function to add +1 to the weights
+    """
+
+    def __qeff_init__(self):
+        with torch.no_grad():
+            self.weight.copy_(self.weight + 1.0)
