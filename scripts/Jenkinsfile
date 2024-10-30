@@ -48,6 +48,41 @@ pipeline
                 }
             }
         }
+
+
+        stage('Install vLLM')
+        {
+            steps
+            {
+                sh '''
+                    . preflight_qeff/bin/activate
+                    git clone https://github.com/vllm-project/vllm.git
+                    cd vllm
+                    git checkout v0.6.0
+                    git apply /opt/qti-aic/integrations/vllm/qaic_vllm.patch
+                    export VLLM_TARGET_DEVICE="qaic"
+                    pip install -e .
+                '''
+            }
+        }
+
+
+        stage('vLLM Test')
+            {
+                steps
+                {
+                    
+            timeout(time: 660, unit: 'MINUTES') {
+                    sh '''
+                    . preflight_qeff/bin/activate
+                    export TOKENIZERS_PARALLELISM=false
+                    pytest --disable-warnings -s -v tests/vllm --junitxml=tests/tests_log3.xml
+                    deactivate
+                    exit
+                    '''     
+                }
+            }
+        }
     }
     post 
     {
