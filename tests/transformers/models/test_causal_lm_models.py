@@ -169,7 +169,10 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
     assert all(
-        [all(pt_token[:24] == cloud_token[:24]) for pt_token, cloud_token in zip(pytorch_hf_tokens, exec_info_fbs.generated_ids)]
+        [
+            all(pt_token[:24] == cloud_token[:24])
+            for pt_token, cloud_token in zip(pytorch_hf_tokens, exec_info_fbs.generated_ids)
+        ]
     ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
 
 
@@ -182,8 +185,10 @@ def test_causal_lm_export_with_deprecated_api(model_name, cb):
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
     new_api_onnx_model_path = qeff_model.export()
-    _, old_api_onnx_model_path = qualcomm_efficient_converter(model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer, full_batch_size= (1 if cb else None))
-    
+    _, old_api_onnx_model_path = qualcomm_efficient_converter(
+        model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer, full_batch_size=(1 if cb else None)
+    )
+
     api_runner = ApiRunner(
         batch_size=1,
         tokenizer=tokenizer,
@@ -191,10 +196,12 @@ def test_causal_lm_export_with_deprecated_api(model_name, cb):
         prompt=Constants.INPUT_STR,
         prompt_len=Constants.PROMPT_LEN,
         ctx_len=Constants.CTX_LEN,
-        full_batch_size= (1 if cb else None)
+        full_batch_size=(1 if cb else None),
     )
-    
+
     new_api_ort_tokens = api_runner.run_(new_api_onnx_model_path)
     old_api_ort_tokens = api_runner.run_kv_model_on_ort(old_api_onnx_model_path)
-    
-    assert (new_api_ort_tokens == old_api_ort_tokens).all(), "New API output does not match old API output for ONNX export function"
+
+    assert (
+        new_api_ort_tokens == old_api_ort_tokens
+    ).all(), "New API output does not match old API output for ONNX export function"

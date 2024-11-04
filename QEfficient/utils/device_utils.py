@@ -43,7 +43,6 @@ def get_available_device_id():
                 return None
 
 
-
 def is_qpc_size_gt_32gb(params: int, mxfp6: bool) -> bool:
     if mxfp6:
         qpc_size = math.ceil((params * 1) / Constants.GB)

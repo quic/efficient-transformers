@@ -5,8 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Dict, List, Optional, Union
 from pathlib import Path
+from typing import Dict, List, Optional, Union
 from warnings import warn
 
 import numpy as np

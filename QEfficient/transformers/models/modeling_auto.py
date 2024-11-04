@@ -244,7 +244,14 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         )
 
     # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate
-    def generate(self, tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer], prompts: List[str], device_id: List[int] = None, runtime: str = "AI_100", **kwargs):
+    def generate(
+        self,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
+        prompts: List[str],
+        device_id: List[int] = None,
+        runtime: str = "AI_100",
+        **kwargs,
+    ):
         """
         This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
         This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
