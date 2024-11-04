@@ -28,6 +28,7 @@ from transformers.models.falcon.modeling_falcon import (
     FalconForCausalLM,
     FalconModel,
     FalconRotaryEmbedding,
+    apply_rotary_pos_emb,
     build_alibi_tensor,
     dropout_add,
     logger,
@@ -211,7 +212,7 @@ class QEffFalconAttention(FalconAttention):
                 cos, sin = self.rotary_emb(value_layer, seq_len=kv_seq_len)
             else:
                 cos, sin = position_embeddings
-            query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos, sin, position_ids)
+            query_layer, key_layer = apply_rotary_pos_emb(query_layer, key_layer, cos, sin, position_ids)
 
         if layer_past is not None:
             cache_kwargs = {"cache_position": cache_position}

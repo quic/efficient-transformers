@@ -48,6 +48,7 @@ class QEffPhiAttention(PhiAttention):
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
@@ -72,16 +73,26 @@ class QEffPhiAttention(PhiAttention):
                     "with a layer index."
                 )
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+
+        if position_embeddings is None:
+            logger.warning_once(
+                "The attention layers in this model are transitioning from computing the RoPE embeddings internally "
+                "through `position_ids` (2D tensor with the indexes of the tokens), to using externally computed "
+                "`position_embeddings` (Tuple of tensors, containing cos and sin). In v4.46 `position_ids` will be "
+                "removed and `position_embeddings` will be mandatory."
+            )
+            cos, sin = self.rotary_emb(value_states, position_ids)
+        else:
+            cos, sin = position_embeddings
 
         # Partial rotary embedding
         query_rot, query_pass = (
-            query_states[..., : self.rotary_emb.dim],
-            query_states[..., self.rotary_emb.dim :],
+            query_states[..., : self.rotary_ndims],
+            query_states[..., self.rotary_ndims :],
         )
         key_rot, key_pass = (
-            key_states[..., : self.rotary_emb.dim],
-            key_states[..., self.rotary_emb.dim :],
+            key_states[..., : self.rotary_ndims],
+            key_states[..., self.rotary_ndims :],
         )
         # [batch_size, seq_length, num_heads, head_dim // config.partial_rotary_factor]
         query_rot, key_rot = apply_rotary_pos_emb(query_rot, key_rot, cos, sin, position_ids)
@@ -207,6 +218,9 @@ class QEffPhiModel(PhiModel):
         inputs_embeds = self.embed_dropout(inputs_embeds)
         hidden_states = inputs_embeds
 
+        # create position embeddings to be shared across the decoder layers
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -226,17 +240,7 @@ class QEffPhiModel(PhiModel):
                     use_cache,
                     past_key_values,
                     cache_position,
-                )
-            elif batch_index is not None:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=causal_mask,
-                    position_ids=position_ids,
-                    batch_index=batch_index,
-                    past_key_value=past_key_values,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                    cache_position=cache_position,
+                    position_embeddings,
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -244,9 +248,11 @@ class QEffPhiModel(PhiModel):
                     attention_mask=causal_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_values,
+                    batch_index=batch_index,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
+                    position_embeddings=position_embeddings,
                 )
 
             hidden_states = layer_outputs[0]
@@ -294,6 +300,7 @@ class QEffPhiDecoderLayer(PhiDecoderLayer):
         use_cache: Optional[bool] = False,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -333,6 +340,7 @@ class QEffPhiDecoderLayer(PhiDecoderLayer):
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
+            position_embeddings=position_embeddings,
         )
         attn_outputs = self.resid_dropout(attn_outputs)
 
@@ -416,6 +424,7 @@ class QEffPhiForCausalLM(PhiForCausalLM):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            cache_position=cache_position,
         )
 
         # Cast to INT32 to avoid issue while running in ONNXRT
