@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 from typing import List, Optional, Tuple
+import warnings
 
 from QEfficient.utils.logging_utils import logger
 
@@ -51,6 +52,11 @@ def compile_kv_model_on_cloud_ai_100(
     device_group: Optional[List[int]] = None,
     **kwargs,
 ) -> Tuple[bool, str]:
+    warnings.warn(
+        "\033[93mUse `QEFFAutoModelForCausalLM.compile` instead, this method will be removed soon.\033[0m",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if kwargs:
         # FIXME
         raise NotImplementedError("Can't handle extra compilation args now!")

@@ -167,11 +167,6 @@ def convert_to_cloud_kvstyle(
     Returns:
          :str: Path of exported ``ONNX`` file.
     """
-    warnings.warn(
-        "\033[93mThis function will be deprecated soon, use QEfficient.export instead\033[0m",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
@@ -389,7 +384,7 @@ def qualcomm_efficient_converter(
 
     Usage 2: You can pass ``model_name`` and ``model_kv`` as an object of ``QEfficient.QEFFAutoModelForCausalLM``, In this case will directly export the ``model_kv.model`` to ``ONNX``
 
-    We will be deprecating this function and it will be replaced by ``QEffAutoModelForCausalLM.export``.
+    We will be deprecating this function and it will be replaced by ``QEFFAutoModelForCausalLM.export``.
 
     ``Mandatory`` Args:
         :model_name (str): The name of the model to be used.
@@ -414,7 +409,7 @@ def qualcomm_efficient_converter(
 
     """
     warnings.warn(
-        "\033[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m",
+        "\033[93m`qualcomm_efficient_converter` method will be deprecated soon, use `QEFFAutoModelForCausalLM.export` instead\033[0m",
         DeprecationWarning,
         stacklevel=2,
     )

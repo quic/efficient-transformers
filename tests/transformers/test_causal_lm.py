@@ -6,19 +6,22 @@
 # ----------------------------------------------------------------------------
 
 import copy
+import hashlib
 from time import perf_counter
 
 import onnx
 import pytest
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 
+from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.utils._utils import load_hf_tokenizer
 
 configs = [
     # name, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
+    ("gpt2", 256, 2, 4, 128, 512, 127, {}),
     ("codegen", 256, 2, 4, 128, 512, 127, {"rotary_dim": 16}),
     ("falcon", 256, 2, 4, 128, 512, 127, {}),
-    ("gpt2", 256, 2, 4, 128, 512, 127, {}),
     ("gptj", 256, 2, 4, 128, 512, 127, {"rotary_dim": 16}),
     ("llama", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("mistral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),

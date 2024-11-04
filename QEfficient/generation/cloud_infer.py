@@ -5,7 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
+from pathlib import Path
 from warnings import warn
 
 import numpy as np
@@ -43,7 +44,7 @@ aic_to_np_dtype_mapping = {
 class QAICInferenceSession:
     def __init__(
         self,
-        qpc_path: str,
+        qpc_path: Union[Path, str],
         device_ids: Optional[List[int]] = None,
         activate: bool = True,
         enable_debug_logs: bool = False,
@@ -68,8 +69,7 @@ class QAICInferenceSession:
         if enable_debug_logs:
             if self.context.setLogLevel(qaicrt.QLogLevel.QL_DEBUG) != qaicrt.QStatus.QS_SUCCESS:
                 raise RuntimeError("Failed to setLogLevel")
-
-        qpc = qaicrt.Qpc(qpc_path)
+        qpc = qaicrt.Qpc(str(qpc_path))
         # Load IO Descriptor
         iodesc = aicapi.IoDesc()
         status, iodesc_data = qpc.getIoDescriptor()

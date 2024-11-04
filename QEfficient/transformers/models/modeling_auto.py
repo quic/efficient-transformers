@@ -8,12 +8,14 @@
 import hashlib
 import logging
 import warnings
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, List, Optional, Union
 
 import torch
 import torch.nn as nn
-from transformers import AutoModel, AutoModelForCausalLM
+from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast
 
+import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
@@ -194,10 +196,10 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
         *,
+        prefill_seq_len: int = 32,
+        ctx_len: int = 128,
         batch_size: int = 1,
         full_batch_size: Optional[int] = None,
-        prefill_seq_len: int,
-        ctx_len: int,
         num_devices: int = 1,
         num_cores: int = 16,
         mxfp6_matmul: bool = False,
@@ -239,6 +241,32 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             **compiler_options,
+        )
+
+    # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate
+    def generate(self, tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer], prompts: List[str], device_id: List[int] = None, runtime: str = "AI_100", **kwargs):
+        """
+        This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
+        If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
+
+        ``Mandatory`` Args:
+            :prompts (List[str]): List of prompts to run the execution.
+            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
+        ``optional`` Args:
+            :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to "AI_100".
+        """
+        if runtime != "AI_100":
+            raise ValueError("Only AI_100 runtime is supported right now via generate API")
+        if not isinstance(self.qpc_path, Path):
+            raise TypeError("Please run compile API first!")
+        generation_len = kwargs.pop("generation_len", None)
+        return QEfficient.cloud_ai_100_exec_kv(
+            tokenizer,
+            self.qpc_path,
+            prompt=prompts,
+            device_id=device_id,
+            generation_len=generation_len,
         )
 
 

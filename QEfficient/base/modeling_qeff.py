@@ -99,7 +99,7 @@ class QEFFBaseModel(ABC):
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
 
-        ``QEffAutoModelForCausalLM`` Args:
+        ``QEFFAutoModelForCausalLM`` Args:
             :full_batch_size (int): Full batch size to allocate cache lines.
             :batch_size (int): Batch size to compile for. ``Defaults to 1``.
             :prefill_seq_len (int): Prefill sequence length to compile for. Prompt will be chunked according to this length.
@@ -169,7 +169,6 @@ class QEFFBaseModel(ABC):
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
-                **onnx_transform_kwargs,
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)

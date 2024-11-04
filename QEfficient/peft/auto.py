@@ -239,7 +239,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         **kwargs,
     ) -> np.ndarray:
         """
-        Generate tokens from compiled binary. This method takes same parameters as huggingface model.generate() method.
+        Generate tokens from compiled binary. This method takes same parameters as HuggingFace transformers model.generate() method.
 
         Args:
             :inputs: input_ids

@@ -5,14 +5,11 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
-
 import numpy as np
 import pytest
 from transformers import AutoModelForCausalLM
 from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 
-from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, QEffAwqQuantizer
@@ -116,11 +113,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         pytorch_hf_tokens == pytorch_kv_tokens
     ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
-    _, onnx_model_path = qualcomm_efficient_converter(
-        model_name=model_name,
-        model_kv=qeff_model,
-        tokenizer=tokenizer,
-    )
+    onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path)
 
     assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
@@ -128,21 +121,15 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    base_path = os.path.dirname(onnx_model_path)
-    tests_qpc_dir = os.path.join(base_path, "tests_qpc")
-    os.makedirs(tests_qpc_dir, exist_ok=True)
-
-    _, test_qpcs_path = compile_kv_model_on_cloud_ai_100(
-        onnx_path=onnx_model_path,
-        specializations_json="scripts/specializations.json",
+    _ = qeff_model.compile(
+        prefill_seq_len=8,
+        ctx_len=32,
         num_cores=14,
-        base_path=tests_qpc_dir,
         mxfp6=False,
-        custom_io_path=os.path.join(base_path, "custom_io_fp16.yaml"),
         aic_enable_depth_first=False,
     )
-
-    cloud_ai_100_tokens = api_runner.run_kv_model_on_cloud_ai_100(test_qpcs_path)
+    exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
+    cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
     gen_len = ort_tokens.shape[-1]
     assert (
         ort_tokens == cloud_ai_100_tokens[:, :gen_len]
@@ -150,12 +137,13 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
     # testing for CB models
     model_hf, _ = load_causal_lm_model(model_config)
-    full_batch_size = 1
+    full_batch_size = 4
+    fbs_prompts = Constants.INPUT_STR * 4
     api_runner = ApiRunner(
         batch_size,
         tokenizer,
         config,
-        Constants.INPUT_STR,
+        fbs_prompts,
         Constants.PROMPT_LEN,
         Constants.CTX_LEN,
         full_batch_size,
@@ -164,36 +152,49 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
     pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
 
-    qeff_model = QEFFAutoModelForCausalLM(model_hf, f"{model_name}")
-    _, onnx_model_path = qualcomm_efficient_converter(
-        model_name=model_name,
-        model_kv=qeff_model,
-        tokenizer=tokenizer,
-        full_batch_size=4,
-    )
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=True)
+    onnx_model_path = qeff_model.export()
 
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    base_path = os.path.dirname(onnx_model_path)
-    tests_qpc_dir = os.path.join(base_path, "tests_qpc_cb")
-    os.makedirs(tests_qpc_dir, exist_ok=True)
-
-    _, test_qpcs_path = compile_kv_model_on_cloud_ai_100(
-        onnx_path=onnx_model_path,
-        specializations_json="scripts/specializations.json",
+    _ = qeff_model.compile(
+        prefill_seq_len=8,
+        ctx_len=32,
         num_cores=14,
-        base_path=tests_qpc_dir,
         mxfp6=False,
-        custom_io_path=os.path.join(base_path, "custom_io_fp16.yaml"),
         aic_enable_depth_first=False,
+        full_batch_size=full_batch_size,
     )
+    exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
-    cloud_ai_100_tokens = api_runner.run_kv_model_on_cloud_ai_100(test_qpcs_path)
+    assert all(
+        [all(pt_token[:24] == cloud_token[:24]) for pt_token, cloud_token in zip(pytorch_hf_tokens, exec_info_fbs.generated_ids)]
+    ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
 
-    pytorch_hf_tokens = pytorch_hf_tokens[:, : api_runner.gen_len]
-    cloud_ai_100_tokens = cloud_ai_100_tokens[:, : api_runner.gen_len]
 
-    assert (
-        pytorch_hf_tokens == cloud_ai_100_tokens
-    ).all(), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
+# FIXME: there should be a CB test here
+@pytest.mark.parametrize("model_name", ["gpt2"], ids=lambda x: x)
+def test_causal_lm_export_with_deprecated_api(model_name, cb):
+    model_config = {"model_name": model_name}
+    model_config["n_layer"] = 1
+    model, _ = load_causal_lm_model(model_config)
+    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
+    qeff_model = QEFFAutoModelForCausalLM(model, cb)
+    new_api_onnx_model_path = qeff_model.export()
+    _, old_api_onnx_model_path = qualcomm_efficient_converter(model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer, full_batch_size= (1 if cb else None))
+    
+    api_runner = ApiRunner(
+        batch_size=1,
+        tokenizer=tokenizer,
+        config=model.config,
+        prompt=Constants.INPUT_STR,
+        prompt_len=Constants.PROMPT_LEN,
+        ctx_len=Constants.CTX_LEN,
+        full_batch_size= (1 if cb else None)
+    )
+    
+    new_api_ort_tokens = api_runner.run_(new_api_onnx_model_path)
+    old_api_ort_tokens = api_runner.run_kv_model_on_ort(old_api_onnx_model_path)
+    
+    assert (new_api_ort_tokens == old_api_ort_tokens).all(), "New API output does not match old API output for ONNX export function"
