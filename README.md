@@ -59,9 +59,9 @@ For other models, there is comprehensive documentation to inspire upon the chang
 ## Quick Installation
 ```bash
 
-# Create Python virtual env and activate it. (Recommended Python 3.8)
-
-python3.8 -m venv qeff_env
+# Create Python virtual env and activate it. (Recommended Python 3.10)
+sudo apt install python3.10-venv
+python3.10 -m venv qeff_env
 source qeff_env/bin/activate
 pip install -U pip
 
