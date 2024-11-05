@@ -93,6 +93,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
     ``Mandatory`` Args:
         :model (nn.Module):  PyTorch model
+        :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
+
 
     .. code-block:: python
 
@@ -101,8 +103,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=2)
         model.compile(prefill_seq_len=32, ctx_len=1024)
 
-        inputs = ...
-        outputs = model.generate(**inputs, max_new_tokens=128)
+        model.generate(prompts=["Hi there!!"])
     """
 
     _hf_auto_class = AutoModelForCausalLM
@@ -130,8 +131,22 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
 
         Args:
-            :pretrained_name_or_path (str): Model card name from huggingface or local path to model directory.
+            :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
+            :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
             :args, kwargs: Additional arguments to pass to transformers.AutoModelForCausalLM.
+
+        .. code-block:: python
+
+            from QEfficient import QEFFAutoModelForCausalLM
+
+            # Initialize the model using from_pretrained similar to transformers.AutoModelForCausalLM
+            model = QEFFAutoModelForCausalLM.from_pretrained("gpt2")
+
+            # Now you can directly compile the model for Cloud AI 100
+            model.compile(num_cores=14, device_group=[0])  # Considering you have a Cloud AI 100 Standard SKU
+
+            # You can now execute the model
+            model.generate(prompts=["Hi there!!"])
         """
 
         if kwargs.pop("full_batch_size", None):
@@ -155,6 +170,16 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         return mhash
 
     def export(self, export_dir: Optional[str] = None) -> str:
+        """
+        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+        We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
+
+        ``Optional`` Args:
+            does not any arguments.
+
+        Returns:
+            :str: Path of the generated ``ONNX`` graph.
+        """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
@@ -208,11 +233,33 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         batch_size: int = 1,
         full_batch_size: Optional[int] = None,
         num_devices: int = 1,
-        num_cores: int = 16,
+        num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         **compiler_options,
     ) -> str:
+        """
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+
+        ``Optional`` Args:
+            :onnx_path (str, optional): Path to pre-exported onnx model.
+            :compile_dir (str, optional): Path for saving the qpc generated.
+            :num_cores (int): Number of cores used to compile the model.
+            :num_devices (List[int]): Number of devices for tensor-slicing is invoked, defaults to None, and automatically chooses suitable device.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :prefill_seq_len (int, optional): The length of the Prefill prompt should be less that ``prefill_seq_len``. ``Defaults to 32``.
+            :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
+            :full_batch_size (int, optional): Continuous batching batch size.
+            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
+            :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
+            :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
+            :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
+        """
         # Specializations
         if self.continuous_batching:
             if full_batch_size is None:

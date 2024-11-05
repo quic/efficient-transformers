@@ -4,15 +4,15 @@
 
 ## `QEFFAutoModelForCausalLM`
 ```{eval-rst}
-.. automodule:: QEfficient.transformers.models.modeling_auto
-   :inherited-members:
-   :undoc-members: 
-   :exclude-members: QEffAutoModel,QEFFTransformersBase, run_ort, run_pytorch, get_tokenizer, run_cloud_ai_100, execute
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM
+   :member-order: bysource
+   :members:
 ``` 
 
 ## `QEffAutoPeftModelForCausalLM`
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
+   :member-order: bysource
    :members:
 ```
 
@@ -22,16 +22,21 @@
    :members:
    :show-inheritance:
    :exclude-members: convert_to_cloud_kvstyle, convert_to_cloud_bertstyle
+.. deprecated::
+   This function will be deprecated in version 1.19, please use QEFFAutoModelForCausalLM.export instead
 ```
 ## `compile`
 ```{eval-rst}
 .. automodule:: QEfficient.compile.compile_helper
    :members:
    :show-inheritance:
-.. code-block:: bash
+.. code-block:: python
+
    import QEfficient
    base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
    qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0])
+.. deprecated::
+   This function will be deprecated in version 1.19, please use QEFFAutoModelForCausalLM.compile instead
 ```
 ## `Execute`
 ```{eval-rst}
