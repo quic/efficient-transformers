@@ -6,16 +6,11 @@
 # ----------------------------------------------------------------------------
 
 import hashlib
-import json
 import logging
-import shutil
-import subprocess
 import warnings
-from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
-import onnx
 import torch
 from peft import AutoPeftModelForCausalLM, PeftModelForCausalLM, load_peft_weights
 from torch import nn
@@ -31,7 +26,7 @@ from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils import constants
 from QEfficient.utils._utils import get_padding_shape_from_config
-from QEfficient.utils.cache import QEFF_HOME, to_hashable
+from QEfficient.utils.cache import to_hashable
 
 logger = logging.getLogger(__name__)
 
@@ -65,14 +60,6 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     _onnx_transforms: List[OnnxTransform] = [FP16ClipTransform, AdapterWeightsToInputsTransform, SplitTensorsTransform]
     _hf_auto_class = AutoPeftModelForCausalLM
 
-    @classmethod
-    def _transform_names(cls) -> List[str]:
-        """
-        Returns names of transforms applied in this class.
-        """
-        # Base class
-        return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
-
     def __init__(self, model: nn.Module):
         if not isinstance(model, PeftModelForCausalLM):
             raise TypeError(f"Required pytorch module of type PeftModel, got {type(model)}")
@@ -92,11 +79,13 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             }
             for adapter_name in model.peft_config
         }
-        self.transform()
 
     @property
     def model_name(self) -> str:
-        return self.model.get_base_model().__class__.__name__ + "-lora"
+        mname = self.model.get_base_model().__class__.__name__ + "-lora"
+        if mname.startswith("QEff"):
+            mname = mname[4:]
+        return mname
 
     @property
     def model_hash(self) -> str:
@@ -166,93 +155,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         obj = cls._from_pretrained(pretrained_name_or_path, *args, **kwargs)
         return obj
 
-    def transform(self, **kwargs):
-        # Base class
-        for transform in self._pytorch_transforms:
-            self.model, transformed = transform.apply(self.model)
-        logger.info("Pytorch transforms applied")
-
-    def _export(
-        self,
-        example_inputs: Dict[str, torch.Tensor],
-        input_names: List[str],
-        output_names: List[str],
-        dynamic_axes: Dict[str, Dict[int, str]],
-        export_kwargs: Dict[str, any] = {},
-        onnx_transform_kwargs: Dict[str, any] = {},
-        export_dir: Optional[str] = None,
-    ) -> str:
-        """
-        Export the pytorch model to ONNX.
-
-        Args:
-            :example_inputs (dict): Sample inputs to trace the model.
-            :input_names (list): names to assign to the input nodes of the graph, in order.
-            :output_names (list): names to assign to the output nodes of the graph, in order.
-            :dynamic_axes (dict): Same as dynamic_axes parameter to be passed to `torch.onnx.export`.
-            :export_kwargs (dict): Additional arguments to be passed to `torch.onnx.export`.
-            :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
-            :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
-        """
-        # Base class
-        export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
-        export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
-        onnx_path = export_dir / f"{self.model_name}.onnx"
-        if onnx_path.is_file():
-            self.onnx_path = onnx_path
-            return onnx_path
-
-        tmp_onnx_dir = export_dir / "onnx_tmp"
-        tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
-        tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            torch.onnx.export(
-                self.model,
-                (example_inputs,),
-                str(tmp_onnx_path),
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=13,
-                **export_kwargs,
-            )
-            logger.info("Pytorch export successful")
-
-            model = onnx.load(tmp_onnx_path, load_external_data=False)
-            onnx_transform_kwargs = {
-                "onnx_base_dir": str(tmp_onnx_dir),
-                "model_name": self.model_name,
-                **onnx_transform_kwargs,
-            }
-            for transform in self._onnx_transforms:
-                model, transformed = transform.apply(model, **onnx_transform_kwargs)
-            model.metadata_props.append(
-                onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
-            )
-            logger.info("ONNX transforms applied")
-
-            onnx.save(model, onnx_path)
-            logger.info("Transformed onnx saved")
-
-        except Exception as e:
-            logger.error(f"ONNX export failed: {e}")
-            raise e
-
-        finally:
-            shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
-
-        self.onnx_path = onnx_path
-        return onnx_path
-
     def export(self, export_dir: Optional[str] = None) -> str:
-        """
-        Export the pytorch model to ONNX.
-
-        Args:
-            :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
-        """
-
         self.exported_peft_config = self.model.active_peft_config
 
         example_shape = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
@@ -273,116 +176,14 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
                 dynamic_axes[f"past_{kv}.{i}"] = {0: "batch_size", 2: "ctx_len"}
                 output_names.append(f"past_{kv}.{i}_RetainedState")
 
-        input_names = list(dynamic_axes.keys())
-
         return self._export(
             example_inputs,
-            input_names,
             output_names,
             dynamic_axes,
             export_kwargs={"do_constant_folding": False},  # To avoid merging adapter weights with base weights
             onnx_transform_kwargs={"adapter_name": self.model.active_adapter},
             export_dir=export_dir,
         )
-
-    def _compile(
-        self,
-        onnx_path: Optional[str] = None,
-        compile_dir: Optional[str] = None,
-        *,
-        specializations: Optional[List[Dict[str, int]]] = None,
-        custom_io: Optional[Dict[str, str]] = None,
-        mdp_ts_num_devices: int = 1,
-        **compiler_options,
-    ) -> str:
-        """
-        Interface for qaic-exec compiler
-
-        Args:
-            :onnx_path (str): Onnx file to compile
-            :compile_dir (str): Directory path to compile the qpc. A suffix is added to the directory path to avoid reusing same qpc for different parameters.
-            :specializations (list): List of specializations to compile for
-            :custom_io (dict): Custom IO to specify the input and outputs in different formats than default
-            :mdp_ts_num_devices (int): Number of devices to paratition to use Multi-Device Partitioning with tensor-slicing.
-            :compiler_options: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
-                - aic_num_cores=16 -> -aic-num-cores=16
-                - convert_to_fp16=True -> -convert-to-fp16
-        """
-        # Base class
-        onnx_path = Path(onnx_path or self.onnx_path)
-        compile_dir = Path(compile_dir or onnx_path.parent)
-        qpc_path = compile_dir / "qpc"
-        if not onnx_path.is_file():
-            raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
-
-        command = ["/opt/qti-aic/exec/qaic-exec", f"-m={onnx_path}", "-aic-hw", "-aic-hw-version=2.0"]
-        for key, value in compiler_options.items():
-            option = "-" + key.replace("_", "-")
-            if isinstance(value, bool):
-                if value:
-                    command.append(option)
-                continue
-            command.append(f"{option}={value}")
-        compile_hash = hashlib.sha256(to_hashable(command))
-
-        # Write specializations.json file
-        if specializations is not None:
-            specializations_json = compile_dir / "specializations.json"
-            with open(specializations_json, "w") as fp:
-                json.dump(
-                    {"specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]},
-                    fp,
-                    indent=4,
-                )
-            command.append(f"-network-specialization-config={specializations_json}")
-            compile_hash.update(to_hashable(specializations))
-
-        # Write custom_io.yaml file
-        if custom_io:
-            custom_io_yaml = compile_dir / "custom_io.yaml"
-            with open(custom_io_yaml, "w") as fp:
-                for io_name, dtype in custom_io.items():
-                    fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
-            command.append(f"-custom-IO-list-file={custom_io_yaml}")
-            compile_hash.update(to_hashable(custom_io))
-
-        # Write mdp_config.json file
-        if mdp_ts_num_devices > 1:
-            num_cores = compiler_options.get("aic_num_cores", 16)
-            mdp_ts_json = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
-            with open(mdp_ts_json, "w") as fp:
-                json.dump(
-                    {
-                        "connections": [{"devices": list(range(mdp_ts_num_devices)), "type": "p2p"}],
-                        "partitions": [
-                            {
-                                "name": "Partition0",
-                                "devices": [{"deviceId": d, "numCores": num_cores} for d in range(mdp_ts_num_devices)],
-                            }
-                        ],
-                    },
-                    fp,
-                    indent=4,
-                )
-            command.append(f"-mdp-load-partition-config={mdp_ts_json}")
-            compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
-
-        # Check if already compiled
-        compile_hash = compile_hash.hexdigest()[:16]
-        qpc_path = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
-        if qpc_path.is_dir():
-            if (qpc_path / "programqpc.bin").is_file():
-                self.qpc_path = qpc_path
-                return qpc_path
-            # Probably compilation failure last time, delete directory to start over
-            shutil.rmtree(qpc_path)
-
-        command.append(f"-aic-binary-dir={qpc_path}")
-        logger.info(f"Running compiler: {' '.join(command)}")
-        subprocess.run(command).check_returncode()
-
-        self.qpc_path = qpc_path
-        return qpc_path
 
     def compile(
         self,
@@ -398,23 +199,6 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         mxint8_kv_cache: bool = False,
         **compiler_options,
     ) -> str:
-        """
-        Compile the exported onnx to run on AI100
-
-        Args:
-            :onnx_path (str): Onnx file to compile
-            :compile_dir (str): Directory path to compile the qpc. A suffix is added to the directory path to avoid reusing same qpc for different parameters.
-            :batch_size (int): Batch size to compile for. ``Defaults to 1``.
-            :prefill_seq_len (int): Prefill sequence length to compile for. Prompt will be chunked according to this length.
-            :ctx_len (int): Context length to allocate space for KV-cache tensors.
-            :num_devices (int): Number of devices to compile for. ``Defaults to 1``.
-            :num_cores (int): Number of cores to utilize in each device ``Defaults to 16``.
-            :mxfp6_matmul (bool): Use MXFP6 to compress weights for MatMul nodes to run faster on device. ``Defaults to False``.
-            :mxint8_kv_cache (bool): Use MXINT8 to compress KV-cache on device to access and update KV-cache faster. ``Defaults to False``.
-            :compiler_options: Pass any compiler option as input. Any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
-                - aic_num_cores=16 -> -aic-num-cores=16
-                - convert_to_fp16=True -> -convert-to-fp16
-        """
         # Specializations
         specializations = [
             {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
@@ -448,13 +232,14 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     def generate(
         self,
         inputs: Optional[Union[torch.Tensor, np.ndarray]] = None,
+        device_ids: Optional[List[int]] = None,
         generation_config: Optional[GenerationConfig] = None,
         stopping_criteria: Optional[StoppingCriteria] = None,
         streamer: Optional[BaseStreamer] = None,
         **kwargs,
     ) -> np.ndarray:
         """
-        Generate tokens from compiled binary. This method takes same parameters as huggingface model.generate() method.
+        Generate tokens from compiled binary. This method takes same parameters as HuggingFace transformers model.generate() method.
 
         Args:
             :inputs: input_ids
@@ -467,7 +252,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         if self.qpc_session is None:
             if self.qpc_path is None:
                 raise FileNotFoundError("Please compile the model with `model.compile(...)`")
-            self.qpc_session = QAICInferenceSession(str(self.qpc_path))
+            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
 
             # Skip buffers
             retained_buffers = [x for x in self.qpc_session.output_names if x.endswith("_RetainedState")]

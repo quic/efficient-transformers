@@ -140,7 +140,7 @@ def latency_stats_bertstyle(
     print(round((cur_len - init_len) / (end - start), 2), "tok/s")
 
 
-def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
+def get_compilation_dims(qpc_path: str) -> Tuple[int, int, Optional[int]]:
     qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
     specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
     logger.info(f"specialization_file_path : {specialization_file_path}")
@@ -153,7 +153,9 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
 
     compilation_batch_size = int(data["specializations"][0]["batch_size"])
     compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
-    return compilation_batch_size, compilation_ctx_len
+    if compilation_fbs := data["specializations"][0].get("full_batch_size", None):
+        compilation_fbs = int(compilation_fbs)
+    return compilation_batch_size, compilation_ctx_len, compilation_fbs
 
 
 def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
@@ -228,7 +230,6 @@ def cloud_ai_100_exec_kv(
     stream: bool = True,
     write_io_dir: Optional[str] = None,
     automation=False,
-    full_batch_size: Optional[int] = None,
 ):
     """
     This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -262,7 +263,7 @@ def cloud_ai_100_exec_kv(
         execinfo = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_id=[0])
 
     """
-    batch_size, ctx_len = get_compilation_dims(qpc_path)
+    batch_size, ctx_len, full_batch_size = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
     generate_text = TextGeneration(

@@ -13,7 +13,6 @@ from typing import Optional, Tuple, Union
 import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
-import QEfficient
 from QEfficient.base.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
@@ -168,11 +167,6 @@ def convert_to_cloud_kvstyle(
     Returns:
          :str: Path of exported ``ONNX`` file.
     """
-    warnings.warn(
-        "\033[93mThis function will be deprecated soon, use QEfficient.export instead\033[0m",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
@@ -323,7 +317,9 @@ def export_for_cloud(
     full_batch_size: Optional[int] = None,
 ) -> str:
     # Check if model architecture is supported for continuous batching.
-    if full_batch_size and qeff_model.model.config.architectures[0] not in get_lists_of_cb_qeff_models.architectures:
+    if full_batch_size and qeff_model.model.config.architectures[0].lower() not in {
+        x.lower() for x in get_lists_of_cb_qeff_models.architectures
+    }:
         raise NotImplementedError(
             f"Continuous batching is not supported for {qeff_model.model.config.architectures[0]}"
         )
@@ -356,24 +352,14 @@ def export_lm_model_for_cloud(
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
 
-    if qeff_model.is_transformed:
-        model_name = export_kvstyle_transformed_model_to_onnx(
-            model_name=model_name,
-            transformed_model=qeff_model.model,
-            tokenizer=tokenizer,
-            onnx_dir_path=onnx_dir_path,
-            seq_len=seq_length,
-            full_batch_size=full_batch_size,
-        )  # type: ignore
-
-    else:
-        model_name = export_bertstyle_model_to_onnx(
-            model_name=model_name,
-            model=qeff_model.model,
-            tokenizer=tokenizer,
-            onnx_dir_path=onnx_dir_path,
-            seq_len=seq_length,
-        )  # type: ignore
+    model_name = export_kvstyle_transformed_model_to_onnx(
+        model_name=model_name,
+        transformed_model=qeff_model.model,
+        tokenizer=tokenizer,
+        onnx_dir_path=onnx_dir_path,
+        seq_len=seq_length,
+        full_batch_size=full_batch_size,
+    )
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
 
@@ -398,7 +384,7 @@ def qualcomm_efficient_converter(
 
     Usage 2: You can pass ``model_name`` and ``model_kv`` as an object of ``QEfficient.QEFFAutoModelForCausalLM``, In this case will directly export the ``model_kv.model`` to ``ONNX``
 
-    We will be deprecating this function and it will be replaced by ``QEffAutoModelForCausalLM.export``.
+    We will be deprecating this function and it will be replaced by ``QEFFAutoModelForCausalLM.export``.
 
     ``Mandatory`` Args:
         :model_name (str): The name of the model to be used.
@@ -423,7 +409,7 @@ def qualcomm_efficient_converter(
 
     """
     warnings.warn(
-        "\033[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel\033[0m",
+        "\033[93m`qualcomm_efficient_converter` method will be deprecated soon, use `QEFFAutoModelForCausalLM.export` instead\033[0m",
         DeprecationWarning,
         stacklevel=2,
     )
@@ -440,13 +426,8 @@ def qualcomm_efficient_converter(
         )
     )
 
-    # Transform if required
-    if model_kv.is_transformed and not kv:
-        raise AttributeError("Transformed model is passed while requesting to convert non-transformed model")
-    model_kv = model_kv if model_kv.is_transformed else QEfficient.transform(model_kv) if kv else model_kv
-
     if onnx_dir_path is None:
-        model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_kv.model_card_name))
+        model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
         onnx_dir_path = os.path.join(model_card_dir, "onnx")
         os.makedirs(onnx_dir_path, exist_ok=True)
 
