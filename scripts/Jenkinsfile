@@ -22,10 +22,9 @@ pipeline
                     docker run --privileged -dit --name ${BRANCH_NAME} -v ./:/efficient-transformers -v  ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
                     docker exec ${BRANCH_NAME} bash -c "
                     cd /efficient-transformers &&
-                    export QEFF_HOME=$(pwd)
                     . /opt/qeff-env/bin/activate &&
                     pip install --upgrade pip setuptools &&
-                    pip install .[test] &&
+                    pip install .[test] --extra-index-url https://download.pytorch.org/whl/cpu &&
                     pip install junitparser pytest-xdist &&
                     rm -rf QEfficient "
                     '''
@@ -45,9 +44,12 @@ pipeline
                     . /opt/qeff-env/bin/activate &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export PYTHONPATH=. &&
-                    pytest tests --ignore tests/cloud --junitxml=tests/tests_log1.xml &&
-                    pytest tests/cloud --junitxml=tests/tests_log2.xml &&
-                    junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log.xml &&
+                    export QEFF_HOME=$(pwd) &&
+                    pytest tests -m "not cli and not on_qaic" -n auto --junitxml=tests/tests_log1.xml & &&
+                    pytest tests -m "not cli and on_qaic" -n 4 --junitxml=tests/tests_log2.xml & &&
+                    wait &&
+                    pytest tests -m cli --junitxml=tests/tests_log3.xml &&
+                    junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log3.xml tests/tests_log.xml &&
                     deactivate &&
                     exit" 
                     '''
@@ -74,7 +76,7 @@ pipeline
                 }
             }
             
-            junit 'tests/tests_log.xml'
+            junit testResults: 'tests/tests_log.xml', skipPublishingChecks: true
             echo 'Cleaning Workspace'
             deleteDir()
          }
