@@ -6,21 +6,19 @@
 # ----------------------------------------------------------------------------
 
 import hashlib
-import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import torch
 import torch.nn as nn
 from peft import PeftConfig, load_peft_weights
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 import QEfficient
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.lora.pytorch_transforms import LoraModelInputsTransform, TargetModulesTransform
-from QEfficient.transformers.pytorch_transforms import CBTransform
-from QEfficient.utils import get_qpc_dir_path, qpc_exists
+from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
-from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
 
@@ -54,14 +52,13 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
     """
 
-    # inherit __init__() from QEFFAutoModelForCausalLM
-    def __init__(self, model: nn.Module, pretrained_model_name_or_path: str, **kwargs) -> None:
-        super().__init__(model, pretrained_model_name_or_path)
+    def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs) -> None:
+        super().__init__(model, continuous_batching)
         assert (
             type(self.model).__name__ == "QEffMistralForCausalLM" or type(self.model).__name__ == "QEffLlamaForCausalLM"
         ), f"Only QEffMistralForCausalLM and QEffLlamaForCausalLM model are supported but get {type(self.model).__name__}"
 
-        self.base_model_name = pretrained_model_name_or_path
+        self.base_model_name = self.model.model.config._name_or_path
         self.adapter_weights = {}
         self.adapter_configs = {}
         self.max_num_adapters = 0
@@ -91,6 +88,9 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
         # ensure model will be exported again if order of adapters changes
         mhash.update(to_hashable(self.active_adapter_to_id))
+
+        # noncb & cb should have different onnx & qpc
+        mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
 
         mhash = mhash.hexdigest()[:16]
         return mhash
@@ -277,141 +277,79 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         # load_weight to model
         self.load_adapter_weights_to_model()
 
-    def export(self, **kwargs) -> str:
-        """
-        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
-        The model should already be transformed i.e. ``self.is_transformed`` should be ``True``.
-        Otherwise, this will raise an ``AssertionError``.
-        We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
-
-        ``Optional`` Args:
-            does not any arguments.
-
-        Raises:
-            :AttributeError: If ``pretrained_model_name_or_path`` is a path, this function needs model card name of the model so that it can distinguish between directories while saving the ``ONNX`` files generated. So, user needs to pass ``model_card_name`` as a valid ``string`` in that case, Otherwise this will raise the error.
-
-        Returns:
-            :str: Path of the generated ``ONNX`` graph.
-        """
-
-        self.full_batch_size = kwargs.get("full_batch_size", self.full_batch_size)
-        export_dir = kwargs.get("export_dir", None)
-
-        # obtain all necessary information to initialize the model
+    def export(self, export_dir: Optional[str] = None) -> str:
+        # initialize the adapter model
         assert self.max_num_adapters, "Please use load_adapter() to add at least one adapter; otherwise, refer to QEFFAutoModelForCausalLM for base model usage"
         self.init_adapter_model()
 
-        assert self.is_transformed, "Please first run transform on the QEFFAutoModelForCausalLM object"
-
-        # Caching export onnx
-        if export_dir is None:
-            model_card_dir = os.path.join(QEFF_MODELS_DIR, str(self.model_card_name))
-            export_dir = Path(model_card_dir).with_name(str(self.model_card_name).split("/")[1] + "-" + self.model_hash)
-        else:
-            export_dir = Path(export_dir).with_name(export_dir.name + "-" + self.model_hash)
-        onnx_dir_path = os.path.join(export_dir, "onnx")
-        model_base_name = self.model_card_name.replace("/", "_") + "_kv"
-        onnx_path = os.path.join(onnx_dir_path, f"{model_base_name}.onnx")
-
-        if Path(onnx_path).is_file():
-            self.onnx_path = onnx_path
-            logger.info(f"Using existing onnx path:-{self.onnx_path}")
-            return self.onnx_path
-
-        # Export
-        os.makedirs(onnx_dir_path, exist_ok=True)
-        _, onnx_model_path = QEfficient.export(
-            model_name=self.model_card_name,
-            model_kv=self,
-            tokenizer=self.tokenizer,
-            full_batch_size=self.full_batch_size,
-            max_num_adapters=self.max_num_adapters,
-            onnx_dir_path=onnx_dir_path,
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
+        kv_cache_shape = get_padding_shape_from_config(
+            self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
-        self.onnx_path = onnx_model_path
+        example_inputs = {
+            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(bs, seq_len),
+            "past_key_values": [[] for _ in range(self.num_layers)],
+            "lora_ids": torch.zeros(bs, dtype=torch.int64).view(bs, 1),
+        }
+        dynamic_axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+            "lora_ids": {0: "batch_size"},
+        }
+        output_names = ["logits"]
+        for i in range(self.num_layers):
+            for kv in ["key", "value"]:
+                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                dynamic_axes[f"past_{kv}.{i}"] = {
+                    0: "full_batch_size" if self.continuous_batching else "batch_size",
+                    2: "ctx_len",
+                }
+                output_names.append(f"past_{kv}.{i}_RetainedState")
 
-        return self.onnx_path
+        if self.continuous_batching:
+            example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
+            dynamic_axes["batch_index"] = {0: "batch_size"}
 
-    def export_and_compile(
+        return self._export(
+            example_inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+        )
+
+    def generate(
         self,
-        num_cores: int,
-        device_group: List[int],
-        batch_size: int = 1,
-        prompt_len: int = 32,
-        ctx_len: int = 128,
-        mxfp6: bool = True,
-        mxint8: bool = False,
-        mos: int = -1,
-        aic_enable_depth_first: bool = False,
-        qpc_dir_suffix: Optional[str] = None,
-        full_batch_size: Optional[int] = None,
-    ) -> str:
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
+        prompts: List[str],
+        device_id: List[int] = None,
+        runtime: str = "AI_100",
+        **kwargs,
+    ):
         """
-        This API is specific to Internal VLLM use-case and is not recommended to be used in your application unless your are using VLLM.
+        This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
+        If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
+
+        ``Mandatory`` Args:
+            :prompts (List[str]): List of prompts to run the execution.
+            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
+        ``optional`` Args:
+            :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to "AI_100".
         """
-        _, transformed = CBTransform.apply(self.model)
-        if not transformed:
-            raise RuntimeError("Could not apply Continuous batch transform on the model")
-        if full_batch_size is not None:
-            self.full_batch_size = full_batch_size
-
-        self.export()
-
-        qpc_base_dir_name = get_qpc_dir_path(
-            model_card_name=self.model_card_name,
-            num_cores=num_cores,
-            mos=mos,
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            mxfp6=mxfp6,
-            mxint8=mxint8,
-            device_group=device_group,
-            full_batch_size=self.full_batch_size,
-        )
-
-        # Caching compiled qpc
-        model_card_dir = os.path.join(QEFF_MODELS_DIR, str(self.model_card_name))
-        export_dir = Path(model_card_dir).with_name(str(self.model_card_name).split("/")[1] + "-" + self.model_hash)
-        qpc_dir_path = qpc_base_dir_name.replace(model_card_dir, str(export_dir))
-        qpc_path = os.path.join(qpc_dir_path, "qpcs")
-
-        if not qpc_exists(qpc_path):
-            # Compile
-            self.qpc_path = QEfficient.compile(
-                onnx_path=self.onnx_path,
-                qpc_path=qpc_dir_path,
-                num_cores=num_cores,
-                device_group=device_group,
-                aic_enable_depth_first=aic_enable_depth_first,
-                mos=mos,
-                batch_size=batch_size,
-                prompt_len=prompt_len,
-                ctx_len=ctx_len,
-                mxfp6=mxfp6,
-                mxint8=mxint8,
-                full_batch_size=full_batch_size,
-            )
-            logger.info(f"Generated qpc:-{qpc_path}")
-        else:
-            self.qpc_path = qpc_path
-            logger.info(f"Using existing qpc path:-{self.qpc_path}")
-
-        return self.qpc_path
-
-    def run_cloud_ai_100(self, prompts: List[str], device_id: List[int] = None, **kwargs):
-        "Execute on cloud ai 100 with prompt_to_lora_id_mapping passed in"
-
-        assert isinstance(self.qpc_path, str), "Please run compile API first!"
+        if runtime != "AI_100":
+            raise ValueError("Only AI_100 runtime is supported right now via generate API")
+        if not isinstance(self.qpc_path, Path):
+            raise TypeError("Please run compile API first!")
         generation_len = kwargs.pop("generation_len", None)
-        default_mapping = [0 for _ in range(len(prompts))]
-        prompt_to_lora_id_mapping = kwargs.pop("prompt_to_lora_id_mapping", default_mapping)
+        prompt_to_lora_id_mapping = kwargs.pop("prompt_to_lora_id_mapping", [0 for _ in range(len(prompts))])
         return QEfficient.cloud_ai_100_exec_kv(
-            self.tokenizer,
+            tokenizer,
             self.qpc_path,
             prompt=prompts,
             device_id=device_id,
             generation_len=generation_len,
-            full_batch_size=self.full_batch_size,
             prompt_to_lora_id_mapping=prompt_to_lora_id_mapping,
         )

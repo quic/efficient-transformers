@@ -7,8 +7,8 @@
 
 ## This example works on continuous batching with different lora adapters in the same batch ##
 
-
 from QEfficient import QEffAutoLoraModelForCausalLM
+from QEfficient.utils import load_hf_tokenizer
 
 base_model_name = "mistralai/Mistral-7B-v0.1"
 seq_len = 128
@@ -20,10 +20,15 @@ device_group = [0]
 
 # **Option1**: Download model weights from hugging face & Init it with QEffAuto model to apply QEff transforms
 # model_hf = AutoModelForCausalLM.from_pretrained(base_model_name)
-# qeff_model = QEffAutoLoraModelForCausalLM(model_hf, pretrained_model_name_or_path=base_model_name)
+# qeff_model = QEffAutoLoraModelForCausalLM(model_hf, continuous_batching=True)
 
 # **Option2**: Initialize the model using from_pretrained() method
-qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name)
+qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(
+    pretrained_model_name_or_path=base_model_name, continuous_batching=True
+)
+
+# (alternative) non-cb initialization
+# qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(pretrained_model_name_or_path=base_model_name, continuous_batching=False)
 
 ## STEP 2 -- load adapter adapter
 adapter_id_gsm8k = qeff_model.load_adapter("predibase/gsm8k", "gsm8k")
@@ -45,20 +50,25 @@ gsm8k_id = qeff_model.get_adapter_id("gsm8k")
 tldr_id = qeff_model.get_adapter_id("tldr_content_gen")
 
 ## STEP 3 -- export & compile qeff model
-args = {
-    "num_cores": 16,
-    "device_group": device_group,
-    "batch_size": 1,
-    "prompt_len": seq_len,
-    "ctx_len": ctx_len,
-    "mxfp6": True,
-    "mxint8": True,
-    "mos": -1,
-    "aic_enable_depth_first": True,
-    "qpc_dir_suffix": None,
-    "full_batch_size": full_batch_size,
-}
-qpc_path = qeff_model.export_and_compile(**args)
+qpc_path = qeff_model.compile(
+    batch_size=1,
+    full_batch_size=full_batch_size,
+    prefill_seq_len=seq_len,
+    ctx_len=ctx_len,
+    num_devices=len(device_group),
+    num_cores=16,
+    mxfp6_matmul=True,
+    mxint8_kv_cache=True,
+)
+
+# (alternative) non-cb compilation
+# qpc_path = qeff_model.compile(batch_size=2,
+#                               prefill_seq_len=seq_len,
+#                               ctx_len=ctx_len,
+#                               num_devices=len(device_group),
+#                               num_cores=16,
+#                               mxfp6_matmul=True,
+#                               mxint8_kv_cache=True)
 
 ## STEP 4 -- run inference on the generate function
 # prompt_to_lora_id_mapping is a list of lora_id of which the size matches num of prompts
@@ -75,9 +85,11 @@ prompts = [
     """Please answer the following question: Gene is sewing a quilt out of old souvenir t-shirts. He has one shirt from each vacation he has been on. Every shirt is its own quilt block. Each row is made of blocks from a different year of vacations. He goes on four vacations a year and has been vacationing since he was 23 years old. He is now 34. How many quilt blocks does he have in total?\n\nAnswer:""",
     """The following headline is the headline of a news report. Please write the content of the news passage based on only this headline.\n\nHeadline: TikTok Picks Streaming Service Audius to Power New ‘Sounds’ Library\n\nContent:""",
 ]
+
 qeff_model.generate(
-    prompts,
-    device_group,
+    tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=base_model_name),
+    prompts=prompts,
+    device_id=device_group,
     prompt_to_lora_id_mapping=[gsm8k_id, tldr_id, gsm8k_id, 0, gsm8k_id, tldr_id, gsm8k_id, tldr_id],
 )
 

@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-from typing import Optional
 
 import numpy as np
 import torch
@@ -13,17 +12,7 @@ from QEfficient.utils import get_num_layers_from_config, get_padding_shape_from_
 
 
 class InputHandler:
-    def __init__(
-        self,
-        batch_size,
-        tokenizer,
-        config,
-        prompt,
-        prompt_len,
-        ctx_len,
-        full_batch_size,
-        max_num_adapters: Optional[int] = None,
-    ):
+    def __init__(self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size):
         """
         Initialization
 
@@ -43,7 +32,6 @@ class InputHandler:
         self.prompt_len = prompt_len
         self.ctx_len = ctx_len
         self.full_batch_size = full_batch_size
-        self.max_num_adapters = max_num_adapters
         self.n_layer = get_num_layers_from_config(config)
         self.padding_shape = get_padding_shape_from_config(
             config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
@@ -88,11 +76,6 @@ class InputHandler:
             inputs["position_ids"] = torch.arange(input_len).view(1, input_len)
             inputs["batch_index"] = torch.arange(1).view(-1, 1)
 
-        # lora_ids for prefill
-        if self.max_num_adapters:
-            lora_ids = torch.zeros((1), dtype=torch.int64).view(-1, 1)
-            inputs["lora_ids"] = lora_ids
-
         past_key_values = []
         for i in range(self.n_layer):
             past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
@@ -135,10 +118,6 @@ class InputHandler:
         updated_inputs["past_key_values"] = tuple(
             [(key.detach(), value.detach()) for key, value in pt_outputs["past_key_values"]]
         )
-
-        if self.max_num_adapters:
-            lora_ids = torch.zeros((self.full_batch_size), dtype=torch.int64).view(-1, 1)
-            updated_inputs["lora_ids"] = lora_ids
 
         return updated_inputs
 

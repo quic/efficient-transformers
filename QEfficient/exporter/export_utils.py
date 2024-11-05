@@ -83,8 +83,6 @@ def export_onnx(
             dynamic_axes[iname] = {0: dynamic_axis_past_key, 2: "ctx_len"}
         elif iname == "batch_index":
             dynamic_axes[iname] = {0: "batch_size"}
-        elif iname == "lora_ids":
-            dynamic_axes[iname] = {0: "batch_size"}
 
     if "past_key.0" in input_names and "attention_mask" in input_names:
         dynamic_axes["attention_mask"] = {0: "batch_size", 1: "ctx_len"}

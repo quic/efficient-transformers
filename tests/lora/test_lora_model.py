@@ -13,6 +13,7 @@ from peft import LoraConfig
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient import QEffAutoLoraModelForCausalLM
+from QEfficient.utils import load_hf_tokenizer
 
 configs = [
     pytest.param(
@@ -43,9 +44,7 @@ model_samples = [
 
 def create_lora_base_model(base_config):
     base_model = AutoModelForCausalLM.from_config(base_config, attn_implementation="eager")
-    lora_base_model = QEffAutoLoraModelForCausalLM(
-        base_model, pretrained_model_name_or_path=str(base_config.model_type)
-    )
+    lora_base_model = QEffAutoLoraModelForCausalLM(base_model)
 
     return lora_base_model
 
@@ -53,8 +52,8 @@ def create_lora_base_model(base_config):
 # test model initialization using __init__ approach
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples)
 def test_auto_lora_model_for_causal_lm_init(base_model_name, adapter_id_0, adapter_id_1):
-    model_hf = AutoModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
-    qeff_model = QEffAutoLoraModelForCausalLM(model_hf, pretrained_model_name_or_path=base_model_name)
+    model_hf = AutoModelForCausalLM.from_pretrained(base_model_name)
+    qeff_model = QEffAutoLoraModelForCausalLM(model_hf)
 
     assert qeff_model.base_model_name == base_model_name
     assert len(qeff_model.adapter_weights) == 0
@@ -66,7 +65,7 @@ def test_auto_lora_model_for_causal_lm_init(base_model_name, adapter_id_0, adapt
 # test model initialization using from_pretrained approach
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples)
 def test_auto_lora_model_for_causal_lm_from_pretrained(base_model_name, adapter_id_0, adapter_id_1):
-    qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
+    qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(pretrained_model_name_or_path=base_model_name)
 
     assert qeff_model.base_model_name == base_model_name
     assert len(qeff_model.adapter_weights) == 0
@@ -80,7 +79,7 @@ def test_auto_lora_model_for_causal_lm_from_pretrained(base_model_name, adapter_
 def test_auto_lora_model_for_causal_lm_init_from_unsupported_model(base_model_name):
     model_hf = AutoModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
     with pytest.raises(AssertionError):
-        QEffAutoLoraModelForCausalLM(model_hf, pretrained_model_name_or_path=base_model_name)
+        QEffAutoLoraModelForCausalLM(model_hf)
 
     with pytest.raises(AssertionError):
         QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
@@ -202,7 +201,7 @@ def test_auto_lora_model_for_causal_lm_export_compile_generate(base_model_name, 
 
     # export
     start = perf_counter()
-    qeff_model.export(export_dir=tmp_path, full_batch_size=1)  # NOTE: should export with full_batch_size enabled
+    qeff_model.export(export_dir=tmp_path)
     end = perf_counter()
     export_time_0 = end - start
     model_path = tmp_path.with_name(tmp_path.name + "-" + qeff_model.model_hash)
@@ -211,15 +210,20 @@ def test_auto_lora_model_for_causal_lm_export_compile_generate(base_model_name, 
 
     # test export caching
     start = perf_counter()
-    qeff_model.export(export_dir=tmp_path, full_batch_size=1)
+    qeff_model.export(export_dir=tmp_path)
     end = perf_counter()
     export_time_1 = end - start
     assert export_time_1 < export_time_0
 
     # test compile
-    qeff_model.compile(num_cores=16, device_group=[0])
+    qeff_model.compile(prefill_seq_len=32, ctx_len=64)
     assert Path(qeff_model.qpc_path).is_dir()
 
     # test generate
     prompts = ["hello!", "hi", "hello, my name is", "hey"]
-    qeff_model.generate(prompts, [0], prompt_to_lora_id_mapping=[id_0, id_1, id_0, 0])
+    qeff_model.generate(
+        tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=base_model_name),
+        prompts=prompts,
+        device_id=[0],
+        prompt_to_lora_id_mapping=[id_0, id_1, id_0, 0],
+    )

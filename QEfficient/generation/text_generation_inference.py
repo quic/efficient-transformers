@@ -230,7 +230,6 @@ def cloud_ai_100_exec_kv(
     stream: bool = True,
     write_io_dir: Optional[str] = None,
     automation=False,
-    full_batch_size: Optional[int] = None,
     prompt_to_lora_id_mapping: Optional[List[int]] = None,
 ):
     """
@@ -348,7 +347,10 @@ class TextGeneration:
 
         if prompt_to_lora_id_mapping:
             self.prompt_to_lora_id_mapping_prefill = deque(prompt_to_lora_id_mapping)
-            self.prompt_to_lora_id_mapping_decode = prompt_to_lora_id_mapping
+            if self.full_batch_size:
+                self.prompt_to_lora_id_mapping_decode = prompt_to_lora_id_mapping
+            else:
+                self.prompt_to_lora_id_mapping_decode = deque(prompt_to_lora_id_mapping)
         else:
             self.prompt_to_lora_id_mapping_prefill = None
             self.prompt_to_lora_id_mapping_decode = None
@@ -472,9 +474,15 @@ class TextGeneration:
         if self.batch_index is not None:
             decode_inputs["batch_index"] = self.batch_index
 
-        if self.prompt_to_lora_id_mapping_decode and self.full_batch_size is not None:
-            first_batch_lora_ids = [self.prompt_to_lora_id_mapping_decode[i] for i in range(self.full_batch_size)]
-            decode_inputs["lora_ids"] = np.array(first_batch_lora_ids, dtype=np.int64).reshape(self.full_batch_size, 1)
+        if self.prompt_to_lora_id_mapping_decode:
+            if self.full_batch_size:
+                first_batch_lora_ids = [self.prompt_to_lora_id_mapping_decode[i] for i in range(self.full_batch_size)]
+                decode_inputs["lora_ids"] = np.array(first_batch_lora_ids, dtype=np.int64).reshape(
+                    self.full_batch_size, 1
+                )
+            else:
+                batch_lora_ids = [self.prompt_to_lora_id_mapping_decode.popleft() for i in range(self.batch_size)]
+                decode_inputs["lora_ids"] = np.array(batch_lora_ids, dtype=np.int64).reshape(self.batch_size, 1)
 
         return decode_inputs
 
@@ -565,9 +573,13 @@ class TextGeneration:
             inputs["batch_index"] = decode_batch_id
 
         if self.prompt_to_lora_id_mapping_prefill:
-            inputs["lora_ids"] = np.array(self.prompt_to_lora_id_mapping_prefill.popleft(), dtype=np.int64).reshape(
-                1, 1
-            )
+            if self.full_batch_size:
+                inputs["lora_ids"] = np.array(self.prompt_to_lora_id_mapping_prefill.popleft(), dtype=np.int64).reshape(
+                    1, 1
+                )
+            else:
+                batch_lora_ids = [self.prompt_to_lora_id_mapping_prefill.popleft() for i in range(self.batch_size)]
+                inputs["lora_ids"] = np.array(batch_lora_ids, dtype=np.int64).reshape(self.batch_size, 1)
 
         for i in range(num_chunks):
             chunk_inputs = inputs.copy()
