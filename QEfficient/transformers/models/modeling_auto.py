@@ -170,14 +170,21 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
+        if len(kv_cache_shape) ==3:  # For GPTBigCode arch the pkv is 3d
+            pkv_dynamic_axes = {
+            0: "full_batch_size" if self.continuous_batching else "batch_size",
+            1: "ctx_len",
+        }
+        else:  # pkv is 4d
+            pkv_dynamic_axes = {
+                0: "full_batch_size" if self.continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
         output_names = ["logits"]
         for i in range(self.num_layers):
             for kv in ["key", "value"]:
                 example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                dynamic_axes[f"past_{kv}.{i}"] = {
-                    0: "full_batch_size" if self.continuous_batching else "batch_size",
-                    2: "ctx_len",
-                }
+                dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                 output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:

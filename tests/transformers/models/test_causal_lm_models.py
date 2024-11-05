@@ -178,15 +178,15 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
 # FIXME: there should be a CB test here
 @pytest.mark.parametrize("model_name", ["gpt2"], ids=lambda x: x)
-def test_causal_lm_export_with_deprecated_api(model_name, cb):
+def test_causal_lm_export_with_deprecated_api(model_name):
     model_config = {"model_name": model_name}
     model_config["n_layer"] = 1
     model, _ = load_causal_lm_model(model_config)
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
-    qeff_model = QEFFAutoModelForCausalLM(model, cb)
+    qeff_model = QEFFAutoModelForCausalLM(model)
     new_api_onnx_model_path = qeff_model.export()
     _, old_api_onnx_model_path = qualcomm_efficient_converter(
-        model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer, full_batch_size=(1 if cb else None)
+        model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer
     )
 
     api_runner = ApiRunner(
@@ -196,10 +196,9 @@ def test_causal_lm_export_with_deprecated_api(model_name, cb):
         prompt=Constants.INPUT_STR,
         prompt_len=Constants.PROMPT_LEN,
         ctx_len=Constants.CTX_LEN,
-        full_batch_size=(1 if cb else None),
     )
 
-    new_api_ort_tokens = api_runner.run_(new_api_onnx_model_path)
+    new_api_ort_tokens = api_runner.run_kv_model_on_ort(new_api_onnx_model_path)
     old_api_ort_tokens = api_runner.run_kv_model_on_ort(old_api_onnx_model_path)
 
     assert (
