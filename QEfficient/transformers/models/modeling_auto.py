@@ -170,11 +170,11 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
-        if len(kv_cache_shape) ==3:  # For GPTBigCode arch the pkv is 3d
+        if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
             pkv_dynamic_axes = {
-            0: "full_batch_size" if self.continuous_batching else "batch_size",
-            1: "ctx_len",
-        }
+                0: "full_batch_size" if self.continuous_batching else "batch_size",
+                1: "ctx_len",
+            }
         else:  # pkv is 4d
             pkv_dynamic_axes = {
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
