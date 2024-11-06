@@ -20,50 +20,6 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.logging_utils import logger
 
-def latency_stats_bertstyle(
-    model_name: str,
-    qpc_path: str,
-    seq_len: int,
-    prompt: str,
-    device_id: Optional[List[int]] = None,
-):
-    """
-    Function to execute Bertstyle ONNX model on Cloud AI 100.
-
-    Args:
-        :model_name (str): Hugging Face Model Card name, Example: gpt2.
-        :qpc_path (str): Path to save generated binary file after compilation.
-        :seq_len (int): Sequence length.
-        :prompt (str): Sample prompt for the model text generation.
-        :device_id (List[int]): Device Ids to be used for compilation. If devices > 1, it enables multiple card setup.
-    """
-    session = QAICInferenceSession(qpc_path, device_id)
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
-    padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
-    inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
-    next_token_id = inputs["input_ids"][0, -1]
-    cur_len = inputs["attention_mask"].sum().item()
-    print(prompt, end=" ", flush=True)
-    init_len = cur_len
-    start = perf_counter()
-    while next_token_id != tokenizer.eos_token_id and cur_len <= seq_len:
-        outputs = session.run(inputs)
-        logits = outputs["logits"]
-        next_token_id = logits[0, -1].argmax().item()
-        inputs["input_ids"] = np.concatenate(
-            [
-                inputs["input_ids"][:, 1:],
-                np.ones((1, 1), dtype=np.int64) * next_token_id,
-            ],
-            1,
-        )
-        inputs["attention_mask"] = np.concatenate([inputs["attention_mask"][:, 1:], np.ones((1, 1), dtype=np.int64)], 1)
-        print(tokenizer.decode(next_token_id), end=" ", flush=True)
-        cur_len += 1
-    end = perf_counter()
-    print()
-    print(round((cur_len - init_len) / (end - start), 2), "tok/s")
-
 @dataclass
 class PerfMetrics:
     """
@@ -112,7 +68,9 @@ class CloudAI100ExecInfo:
         \nTotal token/sec is= {round(self.perf_metrics.total_perf * self.batch_size, 2)}\
         \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)}"
 
+
 io_files = []
+
 
 def write_io_files(
     inputs: Dict[str, np.ndarray],
@@ -154,6 +112,52 @@ def write_io_files(
     with open(f"{write_io_dir}/{write_io_name}.json", "w") as fp:
         json.dump({"IO-files": io_files}, fp, indent=True)
 
+
+def latency_stats_bertstyle(
+    model_name: str,
+    qpc_path: str,
+    seq_len: int,
+    prompt: str,
+    device_id: Optional[List[int]] = None,
+):
+    """
+    Function to execute Bertstyle ONNX model on Cloud AI 100.
+
+    Args:
+        :model_name (str): Hugging Face Model Card name, Example: gpt2.
+        :qpc_path (str): Path to save generated binary file after compilation.
+        :seq_len (int): Sequence length.
+        :prompt (str): Sample prompt for the model text generation.
+        :device_id (List[int]): Device Ids to be used for compilation. If devices > 1, it enables multiple card setup.
+    """
+    session = QAICInferenceSession(qpc_path, device_id)
+    tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
+    padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
+    inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
+    next_token_id = inputs["input_ids"][0, -1]
+    cur_len = inputs["attention_mask"].sum().item()
+    print(prompt, end=" ", flush=True)
+    init_len = cur_len
+    start = perf_counter()
+    while next_token_id != tokenizer.eos_token_id and cur_len <= seq_len:
+        outputs = session.run(inputs)
+        logits = outputs["logits"]
+        next_token_id = logits[0, -1].argmax().item()
+        inputs["input_ids"] = np.concatenate(
+            [
+                inputs["input_ids"][:, 1:],
+                np.ones((1, 1), dtype=np.int64) * next_token_id,
+            ],
+            1,
+        )
+        inputs["attention_mask"] = np.concatenate([inputs["attention_mask"][:, 1:], np.ones((1, 1), dtype=np.int64)], 1)
+        print(tokenizer.decode(next_token_id), end=" ", flush=True)
+        cur_len += 1
+    end = perf_counter()
+    print()
+    print(round((cur_len - init_len) / (end - start), 2), "tok/s")
+
+
 # Read from specializations.json, Relative path computed from qpc path
 def get_compilation_dims(qpc_path: str) -> Tuple[int, int, Optional[int]]:
     qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
@@ -172,12 +176,6 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int, Optional[int]]:
         compilation_fbs = int(compilation_fbs)
     return compilation_batch_size, compilation_ctx_len, compilation_fbs
 
-def read_prompts_txt_file(prompts_txt_file_path: str):
-    prompt = []
-    with open(prompts_txt_file_path, "r") as file:
-        for line in file:
-            prompt.append(line.strip())
-    return prompt
 
 def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
     if prompt is None and prompts_txt_file_path is None:
@@ -216,6 +214,15 @@ def fix_prompts(prompt: List[str], batch_size: int, full_batch_size: int = None)
         prompt = prompt[: batch_size * (len(prompt) // batch_size)]
 
     return prompt
+
+
+def read_prompts_txt_file(prompts_txt_file_path: str):
+    prompt = []
+    with open(prompts_txt_file_path, "r") as file:
+        for line in file:
+            prompt.append(line.strip())
+    return prompt
+
 
 def print_latency_stats_kv(prompt, exec_info, automation: bool = False):
     if automation:
@@ -364,39 +371,15 @@ class TextGenerationBase:
         self.tokenizer = tokenizer
         self._set_tokenizer_params()  # set tokenizer params
 
-    def _fetch_vocab_size(
-        self,
-    ):
+    def _set_tokenizer_params(self):
         """
-        Fetches the vocabulary size from the session's allowed shapes.
-        Returns:
-            vocab_size: The vocabulary size fetched from the session's allowed shapes.
+        Sets the tokenizer parameters for the model.
         """
-        if self._session.allowed_shapes:
-            return [x[self._session.binding_index_map["logits"]] for x in self._session.allowed_shapes][0][1][2]
-
-        return self._session.bindings[self._session.binding_index_map["logits"]].dims[2]
-
-    def _fetch_batch_size_prefill_seq_len(
-        self,
-    ):
-        """
-        Fetches the batch size and prefill sequence length from the session's bindings or allowed shapes.
-
-        Returns:
-            batch_size: The batch size fetched from the session's bindings or allowed shapes.
-            prefill_seq_len: The prefill sequence length fetched from the session's bindings or allowed shapes.
-        """
-        if self._session.allowed_shapes:
-            batch_size = max(
-                [x[self._session.binding_index_map["input_ids"]][1][0] for x in self._session.allowed_shapes]
-            )
-            prefill_seq_len = max(
-                [x[self._session.binding_index_map["input_ids"]][1][1] for x in self._session.allowed_shapes]
-            )
-        else:
-            batch_size, prefill_seq_len = self._session.bindings[self._session.binding_index_map["input_ids"]].dims
-        return batch_size, prefill_seq_len
+        if self.tokenizer.padding_side != "right":
+            logger.warning("Please use padding_side='right' while initializing the tokenizer")
+            self.tokenizer.padding_side = "right"
+        if self.tokenizer.pad_token_id is None:
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
     def _fetch_full_batch_size(
         self,
@@ -419,15 +402,39 @@ class TextGenerationBase:
                 full_batch_size, _ = self._session.bindings[self._session.binding_index_map["batch_index"]].dims
         return full_batch_size
 
-    def _set_tokenizer_params(self):
+    def _fetch_batch_size_prefill_seq_len(
+        self,
+    ):
         """
-        Sets the tokenizer parameters for the model.
+        Fetches the batch size and prefill sequence length from the session's bindings or allowed shapes.
+
+        Returns:
+            batch_size: The batch size fetched from the session's bindings or allowed shapes.
+            prefill_seq_len: The prefill sequence length fetched from the session's bindings or allowed shapes.
         """
-        if self.tokenizer.padding_side != "right":
-            logger.warning("Please use padding_side='right' while initializing the tokenizer")
-            self.tokenizer.padding_side = "right"
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        if self._session.allowed_shapes:
+            batch_size = max(
+                [x[self._session.binding_index_map["input_ids"]][1][0] for x in self._session.allowed_shapes]
+            )
+            prefill_seq_len = max(
+                [x[self._session.binding_index_map["input_ids"]][1][1] for x in self._session.allowed_shapes]
+            )
+        else:
+            batch_size, prefill_seq_len = self._session.bindings[self._session.binding_index_map["input_ids"]].dims
+        return batch_size, prefill_seq_len
+
+    def _fetch_vocab_size(
+        self,
+    ):
+        """
+        Fetches the vocabulary size from the session's allowed shapes.
+        Returns:
+            vocab_size: The vocabulary size fetched from the session's allowed shapes.
+        """
+        if self._session.allowed_shapes:
+            return [x[self._session.binding_index_map["logits"]] for x in self._session.allowed_shapes][0][1][2]
+
+        return self._session.bindings[self._session.binding_index_map["logits"]].dims[2]
 
     def _fetch_generation_len(self, generation_len, max_gen_len):
         """
@@ -452,6 +459,99 @@ class TextGenerationBase:
         if generation_len <= 0:
             raise ValueError("generation length should be greater than zero")
         return generation_len
+
+    def prepare_decode_inputs(self):
+        """
+        This function creates the decode inputs.
+
+        Returns:
+            dict: The decode inputs.
+        """
+        decode_inputs = {}
+        decode_inputs["input_ids"] = self.decode_input_ids
+        decode_inputs["position_ids"] = self.decode_pos_ids
+        if self.batch_index is not None:
+            decode_inputs["batch_index"] = self.batch_index
+
+        if self._prompt_to_lora_id_mapping_decode:
+            if self.full_batch_size:
+                first_batch_lora_ids = [self._prompt_to_lora_id_mapping_decode[i] for i in range(self.full_batch_size)]
+                decode_inputs["lora_ids"] = np.array(first_batch_lora_ids, dtype=np.int64).reshape(
+                    self.full_batch_size, 1
+                )
+            else:
+                batch_lora_ids = [self._prompt_to_lora_id_mapping_decode.popleft() for i in range(self.batch_size)]
+                decode_inputs["lora_ids"] = np.array(batch_lora_ids, dtype=np.int64).reshape(self.batch_size, 1)
+
+        return decode_inputs
+
+    def _fetch_next_token_id(self, outputs):
+        logits = outputs["logits"]
+        if len(logits.shape) == 2:
+            logits = np.expand_dims(logits, 1)
+
+        # Get output token
+        next_token_id = logits.argmax(2)
+        return next_token_id
+
+    def initialize_decode_inputs(self, num_prompts, execution_batch_size, max_gen_length):
+        """
+        Initialize np arrays for storing the prefill output for all the decode batch size.
+        """
+        self.generated_ids = np.full((num_prompts, max_gen_length), self.tokenizer.pad_token_id)
+        self.decode_input_ids = np.zeros((execution_batch_size, 1), np.int64)
+        self.decode_pos_ids = np.zeros((execution_batch_size, 1), np.int64)
+        self.generation_len = np.zeros((execution_batch_size, 1), np.int64)
+        return
+
+    def initialize_lora_id_mapping(self, prompt_to_lora_id_mapping):
+        self._prompt_to_lora_id_mapping_prefill = deque(prompt_to_lora_id_mapping)
+        if self.full_batch_size:
+            self._prompt_to_lora_id_mapping_decode = prompt_to_lora_id_mapping
+        else:
+            self._prompt_to_lora_id_mapping_decode = deque(prompt_to_lora_id_mapping)
+
+    def update_decode_input(self, outputs, position_ids, generation_len, decode_batch_id=None):
+        """
+        Updates the decode input with the generated values.
+        Args:
+            outputs (dict): The outputs of the model.
+            position_ids (array): The position IDs.
+            generation_len (int): The generation length.
+            decode_batch_id (int, optional): The decode batch ID. If None, all values are updated. Defaults to None.
+
+        Returns:
+            next_token_id (array): The next token ID.
+        """
+        next_token_id = self._fetch_next_token_id(outputs)
+
+        # Store the generated values.
+        self.decode_input_ids[decode_batch_id or slice(None)] = next_token_id
+        self.decode_pos_ids[decode_batch_id or slice(None)] = position_ids
+        self.generated_ids[decode_batch_id or slice(None), 0] = next_token_id.squeeze(1)
+        self.generation_len[decode_batch_id or slice(None)] = generation_len
+        return next_token_id
+
+    def run_prefill_for_all_inputs(self, prompt_queue, generation_len):
+        """
+        Runs prefill for all inputs in the prompt queue and updates the decode input.
+
+        Method iterates over the full batch size and for each decode batch ID, it pops the next prompt from the queue.  It then runs prefill for the next prompt and updates the decode input with the outputs.
+
+        Args:
+            prompt_queue (deque): The queue of prompts.
+            generation_len (int): The generation length.
+
+        """
+        for decode_batch_id in range(self.full_batch_size):
+            next_prompt = prompt_queue.popleft()
+
+            # run prefill for num_chunks
+            outputs, position_ids, generation_len = self.run_prefill(
+                next_prompt, generation_len, decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1)
+            )
+
+            _ = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
 
     def run_prefill(self, prompt, generation_len, prefill_logit_bs=1, decode_batch_id=None):
         """
@@ -522,167 +622,6 @@ class TextGenerationBase:
             position_ids,
             generation_len,
         )
-
-    def _fetch_next_token_id(self, outputs):
-        logits = outputs["logits"]
-        if len(logits.shape) == 2:
-            logits = np.expand_dims(logits, 1)
-
-        # Get output token
-        next_token_id = logits.argmax(2)
-        return next_token_id
-
-    def initialize_decode_inputs(self, num_prompts, execution_batch_size, max_gen_length):
-        """
-        Initialize np arrays for storing the prefill output for all the decode batch size.
-        """
-        self.generated_ids = np.full((num_prompts, max_gen_length), self.tokenizer.pad_token_id)
-        self.decode_input_ids = np.zeros((execution_batch_size, 1), np.int64)
-        self.decode_pos_ids = np.zeros((execution_batch_size, 1), np.int64)
-        self.generation_len = np.zeros((execution_batch_size, 1), np.int64)
-        return
-
-    def initialize_lora_id_mapping(self, prompt_to_lora_id_mapping):
-        self._prompt_to_lora_id_mapping_prefill = deque(prompt_to_lora_id_mapping)
-        if self.full_batch_size:
-            self._prompt_to_lora_id_mapping_decode = prompt_to_lora_id_mapping
-        else:
-            self._prompt_to_lora_id_mapping_decode = deque(prompt_to_lora_id_mapping)
-        
-    def update_decode_input(self, outputs, position_ids, generation_len, decode_batch_id=None):
-        """
-        Updates the decode input with the generated values.
-        Args:
-            outputs (dict): The outputs of the model.
-            position_ids (array): The position IDs.
-            generation_len (int): The generation length.
-            decode_batch_id (int, optional): The decode batch ID. If None, all values are updated. Defaults to None.
-
-        Returns:
-            next_token_id (array): The next token ID.
-        """
-        next_token_id = self._fetch_next_token_id(outputs)
-
-        # Store the generated values.
-        self.decode_input_ids[decode_batch_id or slice(None)] = next_token_id
-        self.decode_pos_ids[decode_batch_id or slice(None)] = position_ids
-        self.generated_ids[decode_batch_id or slice(None), 0] = next_token_id.squeeze(1)
-        self.generation_len[decode_batch_id or slice(None)] = generation_len
-        return next_token_id
-
-    def prepare_decode_inputs(self):
-        """
-        This function creates the decode inputs.
-
-        Returns:
-            dict: The decode inputs.
-        """
-        decode_inputs = {}
-        decode_inputs["input_ids"] = self.decode_input_ids
-        decode_inputs["position_ids"] = self.decode_pos_ids
-        if self.batch_index is not None:
-            decode_inputs["batch_index"] = self.batch_index
-
-        if self._prompt_to_lora_id_mapping_decode:
-            if self.full_batch_size:
-                first_batch_lora_ids = [self._prompt_to_lora_id_mapping_decode[i] for i in range(self.full_batch_size)]
-                decode_inputs["lora_ids"] = np.array(first_batch_lora_ids, dtype=np.int64).reshape(
-                    self.full_batch_size, 1
-                )
-            else:
-                batch_lora_ids = [self._prompt_to_lora_id_mapping_decode.popleft() for i in range(self.batch_size)]
-                decode_inputs["lora_ids"] = np.array(batch_lora_ids, dtype=np.int64).reshape(self.batch_size, 1)
-
-        return decode_inputs
-
-    def run_prefill_for_all_inputs(self, prompt_queue, generation_len):
-        """
-        Runs prefill for all inputs in the prompt queue and updates the decode input.
-
-        Method iterates over the full batch size and for each decode batch ID, it pops the next prompt from the queue.  It then runs prefill for the next prompt and updates the decode input with the outputs.
-
-        Args:
-            prompt_queue (deque): The queue of prompts.
-            generation_len (int): The generation length.
-
-        """
-        for decode_batch_id in range(self.full_batch_size):
-            next_prompt = prompt_queue.popleft()
-
-            # run prefill for num_chunks
-            outputs, position_ids, generation_len = self.run_prefill(
-                next_prompt, generation_len, decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1)
-            )
-
-            _ = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
-
-    def run_decode(self, decode_inputs, generation_len, stream):
-        """
-        Default method for running decode. Executes the decoding process for a given set of inputs and a specified generation length.
-
-        Enters a loop that continues until all sequences are finished or the maximum generation length is reached. In each iteration, it runs the session with the decode inputs, prepares the inputs for the next iteration and checks if all sequences are finished.
-
-        Args:
-            decode_inputs (dict): The initial inputs for decoding. This should be a dictionary containing 'input_ids' and 'position_ids'.
-            generation_len (int): Max allowed length for generating tokens. The decoding process will be terminated  when generation length is reached.
-
-        Returns:
-            num_token (int): The number of tokens processed in the decoding process.
-        """
-        finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
-        if stream:
-            streamer = transformers.TextStreamer(self.tokenizer)
-        num_token = 0
-        for num_token in range(1, generation_len):
-            if stream:
-                streamer.put(decode_inputs["input_ids"][0])
-            outputs = self._session.run(decode_inputs)
-
-            if self._write_io_dir is not None:
-                write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
-
-            # Prepare inputs for next iteration
-            decode_inputs["input_ids"] = outputs["logits"].argmax(2)
-            decode_inputs["position_ids"] += 1
-            self.generated_ids[:, num_token] = decode_inputs["input_ids"].squeeze(1)
-            finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
-
-            if finished_sequences.all():
-                break
-        return num_token
-
-    def generate_decode_stream(self, decode_inputs, generation_len):
-        """
-        Generator method for yielding decode tokens. Executes the decoding process for a given set of inputs and a specified generation length.
-
-        Enters a loop that continues until all sequences are finished or the maximum generation length is reached. In each iteration, it runs the session with the decode inputs, prepares the inputs for the next iteration and checks if all sequences are finished.
-
-        Args:
-            decode_inputs (dict): The initial inputs for decoding. This should be a dictionary containing 'input_ids' and 'position_ids'.
-            generation_len (int): Max allowed length for generating tokens. The decoding process will be terminated  when generation length is reached.
-
-        Yields:
-            token_id (int): The token generated in the decoding process.
-        """
-        finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
-        num_token = 0
-        for num_token in range(1, generation_len):
-            yield decode_inputs["input_ids"]
-            outputs = self._session.run(decode_inputs)
-
-            if self._write_io_dir is not None:
-                write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
-
-            # Prepare inputs for next iteration
-            decode_inputs["input_ids"] = outputs["logits"].argmax(2)
-            decode_inputs["position_ids"] += 1
-            self.generated_ids[:, num_token] = decode_inputs["input_ids"].squeeze(1)
-            finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
-
-            if finished_sequences.all():
-                break
 
     def run_continuous_batching_decode(self, prompt_queue, generation_len):
         """
@@ -762,6 +701,75 @@ class TextGenerationBase:
                     generated_id_current_index[decode_batch_id] += 1
 
         return decode_pause_time
+
+    def run_decode(self, decode_inputs, generation_len, stream):
+        """
+        Default method for running decode. Executes the decoding process for a given set of inputs and a specified generation length.
+
+        Enters a loop that continues until all sequences are finished or the maximum generation length is reached. In each iteration, it runs the session with the decode inputs, prepares the inputs for the next iteration and checks if all sequences are finished.
+
+        Args:
+            decode_inputs (dict): The initial inputs for decoding. This should be a dictionary containing 'input_ids' and 'position_ids'.
+            generation_len (int): Max allowed length for generating tokens. The decoding process will be terminated  when generation length is reached.
+
+        Returns:
+            num_token (int): The number of tokens processed in the decoding process.
+        """
+        finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
+        if stream:
+            streamer = transformers.TextStreamer(self.tokenizer)
+        num_token = 0
+        for num_token in range(1, generation_len):
+            if stream:
+                streamer.put(decode_inputs["input_ids"][0])
+            outputs = self._session.run(decode_inputs)
+
+            if self._write_io_dir is not None:
+                write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
+                self._write_io_dir = None
+
+            # Prepare inputs for next iteration
+            decode_inputs["input_ids"] = outputs["logits"].argmax(2)
+            decode_inputs["position_ids"] += 1
+            self.generated_ids[:, num_token] = decode_inputs["input_ids"].squeeze(1)
+            finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
+
+            if finished_sequences.all():
+                break
+        return num_token
+
+    def generate_decode_stream(self, decode_inputs, generation_len):
+        """
+        Generator method for yielding decode tokens. Executes the decoding process for a given set of inputs and a specified generation length.
+
+        Enters a loop that continues until all sequences are finished or the maximum generation length is reached. In each iteration, it runs the session with the decode inputs, prepares the inputs for the next iteration and checks if all sequences are finished.
+
+        Args:
+            decode_inputs (dict): The initial inputs for decoding. This should be a dictionary containing 'input_ids' and 'position_ids'.
+            generation_len (int): Max allowed length for generating tokens. The decoding process will be terminated  when generation length is reached.
+
+        Yields:
+            token_id (int): The token generated in the decoding process.
+        """
+        finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
+        num_token = 0
+        for num_token in range(1, generation_len):
+            yield decode_inputs["input_ids"]
+            outputs = self._session.run(decode_inputs)
+
+            if self._write_io_dir is not None:
+                write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
+                self._write_io_dir = None
+
+            # Prepare inputs for next iteration
+            decode_inputs["input_ids"] = outputs["logits"].argmax(2)
+            decode_inputs["position_ids"] += 1
+            self.generated_ids[:, num_token] = decode_inputs["input_ids"].squeeze(1)
+            finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
+
+            if finished_sequences.all():
+                break
+
 
 class TextGeneration():
     def __init__(
