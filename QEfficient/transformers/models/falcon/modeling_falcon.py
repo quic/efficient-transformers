@@ -87,6 +87,7 @@ class QEffFalconRotaryEmbedding(FalconRotaryEmbedding):
 
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device, **self.rope_kwargs)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.original_inv_freq = self.inv_freq
 
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
@@ -191,15 +192,15 @@ class QEffFalconAttention(FalconAttention):
         key_layer = key_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
         value_layer = value_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
 
-        kv_seq_len = key_layer.shape[-2]
-        if layer_past is not None:
-            if self.layer_idx is None:
-                raise ValueError(
-                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
-                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
-                    "with a layer index."
-                )
-            kv_seq_len = layer_past.get_usable_length(kv_seq_len, self.layer_idx)
+        # kv_seq_len = key_layer.shape[-2]
+        # if layer_past is not None:
+        #     if self.layer_idx is None:
+        #         raise ValueError(
+        #             f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
+        #             "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
+        #             "with a layer index."
+        #         )
+        #     kv_seq_len = layer_past.get_usable_length(kv_seq_len, self.layer_idx)
 
         if alibi is None:
             if position_embeddings is None:
@@ -209,10 +210,10 @@ class QEffFalconAttention(FalconAttention):
                     "`position_embeddings` (Tuple of tensors, containing cos and sin). In v4.46 `position_ids` will be "
                     "removed and `position_embeddings` will be mandatory."
                 )
-                cos, sin = self.rotary_emb(value_layer, seq_len=kv_seq_len)
+                cos, sin = self.rotary_emb(value_layer, position_ids)
             else:
                 cos, sin = position_embeddings
-            query_layer, key_layer = apply_rotary_pos_emb(query_layer, key_layer, cos, sin, position_ids)
+            query_layer, key_layer = apply_rotary_pos_emb(query_layer, key_layer, cos, sin)
 
         if layer_past is not None:
             cache_kwargs = {"cache_position": cache_position}
@@ -448,26 +449,13 @@ class QEffFalconModel(FalconModel):
                     cache_position,
                     position_embeddings,
                 )
-            elif batch_index is not None:
-                outputs = block(
-                    hidden_states,
-                    layer_past=past_key_values,
-                    attention_mask=causal_mask,
-                    position_ids=position_ids,
-                    batch_index=batch_index,
-                    head_mask=head_mask[i],
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                    alibi=alibi,
-                    cache_position=cache_position,
-                    position_embeddings=position_embeddings,
-                )
             else:
                 outputs = block(
                     hidden_states,
                     layer_past=past_key_values,
                     attention_mask=causal_mask,
                     position_ids=position_ids,
+                    batch_index=batch_index,
                     head_mask=head_mask[i],
                     use_cache=use_cache,
                     output_attentions=output_attentions,
@@ -608,6 +596,7 @@ class QEffFalconForCausalLM(FalconForCausalLM):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple[torch.Tensor], CausalLMOutputWithCrossAttentions]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -630,6 +619,7 @@ class QEffFalconForCausalLM(FalconForCausalLM):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            cache_position=cache_position,
         )
 
         # lm_logits = self.lm_head(hidden_states)
@@ -699,6 +689,7 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
             use_cache=use_cache,
             output_attentions=output_attentions,
             cache_position=cache_position,
+            position_embeddings=position_embeddings,
         )
 
         attention_output = attn_outputs[0]

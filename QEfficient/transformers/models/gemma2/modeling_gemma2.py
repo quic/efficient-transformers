@@ -11,6 +11,7 @@ import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
+from transformers.generation import GenerationMixin
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
@@ -27,6 +28,7 @@ from transformers.models.gemma2.modeling_gemma2 import (
     repeat_kv,
     rotate_half,
 )
+from transformers.utils import is_torchdynamo_compiling
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
@@ -163,10 +165,10 @@ class QEffGemma2Attention(Gemma2Attention):
             cache_kwargs = {
                 "sin": sin,
                 "cos": cos,
-                "sliding_window": self.sliding_window,
+                # "sliding_window": self.sliding_window,
                 "batch_index": batch_index,
                 "position_ids": position_ids,
-                "cache_position": cache_position,
+                # "cache_position": cache_position,
             }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
@@ -205,7 +207,7 @@ class QEffGemma2Attention(Gemma2Attention):
         return attn_output, attn_weights, past_key_value
 
 
-class QEffGemma2ForCausalLM(Gemma2ForCausalLM):
+class QEffGemma2ForCausalLM(Gemma2ForCausalLM, GenerationMixin):
     """
     Copied from Gemma2ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma2/modeling_gemma2.py
     The only differences are:
@@ -226,6 +228,7 @@ class QEffGemma2ForCausalLM(Gemma2ForCausalLM):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        num_logits_to_keep: int = 0,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
@@ -233,6 +236,12 @@ class QEffGemma2ForCausalLM(Gemma2ForCausalLM):
                 Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
                 config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
                 (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
+
+            num_logits_to_keep (`int`, *optional*):
+                Calculate logits for the last `num_logits_to_keep` tokens. If `0`, calculate logits for all
+                `input_ids` (special case). Only last token logits are needed for generation, and calculating them only for that
+                token can save memory, which becomes pretty significant for long sequences or large vocabulary size.
+
 
         Returns:
 
@@ -276,8 +285,13 @@ class QEffGemma2ForCausalLM(Gemma2ForCausalLM):
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        logits = self.lm_head(hidden_states).float()
-
+        if labels is None and not is_torchdynamo_compiling():
+            logger.warning_once(
+                "Starting from v4.46, the `logits` model output will have the same type as the model (except at train time, where it will always be FP32)"
+            )
+        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
+        # Using self.lm_head(hidden_states) instead of self.lm_head(hidden_states[:, -num_logits_to_keep:, :]) to avoid onnx export failure.
+        logits = self.lm_head(hidden_states)
         if self.config.final_logit_softcapping is not None:
             logits = logits / self.config.final_logit_softcapping
             logits = torch.tanh(logits)
@@ -285,6 +299,8 @@ class QEffGemma2ForCausalLM(Gemma2ForCausalLM):
 
         loss = None
         if labels is not None:
+            # Upcast to float if we need to compute the loss to avoid potential precision issues
+            logits = logits.float()
             # Shift so that tokens < n predict n
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
