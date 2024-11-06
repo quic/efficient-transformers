@@ -1,15 +1,15 @@
 <!DOCTYPE html>
 <html class="writer-html5" lang="en">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Search &mdash; efficient-transformers main documentation</title>
+  <title>Docs &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
       <link rel="stylesheet" type="text/css" href="_static/my_theme.css?v=547657ed" />
 
   
-    
   <!--[if lt IE 9]>
     <script src="_static/js/html5shiv.min.js"></script>
   <![endif]-->
@@ -20,10 +20,8 @@
         <script src="_static/doctools.js?v=888ff710"></script>
         <script src="_static/sphinx_highlight.js?v=4825356b"></script>
     <script src="_static/js/theme.js"></script>
-    <script src="_static/searchtools.js"></script>
-    <script src="_static/language_data.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
-    <link rel="search" title="Search" href="#" /> 
+    <link rel="search" title="Search" href="search.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -38,7 +36,7 @@
             efficient-transformers
           </a>
 <div role="search">
-  <form id="rtd-search-form" class="wy-form" action="#" method="get">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
     <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
     <input type="hidden" name="check_keywords" value="yes" />
     <input type="hidden" name="area" value="default" />
@@ -110,8 +108,9 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Search</li>
+      <li class="breadcrumb-item active">Docs</li>
       <li class="wy-breadcrumbs-aside">
+            <a href="_sources/README.md.txt" rel="nofollow"> View page source</a>
       </li>
   </ul>
   <hr/>
@@ -119,18 +118,34 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <noscript>
-  <div id="fallback" class="admonition warning">
-    <p class="last">
-      Please activate JavaScript to enable the search functionality.
-    </p>
-  </div>
-  </noscript>
+  <section id="docs">
+<h1>Docs<a class="headerlink" href="#docs" title="Permalink to this heading"></a></h1>
+<p>This directory contains the instructions for building static html documentations based on <a class="reference external" href="https://www.sphinx-doc.org/en/master/">sphinx</a>.</p>
+<section id="build-the-docs">
+<h2>Build the docs<a class="headerlink" href="#build-the-docs" title="Permalink to this heading"></a></h2>
+<p>Install the packages required for building documentation:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>docs/requirements.txt
+</pre></div>
+</div>
+<p>And then, change directory to docs folder to build the docs.</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>docs/
+<span class="c1"># To build docs specific to branch</span>
+sphinx-build<span class="w"> </span>-M<span class="w"> </span>html<span class="w"> </span>.<span class="w"> </span>build
+<span class="c1"># [Optional] To build docs for all the supporting branches</span>
+sphinx-multiversion<span class="w"> </span>.<span class="w"> </span>build
+</pre></div>
+</div>
+</section>
+<section id="preview-the-docs-locally">
+<h2>Preview the docs locally<a class="headerlink" href="#preview-the-docs-locally" title="Permalink to this heading"></a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>build/html
+python<span class="w"> </span>-m<span class="w"> </span>http.server
+</pre></div>
+</div>
+<p>You can visit the page with your web browser with url <code class="docutils literal notranslate"><span class="pre">http://localhost:8080</span></code>.</p>
+</section>
+</section>
 
-  
-  <div id="search-results">
-  
-  </div>
 
            </div>
           </div>
@@ -168,14 +183,7 @@
       jQuery(function () {
           SphinxRtdTheme.Navigation.enable(true);
       });
-  </script>
-  <script>
-    jQuery(function() { Search.loadIndex("searchindex.js"); });
-  </script>
-  
-  <script id="searchindexloader"></script>
-   
-
+  </script> 
 
 </body>
 </html>

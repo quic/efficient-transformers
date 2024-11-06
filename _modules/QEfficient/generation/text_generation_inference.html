@@ -51,8 +51,12 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html">Pre-requisites</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#installation">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#sanity-check">Sanity Check</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Upgrade Efficient-Transformers</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/upgrade.html">Using GitHub Repository</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -256,7 +260,7 @@
     <span class="nb">print</span><span class="p">(</span><span class="nb">round</span><span class="p">((</span><span class="n">cur_len</span> <span class="o">-</span> <span class="n">init_len</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">end</span> <span class="o">-</span> <span class="n">start</span><span class="p">),</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;tok/s&quot;</span><span class="p">)</span>
 
 
-<span class="k">def</span> <span class="nf">get_compilation_dims</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="k">def</span> <span class="nf">get_compilation_dims</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]]:</span>
     <span class="n">qpc_base_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">normpath</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">))</span>
     <span class="n">specialization_file_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">qpc_base_path</span><span class="p">,</span> <span class="s2">&quot;specializations.json&quot;</span><span class="p">)</span>
     <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;specialization_file_path : </span><span class="si">{</span><span class="n">specialization_file_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
@@ -269,13 +273,14 @@
 
     <span class="n">compilation_batch_size</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;batch_size&quot;</span><span class="p">])</span>
     <span class="n">compilation_ctx_len</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;ctx_len&quot;</span><span class="p">])</span>
-    <span class="k">return</span> <span class="n">compilation_batch_size</span><span class="p">,</span> <span class="n">compilation_ctx_len</span>
+    <span class="k">if</span> <span class="n">compilation_fbs</span> <span class="o">:=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">):</span>
+        <span class="n">compilation_fbs</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">compilation_fbs</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">compilation_batch_size</span><span class="p">,</span> <span class="n">compilation_ctx_len</span><span class="p">,</span> <span class="n">compilation_fbs</span>
 
 
 <span class="k">def</span> <span class="nf">get_input_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-    <span class="k">assert</span> <span class="p">(</span>
-        <span class="n">prompt</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">prompts_txt_file_path</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
-    <span class="p">),</span> <span class="s2">&quot;Please pass at least one argument either using --prompt or --prompts_txt_file_path&quot;</span>
+    <span class="k">if</span> <span class="n">prompt</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">prompts_txt_file_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Please pass at least one argument either using --prompt or --prompts_txt_file_path&quot;</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">prompts_txt_file_path</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">prompt</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Found inputs passed using txt file as well as CLI, taking inputs from given txt file&quot;</span><span class="p">)</span>
@@ -285,19 +290,32 @@
     <span class="k">return</span> <span class="n">prompt</span>
 
 
-<span class="k">def</span> <span class="nf">fix_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
-    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">batch_size</span> <span class="ow">or</span> <span class="p">(</span><span class="n">full_batch_size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">full_batch_size</span><span class="p">):</span>
-        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Number of prompts are less than batch size/full batch size, repeating to required batch size&quot;</span><span class="p">)</span>
-        <span class="n">prompt</span> <span class="o">=</span> <span class="n">prompt</span> <span class="o">*</span> <span class="o">-</span><span class="p">(</span><span class="n">batch_size</span> <span class="o">//</span> <span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">))</span>  <span class="c1"># Repeat prompt to required size</span>
-        <span class="n">prompt</span> <span class="o">=</span> <span class="n">prompt</span><span class="p">[:</span><span class="n">batch_size</span><span class="p">]</span>  <span class="c1"># Truncate prompts to required size</span>
-    <span class="k">elif</span> <span class="ow">not</span> <span class="n">full_batch_size</span><span class="p">:</span>
-        <span class="k">if</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span> <span class="o">%</span> <span class="n">batch_size</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
-            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
-                <span class="s2">&quot;Number of prompts are not multiple of batch size, dropping last incomplete batch from given input prompts&quot;</span>
-            <span class="p">)</span>
-            <span class="n">prompt</span> <span class="o">=</span> <span class="n">prompt</span><span class="p">[:</span> <span class="n">batch_size</span> <span class="o">*</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span> <span class="o">//</span> <span class="n">batch_size</span><span class="p">)]</span>
+<div class="viewcode-block" id="fix_prompts"><a class="viewcode-back" href="../../../source/hl_api.html#QEfficient.generation.text_generation_inference.fix_prompts">[docs]</a><span class="k">def</span> <span class="nf">fix_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Adjusts the list of prompts to match the required batch size.</span>
 
-    <span class="k">return</span> <span class="n">prompt</span>
+<span class="sd">    ``Mandatory`` Args:</span>
+<span class="sd">        prompt (List[str]): List of input prompts.</span>
+<span class="sd">        batch_size (int): The batch size to process at a time.</span>
+
+<span class="sd">    ``Optional`` Args:</span>
+<span class="sd">        full_batch_size (Optional[int]): The full batch size if different from batch_size.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        List[str]: Adjusted list of prompts.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">exec_batch_size</span> <span class="o">=</span> <span class="n">full_batch_size</span> <span class="k">if</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">batch_size</span>
+
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">exec_batch_size</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Number of prompts are less than batch size/full batch size, repeating to required batch size&quot;</span><span class="p">)</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="p">(</span><span class="n">prompt</span> <span class="o">*</span> <span class="p">(</span><span class="n">exec_batch_size</span> <span class="o">//</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))[:</span><span class="n">exec_batch_size</span><span class="p">]</span>
+    <span class="k">elif</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span> <span class="o">%</span> <span class="n">batch_size</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+            <span class="s2">&quot;Number of prompts are not multiple of batch size, dropping last incomplete batch from given input prompts&quot;</span>
+        <span class="p">)</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="n">prompt</span><span class="p">[:</span> <span class="n">batch_size</span> <span class="o">*</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span> <span class="o">//</span> <span class="n">batch_size</span><span class="p">)]</span>
+
+    <span class="k">return</span> <span class="n">prompt</span></div>
 
 
 <span class="k">def</span> <span class="nf">read_prompts_txt_file</span><span class="p">(</span><span class="n">prompts_txt_file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
@@ -332,7 +350,6 @@
     <span class="n">stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="n">write_io_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">automation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-    <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.</span>
@@ -366,7 +383,7 @@
 <span class="sd">        execinfo = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt=&quot;Hi there!!&quot;, device_id=[0])</span>
 
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">batch_size</span><span class="p">,</span> <span class="n">ctx_len</span> <span class="o">=</span> <span class="n">get_compilation_dims</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">)</span>
+    <span class="n">batch_size</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">,</span> <span class="n">full_batch_size</span> <span class="o">=</span> <span class="n">get_compilation_dims</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">)</span>
     <span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">get_input_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">)</span>
     <span class="n">prompt</span> <span class="o">=</span> <span class="n">fix_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="p">)</span>
     <span class="n">generate_text</span> <span class="o">=</span> <span class="n">TextGeneration</span><span class="p">(</span>
@@ -547,7 +564,8 @@
                 <span class="s2">&quot;Passed generation_len is greater than allowed length. &quot;</span>
                 <span class="s2">&quot;Make sure this model supports sliding window, such as Mistral&quot;</span>
             <span class="p">)</span>
-        <span class="k">assert</span> <span class="n">generation_len</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;generation length should be greater than zero&quot;</span>
+        <span class="k">if</span> <span class="n">generation_len</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;generation length should be greater than zero&quot;</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">generation_len</span>
 
     <span class="k">def</span> <span class="nf">prepare_decode_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
@@ -646,6 +664,7 @@
 
         <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;np&quot;</span><span class="p">,</span> <span class="n">padding</span><span class="o">=</span><span class="s2">&quot;max_length&quot;</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="n">padded_len</span><span class="p">)</span>
         <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;position_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">inputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;attention_mask&quot;</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">padded_len</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">inputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;token_type_ids&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
 
         <span class="k">if</span> <span class="n">decode_batch_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;batch_index&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">decode_batch_id</span>
@@ -921,13 +940,13 @@
   </div>
   <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
-      Version: Current version here
+      Version: Main
       <span class="fa fa-caret-down"></span>
     </span>
     <div class="rst-other-versions">
       Versions
       <dl>
-        <dd><a href="index.html">main</a></dd>
+        <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
       </dl>
     </div>

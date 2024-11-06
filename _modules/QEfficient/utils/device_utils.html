@@ -51,8 +51,12 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html">Pre-requisites</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#installation">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#sanity-check">Sanity Check</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Upgrade Efficient-Transformers</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/upgrade.html">Using GitHub Repository</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -138,21 +142,24 @@
 
     <span class="n">device_id</span> <span class="o">=</span> <span class="mi">0</span>
     <span class="n">result</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="c1"># FIXME: goes into infinite loop when user doesn&#39;t have permission and the command gives permission denied.</span>
+    <span class="c1"># To reproduce change the ownership of available devices.</span>
     <span class="k">while</span> <span class="mi">1</span><span class="p">:</span>
         <span class="n">command</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;/opt/qti-aic/tools/qaic-util&quot;</span><span class="p">,</span> <span class="s2">&quot;-q&quot;</span><span class="p">,</span> <span class="s2">&quot;-d&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">device_id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span>
         <span class="k">try</span><span class="p">:</span>
             <span class="n">result</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">command</span><span class="p">,</span> <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
         <span class="k">except</span> <span class="ne">OSError</span><span class="p">:</span>
-            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Not a Cloud AI 100 device, Command not found&quot;</span><span class="p">,</span> <span class="n">command</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Not a Cloud AI 100 device, Command not found&quot;</span><span class="p">,</span> <span class="n">command</span><span class="p">)</span>
             <span class="k">return</span> <span class="kc">None</span>
         <span class="k">if</span> <span class="n">result</span><span class="p">:</span>
             <span class="k">if</span> <span class="s2">&quot;Status:Error&quot;</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">:</span>
                 <span class="n">device_id</span> <span class="o">+=</span> <span class="mi">1</span>
             <span class="k">elif</span> <span class="s2">&quot;Status:Ready&quot;</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">:</span>
-                <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;device is available.&quot;</span><span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;device is available.&quot;</span><span class="p">)</span>
                 <span class="k">return</span> <span class="p">[</span><span class="n">device_id</span><span class="p">]</span>
             <span class="k">elif</span> <span class="s2">&quot;Failed to find requested device ID&quot;</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">:</span>
-                <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Failed to find requested device ID&quot;</span><span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Failed to find requested device ID&quot;</span><span class="p">)</span>
                 <span class="k">return</span> <span class="kc">None</span></div>
 
 
@@ -218,13 +225,13 @@
   </div>
   <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
-      Version: Current version here
+      Version: Main
       <span class="fa fa-caret-down"></span>
     </span>
     <div class="rst-other-versions">
       Versions
       <dl>
-        <dd><a href="index.html">main</a></dd>
+        <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
       </dl>
     </div>

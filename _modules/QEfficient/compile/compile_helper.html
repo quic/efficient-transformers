@@ -51,8 +51,12 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html">Pre-requisites</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#installation">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#sanity-check">Sanity Check</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Upgrade Efficient-Transformers</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/upgrade.html">Using GitHub Repository</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -125,6 +129,7 @@
 <span class="kn">import</span> <span class="nn">os</span>
 <span class="kn">import</span> <span class="nn">shutil</span>
 <span class="kn">import</span> <span class="nn">subprocess</span>
+<span class="kn">import</span> <span class="nn">warnings</span>
 <span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Tuple</span>
 
 <span class="kn">from</span> <span class="nn">QEfficient.utils.logging_utils</span> <span class="kn">import</span> <span class="n">logger</span>
@@ -167,6 +172,11 @@
     <span class="n">device_group</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+    <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+        <span class="s2">&quot;</span><span class="se">\033</span><span class="s2">[93mUse `QEFFAutoModelForCausalLM.compile` instead, this method will be removed soon.</span><span class="se">\033</span><span class="s2">[0m&quot;</span><span class="p">,</span>
+        <span class="ne">DeprecationWarning</span><span class="p">,</span>
+        <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="p">)</span>
     <span class="k">if</span> <span class="n">kwargs</span><span class="p">:</span>
         <span class="c1"># FIXME</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Can&#39;t handle extra compilation args now!&quot;</span><span class="p">)</span>
@@ -175,10 +185,10 @@
     <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isdir</span><span class="p">(</span><span class="n">aic_binary_dir</span><span class="p">):</span>
         <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">aic_binary_dir</span><span class="p">)</span>
 
-    <span class="k">assert</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span>
-        <span class="n">specializations_json</span>
-    <span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;Please use &#39;QEfficient.compile&#39;, as </span><span class="si">{</span><span class="n">specializations_json</span><span class="si">}</span><span class="s2"> file was not found&quot;</span>
-    <span class="k">assert</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">custom_io_path</span><span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">custom_io_path</span><span class="si">}</span><span class="s2"> file was not found!&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">specializations_json</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Please use &#39;QEfficient.compile&#39;, as </span><span class="si">{</span><span class="n">specializations_json</span><span class="si">}</span><span class="s2"> file was not found&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">custom_io_path</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">custom_io_path</span><span class="si">}</span><span class="s2"> file was not found!&quot;</span><span class="p">)</span>
     <span class="n">command</span> <span class="o">=</span> <span class="p">[</span>
         <span class="s2">&quot;/opt/qti-aic/exec/qaic-exec&quot;</span><span class="p">,</span>
         <span class="sa">f</span><span class="s2">&quot;-m=</span><span class="si">{</span><span class="n">onnx_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
@@ -325,13 +335,13 @@
   </div>
   <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
-      Version: Current version here
+      Version: Main
       <span class="fa fa-caret-down"></span>
     </span>
     <div class="rst-other-versions">
       Versions
       <dl>
-        <dd><a href="index.html">main</a></dd>
+        <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
       </dl>
     </div>

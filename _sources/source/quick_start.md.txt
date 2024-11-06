@@ -86,8 +86,7 @@ When enabling continuous batching, batch size should not be specified.
 Users can leverage multi-Qranium and other supported features along with continuous batching.
 
 ```bash
-python -m QEfficient.cloud.infer --model_name TinyLlama/TinyLlama_v1.1 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth 
-theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first --full_batch_size 3
+python -m QEfficient.cloud.infer --model_name TinyLlama/TinyLlama_v1.1 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is" --mxfp6 --mos 1 --aic_enable_depth_first --full_batch_size 4
 ```
 ## Python API
 
