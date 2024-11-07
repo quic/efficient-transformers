@@ -60,7 +60,6 @@ def test_output_consistency(model_name):
     for i, op in enumerate(output1):
         check_output1.append(op.outputs[0].text)
 
-
     # Multiple prompt test
     outputDict = dict()
     prompt2 = [
@@ -90,7 +89,6 @@ def test_output_consistency(model_name):
             generated_text = op.outputs[0].text
             outputDict[prompt2[i]].append(str(prompt2[i] + generated_text))
 
-    
     # Assertion to check the consistency of single prompt.
     assert len(set(check_output1)) == 1, "Outputs from different slots for same prompt does not match!!"
 
