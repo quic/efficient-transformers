@@ -16,7 +16,7 @@ pipeline
             steps
             {
                 sh '''
-                    python3.8 -m venv preflight_qeff
+                    python3.10 -m venv preflight_qeff
                     . preflight_qeff/bin/activate
                     pip install --upgrade pip setuptools
                     pip install .[test] --extra-index-url https://download.pytorch.org/whl/cpu
@@ -36,9 +36,12 @@ pipeline
                     sh '''
                     . preflight_qeff/bin/activate
                     export TOKENIZERS_PARALLELISM=false
-                    pytest tests --ignore tests/cloud --junitxml=tests/tests_log1.xml
-                    pytest tests/cloud --junitxml=tests/tests_log2.xml
-                    junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log.xml
+                    export QEFF_HOME=$PWD  
+                    pytest tests -m "not cli and not on_qaic" -n auto --junitxml=tests/tests_log1.xml &
+                    pytest tests -m "not cli and on_qaic" -n 4 --junitxml=tests/tests_log2.xml &
+                    wait
+                    pytest tests -m cli --junitxml=tests/tests_log3.xml
+                    junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log3.xml tests/tests_log.xml
                     deactivate
                     exit
                     '''     
@@ -50,7 +53,7 @@ pipeline
     {
          always 
          {
-             junit 'tests/tests_log.xml'
+             junit testResults: 'tests/tests_log.xml', skipPublishingChecks: true
              echo 'Cleaning Workspace'
              deleteDir() 
          }

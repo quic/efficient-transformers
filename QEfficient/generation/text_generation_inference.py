@@ -140,7 +140,7 @@ def latency_stats_bertstyle(
     print(round((cur_len - init_len) / (end - start), 2), "tok/s")
 
 
-def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
+def get_compilation_dims(qpc_path: str) -> Tuple[int, int, Optional[int]]:
     qpc_base_path = os.path.dirname(os.path.normpath(qpc_path))
     specialization_file_path = os.path.join(qpc_base_path, "specializations.json")
     logger.info(f"specialization_file_path : {specialization_file_path}")
@@ -153,13 +153,14 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int]:
 
     compilation_batch_size = int(data["specializations"][0]["batch_size"])
     compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
-    return compilation_batch_size, compilation_ctx_len
+    if compilation_fbs := data["specializations"][0].get("full_batch_size", None):
+        compilation_fbs = int(compilation_fbs)
+    return compilation_batch_size, compilation_ctx_len, compilation_fbs
 
 
 def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
-    assert (
-        prompt is not None or prompts_txt_file_path is not None
-    ), "Please pass at least one argument either using --prompt or --prompts_txt_file_path"
+    if prompt is None and prompts_txt_file_path is None:
+        raise ValueError("Please pass at least one argument either using --prompt or --prompts_txt_file_path")
     if prompts_txt_file_path is not None:
         if prompt is not None:
             logger.warning("Found inputs passed using txt file as well as CLI, taking inputs from given txt file")
@@ -229,7 +230,6 @@ def cloud_ai_100_exec_kv(
     stream: bool = True,
     write_io_dir: Optional[str] = None,
     automation=False,
-    full_batch_size: Optional[int] = None,
 ):
     """
     This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -263,7 +263,7 @@ def cloud_ai_100_exec_kv(
         execinfo = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_id=[0])
 
     """
-    batch_size, ctx_len = get_compilation_dims(qpc_path)
+    batch_size, ctx_len, full_batch_size = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
     generate_text = TextGeneration(
@@ -444,7 +444,8 @@ class TextGeneration:
                 "Passed generation_len is greater than allowed length. "
                 "Make sure this model supports sliding window, such as Mistral"
             )
-        assert generation_len > 0, "generation length should be greater than zero"
+        if generation_len <= 0:
+            raise ValueError("generation length should be greater than zero")
         return generation_len
 
     def prepare_decode_inputs(self):
@@ -543,6 +544,7 @@ class TextGeneration:
 
         inputs = self.tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+        inputs.pop("token_type_ids", None)
 
         if decode_batch_id is not None:
             inputs["batch_index"] = decode_batch_id

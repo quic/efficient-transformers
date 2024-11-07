@@ -12,6 +12,7 @@ import QEfficient.cloud.execute
 from QEfficient.cloud.execute import main as execute
 
 
+@pytest.mark.on_qaic
 @pytest.mark.cli
 def test_execute(setup, mocker):
     """

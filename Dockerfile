@@ -7,8 +7,8 @@ FROM docker-registry.qualcomm.com/library/ubuntu:20.04
 RUN apt-get update && apt-get install -y \
     git \
     tmux \
-    python3.8 \
-    python3.8-venv \
+    python3.10 \
+    python3.10-venv \
     python3-pip
 
 # pip recognizes this variable
@@ -24,7 +24,7 @@ RUN mkdir -p /app/qefficient-library
 COPY . /app/qefficient-library
 
 # Create Virtual Env for the docker image
-RUN python3.8 -m venv /app/llm_env
+RUN python3.10 -m venv /app/llm_env
 RUN . /app/llm_env/bin/activate
 WORKDIR /app/qefficient-library
 
@@ -33,7 +33,7 @@ WORKDIR /app/qefficient-library
 RUN pip install torch==2.0.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu --no-deps
 RUN pip install datasets==2.17.0 fsspec==2023.10.0 multidict==6.0.5 sentencepiece --no-deps
 
-RUN python3.8 -m pip install .
+RUN python3.10 -m pip install .
 WORKDIR /app/qefficient-library
 
 # Set the environment variable for the model card name and token ID
@@ -45,7 +45,7 @@ ENV TOKEN_ID = ""
 # Print a success message
 CMD ["echo", "qefficient-transformers repository cloned and setup installed inside Docker image."]
 CMD ["echo", "Starting the Model Download and Export to Onnx Stage for QEff."]
-CMD python3.8 -m QEfficient.cloud.export --model-name "$MODEL_NAME"
+CMD python3.10 -m QEfficient.cloud.export --model-name "$MODEL_NAME"
 
 # Example usage:
 # docker build -t qefficient-library .

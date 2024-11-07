@@ -8,6 +8,11 @@
 *Latest news* :fire: <br>
 
 - [coming soon] Support for more popular [models](https://quic.github.io/efficient-transformers/source/validate.html#models-coming-soon) and inference optimization technique speculative decoding <br>
+- [09/2024] [AWQ](https://arxiv.org/abs/2306.00978)/[GPTQ](https://arxiv.org/abs/2210.17323) 4-bit quantized models are supported
+- [09/2024] Now we support [PEFT](https://huggingface.co/docs/peft/index) models
+- [09/2024] Added support for [Gemma-2-Family](https://huggingface.co/collections/google/gemma-2-release-667d6600fd5220e7b967f315)
+- [09/2024] Added support for [CodeGemma-Family](https://huggingface.co/collections/google/codegemma-release-66152ac7b683e2667abdee11)
+- [09/2024] Added support for [Gemma-Family](https://huggingface.co/collections/google/gemma-release-65d5efbccdbb8c4202ec078b)
 - [09/2024] Added support for [Meta-Llama-3.1-8B](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B)
 - [09/2024] Added support for [Meta-Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct)
 - [09/2024] Added support for [Meta-Llama-3.1-70B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-70B-Instruct)
@@ -26,6 +31,7 @@
 - [06/2024] Added support for [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5)
 - [05/2024] Added support for [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) & [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1).
 - [04/2024] Initial release of [efficient transformers](https://github.com/quic/efficient-transformers) for seamless inference on pre-trained LLMs.
+
 
 # Overview
 
@@ -53,9 +59,9 @@ For other models, there is comprehensive documentation to inspire upon the chang
 ## Quick Installation
 ```bash
 
-# Create Python virtual env and activate it. (Recommended Python 3.8)
-
-python3.8 -m venv qeff_env
+# Create Python virtual env and activate it. (Recommended Python 3.10)
+sudo apt install python3.10-venv
+python3.10 -m venv qeff_env
 source qeff_env/bin/activate
 pip install -U pip
 
@@ -77,7 +83,7 @@ For more details about using ``QEfficient`` via Cloud AI 100 Apps SDK, visit [Li
 * [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html#)
 * [Python API](https://quic.github.io/efficient-transformers/source/hl_api.html)
 * [Validated Models](https://quic.github.io/efficient-transformers/source/validate.html)
-* [Models coming soon](models-coming-soon)
+* [Models coming soon](https://quic.github.io/efficient-transformers/source/validate.html#models-coming-soon)
 
 > Note: More details are here: https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Model-Architecture-Support/Large-Language-Models/llm/
 

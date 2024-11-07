@@ -6,28 +6,25 @@
 # ----------------------------------------------------------------------------
 
 import hashlib
-import os
+import logging
+import warnings
+from pathlib import Path
 from typing import Any, List, Optional, Union
 
+import torch
 import torch.nn as nn
 from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 import QEfficient
-from QEfficient.base.modeling_qeff import QEFFBaseModel, Runtime
-from QEfficient.transformers.pytorch_transforms import CBTransform, CustomOpsTransform, KVCacheTransform
+from QEfficient.base.modeling_qeff import QEFFBaseModel
+from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
-from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig
-from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig
-from QEfficient.utils import get_qpc_dir_path, load_hf_tokenizer
-from QEfficient.utils.constants import QEFF_MODELS_DIR
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils import constants, get_padding_shape_from_config
+from QEfficient.utils.cache import to_hashable
 
-# Dictionary that defines the interface from transformers to be used underneath the QEFF interface
-QEFFAutoModelToTransformersAutoModelMap = {
-    "QEFFAutoModelForCausalLM": AutoModelForCausalLM,
-    "QEFFAutoModel": AutoModel,
-}
+logger = logging.getLogger(__file__)
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -35,53 +32,108 @@ class QEFFTransformersBase(QEFFBaseModel):
     Parent class for models QEFF provides from transformers i.e. (AutoModel, AutoModelForCausalLM, AutoModelForAudioClassification etc.) from transformers/models/modeling_auto.py file.
     """
 
-    def __init__(self, model: nn.Module, pretrained_model_name_or_path: str, **kwargs) -> None:
+    _hf_auto_class: type
+
+    def __init__(self, model: nn.Module) -> None:
+        model_class_name = model.__class__.__name__
+        if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
+            raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
+
         if hasattr(model.config, "quantization_config") and not isinstance(
             model.config.quantization_config, tuple(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values())
         ):
             raise AssertionError("Please use `from_pretrained` method to load quantized models")
 
         super().__init__(model)
-        self.model.config.use_cache = (
-            True  # Always pass use_cache = True, to get KV values as output during ONNX export
-        )
-        self.pretrained_model_name_or_path = pretrained_model_name_or_path
-
-        # Set model card name, which is used to decide ONNX, QPC files path during export and compile resp.
-        if model_card_name := kwargs.pop("model_card_name", None):
-            self.model_card_name = model_card_name
-        elif os.path.isdir(self.pretrained_model_name_or_path):
-            hash_object = hashlib.sha256()
-            hash_object.update(self.pretrained_model_name_or_path.encode("utf-8"))
-            self.model_card_name = hash_object.hexdigest()
-        else:
-            self.model_card_name = self.pretrained_model_name_or_path
-
-        self.full_batch_size = kwargs.get("full_batch_size", None)
-        self.kwargs = kwargs
-        self._tokenizer = None
-        self.is_transformed = False
-        if kwargs.get("transform", True):
-            self.transform(**kwargs)
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}\n" + self.model.__repr__()
+        return self.__class__.__name__ + "\n" + self.model.__repr__()
 
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
+        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
+            logger.warning('Updating attn_implementation="eager"')
+
+        if kwargs.get("low_cpu_mem_usage", None):
+            logger.warning("Updating low_cpu_mem_usage=False")
+
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+
+        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        return cls(model)
+
+    @property
+    def model_name(self) -> str:
+        mname = self.model.__class__.__name__
+        if mname.startswith("QEff") or mname.startswith("QEFF"):
+            mname = mname[4:]
+        return mname
+
+    @property
+    def model_hash(self) -> str:
+        # NOTE: model_config.to_diff_dict() has "_name_or_path" attribute which is the model card name or path.
+        # Using same card name will result in same hash. But, using a relative path for one run and
+        # absolute path for another run will result in different hash.
+        # The added complexity to resolve different paths to same location is not worth pursuing.
+        # Instead, advise the user to always provide same relative paths or absolute paths for local models.
+
+        # Compute the hash with: model_config, transforms
+        mhash = hashlib.sha256()
+        mhash.update(to_hashable(self.model.config.to_diff_dict()))
+        mhash.update(to_hashable(self._transform_names()))
+        mhash = mhash.hexdigest()[:16]
+        return mhash
+
+
+class QEFFAutoModelForCausalLM(QEFFTransformersBase):
+    """
+    The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
+    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+
+    ``Mandatory`` Args:
+        :model (nn.Module):  PyTorch model
+        :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
+
+
+    .. code-block:: python
+
+        from QEfficient import QEFFAutoModelForCausalLM
+
+        model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=2)
+        model.compile(prefill_seq_len=32, ctx_len=1024)
+
+        model.generate(prompts=["Hi there!!"])
+    """
+
+    _hf_auto_class = AutoModelForCausalLM
+    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs):
+        if kwargs.pop("full_batch_size", None):
+            continuous_batching = True
+            warnings.warn(
+                "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
+            )
+
+        super().__init__(model)
+
+        # Set use_cache=True to get KV values as output during ONNX export
+        self.model.config.use_cache = True
+        self.num_layers = model.config.num_hidden_layers
+        self.continuous_batching = continuous_batching
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, continuous_batching: bool = False, *args, **kwargs):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
 
-        Accepts All the parameters that are acceptable by ``transformers.AutoModelForCausalLM``
-        There are few additional parameters that this method can take.
-
-        ``Mandatory`` Args:
-            :transform (bool): Whether to optimize model for KV retention; default is ``True``. Pass ``False`` to get BertStyle model.
-            :model_card_name (str): ``HuggingFace`` model card name or name of the model if custom, used for deciding directory name while saving ``ONNX/qpc`` files.
-            :full_batch_size (int): Pass this if you want to execute model with continuous batching.
-            Example usage:
+        Args:
+            :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
+            :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
+            :args, kwargs: Additional arguments to pass to transformers.AutoModelForCausalLM.
 
         .. code-block:: python
 
@@ -95,266 +147,165 @@ class QEFFTransformersBase(QEFFBaseModel):
 
             # You can now execute the model
             model.generate(prompts=["Hi there!!"])
-
         """
-        model_card_name = kwargs.pop(
-            "model_card_name", None
-        )  # Remove model_card_name from kwargs for transformers APIs
 
-        full_batch_size = kwargs.pop("full_batch_size", None)
+        if kwargs.pop("full_batch_size", None):
+            continuous_batching = True
+            warnings.warn(
+                "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
+            )
 
-        attn_implementation = kwargs.get("attn_implementation", None)
-        if attn_implementation != "eager":
-            logger.warning(f"Updating attn_implementation to be 'eager', got {attn_implementation}")
-            kwargs.update({"attn_implementation": "eager"})
-
-        if low_cpu_mem_usage := kwargs.get("low_cpu_mem_usage", None):
-            logger.warning(f"Updating low_cpu_mem_usage to be 'False', got {low_cpu_mem_usage}")
-        kwargs.update({"low_cpu_mem_usage": False})
-
-        model = QEFFAutoModelToTransformersAutoModelMap[cls.__name__].from_pretrained(
-            pretrained_model_name_or_path, *args, **kwargs
-        )
-        return cls(
-            model,
-            pretrained_model_name_or_path=pretrained_model_name_or_path,
-            model_card_name=model_card_name,
-            full_batch_size=full_batch_size,
-            **kwargs,
-        )
+        self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        self.continuous_batching = continuous_batching
+        return self
 
     @property
-    def tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
-        """Returns the tokenizer for given model based on ``self.pretrained_model_name_or_path``.
-        Loads the tokenizer if required.
+    def model_hash(self) -> str:
+        # Compute the hash with: model_config, continuous_batching, transforms
+        mhash = hashlib.sha256()
+        mhash.update(to_hashable(self.model.config.to_diff_dict()))
+        mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
+        mhash.update(to_hashable(self._transform_names()))
+        mhash = mhash.hexdigest()[:16]
+        return mhash
 
-        Returns:
-            :Union[PreTrainedTokenizer, PreTrainedTokenizerFast]: Tokenizer from ``transformers`` for the given model.
-        """
-        if self._tokenizer is None:
-            self._tokenizer = self.get_tokenizer()
-        return self._tokenizer
-
-    def get_tokenizer(self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
-        tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=self.pretrained_model_name_or_path, **self.kwargs)
-        return tokenizer
-
-
-class QEFFAutoModelForCausalLM(QEFFTransformersBase):
-    """
-    The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
-    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
-    Please note that the QEFF class is also a part of the ``QEfficient`` module.
-
-    ``Mandatory`` Args:
-        :model (nn.Module):  PyTorch model
-        :pretrained_model_name_or_path (str): We recommend passing name of the model as input here, as you are not using `from_pretrained` method. This name will be used for deciding path of the ``ONNX/qpc`` files generated during ``export``, ``compilation`` stages.
-
-    .. code-block:: python
-
-        from QEfficient import QEFFAutoModelForCausalLM
-
-    """
-
-    _pytorch_transforms = [CustomOpsTransform, KVCacheTransform]
-
-    def transform(self, **kwargs):
-        """
-        This method applies all relevant optimization transforms on the model and toggles the ``self.is_transformed`` attribute to True. If the model is already transformed, the method will simply return.
-        Please note that this method does not require any input arguments."
-
-        Returns:
-            :obj: Same object with transformed ``self.model``
-        """
-        if self.is_transformed:
-            return
-
-        if self.full_batch_size is not None:
-            if KVCacheTransform in self._pytorch_transforms:
-                self._pytorch_transforms[self._pytorch_transforms.index(KVCacheTransform)] = CBTransform
-            if CBTransform not in self._pytorch_transforms:
-                raise RuntimeError("please don't update _pytorch_transforms variable")
-        else:
-            if CBTransform in self._pytorch_transforms:
-                self._pytorch_transforms[self._pytorch_transforms.index(CBTransform)] = KVCacheTransform
-            if KVCacheTransform not in self._pytorch_transforms:
-                raise RuntimeError("Please don't update _pytorch_transforms variable")
-
-        # Update list of pytorch transforms if the model falls in AWQ/GPTQ category
-        if hasattr(self.model.config, "quantization_config"):
-            if isinstance(self.model.config.quantization_config, QEffAwqConfig):
-                self._pytorch_transforms.insert(0, AwqToMatmulNbitsTransform)
-
-            if isinstance(self.model.config.quantization_config, QEffGPTQConfig):
-                self._pytorch_transforms.insert(0, GPTQToMatmulNbitsTransform)
-
-        for transform in self._pytorch_transforms:
-            transform.apply(self.model)
-        self.is_transformed = True
-
-    def execute(self, *args, **kwargs):  # type: ignore
-        raise NotImplementedError("Reached too far!!")
-
-    def export(self) -> str:
+    def export(self, export_dir: Optional[str] = None) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
-        The model should already be transformed i.e. ``self.is_transformed`` should be ``True``.
-        Otherwise, this will raise an ``AssertionError``.
         We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
 
         ``Optional`` Args:
             does not any arguments.
 
-        Raises:
-            :AttributeError: If ``pretrained_model_name_or_path`` is a path, this function needs model card name of the model so that it can distinguish between directories while saving the ``ONNX`` files generated. So, user needs to pass ``model_card_name`` as a valid ``string`` in that case, Otherwise this will raise the error.
-
         Returns:
             :str: Path of the generated ``ONNX`` graph.
         """
-        assert self.is_transformed, "Please first run transform on the QEFFAutoModelForCausalLM object"
-        # Export
-        _, onnx_model_path = QEfficient.export(
-            model_name=self.model_card_name,
-            model_kv=self,
-            tokenizer=self.tokenizer,
-            full_batch_size=self.full_batch_size,
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
+        kv_cache_shape = get_padding_shape_from_config(
+            self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
-        self.onnx_path = onnx_model_path
+        example_inputs = {
+            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(bs, seq_len),
+            "past_key_values": [[] for _ in range(self.num_layers)],
+        }
+        dynamic_axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+        }
+        if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
+            pkv_dynamic_axes = {
+                0: "full_batch_size" if self.continuous_batching else "batch_size",
+                1: "ctx_len",
+            }
+        else:  # pkv is 4d
+            pkv_dynamic_axes = {
+                0: "full_batch_size" if self.continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
+        output_names = ["logits"]
+        for i in range(self.num_layers):
+            for kv in ["key", "value"]:
+                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                output_names.append(f"past_{kv}.{i}_RetainedState")
 
-        return self.onnx_path
+        if self.continuous_batching:
+            example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
+            dynamic_axes["batch_index"] = {0: "batch_size"}
+
+        return self._export(
+            example_inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+        )
 
     def compile(
         self,
-        num_cores: int,
-        device_group: List[int] = None,
-        batch_size: int = 1,
-        prompt_len: int = 32,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        prefill_seq_len: int = 32,
         ctx_len: int = 128,
-        mxfp6: bool = True,
-        mxint8: bool = False,
-        mos: int = -1,
-        aic_enable_depth_first: bool = False,
+        batch_size: int = 1,
+        full_batch_size: Optional[int] = None,
+        num_devices: int = 1,
+        num_cores: int = 16,  # FIXME: Make this mandatory arg
+        mxfp6_matmul: bool = False,
+        mxint8_kv_cache: bool = False,
+        **compiler_options,
     ) -> str:
         """
         This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
         If the model has not been exported yet, this method will handle the export process.
-        The generated ``qpc`` can be found under the directory ``efficient-transformers/qeff_models/{self.model_card_name}/qpc``.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
 
-        ``Mandatory`` Args:
-            :num_cores (int): Number of cores used to compile the model.
-            :device_group (List[int]): If this is a list of more that one integers, tensor-slicing is invoked, defaults to None, and automatically chooses suitable device.
         ``Optional`` Args:
-            :model_card_name (Optional[str], optional): Name of the model, Mandatory if ``self.pretrained_model_name_or_path`` is a path. ``Defaults to None``.
+            :onnx_path (str, optional): Path to pre-exported onnx model.
+            :compile_dir (str, optional): Path for saving the qpc generated.
+            :num_cores (int): Number of cores used to compile the model.
+            :num_devices (List[int]): Number of devices for tensor-slicing is invoked, defaults to None, and automatically chooses suitable device.
             :batch_size (int, optional): Batch size. ``Defaults to 1``.
-            :prompt_len (int, optional): The length of the Prefill prompt should be less that ``prompt_len``. ``Defaults to 32``.
+            :prefill_seq_len (int, optional): The length of the Prefill prompt should be less that ``prefill_seq_len``. ``Defaults to 32``.
             :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
-            :mxfp6 (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
-            :mxint8 (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
+            :full_batch_size (int, optional): Continuous batching batch size.
+            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
+            :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
             :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
 
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-        # Export first if self.ort_runtime_args are not populated
-        if self.onnx_path is None:
-            logger.info(f"Exporting the {self.model.__class__.__name__} model to ONNX for compilation!")
-            self.export()
+        # Specializations
+        if self.continuous_batching:
+            if full_batch_size is None:
+                raise TypeError("missing required argument: 'full_batch_size'")
 
-        # Prepare qpc dir path
-        qpc_dir_path = get_qpc_dir_path(
-            model_card_name=self.model_card_name,
-            num_cores=num_cores,
-            mos=mos,
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            mxfp6=mxfp6,
-            mxint8=mxint8,
-            device_group=device_group,
-            full_batch_size=self.full_batch_size,
+            specializations = [
+                {"full_batch_size": full_batch_size, "batch_size": 1, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
+                {"full_batch_size": full_batch_size, "batch_size": full_batch_size, "seq_len": 1, "ctx_len": ctx_len},
+            ]
+        else:
+            specializations = [
+                {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
+                {"batch_size": batch_size, "seq_len": 1, "ctx_len": ctx_len},
+            ]
+
+        # Custom IO
+        custom_io = {}
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        for suffix in ["", "_RetainedState"]:
+            for i in range(self.num_layers):
+                for kv in ["key", "value"]:
+                    custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+
+        return self._compile(
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            retained_state=True,
+            specializations=specializations,
+            convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            custom_io=custom_io,
+            mdp_ts_num_devices=num_devices,
+            aic_num_cores=num_cores,
+            **compiler_options,
         )
 
-        # Compile
-        QEfficient.compile(
-            onnx_path=self.onnx_path,
-            qpc_path=os.path.dirname(qpc_dir_path),
-            num_cores=num_cores,
-            device_group=device_group,
-            aic_enable_depth_first=aic_enable_depth_first,
-            mos=mos,
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            mxfp6=mxfp6,
-            mxint8=mxint8,
-            full_batch_size=self.full_batch_size,
-        )
-        self.qpc_path = qpc_dir_path
-        return self.qpc_path
-
-    def export_and_compile(
+    # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate
+    def generate(
         self,
-        num_cores: int,
-        device_group: List[int],
-        batch_size: int = 1,
-        prompt_len: int = 32,
-        ctx_len: int = 128,
-        mxfp6: bool = True,
-        mxint8: bool = False,
-        mos: int = -1,
-        aic_enable_depth_first: bool = False,
-        qpc_dir_suffix: Optional[str] = None,
-        full_batch_size: Optional[int] = None,
-    ) -> str:
-        """
-        This API is specific to Internal VLLM use-case and is not recommended to be used in your application unless your are using VLLM.
-        """
-        _, transformed = CBTransform.apply(self.model)
-        if not transformed:
-            raise RuntimeError("Could not apply Continuous batch transform on the model")
-        if full_batch_size is not None:
-            self.full_batch_size = full_batch_size
-
-        self.export()
-
-        qpc_base_dir_name = get_qpc_dir_path(
-            model_card_name=self.model_card_name,
-            num_cores=num_cores,
-            mos=mos,
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            mxfp6=mxfp6,
-            mxint8=mxint8,
-            device_group=device_group,
-            full_batch_size=self.full_batch_size,
-        )
-        qpc_base_dir_name = (
-            os.path.dirname(qpc_base_dir_name) + "_" + qpc_dir_suffix if qpc_dir_suffix else qpc_base_dir_name
-        )
-        model_card_dir = os.path.join(QEFF_MODELS_DIR, str(self.model_card_name))
-        os.makedirs(model_card_dir, exist_ok=True)
-        qpc_dir_path = os.path.join(model_card_dir, qpc_base_dir_name)
-
-        # Compile
-        self.qpc_path = QEfficient.compile(
-            onnx_path=self.onnx_path,
-            qpc_path=qpc_dir_path,
-            num_cores=num_cores,
-            device_group=device_group,
-            aic_enable_depth_first=aic_enable_depth_first,
-            mos=mos,
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            mxfp6=mxfp6,
-            mxint8=mxint8,
-            full_batch_size=full_batch_size,
-        )
-        return self.qpc_path
-
-    def generate(self, prompts: List[str], device_id: List[int] = None, runtime: str = "AI_100", **kwargs):
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
+        prompts: List[str],
+        device_id: List[int] = None,
+        runtime: str = "AI_100",
+        **kwargs,
+    ):
         """
         This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
         This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
@@ -366,25 +317,24 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         ``optional`` Args:
             :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to "AI_100".
         """
-        assert Runtime(runtime) == Runtime.AI_100, "Only AI_100 runtime is supported right now via generate API"
-        self.run_cloud_ai_100(prompts=prompts, device_id=device_id, **kwargs)
-
-    def run_cloud_ai_100(self, prompts: List[str], device_id: List[int] = None, **kwargs):
-        assert isinstance(self.qpc_path, str), "Please run compile API first!"
+        if runtime != "AI_100":
+            raise ValueError("Only AI_100 runtime is supported right now via generate API")
+        if not isinstance(self.qpc_path, Path):
+            raise TypeError("Please run compile API first!")
         generation_len = kwargs.pop("generation_len", None)
         return QEfficient.cloud_ai_100_exec_kv(
-            self.tokenizer,
+            tokenizer,
             self.qpc_path,
             prompt=prompts,
             device_id=device_id,
             generation_len=generation_len,
-            full_batch_size=self.full_batch_size,
         )
 
 
 class QEffAutoModel(QEFFTransformersBase):
-    def execute(self, *args, **kwargs):  # type: ignore
-        raise NotImplementedError("Reached too far!!")
+    _hf_auto_class = AutoModel
+    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def export(self):
         raise NotImplementedError("Reached too far!!")

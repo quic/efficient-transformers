@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
+
 import numpy as np
 import onnx
 import onnxruntime
@@ -182,7 +184,7 @@ class ApiRunner:
         added_initializers = {}
         for node in m.graph.node:
             if node.op_type == "Constant":
-                np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t)
+                np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t, os.path.dirname(model_path))
                 if len(np_tensor.shape) == 0 and np_tensor.item() == 2147483647:
                     added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(
                         np.array(0, np_tensor.dtype)

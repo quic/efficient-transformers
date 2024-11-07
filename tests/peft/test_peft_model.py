@@ -158,29 +158,32 @@ def test_auto_peft_model_for_causal_lm_activate_invalid(base_config, adapter_con
         qeff_model.set_adapter("invalid")
 
 
+@pytest.mark.on_qaic
+@pytest.mark.parametrize("batch_size", [1, 4], ids=["bs1", "bs4"])
 @pytest.mark.parametrize("base_config,adapter_config", configs)
-def test_auto_peft_model_for_causal_lm_compile_generate(base_config, adapter_config, tmp_path):
+def test_auto_peft_model_for_causal_lm_compile_generate(base_config, adapter_config, batch_size, tmp_path):
     _, lora_model = create_peft_model(base_config, adapter_config)
     qeff_model = QEffAutoPeftModelForCausalLM(lora_model)
     qeff_model.export(tmp_path)
     start = perf_counter()
-    qeff_model.compile(prefill_seq_len=32, ctx_len=128)
+    qeff_model.compile(batch_size=batch_size, prefill_seq_len=32, ctx_len=128)
     end = perf_counter()
     compile_time_0 = end - start
 
     qeff_model.generate(
-        input_ids=np.zeros((1, 32), dtype="int64"),
+        input_ids=np.zeros((batch_size, 32), dtype="int64"),
         attention_mask=np.concatenate(
             [
-                np.ones(10, dtype="int64"),
-                np.zeros(22, dtype="int64"),
-            ]
-        ).reshape(1, 32),
+                np.ones((batch_size, 10), dtype="int64"),
+                np.zeros((batch_size, 22), dtype="int64"),
+            ],
+            axis=1,
+        ),
         max_new_tokens=10,
     )
 
     start = perf_counter()
-    qeff_model.compile(prefill_seq_len=32, ctx_len=128)
+    qeff_model.compile(batch_size=batch_size, prefill_seq_len=32, ctx_len=128)
     end = perf_counter()
     compile_time_1 = end - start
     assert compile_time_1 < 0.01 * compile_time_0
