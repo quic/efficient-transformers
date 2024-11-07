@@ -142,7 +142,7 @@ def cloud_ai_100_exec_kv_cpp(
     stream: bool = True,
     full_batch_size: Optional[int] = None,
 ):
-    batch_size, ctx_len = get_compilation_dims(qpc_path)
+    batch_size, ctx_len, _ = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
 

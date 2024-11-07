@@ -5,7 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Union
 from warnings import warn
 
 import numpy as np
@@ -43,7 +44,7 @@ aic_to_np_dtype_mapping = {
 class QAICInferenceSession:
     def __init__(
         self,
-        qpc_path: str,
+        qpc_path: Union[Path, str],
         device_ids: Optional[List[int]] = None,
         activate: bool = True,
         enable_debug_logs: bool = False,
@@ -66,14 +67,14 @@ class QAICInferenceSession:
             self.context = qaicrt.Context()
             self.queue = qaicrt.Queue(self.context, 0)  # Async API
         if enable_debug_logs:
-            assert (
-                self.context.setLogLevel(qaicrt.QLogLevel.QL_DEBUG) == qaicrt.QStatus.QS_SUCCESS
-            ), "Failed to setLogLevel"
-        qpc = qaicrt.Qpc(qpc_path)
+            if self.context.setLogLevel(qaicrt.QLogLevel.QL_DEBUG) != qaicrt.QStatus.QS_SUCCESS:
+                raise RuntimeError("Failed to setLogLevel")
+        qpc = qaicrt.Qpc(str(qpc_path))
         # Load IO Descriptor
         iodesc = aicapi.IoDesc()
         status, iodesc_data = qpc.getIoDescriptor()
-        assert status == qaicrt.QStatus.QS_SUCCESS, "Failed to getIoDescriptor"
+        if status != qaicrt.QStatus.QS_SUCCESS:
+            raise RuntimeError("Failed to getIoDescriptor")
         iodesc.ParseFromString(bytes(iodesc_data))
         self.allowed_shapes = [
             [(aic_to_np_dtype_mapping[x.type].itemsize, list(x.dims)) for x in allowed_shape.shapes]
@@ -87,7 +88,8 @@ class QAICInferenceSession:
         if device_ids and len(device_ids) > 1:
             prog_properties.devMapping = ":".join(map(str, device_ids))
         self.program = qaicrt.Program(self.context, None, qpc, prog_properties)
-        assert self.program.load() == qaicrt.QStatus.QS_SUCCESS, "Failed to load program"
+        if self.program.load() != qaicrt.QStatus.QS_SUCCESS:
+            raise RuntimeError("Failed to load program")
         if activate:
             self.activate()
         # Create input qbuffers and buf_dims
@@ -157,11 +159,13 @@ class QAICInferenceSession:
         """
         # Set inputs
         self.set_buffers(inputs)
-        assert self.execObj.setData(self.qbuffers, self.buf_dims) == qaicrt.QStatus.QS_SUCCESS, "Failed to setData"
+        if self.execObj.setData(self.qbuffers, self.buf_dims) != qaicrt.QStatus.QS_SUCCESS:
+            raise MemoryError("Failed to setData")
         # # Run with sync API
         # if self.execObj.run(self.qbuffers) != qaicrt.QStatus.QS_SUCCESS:
         # Run with async API
-        assert self.queue.enqueue(self.execObj) == qaicrt.QStatus.QS_SUCCESS, "Failed to enqueue"
+        if self.queue.enqueue(self.execObj) != qaicrt.QStatus.QS_SUCCESS:
+            raise MemoryError("Failed to enqueue")
         if self.execObj.waitForCompletion() != qaicrt.QStatus.QS_SUCCESS:
             error_message = "Failed to run"
             # Print additional error messages for unmatched dimension error
@@ -187,7 +191,8 @@ class QAICInferenceSession:
             raise ValueError(error_message)
         # Get output buffers
         status, output_qbuffers = self.execObj.getData()
-        assert status == qaicrt.QStatus.QS_SUCCESS, "Failed to getData"
+        if status != qaicrt.QStatus.QS_SUCCESS:
+            raise MemoryError("Failed to getData")
         # Build output
         outputs = {}
         for output_name in self.output_names:

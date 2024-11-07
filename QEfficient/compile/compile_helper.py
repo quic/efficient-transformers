@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import warnings
 from typing import List, Optional, Tuple
 
 from QEfficient.utils.logging_utils import logger
@@ -51,6 +52,11 @@ def compile_kv_model_on_cloud_ai_100(
     device_group: Optional[List[int]] = None,
     **kwargs,
 ) -> Tuple[bool, str]:
+    warnings.warn(
+        "\033[93mUse `QEFFAutoModelForCausalLM.compile` instead, this method will be removed soon.\033[0m",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if kwargs:
         # FIXME
         raise NotImplementedError("Can't handle extra compilation args now!")
@@ -59,10 +65,10 @@ def compile_kv_model_on_cloud_ai_100(
     if os.path.isdir(aic_binary_dir):
         shutil.rmtree(aic_binary_dir)
 
-    assert os.path.isfile(
-        specializations_json
-    ), f"Please use 'QEfficient.compile', as {specializations_json} file was not found"
-    assert os.path.isfile(custom_io_path), f"{custom_io_path} file was not found!"
+    if not os.path.isfile(specializations_json):
+        raise FileNotFoundError(f"Please use 'QEfficient.compile', as {specializations_json} file was not found")
+    if not os.path.isfile(custom_io_path):
+        raise FileNotFoundError(f"{custom_io_path} file was not found!")
     command = [
         "/opt/qti-aic/exec/qaic-exec",
         f"-m={onnx_path}",
