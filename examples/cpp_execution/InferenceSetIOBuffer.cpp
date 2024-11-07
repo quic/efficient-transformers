@@ -521,7 +521,7 @@ int generatePrompt(
             }
             auto endDecode = std::chrono::high_resolution_clock::now();
             elapsedDecode += (endDecode - startDecode);
-        }
+        } //TODO: Add EOS
 
         // Filling last generated_ids from outputBuffers
         get_logits_from_output_buffers(outputBuffers, logits,generated_ids, batch_size, size_of_logits);
