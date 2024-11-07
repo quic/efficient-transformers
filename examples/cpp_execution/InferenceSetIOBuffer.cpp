@@ -251,6 +251,7 @@ int generatePrompt(
         int prefill_seq_len = prompt_len;
         py::dict inputs = text_generation_inference.attr("tokenize_for_prefill")(prompt, tokenizer).cast<py::dict>();
 
+        // Creating attention_mask
         py::array attention_mask_py = inputs["attention_mask"].cast<py::array>();
         auto attn_mask_buff = attention_mask_py.request();
         int64_t *attn_mask_ptr = static_cast<int64_t *>(attn_mask_buff.ptr);
@@ -285,6 +286,7 @@ int generatePrompt(
         }
         WARN_IF(generation_len.value() > max_gen_len, "Passed generation_len is greater than allowed length.");
 
+        // Getting inputs dict from Python
         inputs = text_generation_inference.attr("tokenize_for_prefill_with_padded_len")(prompt, tokenizer, padded_len).cast<py::dict>();
 
         // PREPARE INPUTS FOR PREFILL
@@ -314,6 +316,7 @@ int generatePrompt(
             position_ids_value.clear();
         }
 
+        // Create input_ids vector
         py::array input_ids_py = inputs["input_ids"].cast<py::array>();
         py::buffer_info inp_id_buf = input_ids_py.request();
         std::vector<std::vector<int64_t>> input_ids;
@@ -329,6 +332,7 @@ int generatePrompt(
             input_ids_value.clear();
         }
 
+        // Max value from position ids 2D vector for all batches
         std::vector<int64_t> max_input_len_value_array;
         for(int i=0;i<batch_size;i++)
         {
@@ -336,7 +340,7 @@ int generatePrompt(
             max_input_len_value_array.push_back(*max_input_len_value);
         }
 
-        // *** INFERENCE SET ***
+        // *** INFERENCE SET CREATION ***
         constexpr uint32_t setSize = 10;
         constexpr uint32_t numActivations = 1;
         auto inferenceSet = qaic::rt::InferenceSet::Factory(
@@ -441,7 +445,7 @@ int generatePrompt(
         // At this point, the output is available in "outputBuffers" and can be
         // consumed.
 
-        // *** BUFFER DIMS UPDATE ***
+        // *** BUFFER DIMS UPDATE FOR DECODE***
         for (auto &bufid : bufferIdentifiers.getBufferIdentifierVec())
         {
             if (bufid.getBufferName().find("input_ids") == 0)
@@ -466,20 +470,24 @@ int generatePrompt(
         std::vector<std::vector<int64_t>> generated_ids(batch_size);
         std::vector<std::vector<int64_t>> logits(batch_size);
         std::vector<std::vector<int64_t>> position_id_for_decode(batch_size);
+
+        // Total size of logits generated in outputBuffers
         int size_of_logits = outputBuffers[outputBuffers.size() - 1].size / (sizeof(float) *batch_size);
 
         // *** DECODE LOOP ***
         std::chrono::duration<double> elapsedDecode(0);
         for (int num_tokens = 1; num_tokens < generation_len.value() ; num_tokens++)
         {
-            // *** POPULATE DECODE BUFFERS ***
+            // Get data from outputBuffers into logits array
             get_logits_from_output_buffers(outputBuffers, logits, generated_ids, batch_size, size_of_logits);
 
+            // Incrementing position ids by +1
             for(int bs=0;bs<batch_size;bs++){
                 position_id_for_decode[bs] = {max_input_len_value_array[bs] + num_tokens};
             }
 
             auto startDecode = std::chrono::high_resolution_clock::now();
+            // *** POPULATE DECODE BUFFERS ***
             populateBuffer(inputIdBufferDecode->getQBuffer(), logits);
             populateBuffer(positionIdBufferDecode->getQBuffer(), position_id_for_decode);
 
@@ -515,6 +523,7 @@ int generatePrompt(
             elapsedDecode += (endDecode - startDecode);
         }
 
+        // Filling last generated_ids from outputBuffers
         get_logits_from_output_buffers(outputBuffers, logits,generated_ids, batch_size, size_of_logits);
         int totalGeneratedIds = 0;
         for(ssize_t i=0;i<(int)generated_ids.size();i++){

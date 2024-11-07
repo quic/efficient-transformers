@@ -162,6 +162,7 @@ def tokenize_for_prefill_with_padded_len(prompt, tokenizer, padded_len):
     return inputs
 
 
+# Generating text from generated_ids received from Python
 def tokenize_decode_output(tokenizer, generated_ids, prompt):
     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
     for g, p in zip(generated_texts, prompt):
