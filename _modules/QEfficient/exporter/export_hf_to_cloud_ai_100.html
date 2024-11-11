@@ -51,8 +51,12 @@
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html">Pre-requisites</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#linux-installation">Linux Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#installation">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#sanity-check">Sanity Check</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Upgrade Efficient-Transformers</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/upgrade.html">Using GitHub Repository</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -129,7 +133,6 @@
 <span class="kn">import</span> <span class="nn">torch</span>
 <span class="kn">from</span> <span class="nn">transformers</span> <span class="kn">import</span> <span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span>
 
-<span class="kn">import</span> <span class="nn">QEfficient</span>
 <span class="kn">from</span> <span class="nn">QEfficient.base.common</span> <span class="kn">import</span> <span class="n">AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP</span><span class="p">,</span> <span class="n">QEFF_MODEL_TYPE</span><span class="p">,</span> <span class="n">QEFFCommonLoader</span>
 <span class="kn">from</span> <span class="nn">QEfficient.base.modeling_qeff</span> <span class="kn">import</span> <span class="n">QEFFBaseModel</span>
 <span class="kn">from</span> <span class="nn">QEfficient.exporter.export_utils</span> <span class="kn">import</span> <span class="n">export_onnx</span><span class="p">,</span> <span class="n">fix_onnx_fp16</span><span class="p">,</span> <span class="n">generate_input_files</span><span class="p">,</span> <span class="n">run_model_on_ort</span>
@@ -284,16 +287,12 @@
 <span class="sd">    Returns:</span>
 <span class="sd">         :str: Path of exported ``ONNX`` file.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
-        <span class="s2">&quot;</span><span class="se">\033</span><span class="s2">[93mThis function will be deprecated soon, use QEfficient.export instead</span><span class="se">\033</span><span class="s2">[0m&quot;</span><span class="p">,</span>
-        <span class="ne">DeprecationWarning</span><span class="p">,</span>
-        <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-    <span class="p">)</span>
     <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">):</span>
         <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Overriding </span><span class="si">{</span><span class="n">onnx_dir_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">)</span>
 
-    <span class="k">assert</span> <span class="n">qeff_model</span><span class="o">.</span><span class="n">is_transformed</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;please pass the </span><span class="si">{</span><span class="n">qeff_model</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> after transform API&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">qeff_model</span><span class="o">.</span><span class="n">is_transformed</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;please pass the </span><span class="si">{</span><span class="n">qeff_model</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> after transform API&quot;</span><span class="p">)</span>
 
     <span class="c1"># Decide path for saving exported ONNX files.</span>
     <span class="n">model_name</span> <span class="o">=</span> <span class="n">export_kvstyle_transformed_model_to_onnx</span><span class="p">(</span>
@@ -336,8 +335,10 @@
     <span class="n">output_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">pt_outputs</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
 
     <span class="c1"># Raise error if expected outputs are not present</span>
-    <span class="k">assert</span> <span class="s2">&quot;logits&quot;</span> <span class="ow">in</span> <span class="n">output_names</span><span class="p">,</span> <span class="s2">&quot;logits not found in output&quot;</span>
-    <span class="k">assert</span> <span class="s2">&quot;past_key_values&quot;</span> <span class="ow">in</span> <span class="n">output_names</span><span class="p">,</span> <span class="s2">&quot;past_key_values not found in output&quot;</span>
+    <span class="k">if</span> <span class="s2">&quot;logits&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">output_names</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span><span class="s2">&quot;logits not found in output&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="s2">&quot;past_key_values&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">output_names</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span><span class="s2">&quot;past_key_values not found in output&quot;</span><span class="p">)</span>
 
     <span class="c1"># Build inputs for next iteration from outputs</span>
     <span class="c1"># Build inputs for decode</span>
@@ -436,7 +437,9 @@
     <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="c1"># Check if model architecture is supported for continuous batching.</span>
-    <span class="k">if</span> <span class="n">full_batch_size</span> <span class="ow">and</span> <span class="n">qeff_model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">architectures</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">get_lists_of_cb_qeff_models</span><span class="o">.</span><span class="n">architectures</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">full_batch_size</span> <span class="ow">and</span> <span class="n">qeff_model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">architectures</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">{</span>
+        <span class="n">x</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">get_lists_of_cb_qeff_models</span><span class="o">.</span><span class="n">architectures</span>
+    <span class="p">}:</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
             <span class="sa">f</span><span class="s2">&quot;Continuous batching is not supported for </span><span class="si">{</span><span class="n">qeff_model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">architectures</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
         <span class="p">)</span>
@@ -469,24 +472,14 @@
         <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Overriding </span><span class="si">{</span><span class="n">onnx_dir_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">)</span>
 
-    <span class="k">if</span> <span class="n">qeff_model</span><span class="o">.</span><span class="n">is_transformed</span><span class="p">:</span>
-        <span class="n">model_name</span> <span class="o">=</span> <span class="n">export_kvstyle_transformed_model_to_onnx</span><span class="p">(</span>
-            <span class="n">model_name</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span>
-            <span class="n">transformed_model</span><span class="o">=</span><span class="n">qeff_model</span><span class="o">.</span><span class="n">model</span><span class="p">,</span>
-            <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
-            <span class="n">onnx_dir_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
-            <span class="n">seq_len</span><span class="o">=</span><span class="n">seq_length</span><span class="p">,</span>
-            <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
-        <span class="p">)</span>  <span class="c1"># type: ignore</span>
-
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">model_name</span> <span class="o">=</span> <span class="n">export_bertstyle_model_to_onnx</span><span class="p">(</span>
-            <span class="n">model_name</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span>
-            <span class="n">model</span><span class="o">=</span><span class="n">qeff_model</span><span class="o">.</span><span class="n">model</span><span class="p">,</span>
-            <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
-            <span class="n">onnx_dir_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
-            <span class="n">seq_len</span><span class="o">=</span><span class="n">seq_length</span><span class="p">,</span>
-        <span class="p">)</span>  <span class="c1"># type: ignore</span>
+    <span class="n">model_name</span> <span class="o">=</span> <span class="n">export_kvstyle_transformed_model_to_onnx</span><span class="p">(</span>
+        <span class="n">model_name</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span>
+        <span class="n">transformed_model</span><span class="o">=</span><span class="n">qeff_model</span><span class="o">.</span><span class="n">model</span><span class="p">,</span>
+        <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+        <span class="n">onnx_dir_path</span><span class="o">=</span><span class="n">onnx_dir_path</span><span class="p">,</span>
+        <span class="n">seq_len</span><span class="o">=</span><span class="n">seq_length</span><span class="p">,</span>
+        <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
+    <span class="p">)</span>
     <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2">.onnx&quot;</span><span class="p">)</span>
 
 
@@ -511,7 +504,7 @@
 
 <span class="sd">    Usage 2: You can pass ``model_name`` and ``model_kv`` as an object of ``QEfficient.QEFFAutoModelForCausalLM``, In this case will directly export the ``model_kv.model`` to ``ONNX``</span>
 
-<span class="sd">    We will be deprecating this function and it will be replaced by ``QEffAutoModelForCausalLM.export``.</span>
+<span class="sd">    We will be deprecating this function and it will be replaced by ``QEFFAutoModelForCausalLM.export``.</span>
 
 <span class="sd">    ``Mandatory`` Args:</span>
 <span class="sd">        :model_name (str): The name of the model to be used.</span>
@@ -536,7 +529,7 @@
 
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
-        <span class="s2">&quot;</span><span class="se">\033</span><span class="s2">[93mmodel_kv argument will be replaced by qeff_model of type QEFFBaseModel</span><span class="se">\033</span><span class="s2">[0m&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;</span><span class="se">\033</span><span class="s2">[93m`qualcomm_efficient_converter` method will be deprecated soon, use `QEFFAutoModelForCausalLM.export` instead</span><span class="se">\033</span><span class="s2">[0m&quot;</span><span class="p">,</span>
         <span class="ne">DeprecationWarning</span><span class="p">,</span>
         <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
     <span class="p">)</span>
@@ -553,13 +546,8 @@
         <span class="p">)</span>
     <span class="p">)</span>
 
-    <span class="c1"># Transform if required</span>
-    <span class="k">if</span> <span class="n">model_kv</span><span class="o">.</span><span class="n">is_transformed</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">kv</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;Transformed model is passed while requesting to convert non-transformed model&quot;</span><span class="p">)</span>
-    <span class="n">model_kv</span> <span class="o">=</span> <span class="n">model_kv</span> <span class="k">if</span> <span class="n">model_kv</span><span class="o">.</span><span class="n">is_transformed</span> <span class="k">else</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="n">model_kv</span><span class="p">)</span> <span class="k">if</span> <span class="n">kv</span> <span class="k">else</span> <span class="n">model_kv</span>
-
     <span class="k">if</span> <span class="n">onnx_dir_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">model_card_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">QEFF_MODELS_DIR</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">model_kv</span><span class="o">.</span><span class="n">model_card_name</span><span class="p">))</span>
+        <span class="n">model_card_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">QEFF_MODELS_DIR</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">model_name</span><span class="p">))</span>
         <span class="n">onnx_dir_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">model_card_dir</span><span class="p">,</span> <span class="s2">&quot;onnx&quot;</span><span class="p">)</span>
         <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">onnx_dir_path</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 
@@ -619,8 +607,8 @@
     <div class="rst-other-versions">
       Versions
       <dl>
-        <dd><a href="../../../index.html">main</a></dd>
-        <dd><a href="../../../source/release/v1.18</a></dd>
+        <dd><a href="../index.html">main</a></dd>
+        <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
       </dl>
     </div>
 </div><script>
