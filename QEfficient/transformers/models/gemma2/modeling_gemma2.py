@@ -28,7 +28,7 @@ from transformers.models.gemma2.modeling_gemma2 import (
     repeat_kv,
     rotate_half,
 )
-from transformers.utils import is_torchdynamo_compiling
+# from transformers.utils import is_torchdynamo_compiling
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
@@ -285,10 +285,10 @@ class QEffGemma2ForCausalLM(Gemma2ForCausalLM, GenerationMixin):
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        if labels is None and not is_torchdynamo_compiling():
-            logger.warning_once(
-                "Starting from v4.46, the `logits` model output will have the same type as the model (except at train time, where it will always be FP32)"
-            )
+        # if labels is None and not is_torchdynamo_compiling():
+        #     logger.warning_once(
+        #         "Starting from v4.46, the `logits` model output will have the same type as the model (except at train time, where it will always be FP32)"
+        #     )
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
         # Using self.lm_head(hidden_states) instead of self.lm_head(hidden_states[:, -num_logits_to_keep:, :]) to avoid onnx export failure.
         logits = self.lm_head(hidden_states)
