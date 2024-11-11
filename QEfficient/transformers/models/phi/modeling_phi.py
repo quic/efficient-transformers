@@ -98,6 +98,7 @@ class QEffPhiAttention(PhiAttention):
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
+        kv_seq_len = key_states.shape[-2]
         # Queries and keys upcast to fp32 is required by Phi-2 to avoid overflow
         attn_weights = torch.matmul(
             query_states.to(torch.float32), key_states.to(torch.float32).transpose(2, 3)
