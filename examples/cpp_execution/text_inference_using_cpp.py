@@ -28,8 +28,13 @@ if so_folder_path.is_dir():
         import InferenceSetIOBuffer  # noqa: E402
     except ImportError:
         logger.error("Error importing InferenceSetIOBuffer Module")
+        raise ImportError(
+            "Could not import `InfereceSetIoBuffer` executable, Please refer `examples/cpp_execution/README.md` file for building compiling cpp files."
+        )
 else:
-    raise FileNotFoundError("Please follow README instructions to first compile the cpp files")
+    raise FileNotFoundError(
+        "Please follow `examples/cpp_execution/README.md` instructions to first compile the cpp files"
+    )
 
 
 def main(
@@ -89,8 +94,7 @@ def main(
     )
 
     if full_batch_size is not None:
-        logger.warning("Continous batching support is not enabled on cpp execution. Switching to regular execution.")
-        full_batch_size = None
+        raise RuntimeError("Continuous batching will be supported in future, please rerun without continuous batching.")
 
     qpc_dir_path = get_qpc_dir_path(
         model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
