@@ -7,7 +7,7 @@
 
 ## This example works on continuous batching with different lora adapters in the same batch ##
 
-from QEfficient import QEffAutoLoraModelForCausalLM
+from QEfficient import QEffAutoPeftModelForCausalLM
 from QEfficient.utils import load_hf_tokenizer
 
 base_model_name = "mistralai/Mistral-7B-v0.1"
@@ -17,37 +17,22 @@ full_batch_size = 4
 device_group = [0]
 
 ## STEP 1 -- init base model
-
-# **Option1**: Download model weights from hugging face & Init it with QEffAuto model to apply QEff transforms
-# model_hf = AutoModelForCausalLM.from_pretrained(base_model_name)
-# qeff_model = QEffAutoLoraModelForCausalLM(model_hf, continuous_batching=True)
-
-# **Option2**: Initialize the model using from_pretrained() method
-qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(
-    pretrained_model_name_or_path=base_model_name, continuous_batching=True
+qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained(
+    "predibase/gsm8k", "gsm8k", continuous_batching=True, finite_adapters=True
 )
 
-# (alternative) non-cb initialization
-# qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(pretrained_model_name_or_path=base_model_name, continuous_batching=False)
+# (alternative) non-cb compilation
+# qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained("predibase/gsm8k", "gsm8k", continuous_batching=False, finite_adapters=True)
 
 ## STEP 2 -- load adapter adapter
-adapter_id_gsm8k = qeff_model.load_adapter("predibase/gsm8k", "gsm8k")
-print(f"Activating gsm8k as adapter_id {adapter_id_gsm8k}")
+qeff_model.load_adapter("predibase/tldr_content_gen", "tldr_content_gen")
 
-adapter_id_tldr = qeff_model.load_adapter("predibase/tldr_content_gen", "tldr_content_gen")
-print(f"Activating tldr_content_gen as adapter_id {adapter_id_tldr}")
-
-adapter_id_dbpedia = qeff_model.load_adapter("predibase/dbpedia", "dbpedia")
-print(f"Activating dbpedia as adapter_id {adapter_id_dbpedia}")
+qeff_model.load_adapter("predibase/dbpedia", "dbpedia")
 
 # STEP 2 (optional) -- unload adapter
 unload_status = qeff_model.unload_adapter("dbpedia")
 print(f"Unloading dbpedia success: {unload_status}")
 
-# get adapter id
-# NOTE: should rely on get_adapter_id in case the id obtained at set_adpater() get updated
-gsm8k_id = qeff_model.get_adapter_id("gsm8k")
-tldr_id = qeff_model.get_adapter_id("tldr_content_gen")
 
 ## STEP 3 -- export & compile qeff model
 qpc_path = qeff_model.compile(
@@ -71,10 +56,6 @@ qpc_path = qeff_model.compile(
 #                               mxint8_kv_cache=True)
 
 ## STEP 4 -- run inference on the generate function
-# prompt_to_lora_id_mapping is a list of lora_id of which the size matches num of prompts
-# and is a one-on-one mapping for the prompt-to-loraid
-# e.g., prompt_to_lora_id_mapping = [{adapter_id_0}, {adapter_id_1}, {adapter_id_0}, {adapter_id_1}, ...]
-# setting 0 means using base model
 prompts = [
     """Please answer the following question: James decides to run 3 sprints 3 times a week.  He runs 60 meters each sprint.  How many total meters does he run a week?\n\nAnswer:""",
     """The following headline is the headline of a news report. Please write the content of the news passage based on only this headline.\n\nHeadline: Harvard shrank its insect-inspired microrobot to the size of a penny\n\nContent:""",
@@ -90,7 +71,16 @@ qeff_model.generate(
     tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=base_model_name),
     prompts=prompts,
     device_id=device_group,
-    prompt_to_lora_id_mapping=[gsm8k_id, tldr_id, gsm8k_id, 0, gsm8k_id, tldr_id, gsm8k_id, tldr_id],
+    prompt_to_adapter_mapping=[
+        "gsm8k",
+        "tldr_content_gen",
+        "gsm8k",
+        "base",
+        "gsm8k",
+        "tldr_content_gen",
+        "gsm8k",
+        "tldr_content_gen",
+    ],
 )
 
 

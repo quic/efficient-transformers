@@ -24,8 +24,8 @@ from QEfficient.utils.logging_utils import logger
 
 class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
     """
-    QEff class for loading models with multiple LoRA adapters.
-    Once exported and compiled, the qpc can perform mixed batch inference with provided prompt_to_lora_id_mapping.
+    QEff class for loading models with multiple LoRA adapters. Currently only Mistral and Llama model are supported.
+    Once exported and compiled, the qpc can perform mixed batch inference with provided `prompt_to_adapter_mapping`.
 
     Args:
         :model (nn.Module): PyTorch model
@@ -34,21 +34,20 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         :adapter_configs (Dict): A dictionary contains lora_name to lora_configs mapping
         :max_num_adapters (int): Total number of active adapters that to be exported and compiled
         :active_adapter_to_id (Dict): A dictionary contains active adapter's lora_name to lora_id mapping
+        :lora_rank (int): The consistent lora rank across all active adapters
+        :target_modules_for_all_adapters (List[str]): The consistent set of target modules across all active adapters
 
     .. code-block:: python
 
-        from QEfficient import QEffAutoLoraModelForCausalLM
+        from QEfficient.lora import QEffAutoLoraModelForCausalLM
 
         m = QEffAutoPeftModelForCausalLM.from_pretrained("mistralai/Mistral-7B-v0.1")
         m.load_adapter("predibase/gsm8k", "gsm8k")
         m.load_adapter("predibase/magicoder", "magicoder")
-        gsm8k_id = m.set_adapter("gsm8k")
-        magicoder_id = m.set_adapter("magicoder")
-        m.export(full_batch_size=3)
         m.compile(num_cores=16, device_group=[0])
 
         prompts=["code prompt", "math prompt", "generic"]
-        m.generate(prompts, device_group=[0], prompt_to_lora_id_mapping=[magicoder_id,gsm8k_id,0])
+        m.generate(prompts, device_group=[0], prompt_to_adapter_mapping=["magicoder","gsm8k_id","base"])
 
     """
 
@@ -188,12 +187,10 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
         return True
 
-    def get_adapter_id(self, adapter_name):
-        "get the adapter_id that maps to the adapter_name"
+    def set_adapter(self, adapter_name: str):
+        raise NotImplementedError("Set adapter is not supported in finite_adapters mode")
 
-        return self.active_adapter_to_id[adapter_name]
-
-    def load_adapter_weights_to_model(self):
+    def _load_adapter_weights_to_model(self):
         "Loads adapter weights to the model's multilora layer in a stacked format"
 
         num_hidden_layers = len(self.model.model.layers)
@@ -256,7 +253,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
                 module.lora_b_weights.copy_(stacked_lora_b)
                 module.lora_scalings.copy_(stacked_lora_s)
 
-    def init_adapter_model(self):
+    def _init_adapter_model(self):
         "Initialize the fixed lora model with multiple adapter weigths standby"
 
         # assume all adapters have same target_modules and ranks
@@ -275,12 +272,23 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         )
 
         # load_weight to model
-        self.load_adapter_weights_to_model()
+        self._load_adapter_weights_to_model()
 
     def export(self, export_dir: Optional[str] = None) -> str:
+        """
+        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+        We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
+
+        ``Optional`` Args:
+            does not any arguments.
+
+        Returns:
+            :str: Path of the generated ``ONNX`` graph.
+        """
+
         # initialize the adapter model
         assert self.max_num_adapters, "Please use load_adapter() to add at least one adapter; otherwise, refer to QEFFAutoModelForCausalLM for base model usage"
-        self.init_adapter_model()
+        self._init_adapter_model()
 
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
@@ -338,18 +346,21 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
             :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
         ``optional`` Args:
             :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to "AI_100".
+            :prompt_to_adapter_mapping (List[str]): A list of adapter names that maps to the prompts, specifying which adapter the prompt wants to apply. "base" for base model (no adapter).
         """
         if runtime != "AI_100":
             raise ValueError("Only AI_100 runtime is supported right now via generate API")
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
         generation_len = kwargs.pop("generation_len", None)
-        prompt_to_lora_id_mapping = kwargs.pop("prompt_to_lora_id_mapping", [0 for _ in range(len(prompts))])
+        prompt_to_adapter_mapping = kwargs.pop("prompt_to_adapter_mapping", ["base" for _ in range(len(prompts))])
         return QEfficient.cloud_ai_100_exec_kv(
             tokenizer,
             self.qpc_path,
             prompt=prompts,
             device_id=device_id,
             generation_len=generation_len,
-            prompt_to_lora_id_mapping=prompt_to_lora_id_mapping,
+            prompt_to_lora_id_mapping=[
+                self.active_adapter_to_id[name] if name != "base" else 0 for name in prompt_to_adapter_mapping
+            ],
         )

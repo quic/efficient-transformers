@@ -12,7 +12,8 @@ import pytest
 from peft import LoraConfig
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from QEfficient import QEffAutoLoraModelForCausalLM
+from QEfficient import QEffAutoPeftModelForCausalLM
+from QEfficient.lora import QEffAutoLoraModelForCausalLM
 from QEfficient.utils import load_hf_tokenizer
 
 configs = [
@@ -72,6 +73,18 @@ def test_auto_lora_model_for_causal_lm_from_pretrained(base_model_name, adapter_
     assert len(qeff_model.adapter_configs) == 0
     assert qeff_model.max_num_adapters == 0
     assert len(qeff_model.active_adapter_to_id) == 0
+
+
+# test peft model initialization using from_pretrained approach
+@pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples)
+def test_auto_peft_model_for_causal_lm_from_pretrained(base_model_name, adapter_id_0, adapter_id_1):
+    qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained(adapter_id_0, "id_0", finite_adapters=True)
+
+    assert qeff_model.base_model_name == base_model_name
+    assert len(qeff_model.adapter_weights) == 1
+    assert len(qeff_model.adapter_configs) == 1
+    assert qeff_model.max_num_adapters == 1
+    assert len(qeff_model.active_adapter_to_id) == 1
 
 
 # test the init assertion for models that are not supported
@@ -156,27 +169,6 @@ def test_auto_lora_model_for_causal_lm_hash():
     assert model_hash_0_1 != model_hash_0_0
 
 
-# test load_adapter() and get_adapter_id()
-@pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[:1])
-def test_auto_lora_model_for_causal_lm_load_get_adapter_id_check(base_model_name, adapter_id_0, adapter_id_1):
-    qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
-
-    set_id_0 = qeff_model.load_adapter(adapter_id_0, "adapter_0")
-    set_id_1 = qeff_model.load_adapter(adapter_id_1, "adapter_1")
-    assert set_id_1 == set_id_0 + 1
-
-    qeff_model.load_adapter(adapter_id_1, "adapter_2")
-    qeff_model.unload_adapter("adapter_1")
-
-    update_id_0 = qeff_model.get_adapter_id("adapter_0")
-    update_id_2 = qeff_model.get_adapter_id("adapter_2")
-    assert set_id_0 == update_id_0
-    assert set_id_1 == update_id_2
-
-    with pytest.raises(KeyError):
-        qeff_model.get_adapter_id("adapter_1")
-
-
 # test download_adapter(), load_adapter() and unload_adapter()
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[1:])
 def test_auto_lora_model_for_causal_lm_load_unload_adapter(base_model_name, adapter_id_0, adapter_id_1):
@@ -196,8 +188,8 @@ def test_auto_lora_model_for_causal_lm_load_unload_adapter(base_model_name, adap
 def test_auto_lora_model_for_causal_lm_export_compile_generate(base_model_name, adapter_id_0, adapter_id_1, tmp_path):
     qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
 
-    id_0 = qeff_model.load_adapter(adapter_id_0, "adapter_0")
-    id_1 = qeff_model.load_adapter(adapter_id_1, "adapter_1")
+    qeff_model.load_adapter(adapter_id_0, "adapter_0")
+    qeff_model.load_adapter(adapter_id_1, "adapter_1")
 
     # export
     start = perf_counter()
@@ -225,5 +217,5 @@ def test_auto_lora_model_for_causal_lm_export_compile_generate(base_model_name, 
         tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=base_model_name),
         prompts=prompts,
         device_id=[0],
-        prompt_to_lora_id_mapping=[id_0, id_1, id_0, 0],
+        prompt_to_adapter_mapping=["adapter_0", "adapter_1", "adapter_0", "base"],
     )
