@@ -17,7 +17,7 @@
 | [CodeGemma-2b](https://huggingface.co/google/codegemma-2b) | ✔️ |
 | [CodeGemma-7b](https://huggingface.co/google/codegemma-7b) | ✔️ |
 | [Gemma-2-2b](https://huggingface.co/google/gemma-2-2b) | ✔️ |
-| [Gemma-2-7b](https://huggingface.co/google/gemma-2-7b) | ✔️ |
+| [Gemma-2-9b](https://huggingface.co/google/gemma-2-9b) | ✔️ |
 | [Gemma-2-27b](https://huggingface.co/google/gemma-2-27b) | ✔️ |
 | [Salesforce/codegen25-7b-mono_P](https://huggingface.co/Salesforce/codegen25-7b-mono_P) | ✔️ |
 | [Salesforce/xgen-7b-8k-base](https://huggingface.co/Salesforce/xgen-7b-8k-base) | ✔️ |
