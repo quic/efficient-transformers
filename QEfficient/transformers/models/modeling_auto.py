@@ -7,6 +7,7 @@
 
 import hashlib
 import logging
+import os
 import warnings
 from pathlib import Path
 from typing import Any, List, Optional, Union
@@ -70,8 +71,8 @@ class QEFFTransformersBase(QEFFBaseModel):
             mname = mname[4:]
         return mname
 
-    @property
-    def model_hash(self) -> str:
+    @classmethod
+    def model_hash(self, model_config) -> str:
         # NOTE: model_config.to_diff_dict() has "_name_or_path" attribute which is the model card name or path.
         # Using same card name will result in same hash. But, using a relative path for one run and
         # absolute path for another run will result in different hash.
@@ -80,7 +81,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
         # Compute the hash with: model_config, transforms
         mhash = hashlib.sha256()
-        mhash.update(to_hashable(self.model.config.to_diff_dict()))
+        mhash.update(to_hashable(model_config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
@@ -159,15 +160,122 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self.continuous_batching = continuous_batching
         return self
 
-    @property
-    def model_hash(self) -> str:
+    @classmethod
+    def model_hash(cls, model_config, continuous_batching: bool) -> str:
         # Compute the hash with: model_config, continuous_batching, transforms
         mhash = hashlib.sha256()
-        mhash.update(to_hashable(self.model.config.to_diff_dict()))
-        mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
-        mhash.update(to_hashable(self._transform_names()))
+        mhash.update(to_hashable(model_config.to_diff_dict()))
+        mhash.update(to_hashable({"continuous_batching": continuous_batching}))
+        mhash.update(to_hashable(cls._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
+
+    @classmethod
+    def get_onnx_path(cls, model_config, continuous_batching: bool = False, export_dir: Optional[str] = None) -> str:
+        mhash = cls.model_hash(model_config, continuous_batching=continuous_batching)
+        return cls._get_onnx_path(model_hash=mhash, export_dir=export_dir)
+
+    @classmethod
+    def compile_hash(
+        cls,
+        model_config,
+        num_cores: int,
+        continuous_batching: bool = False,
+        export_dir: Optional[str] = None,
+        prefill_seq_len: int = 32,
+        ctx_len: int = 128,
+        batch_size: int = 1,
+        full_batch_size: Optional[int] = None,
+        num_devices: int = 1,
+        mxfp6_matmul: bool = False,
+        mxint8_kv_cache: bool = False,
+        **compiler_options,
+    ):
+        onnx_path = cls.get_onnx_path(model_config, continuous_batching, export_dir=export_dir)
+        # Specializations
+        if cls.continuous_batching:
+            if full_batch_size is None:
+                raise TypeError("missing required argument: 'full_batch_size'")
+
+            specializations = [
+                {"full_batch_size": full_batch_size, "batch_size": 1, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
+                {"full_batch_size": full_batch_size, "batch_size": full_batch_size, "seq_len": 1, "ctx_len": ctx_len},
+            ]
+        else:
+            specializations = [
+                {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
+                {"batch_size": batch_size, "seq_len": 1, "ctx_len": ctx_len},
+            ]
+
+        # Custom IO
+        custom_io = {}
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        for suffix in ["", "_RetainedState"]:
+            for i in range(model_config.num_hidden_layers):
+                for kv in ["key", "value"]:
+                    custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+
+        compile_hash = hashlib.sha256(
+            to_hashable(
+                {
+                    "onnx_path": onnx_path,
+                    "num_cores": num_cores,
+                    "prefill_seq_len": prefill_seq_len,
+                    "ctx_len": ctx_len,
+                    "batch_size": batch_size,
+                    "full_batch_size": full_batch_size,
+                    "mxfp6_matmul": mxfp6_matmul,
+                    "mxint8_kv_cache": mxint8_kv_cache,
+                    **compiler_options,
+                }
+            )
+        )
+
+        if specializations is not None:
+            compile_hash.update(to_hashable(specializations))
+
+        if custom_io is not None:
+            compile_hash.update(to_hashable(custom_io))
+
+        if num_devices > 1:
+            compile_hash.update(to_hashable({"mdp_ts_num_devices": num_devices}))
+
+        # Check if already compiled
+        compile_hash = compile_hash.hexdigest()[:16]
+        return compile_hash
+
+    @classmethod
+    def get_qpc_path(
+        cls,
+        model_config,
+        num_cores,
+        continuous_batching: bool = False,
+        prefill_seq_len: int = 32,
+        ctx_len: int = 128,
+        batch_size: Optional[int] = 1,
+        full_batch_size: Optional[int] = None,
+        num_devices: int = 1,
+        mxfp6_matmul: bool = False,
+        mxint8_kv_cache: bool = False,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        **compiler_options,
+    ):
+        compile_hash = cls.compile_hash(
+            model_config,
+            continuous_batching,
+            num_cores=num_cores,
+            export_dir=os.path.dirname(onnx_path) if onnx_path else None,
+            prefill_seq_len=prefill_seq_len,
+            ctx_len=ctx_len,
+            batch_size=batch_size,
+            full_batch_size=full_batch_size,
+            num_devices=num_devices,
+            mxfp6_matmul=mxfp6_matmul,
+            mxint8_kv_cache=mxint8_kv_cache,
+            **compiler_options,
+        )
+        return cls._get_qpc_path(compile_hash, onnx_path, compile_dir)
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
@@ -220,11 +328,13 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             example_inputs,
             output_names,
             dynamic_axes,
+            model_hash=self.model_hash(model_config=self.model.config, continuous_batching=self.continuous_batching),
             export_dir=export_dir,
         )
 
     def compile(
         self,
+        num_cores: int,
         onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
         *,
@@ -233,7 +343,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         batch_size: int = 1,
         full_batch_size: Optional[int] = None,
         num_devices: int = 1,
-        num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         **compiler_options,
@@ -283,7 +392,23 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 for kv in ["key", "value"]:
                     custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
 
+        compile_hash = self.compile_hash(
+            self.model.config,
+            self.continuous_batching,
+            num_cores=num_cores,
+            export_dir=os.path.dirname(onnx_path) if onnx_path else None,
+            prefill_seq_len=prefill_seq_len,
+            ctx_len=ctx_len,
+            batch_size=batch_size,
+            full_batch_size=full_batch_size,
+            num_devices=num_devices,
+            mxfp6_matmul=mxfp6_matmul,
+            mxint8_kv_cache=mxint8_kv_cache,
+            **compiler_options,
+        )
+
         return self._compile(
+            compile_hash,
             onnx_path,
             compile_dir,
             compile_only=True,

@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import hashlib
 import inspect
 import json
 import logging
@@ -23,7 +22,7 @@ from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
-from QEfficient.utils.cache import QEFF_HOME, to_hashable
+from QEfficient.utils.cache import QEFF_HOME
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +66,13 @@ class QEFFBaseModel(ABC):
     @abstractmethod
     def model_name(self) -> str: ...
 
-    @property
+    @classmethod
     @abstractmethod
-    def model_hash(self) -> str: ...
+    def model_hash(cls) -> str: ...
+
+    @classmethod
+    @abstractmethod
+    def compile_hash(cls) -> str: ...
 
     @abstractmethod
     def export(self, export_dir: Optional[str] = None) -> Path:
@@ -115,6 +118,7 @@ class QEFFBaseModel(ABC):
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
+        model_hash: str,
         export_kwargs: Optional[Dict[str, any]] = None,
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
@@ -130,9 +134,9 @@ class QEFFBaseModel(ABC):
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
         """
+        onnx_path = self._get_onnx_path(model_hash, export_dir)
         export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
-        export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
-        onnx_path = export_dir / f"{self.model_name}.onnx"
+        export_dir = export_dir.with_name(export_dir.name + "-" + model_hash)
         if onnx_path.is_file():
             self.onnx_path = onnx_path
             return onnx_path
@@ -193,8 +197,22 @@ class QEFFBaseModel(ABC):
         self.onnx_path = onnx_path
         return onnx_path
 
+    def _get_onnx_path(self, model_hash: str, export_dir: Optional[str] = None):
+        export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
+        export_dir = export_dir.with_name(export_dir.name + "-" + model_hash)
+        onnx_path = export_dir / f"{self.model_name}.onnx"
+        return onnx_path
+
+    def _get_qpc_path(self, compile_hash: str, onnx_path: Optional[str] = None, compile_dir: Optional[str] = None):
+        onnx_path = Path(onnx_path or onnx_path)
+        compile_dir = Path(compile_dir or onnx_path.parent)
+        qpc_path = compile_dir / "qpc"
+        qpc_path = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
+        return qpc_path
+
     def _compile(
         self,
+        compile_hash: str,
         onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
         *,
@@ -225,6 +243,14 @@ class QEFFBaseModel(ABC):
         if not onnx_path.is_file():
             raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
 
+        qpc_path = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
+        if qpc_path.is_dir():
+            if (qpc_path / "programqpc.bin").is_file():
+                self.qpc_path = qpc_path
+                return qpc_path
+            # Probably compilation failure last time, delete directory to start over
+            shutil.rmtree(qpc_path)
+
         command = constants.COMPILER + [f"-m={onnx_path}"]
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
@@ -233,26 +259,6 @@ class QEFFBaseModel(ABC):
                     command.append(option)
                 continue
             command.append(f"{option}={value}")
-        compile_hash = hashlib.sha256(to_hashable(command))
-
-        if specializations is not None:
-            compile_hash.update(to_hashable(specializations))
-
-        if custom_io is not None:
-            compile_hash.update(to_hashable(custom_io))
-
-        if mdp_ts_num_devices > 1:
-            compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
-
-        # Check if already compiled
-        compile_hash = compile_hash.hexdigest()[:16]
-        qpc_path = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
-        if qpc_path.is_dir():
-            if (qpc_path / "programqpc.bin").is_file():
-                self.qpc_path = qpc_path
-                return qpc_path
-            # Probably compilation failure last time, delete directory to start over
-            shutil.rmtree(qpc_path)
 
         # Write specializations.json file
         if specializations is not None:
