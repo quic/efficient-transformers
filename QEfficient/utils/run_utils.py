@@ -231,7 +231,7 @@ class ApiRunner:
             device_id=device_group,
             ctx_len=self.input_handler.ctx_len,
             full_batch_size=self.input_handler.full_batch_size,
-        ).cloud_ai_100_exec_kv_helper(
+        ).generate(
             prompt=self.input_handler.prompt,
             generation_len=self.gen_len,
             stream=False
