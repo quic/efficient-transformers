@@ -16,7 +16,7 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 import QEfficient
 from QEfficient import QEFFAutoModelForCausalLM
-from QEfficient.lora.pytorch_transforms import LoraModelInputsTransform, TargetModulesTransform
+from QEfficient.peft.lora.pytorch_transforms import LoraModelInputsTransform, TargetModulesTransform
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
@@ -29,17 +29,11 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
     Args:
         :model (nn.Module): PyTorch model
-        :base_model_name (str): Model card name for base model
-        :adapter_weights (Dict): A dictionary contains lora_name to lora_weight mapping
-        :adapter_configs (Dict): A dictionary contains lora_name to lora_configs mapping
-        :max_num_adapters (int): Total number of active adapters that to be exported and compiled
-        :active_adapter_to_id (Dict): A dictionary contains active adapter's lora_name to lora_id mapping
-        :lora_rank (int): The consistent lora rank across all active adapters
-        :target_modules_for_all_adapters (List[str]): The consistent set of target modules across all active adapters
+        :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
 
     .. code-block:: python
 
-        from QEfficient.lora import QEffAutoLoraModelForCausalLM
+        from QEfficient.peft.lora import QEffAutoLoraModelForCausalLM
 
         m = QEffAutoPeftModelForCausalLM.from_pretrained("mistralai/Mistral-7B-v0.1")
         m.load_adapter("predibase/gsm8k", "gsm8k")
@@ -53,14 +47,13 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
     def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs) -> None:
         super().__init__(model, continuous_batching)
-        assert (
-            type(self.model).__name__ == "QEffMistralForCausalLM" or type(self.model).__name__ == "QEffLlamaForCausalLM"
-        ), f"Only QEffMistralForCausalLM and QEffLlamaForCausalLM model are supported but get {type(self.model).__name__}"
+        if self.model.__class__.__name__ not in ["QEffMistralForCausalLM", "QEffLlamaForCausalLM"]:
+            raise NotImplementedError(
+                f"Only QEffMistralForCausalLM and QEffLlamaForCausalLM model are supported but get {self.model.__class__.__name__}"
+            )
 
-        self.base_model_name = self.model.model.config._name_or_path
         self.adapter_weights = {}
         self.adapter_configs = {}
-        self.max_num_adapters = 0
         self.active_adapter_to_id = {}
 
         self.lora_rank = 0
@@ -101,11 +94,15 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         adapter_weight: Optional[dict] = None,
         adapter_config: Optional[PeftConfig] = None,
     ):
-        """Loads a new adapter from huggingface hub or local path into CPU cache
+        """
+        Loads a new adapter from huggingface hub or local path into CPU cache
 
-        Args:
+        ``Mandatory`` Args:
             :adapter_model_id (str): Adapter model ID from huggingface hub or local path
-            :adapter_name (str): Adapter name to be used to set this adapter as current
+            :adapter_name (str): Adapter name to be used to downloaded this adapter
+        ``Optional`` Args:
+            :adapter_weight (dict): Adapter weight tensors in dictionary format
+            :adapter_config (PeftConfig): Adapter config in the format of PeftConfig
         """
 
         # check if adapter name already loaded
@@ -128,7 +125,16 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         adapter_weight: Optional[dict] = None,
         adapter_config: Optional[PeftConfig] = None,
     ):
-        "Load adapter into CPU cache and Sets active adapter from one of the loaded adapters"
+        """
+        Load adapter into CPU cache and set it as active
+
+        ``Mandatory`` Args:
+            :adapter_model_id (str): Adapter model ID from huggingface hub or local path
+            :adapter_name (str): Adapter name to be used to load this adapter
+        ``Optional`` Args:
+            :adapter_weight (dict): Adapter weight tensors in dictionary format
+            :adapter_config (PeftConfig): Adapter config in the format of PeftConfig
+        """
 
         # check if adapter name already exist and activated
         if adapter_name in self.active_adapter_to_id.keys():
@@ -151,22 +157,23 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
             # set active adapter id to current max if adapter_name is new
             if adapter_name not in self.active_adapter_to_id.keys():
-                self.active_adapter_to_id[adapter_name] = self.max_num_adapters + 1  # reserve 0 for base
-
-                # add active adapter to set
-                self.max_num_adapters = len(self.active_adapter_to_id)
+                self.active_adapter_to_id[adapter_name] = len(self.active_adapter_to_id) + 1  # reserve 0 for base
 
         return self.active_adapter_to_id[adapter_name]
 
     def unload_adapter(self, adapter_name: str):
-        "Deactivate adpater and remove it from CPU cache"
+        """
+        Deactivate adpater and remove it from CPU cache
+
+        ``Mandatory`` Args:
+            :adapter_name (str): Adapter name to be unloaded
+        """
 
         # step1: remove from active list if it's there
         if adapter_name not in self.active_adapter_to_id.keys():
             logger.info(f"Adapter name {adapter_name} is not set active yet")
             return False
 
-        self.max_num_adapters -= 1
         self.active_adapter_to_id.pop(adapter_name)
 
         # renumbering of active adapter id
@@ -197,9 +204,9 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         for i in range(num_hidden_layers):
             for target_module in self.target_modules_for_all_adapters:
                 # stack all adapters weights
-                a_tensor_list = list(range(self.max_num_adapters + 1))
-                b_tensor_list = list(range(self.max_num_adapters + 1))
-                s_tensor_list = list(range(self.max_num_adapters + 1))
+                a_tensor_list = list(range(len(self.active_adapter_to_id) + 1))
+                b_tensor_list = list(range(len(self.active_adapter_to_id) + 1))
+                s_tensor_list = list(range(len(self.active_adapter_to_id) + 1))
 
                 for lora_name, lora_id in self.active_adapter_to_id.items():
                     if target_module in ["q_proj", "k_proj", "v_proj", "o_proj"]:
@@ -256,10 +263,6 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
     def _init_adapter_model(self):
         "Initialize the fixed lora model with multiple adapter weigths standby"
 
-        # assume all adapters have same target_modules and ranks
-        if self.max_num_adapters != len(self.active_adapter_to_id):
-            raise ValueError("Inconsistent max_num_adapters and active adapters")
-
         # set lora rank
         self.lora_rank = list(self.adapter_configs.values())[0].r
 
@@ -268,7 +271,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
 
         self.target_modules_for_all_adapters = list(self.adapter_configs.values())[0].target_modules
         _, transformed = TargetModulesTransform.apply(
-            self.model, self.target_modules_for_all_adapters, self.lora_rank, self.max_num_adapters
+            self.model, self.target_modules_for_all_adapters, self.lora_rank, len(self.active_adapter_to_id)
         )
 
         # load_weight to model
@@ -287,7 +290,11 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         """
 
         # initialize the adapter model
-        assert self.max_num_adapters, "Please use load_adapter() to add at least one adapter; otherwise, refer to QEFFAutoModelForCausalLM for base model usage"
+        if len(self.active_adapter_to_id) == 0:
+            raise ValueError(
+                "Please use load_adapter() to add at least one adapter; otherwise, refer to QEFFAutoModelForCausalLM for base model usage"
+            )
+
         self._init_adapter_model()
 
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
@@ -333,6 +340,7 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
         prompts: List[str],
         device_id: List[int] = None,
+        prompt_to_adapter_mapping: List[str] = None,
         runtime: str = "AI_100",
         **kwargs,
     ):
@@ -342,18 +350,28 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
 
         ``Mandatory`` Args:
+            :tokenizer (PreTrainedTokenizerFast or PreTrainedTokenizer): The tokenizer used in the inference
             :prompts (List[str]): List of prompts to run the execution.
             :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
+            :prompt_to_adapter_mapping (List[str]): The sequence of the adapter names will be matched with sequence of prompts and corresponding adapters will be used for the prompts."base" for base model (no adapter).
         ``optional`` Args:
             :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to "AI_100".
-            :prompt_to_adapter_mapping (List[str]): A list of adapter names that maps to the prompts, specifying which adapter the prompt wants to apply. "base" for base model (no adapter).
+
         """
         if runtime != "AI_100":
             raise ValueError("Only AI_100 runtime is supported right now via generate API")
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
         generation_len = kwargs.pop("generation_len", None)
-        prompt_to_adapter_mapping = kwargs.pop("prompt_to_adapter_mapping", ["base" for _ in range(len(prompts))])
+
+        if not prompt_to_adapter_mapping:
+            prompt_to_adapter_mapping = ["base" for _ in range(len(prompts))]
+
+        if len(prompt_to_adapter_mapping) != len(prompts):
+            raise RuntimeError(
+                f"Number of prompts should match number of prompt_to_adapter_mapping, got len(prompts) = {len(prompts)}, len(prompt_to_adapter_mapping) = {len(prompt_to_adapter_mapping)}"
+            )
+
         return QEfficient.cloud_ai_100_exec_kv(
             tokenizer,
             self.qpc_path,

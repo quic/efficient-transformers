@@ -10,8 +10,8 @@ from typing import Dict, Optional, Tuple
 from torch import nn
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
-from QEfficient.lora.layers import LinearBase, LinearMultiLoRA
-from QEfficient.lora.lora_model import QEffLoraModelLlamaForCausalLM, QEffLoraModelMistralForCausalLM
+from QEfficient.peft.lora.layers import LinearBase, LinearMultiLoRA
+from QEfficient.peft.lora.lora_model import QEffLoraModelLlamaForCausalLM, QEffLoraModelMistralForCausalLM
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaForCausalLM
 from QEfficient.transformers.models.mistral.modeling_mistral import QEffMistralForCausalLM
 

@@ -22,7 +22,9 @@ qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained(
 )
 
 # (alternative) non-cb compilation
-# qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained("predibase/gsm8k", "gsm8k", continuous_batching=False, finite_adapters=True)
+# qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained(
+#     "predibase/gsm8k", "gsm8k", continuous_batching=False, finite_adapters=True
+# )
 
 ## STEP 2 -- load adapter adapter
 qeff_model.load_adapter("predibase/tldr_content_gen", "tldr_content_gen")
@@ -47,13 +49,15 @@ qpc_path = qeff_model.compile(
 )
 
 # (alternative) non-cb compilation
-# qpc_path = qeff_model.compile(batch_size=2,
-#                               prefill_seq_len=seq_len,
-#                               ctx_len=ctx_len,
-#                               num_devices=len(device_group),
-#                               num_cores=16,
-#                               mxfp6_matmul=True,
-#                               mxint8_kv_cache=True)
+# qpc_path = qeff_model.compile(
+#     batch_size=2,
+#     prefill_seq_len=seq_len,
+#     ctx_len=ctx_len,
+#     num_devices=len(device_group),
+#     num_cores=16,
+#     mxfp6_matmul=True,
+#     mxint8_kv_cache=True,
+# )
 
 ## STEP 4 -- run inference on the generate function
 prompts = [

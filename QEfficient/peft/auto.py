@@ -21,7 +21,7 @@ from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, OnnxTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.lora import QEffAutoLoraModelForCausalLM
+from QEfficient.peft.lora import QEffAutoLoraModelForCausalLM
 from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
 from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
@@ -147,6 +147,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         """
         Args:
             :pretrained_name_or_path (str): Model card name from huggingface or local path to model directory.
+            :finite_adapters (bool): set True to enable finite adapter mode with QEffAutoLoraModelForCausalLM class. Please refer to QEffAutoLoraModelForCausalLM for API specification.
             :args, kwargs: Additional arguments to pass to peft.AutoPeftModelForCausalLM.
         """
         if kwargs.get("full_batch_size"):
@@ -162,6 +163,8 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
                 ).base_model_name_or_path,
                 **kwargs,
             )
+            if len(args) == 0 or not isinstance(list(args)[0], str):
+                raise TypeError("Required adapter name argument in string format")
             obj.load_adapter(pretrained_name_or_path, list(args)[0])
         else:
             obj = cls._from_pretrained(pretrained_name_or_path, *args, **kwargs)

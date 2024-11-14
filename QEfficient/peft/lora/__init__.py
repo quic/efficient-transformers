@@ -5,7 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
-from QEfficient.lora.auto import QEffAutoLoraModelForCausalLM
+from QEfficient.peft.lora.auto import QEffAutoLoraModelForCausalLM
 
 __all__ = [
     "QEffAutoLoraModelForCausalLM",
