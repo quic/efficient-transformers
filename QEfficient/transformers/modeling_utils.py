@@ -109,13 +109,6 @@ from .models.gemma2.modeling_gemma2 import (
     QEffGemma2ForCausalLM,
     QEffGemma2Model,
 )
-from .models.cohere.modeling_cohere import (
-    QEffCohereAttention,
-    QEffCohereForCausalLM,
-    QEffCohereModel,
-    QEffCohereRotaryEmbedding,
-    QEffCohereDecoderLayer,
-)
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
 from .models.gpt_bigcode.modeling_gpt_bigcode import (
     QEffGPTBigCodeAttention,
