@@ -19,8 +19,6 @@
 | [Gemma-2-2b](https://huggingface.co/google/gemma-2-2b) | ✔️ |
 | [Gemma-2-9b](https://huggingface.co/google/gemma-2-9b) | ✔️ |
 | [Gemma-2-27b](https://huggingface.co/google/gemma-2-27b) | ✔️ |
-| [Salesforce/codegen25-7b-mono_P](https://huggingface.co/Salesforce/codegen25-7b-mono_P) | ✔️ |
-| [Salesforce/xgen-7b-8k-base](https://huggingface.co/Salesforce/xgen-7b-8k-base) | ✔️ |
 | [MPT-7b](https://huggingface.co/mosaicml/mpt-7b) | ✔️ |
 | [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1) | ✔️ |
 | [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) | ✔️ |
