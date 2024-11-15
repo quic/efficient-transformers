@@ -275,6 +275,9 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 {"batch_size": batch_size, "seq_len": 1, "ctx_len": ctx_len},
             ]
 
+            if prefill_seq_len == 1:
+                specializations.pop()
+
         # Custom IO
         custom_io = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"

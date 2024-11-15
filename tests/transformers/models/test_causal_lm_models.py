@@ -11,7 +11,6 @@ from transformers import AutoModelForCausalLM
 from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.compile.compile_helper import compile_kv_model_on_cloud_ai_100, create_and_dump_specializations
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, QEffAwqQuantizer
 from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig, QEffGPTQQuantizer
@@ -74,10 +73,7 @@ def load_causal_lm_model(model_config):
     return model_hf, params
 
 
-@pytest.mark.on_qaic
-@pytest.mark.parametrize("model_name", test_models)
-@pytest.mark.skip(reason="This is not a test function")
-def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     prompt_len: int = Constants.PROMPT_LEN,
     ctx_len: int = Constants.CTX_LEN,
@@ -128,8 +124,8 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         pytest.skip("No available devices to run model on Cloud AI 100")
 
     _ = qeff_model.compile(
-        prefill_seq_len=8,
-        ctx_len=32,
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
         num_cores=14,
         mxfp6=False,
         aic_enable_depth_first=False,
@@ -165,8 +161,8 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         pytest.skip("No available devices to run model on Cloud AI 100")
 
     _ = qeff_model.compile(
-        prefill_seq_len=8,
-        ctx_len=32,
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
         num_cores=14,
         mxfp6=False,
         aic_enable_depth_first=False,
@@ -210,6 +206,7 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     assert (
         new_api_ort_tokens == old_api_ort_tokens
     ).all(), "New API output does not match old API output for ONNX export function"
+
 
 @pytest.mark.causal_lm
 @pytest.mark.parametrize("model_name", test_models)
