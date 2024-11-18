@@ -152,8 +152,8 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         pytest.skip("No available devices to run model on Cloud AI 100")
 
     _ = qeff_model.compile(
-        prefill_seq_len=8,
-        ctx_len=32,
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
         num_cores=14,
         mxfp6=False,
         aic_enable_depth_first=False,
@@ -197,3 +197,30 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     assert (
         new_api_ort_tokens == old_api_ort_tokens
     ).all(), "New API output does not match old API output for ONNX export function"
+
+
+@pytest.mark.on_qaic
+@pytest.mark.parametrize("model_name", test_models)
+def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    if model_name == "microsoft/Phi-3-mini-4k-instruct":
+        n_layer = 2  # test only 2 layer models
+    else:
+        n_layer = 1
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
+
+
+@pytest.mark.on_qaic
+def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and without continuous batching.
+    """
+    model_name = "gpt2"
+    prompt_len = 1
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
