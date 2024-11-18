@@ -256,6 +256,8 @@ class KVCacheTransform(ModuleMappingTransform):
         MllamaTextModel: QEffMllamaTextModel,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
         MllamaTextCrossAttention: QEffMllamaTextCrossAttention,
+        MllamaCrossAttentionDecoderLayer: QEffMllamaCrossAttentionDecoderLayer,
+        MllamaSelfAttentionDecoderLayer: QEffMllamaSelfAttentionDecoderLayer,
         # Mistral
         MistralAttention: QEffMistralAttention,
         MistralDecoderLayer: QEffMistralDecoderLayer,

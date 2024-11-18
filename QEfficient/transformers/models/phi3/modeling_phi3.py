@@ -277,7 +277,7 @@ class QEffPhi3Model(Phi3Model):
             position_ids = cache_position.unsqueeze(0)
 
         target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        
+
         causal_mask = _create_causal_mask(
             position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
         )
