@@ -132,7 +132,12 @@ class QEFFBaseModel(ABC):
         """
         export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
         export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
-        onnx_path = export_dir / f"{self.model_name}.onnx"
+        if self.num_speculative_tokens:
+            model_name = f"{self.model_name}_{self.num_speculative_tokens+1}nltk.onnx"
+        else:
+            model_name = f"{self.model_name}.onnx"
+        onnx_path = export_dir / model_name
+        # TODO: need to add hash to onnx
         if onnx_path.is_file():
             self.onnx_path = onnx_path
             return onnx_path
@@ -243,6 +248,12 @@ class QEFFBaseModel(ABC):
 
         if mdp_ts_num_devices > 1:
             compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
+
+        if self.num_speculative_tokens:
+            compile_hash.update(to_hashable({"num_speculative_tokens": self.num_speculative_tokens}))
+
+        if self.is_dlm:
+            compile_hash.update(to_hashable({"is_dlm": self.is_dlm}))
 
         # Check if already compiled
         compile_hash = compile_hash.hexdigest()[:16]
