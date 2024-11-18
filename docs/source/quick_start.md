@@ -156,7 +156,6 @@ Draft-based speculative decoding is the approach where a small Draft Language Mo
 To export both DLM/TLM, add below flags to `from_pretrained`:
 
 ```Python
-
 tlm_name = "meta-llama/Llama-3.1-405B"
 dlm_name = "meta-llama/Llama-3.1-8B"
 k = 3 # DLM will make `k` speculations
