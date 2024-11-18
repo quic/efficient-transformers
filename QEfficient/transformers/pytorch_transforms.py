@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 from typing import Tuple
+from types import MethodType
 
 import transformers
 from torch import nn
@@ -199,6 +200,7 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
 )
+from QEfficient.transformers.models.spd.modeling_tlm import tlm_forward
 
 
 class CustomOpsTransform(ModuleMappingTransform):
@@ -306,4 +308,35 @@ class KVCacheTransform(ModuleMappingTransform):
         model, transformed = super().apply(model)
         # FIXME: see if we can merge into _module_mapping dict
         transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update
+        return model, transformed
+
+class SpDTransform:
+    """
+    Apply generic QEffForCausalLM forward pass to extract `num_speculative_tokens+1` hidden states before computing logits.
+    This is only needed if user is exporting Target Language Model (TLM) for Speculative Decoding to validate output logits
+    against the speculated tokens from a smaller model. 
+    Other than the computed logits, there should be no difference between the SpD Transformed model and its corresponding cunterpart.
+
+    ``Mandatory`` Args:
+        :model (nn.Module): PyTorch model.
+
+    Returns:
+        :model (nn.Module): PyTorch model.
+        :transformed (bool): whether transformation was applied successfully.
+    """
+    # supported architectures
+    _module_mapping = {
+        # Llama
+        QEffLlamaForCausalLM,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        transformed = False
+        if (model_class:=model.__class__) in cls._module_mapping:
+            model.forward = MethodType(tlm_forward, model)
+            transformed = True
+        else:
+            raise NotImplementedError(f"model class {model_class} does not yet support returning multiple logits to keep.")
+
         return model, transformed

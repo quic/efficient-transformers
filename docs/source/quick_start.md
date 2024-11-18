@@ -149,3 +149,18 @@ Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/s
 qeff_model.generate(prompts=["My name is"])
 ```
 End to End demo examples for various models are available in **notebooks** directory. Please check them out.
+
+### Draft-Based Speculative Decoding
+Draft-based speculative decoding is the approach where a small Draft Language Model (DLM) makes `num_logits_to_keep` autoregressive speculations ahead of the Target Language Model (TLM). The objective is to predict what the TLM would have predicted if it would have been used instead of the DLM. This approach is beneficial when the autoregressive decode phase of the TLM is memory bound and thus, we can leverage the extra computing resources of our hardware by batching the speculations of the DLM.  
+
+To export both DLM/TLM, add below flags to `from_pretrained`:
+
+```Python
+
+tlm_name = "meta-llama/Llama-3.1-405B"
+dlm_name = "meta-llama/Llama-3.1-8B"
+k = 3 # DLM will make `k` speculations
+tlm = AutoModelForCausalLM.from_pretrained(tlm_name, num_speculative_tokens=k)
+dlm = AutoModelForCausalLM.from_pretrained(dlm_name, is_dlm=True)
+```
+Once done, the same high-level python APIs of `export` and `compile` can be used to generate QPC. 

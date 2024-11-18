@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import os
+import math
 import shutil
 import warnings
 from typing import Optional, Tuple, Union
@@ -189,6 +190,7 @@ def export_kvstyle_transformed_model_to_onnx(
     onnx_dir_path: str,
     seq_len: int,
     full_batch_size: Optional[int] = None,
+    num_speculative_tokens: Optional[int] = None,
 ) -> str:
     # Disabling requires_grad on all parameters
     for _, p in enumerate(transformed_model.parameters()):
@@ -197,6 +199,19 @@ def export_kvstyle_transformed_model_to_onnx(
     if seq_len <= 0:
         raise ValueError(f"Need seq_len to be greater than zero, got seq_len={seq_len}")
 
+    # Implicitly pass "num_speculative_tokens" if defined and \
+    # assert prompt_len >= num_speculative_tokens
+    prompt_len = Constants.PROMPT_LEN
+    num_logits_to_keep = None
+    if num_speculative_tokens is not None:
+        num_logits_to_keep = num_speculative_tokens+1
+        setattr(transformed_model, "num_logits_to_keep", num_logits_to_keep)
+        if prompt_len < num_logits_to_keep:
+            prompt_len *= math.ceil((num_logits_to_keep) / prompt_len)
+            if prompt_len >= seq_len:
+                seq_len = prompt_len*2
+
+
     # Preprocess inputs
     # Build inputs for prefill
     input_handler = InputHandler(
@@ -204,9 +219,10 @@ def export_kvstyle_transformed_model_to_onnx(
         tokenizer=tokenizer,
         config=transformed_model.config,
         prompt=Constants.INPUT_STR,
-        prompt_len=Constants.PROMPT_LEN,
+        prompt_len=prompt_len,
         ctx_len=seq_len,
         full_batch_size=full_batch_size,
+        num_logits_to_keep=num_logits_to_keep,
     )
 
     inputs = input_handler.prepare_pytorch_inputs()
@@ -223,7 +239,9 @@ def export_kvstyle_transformed_model_to_onnx(
     # Build inputs for decode
     inputs = input_handler.update_pytorch_inputs(inputs, pt_outputs)
     # To avoid issues in onnx export
-    inputs["position_ids"] = torch.full((full_batch_size if full_batch_size else 1, 1), seq_len - 1)
+    bsz = full_batch_size if full_batch_size else 1
+    pos_len = inputs["position_ids"].size(1)
+    inputs["position_ids"] = torch.full((bsz, pos_len), seq_len - 1)
 
     # Run PyTorch inference with past
     pt_outputs = transformed_model(**inputs)
@@ -314,6 +332,7 @@ def export_for_cloud(
     onnx_dir_path: str,
     seq_length: int = Constants.SEQ_LEN,
     full_batch_size: Optional[int] = None,
+    num_speculative_tokens: Optional[int] = None,
 ) -> str:
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
@@ -324,6 +343,7 @@ def export_for_cloud(
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length,
             full_batch_size=full_batch_size,
+            num_speculative_tokens=num_speculative_tokens
         )
     else:
         raise NotImplementedError(
@@ -338,6 +358,7 @@ def export_lm_model_for_cloud(
     onnx_dir_path: str,
     seq_length: int,
     full_batch_size: Optional[int] = None,
+    num_speculative_tokens: Optional[int] = None,
 ) -> str:
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
@@ -366,6 +387,7 @@ def qualcomm_efficient_converter(
     kv: bool = True,
     form_factor: str = "cloud",
     full_batch_size: Optional[int] = None,
+    num_speculative_tokens: Optional[int] = None,
 ) -> Tuple[str, str]:
     """
     This method is an alias for ``QEfficient.export``.
@@ -441,6 +463,7 @@ def qualcomm_efficient_converter(
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length,
             full_batch_size=full_batch_size,
+            num_speculative_tokens=num_speculative_tokens,
         )
         return onnx_dir_path, generated_onnx_model_path
     else:
