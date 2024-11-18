@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import math
 import hashlib
 import logging
 import warnings
@@ -18,7 +19,7 @@ from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, P
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
-from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
+from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import constants, get_padding_shape_from_config
@@ -110,7 +111,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs):
+    def __init__(self, model: nn.Module, continuous_batching: bool = False, num_speculative_tokens: Optional[int] = None, is_dlm: bool = False, **kwargs):
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -123,6 +124,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
+        self.num_speculative_tokens = num_speculative_tokens
+        self.is_dlm = is_dlm
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, continuous_batching: bool = False, *args, **kwargs):
@@ -149,6 +152,14 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             model.generate(prompts=["Hi there!!"])
         """
 
+        num_speculative_tokens = kwargs.pop("num_speculative_tokens", None)
+        is_dlm = kwargs.pop("is_dlm", False)
+        if num_speculative_tokens is not None:
+            if not isinstance(num_speculative_tokens, int) or num_speculative_tokens<2:
+                ValueError("`num_speculative_tokens` arg should be an integer greater than 1.")
+            if is_dlm:
+                raise ValueError("`num_speculative_tokens` arg and `is_dlm` flag are mutually exclusive.")
+            cls._pytorch_transforms.append(SpDTransform)
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -157,6 +168,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
         self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         self.continuous_batching = continuous_batching
+        self.num_speculative_tokens = num_speculative_tokens
+        self.is_dlm = is_dlm
         return self
 
     @property
@@ -182,13 +195,18 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        if self.num_speculative_tokens:
+            num_logits_to_keep = self.num_speculative_tokens+1
+            setattr(self.model, "num_logits_to_keep", num_logits_to_keep)
+            if seq_len < num_logits_to_keep:
+                seq_len *= math.ceil((num_logits_to_keep) / seq_len)
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(bs, seq_len),
+            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs,1),
             "past_key_values": [[] for _ in range(self.num_layers)],
         }
         dynamic_axes = {
@@ -261,20 +279,29 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :str: Path of the compiled ``qpc`` package.
         """
         # Specializations
+        decode_seq_len = self.num_speculative_tokens+1 if self.num_speculative_tokens else 1
         if self.continuous_batching:
             if full_batch_size is None:
                 raise TypeError("missing required argument: 'full_batch_size'")
 
             specializations = [
                 {"full_batch_size": full_batch_size, "batch_size": 1, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
-                {"full_batch_size": full_batch_size, "batch_size": full_batch_size, "seq_len": 1, "ctx_len": ctx_len},
+                {"full_batch_size": full_batch_size, "batch_size": full_batch_size, "seq_len": decode_seq_len, "ctx_len": ctx_len},
             ]
+            if self.is_dlm:
+                specializations.append(
+                    {"full_batch_size": full_batch_size, "batch_size": full_batch_size, "seq_len": 2, "ctx_len": ctx_len},
+                )
         else:
             specializations = [
                 {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
             ]
             if prefill_seq_len != 1:
                 specializations.append({"batch_size": batch_size, "seq_len": 1, "ctx_len": ctx_len})
+            if self.is_dlm:
+                specializations.append(
+                    {"batch_size": batch_size, "seq_len": 2, "ctx_len": ctx_len},
+                )
 
         # Custom IO
         custom_io = {}
