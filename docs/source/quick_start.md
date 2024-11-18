@@ -163,3 +163,6 @@ tlm = AutoModelForCausalLM.from_pretrained(tlm_name, num_speculative_tokens=k)
 dlm = AutoModelForCausalLM.from_pretrained(dlm_name, is_dlm=True)
 ```
 Once done, the same high-level python APIs of `export` and `compile` can be used to generate QPC. 
+
+When `num_speculative_tokens` is specified, QEfficient transforms the TLM to always output `num_speculative_tokens+1` logits per batch for both prefill and decode. While only the last logit corresponding to the last autoregressive token is needed in prefill, for decode phase, we take in as batch input the speculations from the DLM. As for the DLM, the only addition of adding the `is_dlm=True` flag is that an extra specialization file with `seq_len=2` is created to account for the "bonus" token that happens when all speculations are correct. 
+> NOTE: due to some compiler limitations, it is currently not possible to create an onnx-graph that parametrizes `num_speculative_tokens`. Because of this, a unique onnx-graph will be created per unique-specified `num_speculative_tokens`. This is also why `num_speculative_tokens+1` will be returned for both prefill and decode. 
