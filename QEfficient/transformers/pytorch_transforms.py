@@ -15,6 +15,13 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
+from transformers.models.cohere.modeling_cohere import (
+    CohereAttention,
+    CohereDecoderLayer,
+    CohereForCausalLM,
+    CohereModel,
+    CohereRotaryEmbedding,
+)
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconDecoderLayer,
@@ -96,6 +103,13 @@ from QEfficient.transformers.models.codegen.modeling_codegen import (
     QeffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
+)
+from QEfficient.transformers.models.cohere.modeling_cohere import (
+    QEffCohereAttention,
+    QEffCohereDecoderLayer,
+    QEffCohereForCausalLM,
+    QEffCohereModel,
+    QEffCohereRotaryEmbedding,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
@@ -233,6 +247,12 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
         Gemma2Model: QEffGemma2Model,
         Gemma2ForCausalLM: QEffGemma2ForCausalLM,
+        # Cohere
+        CohereForCausalLM: QEffCohereForCausalLM,
+        CohereAttention: QEffCohereAttention,
+        CohereModel: QEffCohereModel,
+        CohereRotaryEmbedding: QEffCohereRotaryEmbedding,
+        CohereDecoderLayer: QEffCohereDecoderLayer,
         # Mistral
         MistralAttention: QEffMistralAttention,
         MistralDecoderLayer: QEffMistralDecoderLayer,

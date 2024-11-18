@@ -13,8 +13,9 @@ from time import perf_counter
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import torch
 import transformers
-from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers import AutoConfig, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import padding_check_and_fix
@@ -221,6 +222,8 @@ def print_latency_stats_kv(prompt, exec_info, automation: bool = False):
 
 def cloud_ai_100_exec_kv(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+    config: AutoConfig,
+    embeddings: torch.Tensor,
     qpc_path: str,
     prompt: Optional[str] = None,
     prompts_txt_file_path: Optional[str] = None,
@@ -269,6 +272,8 @@ def cloud_ai_100_exec_kv(
     generate_text = TextGeneration(
         tokenizer=tokenizer,
         prompt=prompt,
+        embeddings=embeddings,
+        config=config,
         qpc_path=qpc_path,
         device_id=device_id,
         ctx_len=ctx_len,
@@ -310,6 +315,8 @@ class TextGeneration:
     def __init__(
         self,
         tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+        embeddings: torch.Tensor,
+        config: AutoConfig,
         qpc_path: str,
         prompt: List[str],
         full_batch_size: Optional[int] = None,
@@ -321,6 +328,8 @@ class TextGeneration:
         write_io_dir: Optional[str] = None,
     ) -> None:
         self.tokenizer = tokenizer
+        self.embeddings = embeddings
+        self.config = config
         self.prompt = prompt
         self.qpc_path = qpc_path
         self.device_id = device_id
@@ -404,12 +413,20 @@ class TextGeneration:
             prefill_seq_len: The prefill sequence length fetched from the session's bindings or allowed shapes.
         """
         if self.session.allowed_shapes:
-            batch_size = max(
-                [x[self.session.binding_index_map["input_ids"]][1][0] for x in self.session.allowed_shapes]
-            )
-            prefill_seq_len = max(
-                [x[self.session.binding_index_map["input_ids"]][1][1] for x in self.session.allowed_shapes]
-            )
+            if "input_ids" in self.session.binding_index_map:
+                batch_size = max(
+                    [x[self.session.binding_index_map["input_ids"]][1][0] for x in self.session.allowed_shapes]
+                )
+                prefill_seq_len = max(
+                    [x[self.session.binding_index_map["input_ids"]][1][1] for x in self.session.allowed_shapes]
+                )
+            else:
+                batch_size = max(
+                    [x[self.session.binding_index_map["inputs_embeds"]][1][0] for x in self.session.allowed_shapes]
+                )
+                prefill_seq_len = max(
+                    [x[self.session.binding_index_map["inputs_embeds"]][1][1] for x in self.session.allowed_shapes]
+                )
         else:
             batch_size, prefill_seq_len = self.session.bindings[self.session.binding_index_map["input_ids"]].dims
         return batch_size, prefill_seq_len
@@ -463,7 +480,8 @@ class TextGeneration:
         decode_inputs["position_ids"] = self.decode_pos_ids
         if self.batch_index is not None:
             decode_inputs["batch_index"] = self.batch_index
-
+        if self.config.architectures[0] == "CohereForCausalLM":
+            decode_inputs["inputs_embeds"] = self.embeddings(torch.tensor(decode_inputs["input_ids"])).detach().numpy()
         return decode_inputs
 
     def _update_decode_input(self, outputs, position_ids, generation_len, decode_batch_id=None):
@@ -560,6 +578,10 @@ class TextGeneration:
             chunk_inputs["position_ids"] = inputs["position_ids"][
                 :, i * self.prefill_seq_len : (i + 1) * self.prefill_seq_len
             ]
+            if self.config.architectures[0] == "CohereForCausalLM":
+                chunk_inputs["inputs_embeds"] = (
+                    self.embeddings(torch.tensor(chunk_inputs.pop("input_ids"))).detach().numpy()
+                )
             outputs = self.session.run(chunk_inputs)
             if self.write_io_dir is not None:
                 write_io_files(inputs, outputs, self.write_io_dir, "prefill", "aic_batch_io", True, False)
@@ -659,6 +681,10 @@ class TextGeneration:
         for num_token in range(1, generation_len):
             if self.stream:
                 self.streamer.put(decode_inputs["input_ids"][0])
+            if self.config.architectures[0] == "CohereForCausalLM":
+                decode_inputs["inputs_embeds"] = (
+                    self.embeddings(torch.tensor(decode_inputs.pop("input_ids"))).detach().numpy()
+                )
             outputs = self.session.run(decode_inputs)
 
             if self.write_io_dir is not None:

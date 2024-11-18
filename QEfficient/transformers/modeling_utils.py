@@ -15,6 +15,13 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
 )
+from transformers.models.cohere.modeling_cohere import (
+    CohereAttention,
+    CohereDecoderLayer,
+    CohereForCausalLM,
+    CohereModel,
+    CohereRotaryEmbedding,
+)
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconForCausalLM,
@@ -82,6 +89,13 @@ from .models.codegen.modeling_codegen import (
     QeffCodeGenBlock,
     QEffCodeGenForCausalLM,
     QEffCodeGenModel,
+)
+from .models.cohere.modeling_cohere import (
+    QEffCohereAttention,
+    QEffCohereDecoderLayer,
+    QEffCohereForCausalLM,
+    QEffCohereModel,
+    QEffCohereRotaryEmbedding,
 )
 from .models.falcon.modeling_falcon import (
     QEffFalconAttention,
@@ -154,6 +168,7 @@ get_lists_of_cb_qeff_models = ModelArchitectures(
         MptForCausalLM.__name__,
         FalconForCausalLM.__name__,
         GPTBigCodeForCausalLM.__name__,
+        CohereForCausalLM.__name__,
     ]
 )
 # Create an instance of the named tuple
@@ -174,6 +189,7 @@ qeff_supported_architectures = ModelArchitectures(
         Qwen2ForCausalLM.__name__,
         Starcoder2ForCausalLM.__name__,
         GPTBigCodeForCausalLM.__name__,
+        CohereForCausalLM.__name__,
     ]
 )
 
@@ -217,6 +233,12 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     CodeGenModel: QEffCodeGenModel,
     CodeGenForCausalLM: QEffCodeGenForCausalLM,
     CodeGenBlock: QeffCodeGenBlock,
+    # Cohere
+    CohereForCausalLM: QEffCohereForCausalLM,
+    CohereAttention: QEffCohereAttention,
+    CohereModel: QEffCohereModel,
+    CohereRotaryEmbedding: QEffCohereRotaryEmbedding,
+    CohereDecoderLayer: QEffCohereDecoderLayer,
     # Mistral model layers
     MistralAttention: QEffMistralAttention,
     MistralDecoderLayer: QEffMistralDecoderLayer,
