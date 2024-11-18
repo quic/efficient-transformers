@@ -208,9 +208,9 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     ).all(), "New API output does not match old API output for ONNX export function"
 
 
-@pytest.mark.causal_lm
+@pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models)
-def test_causal_lm(model_name):
+def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
     ``Mandatory`` Args:
@@ -224,8 +224,8 @@ def test_causal_lm(model_name):
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
 
 
-@pytest.mark.causal_lm_prompt_len_1
-def test_causal_lm_pl_1():
+@pytest.mark.on_qaic
+def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and without continuous batching.
     """

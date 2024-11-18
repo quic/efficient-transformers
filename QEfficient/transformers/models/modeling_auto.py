@@ -272,11 +272,9 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         else:
             specializations = [
                 {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
-                {"batch_size": batch_size, "seq_len": 1, "ctx_len": ctx_len},
             ]
-
-            if prefill_seq_len == 1:
-                specializations.pop()
+            if prefill_seq_len != 1:
+                specializations.append({"batch_size": batch_size, "seq_len": 1, "ctx_len": ctx_len})
 
         # Custom IO
         custom_io = {}
