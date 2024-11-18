@@ -297,7 +297,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
             ]
             if prefill_seq_len != 1:
-                specializations.append({"batch_size": batch_size, "seq_len": 1, "ctx_len": ctx_len})
+                specializations.append({"batch_size": batch_size, "seq_len": decode_seq_len, "ctx_len": ctx_len})
             if self.is_dlm:
                 specializations.append(
                     {"batch_size": batch_size, "seq_len": 2, "ctx_len": ctx_len},
