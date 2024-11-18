@@ -35,6 +35,10 @@ def create_and_dump_specializations(
         specializations["specializations"][1]["full_batch_size"] = str(full_batch_size)
         specializations["specializations"][1]["batch_size"] = str(full_batch_size)
 
+    # To handle repetative input in specializations when prompt_len is 1
+    if prompt_len == 1 and full_batch_size is None:
+        specializations["specializations"].pop()
+
     # Dump
     with open(path, "w") as file:
         json.dump(specializations, file, indent=4)
