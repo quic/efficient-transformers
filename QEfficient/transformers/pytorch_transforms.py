@@ -194,13 +194,13 @@ from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2ForCausalLM,
     QEffQwen2Model,
 )
+from QEfficient.transformers.models.spd.modeling_tlm import tlm_forward
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
     QEFFStarcoder2DecoderLayer,
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
 )
-from QEfficient.transformers.models.spd.modeling_tlm import tlm_forward
 
 
 class CustomOpsTransform(ModuleMappingTransform):
