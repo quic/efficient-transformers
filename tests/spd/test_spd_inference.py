@@ -15,7 +15,14 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 
 def run_prefill_on_draft_and_target(
-    tlm_session, dlm_session, prompt, prompt_len, ctx_len, prefill_batch_size, decode_batch_size, slot_idx
+    tlm_session: QAICInferenceSession, 
+    dlm_session: QAICInferenceSession, 
+    prompt: dict, 
+    prompt_len: int, 
+    ctx_len: int, 
+    prefill_batch_size: int, 
+    decode_batch_size: int, 
+    slot_idx: int
 ):
     tlm_decode_start_input = dict()
     dlm_decode_start_input = dict()
@@ -85,7 +92,17 @@ def run_prefill_on_draft_and_target(
     return tlm_decode_start_input, dlm_decode_start_input
 
 
-def get_padded_input_len(input_len, prompt_len, ctx_len):
+def get_padded_input_len(input_len: int, prompt_len: int, ctx_len: int):
+    """return padded input length (must be factor of `prompt_len`)
+
+    Args:
+        input_len (int): prompt length
+        prompt_len (int): prefill sequence length 
+        ctx_len (int): context length
+
+    Returns:
+        input_len_padded (int): padded input length
+    """
     num_chunks = -(input_len // -prompt_len)  # ceil divide without float
     input_len_padded = num_chunks * prompt_len  # Convert input_len to a multiple of prompt_len
     assert input_len_padded <= ctx_len, "input_len rounded to nearest prompt_len multiple should be less than ctx_len"
@@ -118,6 +135,8 @@ def test_spec_decode_inference(
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(target_model_name)
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
     vocab_size = len(tokenizer)
 
     # export_and_compile tlm and dlm
@@ -126,24 +145,25 @@ def test_spec_decode_inference(
     )
     draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, is_dlm=True)
 
-    target_model_qpc_path: str = target_model.export_and_compile(
+    num_devices = len(device_group)
+    target_model_qpc_path: str = target_model.compile(
         num_cores=11,
-        device_group=device_group,
+        num_devices=num_devices,
         batch_size=prefill_bsz,
-        prompt_len=prompt_len,
+        prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
-        mxfp6=True,
-        mxint8=True,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
         full_batch_size=full_batch_size,
     )
-    draft_model_qpc_path: str = draft_model.export_and_compile(
+    draft_model_qpc_path: str = draft_model.compile(
         num_cores=5,
-        device_group=device_group,
+        num_devices=num_devices,
         batch_size=prefill_bsz,
-        prompt_len=prompt_len,
+        prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
-        mxfp6=True,
-        mxint8=True,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
         full_batch_size=full_batch_size,
     )
 
@@ -167,12 +187,13 @@ def test_spec_decode_inference(
         prompts = prompt
         decode_batch_size = full_batch_size
     # tokenize the prompts
-    prompts_tokenized = []
+    prompts_tokenized: List[dict] = []
     for p in prompts:
-        input_len = tokenizer(p, return_tensors="np", padding=True).input_ids.shape[1]
-        input_len_padded = get_padded_input_len(input_len, prompt_len, ctx_len)
-        p_tok = tokenizer(p, return_tensors="np", padding="max_length", max_length=input_len_padded)
+        input_len: int = tokenizer(p, return_tensors="np", padding=True).input_ids.shape[1]
+        input_len_padded: int = get_padded_input_len(input_len, prompt_len, ctx_len)
+        p_tok: dict = tokenizer(p, return_tensors="np", padding="max_length", max_length=input_len_padded)
         prompts_tokenized.append(p_tok)
+    # create caches to hold generated ids and input prompt lengths
     generated_ids = [[] for i in range(decode_batch_size)]
     input_lengths = [0] * decode_batch_size
     # run prefill on both draft and target models
@@ -188,11 +209,12 @@ def test_spec_decode_inference(
     is_prefill = True
     generation_done = False
     max_gen_len = [ctx_len] * decode_batch_size
+    num_logits_to_keep = num_speculative_tokens+1
     all_accept = np.full((decode_batch_size, num_speculative_tokens), False, dtype=np.bool)
-    tlm_prefill_logits_ph = np.zeros((prefill_bsz, prompt_len, vocab_size), dtype=np.float32)
-    dlm_prefill_logits_ph = np.zeros((prefill_bsz, 1, vocab_size), dtype=np.float32)
+    tlm_prefill_logits_ph = np.zeros((prefill_bsz, num_logits_to_keep, vocab_size), dtype=np.float32)
+    dlm_prefill_logits_ph = np.zeros((prefill_bsz, num_logits_to_keep, vocab_size), dtype=np.float32)
     decode_logits_ph = np.zeros((decode_batch_size, 1, vocab_size), dtype=np.float32)
-    precode_logits_ph = np.zeros((decode_batch_size, num_speculative_tokens + 1, vocab_size), dtype=np.float32)
+    precode_logits_ph = np.zeros((decode_batch_size, num_logits_to_keep, vocab_size), dtype=np.float32)
 
     target_model_session.set_buffers({"logits": tlm_prefill_logits_ph})
     draft_model_session.set_buffers({"logits": dlm_prefill_logits_ph})
@@ -327,7 +349,7 @@ test_spec_decode_inference(
     32,
     128,
     1,
-    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "JackFram/llama-68m",
+    "JackFram/llama-68m",
     4,
 )
