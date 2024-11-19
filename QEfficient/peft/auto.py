@@ -12,7 +12,7 @@ from typing import List, Optional, Union
 
 import numpy as np
 import torch
-from peft import AutoPeftModelForCausalLM, PeftModelForCausalLM, load_peft_weights
+from peft import AutoPeftModelForCausalLM, PeftConfig, PeftModelForCausalLM, load_peft_weights
 from torch import nn
 from transformers import GenerationConfig, StoppingCriteria, StoppingCriteriaList
 from transformers.generation.streamers import BaseStreamer
@@ -21,6 +21,7 @@ from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, OnnxTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.peft.lora import QEffAutoLoraModelForCausalLM
 from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
 from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
 from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
@@ -38,6 +39,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     Args:
         :model (nn.Module): PyTorch model
+        :finite_adapters (bool): set True to enable finite adapter mode with QEffAutoLoraModelForCausalLM class. Please refer to QEffAutoLoraModelForCausalLM for API specification.
 
     .. code-block:: python
 
@@ -79,6 +81,9 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             }
             for adapter_name in model.peft_config
         }
+
+    def __repr__(self) -> str:
+        return self.__class__.__name__ + "\n" + self.model.__repr__()
 
     @property
     def model_name(self) -> str:
@@ -145,6 +150,8 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         """
         Args:
             :pretrained_name_or_path (str): Model card name from huggingface or local path to model directory.
+            :finite_adapters (bool): set True to enable finite adapter mode with QEffAutoLoraModelForCausalLM class. Please refer to QEffAutoLoraModelForCausalLM for API specification.
+            :adapter_name (str): Name used to identify loaded adapter.
             :args, kwargs: Additional arguments to pass to peft.AutoPeftModelForCausalLM.
         """
         if kwargs.get("full_batch_size"):
@@ -152,7 +159,22 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         if kwargs.get("use_cache") is False:
             warnings.warn("Overriding to use_cache=True")
         kwargs["use_cache"] = True
-        obj = cls._from_pretrained(pretrained_name_or_path, *args, **kwargs)
+
+        if kwargs.pop("finite_adapters", False):  # initialize through finite_adapters class
+            obj = QEffAutoLoraModelForCausalLM.from_pretrained(
+                pretrained_model_name_or_path=PeftConfig.from_pretrained(
+                    pretrained_name_or_path
+                ).base_model_name_or_path,
+                **kwargs,
+            )
+            if adapter_name := kwargs.pop("adapter_name", None):
+                obj.load_adapter(pretrained_name_or_path, adapter_name=adapter_name)
+                return obj
+            if len(args) == 0 or not isinstance(list(args)[0], str):
+                raise TypeError("Required adapter name argument in string format")
+            obj.load_adapter(pretrained_name_or_path, list(args)[0])
+        else:
+            obj = cls._from_pretrained(pretrained_name_or_path, *args, **kwargs)
         return obj
 
     def export(self, export_dir: Optional[str] = None) -> str:
