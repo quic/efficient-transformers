@@ -5,8 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Tuple
 from types import MethodType
+from typing import Tuple
 
 import transformers
 from torch import nn
