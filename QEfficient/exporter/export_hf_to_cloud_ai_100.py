@@ -5,8 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
 import math
+import os
 import shutil
 import warnings
 from typing import Optional, Tuple, Union
