@@ -196,6 +196,7 @@ def test_auto_lora_model_for_causal_lm_load_unload_adapter(base_model_name, adap
 
 
 # test the export, export caching, compile, generate workflow
+@pytest.mark.on_qaic
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[:1])
 def test_auto_lora_model_for_causal_lm_export_compile_generate(base_model_name, adapter_id_0, adapter_id_1, tmp_path):
     qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
