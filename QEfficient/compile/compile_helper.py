@@ -30,10 +30,7 @@ def create_and_dump_specializations(
         dict(batch_size=str(batch_size), seq_len=str(prompt_len), ctx_len=str(ctx_len)), # prefill
         dict(batch_size=str(batch_size), seq_len=str(decode_seq_len), ctx_len=str(ctx_len)) # decode
     ]
-    if num_logits_to_keep is not None:
-        specialization_cfgs[0]["num_logits_to_keep"] = "1" # return last logit
-        specialization_cfgs[1]["num_logits_to_keep"] = str(num_logits_to_keep+1) # return all SpD decode logits
-    elif is_dlm:
+    if is_dlm:
         specialization_cfgs.append(
             dict(batch_size=str(batch_size), seq_len="2", ctx_len=str(ctx_len)) 
         )
