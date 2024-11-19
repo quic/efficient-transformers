@@ -82,6 +82,9 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             for adapter_name in model.peft_config
         }
 
+    def __repr__(self) -> str:
+        return self.__class__.__name__ + "\n" + self.model.__repr__()
+
     @property
     def model_name(self) -> str:
         mname = self.model.get_base_model().__class__.__name__ + "-lora"
@@ -148,6 +151,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         Args:
             :pretrained_name_or_path (str): Model card name from huggingface or local path to model directory.
             :finite_adapters (bool): set True to enable finite adapter mode with QEffAutoLoraModelForCausalLM class. Please refer to QEffAutoLoraModelForCausalLM for API specification.
+            :adapter_name (str): Name used to identify loaded adapter.
             :args, kwargs: Additional arguments to pass to peft.AutoPeftModelForCausalLM.
         """
         if kwargs.get("full_batch_size"):
@@ -163,6 +167,9 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
                 ).base_model_name_or_path,
                 **kwargs,
             )
+            if adapter_name := kwargs.pop("adapter_name", None):
+                obj.load_adapter(pretrained_name_or_path, adapter_name=adapter_name)
+                return obj
             if len(args) == 0 or not isinstance(list(args)[0], str):
                 raise TypeError("Required adapter name argument in string format")
             obj.load_adapter(pretrained_name_or_path, list(args)[0])

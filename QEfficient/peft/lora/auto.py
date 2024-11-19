@@ -59,6 +59,9 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         self.lora_rank = 0
         self.target_modules_for_all_adapters = []
 
+    def __repr__(self) -> str:
+        return self.__class__.__name__ + "\n" + self.model.__repr__()
+
     @property
     def model_hash(self) -> str:
         mhash = hashlib.sha256()

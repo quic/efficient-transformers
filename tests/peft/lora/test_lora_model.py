@@ -53,7 +53,7 @@ def create_lora_base_model(base_config):
 # test model initialization using __init__ approach
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples)
 def test_auto_lora_model_for_causal_lm_init(base_model_name, adapter_id_0, adapter_id_1):
-    model_hf = AutoModelForCausalLM.from_pretrained(base_model_name)
+    model_hf = AutoModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
     qeff_model = QEffAutoLoraModelForCausalLM(model_hf)
 
     assert len(qeff_model.adapter_weights) == 0
@@ -64,7 +64,9 @@ def test_auto_lora_model_for_causal_lm_init(base_model_name, adapter_id_0, adapt
 # test model initialization using from_pretrained approach
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples)
 def test_auto_lora_model_for_causal_lm_from_pretrained(base_model_name, adapter_id_0, adapter_id_1):
-    qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(pretrained_model_name_or_path=base_model_name)
+    qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(
+        pretrained_model_name_or_path=base_model_name, num_hidden_layers=1
+    )
 
     assert len(qeff_model.adapter_weights) == 0
     assert len(qeff_model.adapter_configs) == 0
@@ -74,8 +76,15 @@ def test_auto_lora_model_for_causal_lm_from_pretrained(base_model_name, adapter_
 # test peft model initialization using from_pretrained approach
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples)
 def test_auto_peft_model_for_causal_lm_from_pretrained(base_model_name, adapter_id_0, adapter_id_1):
-    qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained(adapter_id_0, "id_0", finite_adapters=True)
+    qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained(
+        adapter_id_0, "id_0", finite_adapters=True, num_hidden_layers=1
+    )
+    qeff_model_tmp = QEffAutoPeftModelForCausalLM.from_pretrained(
+        adapter_id_0, adapter_name="id_0", finite_adapters=True, num_hidden_layers=1
+    )
 
+    assert qeff_model.active_adapter_to_id == qeff_model_tmp.active_adapter_to_id
+    del qeff_model_tmp
     assert isinstance(qeff_model, QEffAutoLoraModelForCausalLM)
     assert len(qeff_model.adapter_weights) == 1
     assert len(qeff_model.adapter_configs) == 1
@@ -83,11 +92,11 @@ def test_auto_peft_model_for_causal_lm_from_pretrained(base_model_name, adapter_
 
     # test pass without adapter name
     with pytest.raises(TypeError):
-        QEffAutoLoraModelForCausalLM.from_pretrained(adapter_id_0, finite_adapters=True)
+        QEffAutoLoraModelForCausalLM.from_pretrained(adapter_id_0, finite_adapters=True, num_hidden_layers=1)
 
     # test pass with adapter name as integer
     with pytest.raises(TypeError):
-        QEffAutoLoraModelForCausalLM.from_pretrained(adapter_id_0, 0, finite_adapters=True)
+        QEffAutoLoraModelForCausalLM.from_pretrained(adapter_id_0, 0, finite_adapters=True, num_hidden_layers=1)
 
 
 # test the init assertion for models that are not supported
