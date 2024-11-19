@@ -33,10 +33,7 @@ dependencies = [
     "onnxscript==0.1.0.dev20240327",
     "sympy",
     "torch==2.0.0; platform_machine=='aarch64'",
-    # Specifying torch cpu package URL per python version, update the list once pytorch releases whl for python>3.11
-    "torch@https://download.pytorch.org/whl/cpu/torch-2.0.0%2Bcpu-cp38-cp38-linux_x86_64.whl ; python_version=='3.8' and platform_machine=='x86_64'",
-    "torch@https://download.pytorch.org/whl/cpu/torch-2.0.0%2Bcpu-cp39-cp39-linux_x86_64.whl ; python_version=='3.9' and platform_machine=='x86_64'",
-    "torch@https://download.pytorch.org/whl/cpu/torch-2.0.0%2Bcpu-cp310-cp310-linux_x86_64.whl ; python_version=='3.10' and platform_machine=='x86_64'",
+    "torch@https://download.pytorch.org/whl/cpu/torch-2.0.0%2Bcpu-cp310-cp310-linux_x86_64.whl ; platform_machine=='x86_64'",
 ]
 
 [project.optional-dependencies]
