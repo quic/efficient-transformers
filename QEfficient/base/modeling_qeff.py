@@ -222,7 +222,11 @@ class QEFFBaseModel(ABC):
                 - convert_to_fp16=True -> -convert-to-fp16
         """
         if onnx_path is None and self.onnx_path is None:
-            self.export()
+            if self.num_speculative_tokens is not None:
+                prefill_seq_len = specializations[0]["seq_len"]
+                self.export(seq_len=prefill_seq_len)
+            else:
+                self.export()
 
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)

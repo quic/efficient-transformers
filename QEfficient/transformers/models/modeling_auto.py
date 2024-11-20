@@ -182,24 +182,28 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mhash = mhash.hexdigest()[:16]
         return mhash
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(
+        self, 
+        export_dir: Optional[str] = None,
+        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+    ) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
         We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
 
         ``Optional`` Args:
-            does not any arguments.
+            :export_dir (str, optional): The directory path to store ONNX-graph.
+            :seq_len (int, optional): The length of the pytorch prompt inputs.. ``Defaults to 32``.
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        if self.num_speculative_tokens:
+        if self.num_speculative_tokens is not None:
             num_logits_to_keep = self.num_speculative_tokens+1
-            setattr(self.model, "num_logits_to_keep", num_logits_to_keep)
             if seq_len < num_logits_to_keep:
-                seq_len *= math.ceil((num_logits_to_keep) / seq_len)
+                raise ValueError(f"sequence length ({seq_len}) must be at least `num_speculative_tokens+1` ({num_logits_to_keep})")
+            setattr(self.model, "num_logits_to_keep", num_logits_to_keep)
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
