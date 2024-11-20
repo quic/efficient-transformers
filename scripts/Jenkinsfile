@@ -45,7 +45,7 @@ pipeline {
                }
                stage('Run Non-CLI QAIC Tests') {
                    steps {
-                       timeout(time: 140, unit: 'MINUTES') {
+                       timeout(time: 60, unit: 'MINUTES') {
                            sh '''
                            docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
