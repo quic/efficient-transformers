@@ -9,7 +9,7 @@ import hashlib
 import logging
 import warnings
 from pathlib import Path
-from typing import Any, List, Optional, Union
+from typing import List, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -35,9 +35,6 @@ class QEFFTransformersBase(QEFFBaseModel):
     _hf_auto_class: type
 
     def __init__(self, model: nn.Module) -> None:
-        model_class_name = model.__class__.__name__
-        if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
-            raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
 
         if hasattr(model.config, "quantization_config") and not isinstance(
             model.config.quantization_config, tuple(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values())
@@ -386,11 +383,78 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
 class QEffAutoModel(QEFFTransformersBase):
     _hf_auto_class = AutoModel
-    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _pytorch_transforms = [CustomOpsTransform]
+    _onnx_transforms = [FP16ClipTransform]
 
-    def export(self):
-        raise NotImplementedError("Reached too far!!")
+    def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs):
+        super().__init__(model)
+        self.model.config.use_cache = True
+        self.num_layers = model.config.num_hidden_layers
 
-    def compile(self, *args, **kwargs) -> Any:
-        raise NotImplementedError("Reached too far!!")
+    def export(self, export_dir: Optional[str] = None) -> str:
+        seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
+        example_inputs = {
+            "input_ids": torch.zeros((1, seq_len), dtype=torch.int64),
+            "attention_mask": torch.ones((1, seq_len), dtype=torch.int64),
+        }
+
+        dynamic_axes = {"input_ids": {1: "seq_len"}, "attention_mask": {1: "seq_len"}}
+
+        output_names = ["output"]
+
+        return self._export(
+            example_inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+        )
+
+    def compile(
+        self,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        seq_len: int = 32,
+        num_cores: int = 14,  # FIXME: Make this mandatory arg
+        **compiler_options,
+    ) -> str:
+        specializations = [
+            {"seq_len": seq_len},
+        ]
+
+        return self._compile(
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            specializations=specializations,
+            convert_to_fp16=True,
+            aic_num_cores=num_cores,
+            **compiler_options,
+        )
+
+    def generate(
+        self,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
+        prompt: List[str],
+        device_id: List[int] = [0],
+        runtime_ai100: bool = True,
+        seq_len: int = constants.Constants.CTX_LEN,
+    ):
+        if runtime_ai100:
+            if not isinstance(self.qpc_path, Path):
+                raise TypeError("Please run compile API first!")        
+
+            return QEfficient.cloud_ai_100_exec_embed(
+                tokenizer=tokenizer, prompt=prompt, qpc_path=self.qpc_path, device_id=device_id
+            )
+        else:
+            inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
+            return self.model(**inputs)
+            
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+        self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+        return self

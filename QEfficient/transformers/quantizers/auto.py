@@ -38,7 +38,6 @@ def with_replaced_quantizers(func):
 
         # Put back quantization config and quantizer
         for k in QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.keys():
-            AUTO_QUANTIZATION_CONFIG_MAPPING[k] = transformers_replaced_quantization_config_mapping[k]
             AUTO_QUANTIZER_MAPPING[k] = transformers_replaced_quantizer_mapping[k]
 
         return out

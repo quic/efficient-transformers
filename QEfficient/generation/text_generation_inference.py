@@ -347,7 +347,29 @@ def cloud_ai_100_exec_kv(
     return exec_info
 
 
-class QEffTextGenerationBase:
+def cloud_ai_100_exec_embed(
+    tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
+    prompt: List[str],
+    qpc_path: str,
+    device_id: List[int] = [0],
+):
+    session = QAICInferenceSession(qpc_path, device_ids=device_id)
+    seq_len = session.bindings[0].dims[1]
+    inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
+
+    prefill_inputs = dict(
+        input_ids=inputs["input_ids"].numpy(),
+        attention_mask=inputs["attention_mask"].numpy(),
+    )
+    prefill_logits = {
+        "output": np.random.randn(1, seq_len, session.bindings[2].dims[2]).astype(np.float32),
+    }
+    session.set_buffers(prefill_logits)
+    prefill_outputs = session.run(prefill_inputs)
+    return prefill_outputs
+
+
+class TextGeneration:
     def __init__(
         self,
         tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
