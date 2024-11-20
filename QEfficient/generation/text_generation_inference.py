@@ -10,7 +10,7 @@ import os
 from collections import deque
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Dict, List, Optional, Tuple, Union, Deque
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import transformers
@@ -19,6 +19,7 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.logging_utils import logger
+
 
 @dataclass
 class PerfMetrics:
@@ -31,6 +32,7 @@ class PerfMetrics:
         :total_perf (float): Total performance.
         :total_time (float): Total time.
     """
+
     prefill_time: float
     decode_perf: float
     total_perf: float
@@ -41,6 +43,7 @@ class PerfMetrics:
         self.decode_perf = decode_perf
         self.total_perf = total_perf
         self.total_time = total_time
+
 
 @dataclass
 class CloudAI100ExecInfo:
@@ -194,6 +197,7 @@ def get_input_prompts(prompt: str, prompts_txt_file_path: str) -> List[str]:
         prompt = [prompt]
     return prompt
 
+
 def fix_prompts(prompt: List[str], batch_size: int, full_batch_size: int = None):
     """
     Adjusts the list of prompts to match the required batch size.
@@ -242,6 +246,7 @@ def print_latency_stats_kv(prompt, exec_info, automation: bool = False):
     print(exec_info)
     print("=====================================================================")
 
+
 def calculate_latency(total_decoded_tokens, loop_start, start, end, decode_pause_time=0):
     """
     Method will calculate the latency metrics using the time loops and based on the total decoded token count.
@@ -261,6 +266,7 @@ def calculate_latency(total_decoded_tokens, loop_start, start, end, decode_pause
     total_perf = (total_decoded_tokens) / (end - start)
     total_time = end - start
     return prefill_time, decode_perf, total_perf, total_time
+
 
 def cloud_ai_100_exec_kv(
     tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
@@ -343,6 +349,7 @@ def cloud_ai_100_exec_kv(
 
     print_latency_stats_kv(prompt, exec_info=exec_info, automation=automation)
     return exec_info
+
 
 class QEffTextGenerationBase:
     def __init__(
@@ -608,12 +615,12 @@ class QEffTextGenerationBase:
 
         if decode_batch_id is not None:
             inputs["batch_index"] = decode_batch_id
-        
+
         if self._prompt_to_lora_id_mapping_prefill:
             if self.full_batch_size:
-                inputs["lora_ids"] = np.array(self._prompt_to_lora_id_mapping_prefill.popleft(), dtype=np.int64).reshape(
-                    1, 1
-                )
+                inputs["lora_ids"] = np.array(
+                    self._prompt_to_lora_id_mapping_prefill.popleft(), dtype=np.int64
+                ).reshape(1, 1)
             else:
                 batch_lora_ids = [self._prompt_to_lora_id_mapping_prefill.popleft() for i in range(self.batch_size)]
                 inputs["lora_ids"] = np.array(batch_lora_ids, dtype=np.int64).reshape(self.batch_size, 1)
@@ -781,7 +788,7 @@ class QEffTextGenerationBase:
                 break
 
 
-class TextGeneration():
+class TextGeneration:
     def __init__(
         self,
         tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
@@ -792,25 +799,26 @@ class TextGeneration():
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
     ) -> None:
-        self._qaic_model = QEffTextGenerationBase(tokenizer,
-                           qpc_path,
-                           full_batch_size,
-                           ctx_len,
-                           device_id,
-                           enable_debug_logs,
-                           write_io_dir)
+        self._qaic_model = QEffTextGenerationBase(
+            tokenizer, qpc_path, full_batch_size, ctx_len, device_id, enable_debug_logs, write_io_dir
+        )
         self._full_batch_size = self._qaic_model.full_batch_size
         self._tokenizer = self._qaic_model.tokenizer
         self._ctx_len = ctx_len
         self._perf_metrics = None
         self._prompt_queue = None
         self._text_streamer = None
-    
+
     @property
     def perf_metrics(self):
         return self._perf_metrics
 
-    def _setup_model_execution_inputs(self, prompt: List[str], generation_len: Optional[int] = None, prompt_to_lora_id_mapping: Optional[List[int]] = None):
+    def _setup_model_execution_inputs(
+        self,
+        prompt: List[str],
+        generation_len: Optional[int] = None,
+        prompt_to_lora_id_mapping: Optional[List[int]] = None,
+    ):
         """
         This method should be called to set/reset inputs
         Args:
@@ -818,7 +826,9 @@ class TextGeneration():
             :generation_len (Optional[int], optional): Number of tokens to be generated.
             :prompt_to_lora_id_mapping (Optional[List[int]], optional): Mapping to associate prompts with their respective LoRA adapter.
         """
-        execution_batch_size = self._full_batch_size if self._full_batch_size is not None else self._qaic_model.batch_size
+        execution_batch_size = (
+            self._full_batch_size if self._full_batch_size is not None else self._qaic_model.batch_size
+        )
         max_gen_length = self._ctx_len if not generation_len else max(self._ctx_len, generation_len)
 
         # Create a prompt queue.
@@ -831,7 +841,13 @@ class TextGeneration():
 
         self._qaic_model.initialize_decode_inputs(num_prompts, execution_batch_size, max_gen_length)
 
-    def _regular_model_execution(self, prompt: List[str], generation_len: Optional[int] = None, stream: Optional[bool] = True, prompt_to_lora_id_mapping: Optional[List[int]] = None):
+    def _regular_model_execution(
+        self,
+        prompt: List[str],
+        generation_len: Optional[int] = None,
+        stream: Optional[bool] = True,
+        prompt_to_lora_id_mapping: Optional[List[int]] = None,
+    ):
         """
         Executes the model in regular mode.
         This method runs the prefill, prepares the decode inputs, and then runs the decode. The generated texts are decoded and optionally streamed. Latency metrics are calculated and returned.
@@ -855,7 +871,7 @@ class TextGeneration():
         self._qaic_model.update_decode_input(outputs, position_ids, generation_len)
 
         decode_inputs = self._qaic_model.prepare_decode_inputs()
-        
+
         loop_start = perf_counter()  # Start decode loop timer
         num_token = self._qaic_model.run_decode(decode_inputs, generation_len, self._text_streamer)
         end = perf_counter()
@@ -868,7 +884,12 @@ class TextGeneration():
         self._perf_metrics = PerfMetrics(prefill_time, decode_perf, total_perf, total_time)
         return self._perf_metrics, generated_texts
 
-    def _continuous_batching_execution(self, prompt: List[str], generation_len: Optional[int] = None, prompt_to_lora_id_mapping: Optional[List[int]] = None):
+    def _continuous_batching_execution(
+        self,
+        prompt: List[str],
+        generation_len: Optional[int] = None,
+        prompt_to_lora_id_mapping: Optional[List[int]] = None,
+    ):
         """
         Executes the model using continuous batching.
         This method handles the execution of the model when continuous batching is enabled. It runs the prefill step for all inputs, performs continuous batching decode, and then decodes the generated texts. The texts are optionally streamed. Latency metrics are calculated and returned.
@@ -902,12 +923,17 @@ class TextGeneration():
         self._perf_metrics = PerfMetrics(prefill_time, decode_perf, total_perf, total_time)
         return self._perf_metrics, generated_texts
 
-    def generate_stream_tokens(self, prompt: List[str], generation_len: Optional[int] = None, prompt_to_lora_id_mapping: Optional[List[int]] = None):
+    def generate_stream_tokens(
+        self,
+        prompt: List[str],
+        generation_len: Optional[int] = None,
+        prompt_to_lora_id_mapping: Optional[List[int]] = None,
+    ):
         """
         Executes the model for a given list of prompts and a specified generation length.
         This method runs the prefill, prepares the decode inputs, and then runs the decode. The tokens are decoded and streamed as they are generated. Latency metrics are calculated and can be retreived
         after all tokens are streamed.
-        
+
         Args:
             :prompt (List[str]): The list of prompts for the model.
             :generation_len (Optional[int], optional): The generation length.
@@ -944,7 +970,13 @@ class TextGeneration():
         )
         self._perf_metrics = PerfMetrics(prefill_time, decode_perf, total_perf, total_time)
 
-    def generate(self, prompt: List[str], generation_len: Optional[int] = None, stream: bool = True, prompt_to_lora_id_mapping: Optional[List[int]] = None):
+    def generate(
+        self,
+        prompt: List[str],
+        generation_len: Optional[int] = None,
+        stream: bool = True,
+        prompt_to_lora_id_mapping: Optional[List[int]] = None,
+    ):
         """
         Executes the model for a given list of prompts and a specified generation length.
 
@@ -959,11 +991,15 @@ class TextGeneration():
 
         if self._full_batch_size is not None:
             logger.warning("Streamer is currently unavailable for continuous batch execution.")
-            perf_metrics, generated_texts = self._continuous_batching_execution(prompt, generation_len, prompt_to_lora_id_mapping)
+            perf_metrics, generated_texts = self._continuous_batching_execution(
+                prompt, generation_len, prompt_to_lora_id_mapping
+            )
         else:
             if stream:
                 print("\nPrompt : " + prompt[0] + "\nCompletion :", flush=True, end="")
-            perf_metrics, generated_texts = self._regular_model_execution(prompt, generation_len, stream, prompt_to_lora_id_mapping)
+            perf_metrics, generated_texts = self._regular_model_execution(
+                prompt, generation_len, stream, prompt_to_lora_id_mapping
+            )
 
         if stream:
             stream_start = 0 if self._full_batch_size else 1
@@ -977,6 +1013,6 @@ class TextGeneration():
             batch_size=1 if self._full_batch_size else self._qaic_model.batch_size,
             generated_texts=generated_texts,
             generated_ids=self._qaic_model.generated_ids,
-            perf_metrics=perf_metrics
+            perf_metrics=perf_metrics,
         )
         return latency_stats

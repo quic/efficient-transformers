@@ -231,11 +231,7 @@ class ApiRunner:
             device_id=device_group,
             ctx_len=self.input_handler.ctx_len,
             full_batch_size=self.input_handler.full_batch_size,
-        ).generate(
-            prompt=self.input_handler.prompt,
-            generation_len=self.gen_len,
-            stream=False
-        )
+        ).generate(prompt=self.input_handler.prompt, generation_len=self.gen_len, stream=False)
 
         predicted_string = self.input_handler.tokenizer.batch_decode(execinfo.generated_ids, skip_special_tokens=True)
         print("QEff Transformed Model Outputs (Cloud AI 100): \n")
