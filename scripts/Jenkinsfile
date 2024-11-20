@@ -1,62 +1,100 @@
-pipeline 
-{
+pipeline {
+   agent {
+       node {
+           label 'qeff_node'
+       }
+   }
 
-    agent 
-    {
-        node 
-        {
-            label 'qeff_node'
+   stages {
+       stage('Install QEfficient') {
+           steps {
+               sh '''
+                   . ~/.bashrc
+                   docker run --privileged -dit --name ${BUILD_TAG} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
+                   docker exec ${BUILD_TAG} bash -c "
+                   cd /efficient-transformers &&
+                   apt update &&
+                   apt install -y python3-venv &&
+                   python3.10 -m venv preflight_qeff &&
+                   . preflight_qeff/bin/activate &&
+                   pip install --upgrade pip setuptools &&
+                   pip install .[test] --extra-index-url https://download.pytorch.org/whl/cpu &&
+                   pip install junitparser pytest-xdist &&
+                   rm -rf QEfficient"
+               '''
+           }
+       }
+
+       stage('Non CLI Tests') {
+           parallel {
+               stage('Run Non-CLI Non-QAIC Tests') {
+                   steps {
+                       timeout(time: 140, unit: 'MINUTES') {
+                           sh '''
+                           docker exec ${BUILD_TAG} bash -c "
+                           cd /efficient-transformers &&
+                           . preflight_qeff/bin/activate &&
+                           mkdir -p $PWD/Non_cli_qaic &&
+                           export TOKENIZERS_PARALLELISM=false &&
+                           export QEFF_HOME=$PWD/Non_cli_qaic &&
+                           pytest tests -m '(not cli) and (not on_qaic)' -n auto --junitxml=tests/tests_log1.xml &&
+                           deactivate"
+                           '''
+                       }
+                   }
+               }
+               stage('Run Non-CLI QAIC Tests') {
+                   steps {
+                       timeout(time: 140, unit: 'MINUTES') {
+                           sh '''
+                           docker exec ${BUILD_TAG} bash -c "
+                           cd /efficient-transformers &&
+                           . preflight_qeff/bin/activate &&
+                           mkdir -p $PWD/Non_qaic &&
+                           export TOKENIZERS_PARALLELISM=false &&
+                           export QEFF_HOME=$PWD/Non_qaic &&
+                           pytest tests -m '(not cli) and (on_qaic)' -n 4 --junitxml=tests/tests_log2.xml &&
+                           deactivate"
+                           '''
+                       }
+                   }
+               }
+           }
+       }
+       stage('CLI Tests') {
+                   steps {
+                       timeout(time: 140, unit: 'MINUTES') {
+                           sh '''
+                           docker exec ${BUILD_TAG} bash -c "
+                           cd /efficient-transformers &&
+                           . preflight_qeff/bin/activate &&
+                           mkdir -p $PWD/cli &&
+                           export TOKENIZERS_PARALLELISM=false &&
+                           export QEFF_HOME=$PWD/cli &&
+                           pytest tests -m cli --junitxml=tests/tests_log3.xml &&
+                           junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log3.xml tests/tests_log.xml &&
+                           deactivate"
+                           '''
+                       }
+                   }
         }
-    }
+   }
 
-    stages 
-    {
-        stage('Install QEfficient')
-        {
-            steps
-            {
-                sh '''
-                    python3.10 -m venv preflight_qeff
-                    . preflight_qeff/bin/activate
-                    pip install --upgrade pip setuptools
-                    pip install .[test] --extra-index-url https://download.pytorch.org/whl/cpu
-                    pip install junitparser pytest-xdist
-                    rm -rf QEfficient
-                '''
-            }
-        }
-
-
-        stage('Test')
-            {
-                steps
-                {
-                    //todo(ochougul): Increase when MQ tests are enabled 
-		    timeout(time: 420, unit: 'MINUTES') {
-                    sh '''
-                    . preflight_qeff/bin/activate
-                    export TOKENIZERS_PARALLELISM=false
-                    export QEFF_HOME=$PWD  
-                    pytest tests -m "not cli and not on_qaic" -n auto --junitxml=tests/tests_log1.xml &
-                    pytest tests -m "not cli and on_qaic" -n 4 --junitxml=tests/tests_log2.xml &
-                    wait
-                    pytest tests -m cli --junitxml=tests/tests_log3.xml
-                    junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log3.xml tests/tests_log.xml
-                    deactivate
-                    exit
-                    '''     
-                }
-            }
-        }
-    }
-    post 
-    {
-         always 
-         {
-             junit testResults: 'tests/tests_log.xml', skipPublishingChecks: true
-             echo 'Cleaning Workspace'
-             deleteDir() 
-         }
-    }
-       
+   post {
+       always {
+           script {
+               try {
+                   sh '''
+                   docker rm -f ${BUILD_TAG}
+                   sudo chown -R ubuntu .
+                   '''
+               } catch (error) {
+                   echo "Failed to delete container ${BUILD_TAG}: ${error}"
+               }
+           }
+           junit testResults: 'tests/tests_log.xml', skipPublishingChecks: true
+           echo 'Cleaning Workspace'
+           deleteDir()
+       }
+   }
 }
