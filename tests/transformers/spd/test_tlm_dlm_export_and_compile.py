@@ -65,7 +65,7 @@ def test_llama_tlm_logit_dims(
     )
     qpc_path: str = qeff_model.compile(
         num_devices=len(device_group),
-        num_cores=14,
+        num_cores=16,
         batch_size=prefill_bsz,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,

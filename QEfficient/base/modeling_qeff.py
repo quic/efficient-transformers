@@ -132,10 +132,7 @@ class QEFFBaseModel(ABC):
         """
         export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
         export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
-        if self.num_speculative_tokens:
-            model_name = f"{self.model_name}_{self.num_speculative_tokens+1}nltk.onnx"
-        else:
-            model_name = f"{self.model_name}.onnx"
+        model_name = f"{self.model_name}.onnx"
         onnx_path = export_dir / model_name
         # TODO: need to add hash to onnx
         if onnx_path.is_file():
