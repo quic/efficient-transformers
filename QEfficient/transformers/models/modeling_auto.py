@@ -18,7 +18,7 @@ from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, P
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
-from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
+from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import constants, get_padding_shape_from_config
@@ -110,7 +110,14 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, continuous_batching: bool = False, num_speculative_tokens: Optional[int] = None, is_dlm: bool = False, **kwargs):
+    def __init__(
+        self,
+        model: nn.Module,
+        continuous_batching: bool = False,
+        num_speculative_tokens: Optional[int] = None,
+        is_dlm: bool = False,
+        **kwargs,
+    ):
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -154,7 +161,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         num_speculative_tokens = kwargs.pop("num_speculative_tokens", None)
         is_dlm = kwargs.pop("is_dlm", False)
         if num_speculative_tokens is not None:
-            if not isinstance(num_speculative_tokens, int) or num_speculative_tokens<2:
+            if not isinstance(num_speculative_tokens, int) or num_speculative_tokens < 2:
                 ValueError("`num_speculative_tokens` arg should be an integer greater than 1.")
             if is_dlm:
                 raise ValueError("`num_speculative_tokens` arg and `is_dlm` flag are mutually exclusive.")
@@ -182,7 +189,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         return mhash
 
     def export(
-        self, 
+        self,
         export_dir: Optional[str] = None,
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
     ) -> str:
@@ -199,17 +206,19 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         if self.num_speculative_tokens is not None:
-            num_logits_to_keep = self.num_speculative_tokens+1
+            num_logits_to_keep = self.num_speculative_tokens + 1
             if seq_len < num_logits_to_keep:
-                raise ValueError(f"sequence length ({seq_len}) must be at least `num_speculative_tokens+1` ({num_logits_to_keep})")
-            setattr(self.model, "num_logits_to_keep", num_logits_to_keep)
+                raise ValueError(
+                    f"sequence length ({seq_len}) must be at least `num_speculative_tokens+1` ({num_logits_to_keep})"
+                )
+
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs,1),
+            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(self.num_layers)],
         }
         dynamic_axes = {
@@ -236,6 +245,12 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
             dynamic_axes["batch_index"] = {0: "batch_size"}
+
+        if self.num_speculative_tokens is not None:
+            example_inputs["num_logits_to_keep"] = torch.arange(self.num_speculative_tokens + 1).view(
+                self.num_speculative_tokens + 1, 1
+            )
+            dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
 
         return self._export(
             example_inputs,
@@ -282,18 +297,28 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :str: Path of the compiled ``qpc`` package.
         """
         # Specializations
-        decode_seq_len = self.num_speculative_tokens+1 if self.num_speculative_tokens else 1
+        decode_seq_len = self.num_speculative_tokens + 1 if self.num_speculative_tokens else 1
         if self.continuous_batching:
             if full_batch_size is None:
                 raise TypeError("missing required argument: 'full_batch_size'")
 
             specializations = [
                 {"full_batch_size": full_batch_size, "batch_size": 1, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
-                {"full_batch_size": full_batch_size, "batch_size": full_batch_size, "seq_len": decode_seq_len, "ctx_len": ctx_len},
+                {
+                    "full_batch_size": full_batch_size,
+                    "batch_size": full_batch_size,
+                    "seq_len": decode_seq_len,
+                    "ctx_len": ctx_len,
+                },
             ]
             if self.is_dlm:
                 specializations.append(
-                    {"full_batch_size": full_batch_size, "batch_size": full_batch_size, "seq_len": 2, "ctx_len": ctx_len},
+                    {
+                        "full_batch_size": full_batch_size,
+                        "batch_size": full_batch_size,
+                        "seq_len": 2,
+                        "ctx_len": ctx_len,
+                    },
                 )
         else:
             specializations = [
@@ -306,6 +331,13 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                     {"batch_size": batch_size, "seq_len": 2, "ctx_len": ctx_len},
                 )
 
+        if self.num_speculative_tokens:
+            for specialization in specializations:
+                specialization.update({"num_logits_to_keep": self.num_speculative_tokens + 1})
+
+        import ipdb
+
+        ipdb.set_trace()
         # Custom IO
         custom_io = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"

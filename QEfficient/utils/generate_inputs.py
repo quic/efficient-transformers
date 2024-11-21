@@ -15,7 +15,15 @@ from QEfficient.utils import get_num_layers_from_config, get_padding_shape_from_
 
 class InputHandler:
     def __init__(
-        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size, num_logits_to_keep: Optional[int] = None
+        self,
+        batch_size,
+        tokenizer,
+        config,
+        prompt,
+        prompt_len,
+        ctx_len,
+        full_batch_size,
+        num_logits_to_keep: Optional[int] = None,
     ):
         """
         Initialization
@@ -28,8 +36,8 @@ class InputHandler:
             :prompt_len (int): Prompt length for the model to compile.
             :ctx_len (int): Maximum context length to compile the model.
             :full_batch_size (int): Continuous batching batch size
-            :num_logits_to_keep (Optional[int]): 
-                Calculate logits for the last valid `num_logits_to_keep` tokens. 
+            :num_logits_to_keep (Optional[int]):
+                Calculate logits for the last valid `num_logits_to_keep` tokens.
                 Only last token logits are needed for generation, and calculating them only for that
                 token can save memory, which becomes pretty significant for long sequences or large vocabulary size.
         """
@@ -121,7 +129,9 @@ class InputHandler:
             input_ids = torch.full((self.full_batch_size, decode_len), self.tokenizer.pad_token_id)
             input_ids[batch_index.view(-1)] = batch_idx_input_ids
             position_ids = torch.full((self.full_batch_size, decode_len), 0)
-            batch_idx_position_ids = torch.arange(decode_len).view(1,-1) + (inputs["position_ids"].max(1, keepdim=True).values + 1)
+            batch_idx_position_ids = torch.arange(decode_len).view(1, -1) + (
+                inputs["position_ids"].max(1, keepdim=True).values + 1
+            )
             position_ids[batch_index.view(-1)] = batch_idx_position_ids
             updated_inputs["input_ids"] = input_ids
             updated_inputs["position_ids"] = position_ids
@@ -129,9 +139,11 @@ class InputHandler:
 
         else:
             if self.num_logits_to_keep is not None:
-                input_ids = pt_outputs["logits"].argmax(-1) # shape: [batch_size, num_logits_to_keep]
+                input_ids = pt_outputs["logits"].argmax(-1)  # shape: [batch_size, num_logits_to_keep]
                 batch_size = input_ids.size(0)
-                position_ids = torch.arange(self.num_logits_to_keep).view(1, self.num_logits_to_keep).repeat(batch_size, 1)
+                position_ids = (
+                    torch.arange(self.num_logits_to_keep).view(1, self.num_logits_to_keep).repeat(batch_size, 1)
+                )
             else:
                 input_ids = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
                 position_ids = inputs["position_ids"].max(1, keepdim=True).values + 1

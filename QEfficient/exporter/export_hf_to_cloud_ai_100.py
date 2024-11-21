@@ -204,13 +204,12 @@ def export_kvstyle_transformed_model_to_onnx(
     prompt_len = Constants.PROMPT_LEN
     num_logits_to_keep = None
     if num_speculative_tokens is not None:
-        num_logits_to_keep = num_speculative_tokens+1
+        num_logits_to_keep = num_speculative_tokens + 1
         setattr(transformed_model, "num_logits_to_keep", num_logits_to_keep)
         if prompt_len < num_logits_to_keep:
             prompt_len *= math.ceil((num_logits_to_keep) / prompt_len)
             if prompt_len >= seq_len:
-                seq_len = prompt_len*2
-
+                seq_len = prompt_len * 2
 
     # Preprocess inputs
     # Build inputs for prefill
@@ -343,7 +342,7 @@ def export_for_cloud(
             onnx_dir_path=onnx_dir_path,
             seq_length=seq_length,
             full_batch_size=full_batch_size,
-            num_speculative_tokens=num_speculative_tokens
+            num_speculative_tokens=num_speculative_tokens,
         )
     else:
         raise NotImplementedError(
