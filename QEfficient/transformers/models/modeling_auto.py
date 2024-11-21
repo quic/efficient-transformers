@@ -116,7 +116,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         model: nn.Module,
         continuous_batching: bool = False,
         is_tlm: bool = False,
-        is_dlm: bool = False,
         **kwargs,
     ):
         # TODO: remove from version 1.20
@@ -132,7 +131,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
-        self.is_dlm = is_dlm
 
         if is_tlm:
             # TODO: It is possible to always apply this transform and make value of indices as last indices by default in PyTorch
@@ -140,7 +138,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self.is_tlm = is_tlm
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, is_dlm: bool= False, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, *args, **kwargs):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
@@ -163,8 +161,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             # You can now execute the model
             model.generate(prompts=["Hi there!!"])
         """
-        if is_tlm and is_dlm:
-            raise ValueError("`num_speculative_tokens` arg and `is_dlm` flag are mutually exclusive.")
             
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
@@ -174,7 +170,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
         self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, *args, **kwargs)
         self.continuous_batching = continuous_batching
-        self.is_dlm = is_dlm
         return self
 
     @property
@@ -264,6 +259,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
+        is_dlm: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -298,6 +294,9 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 raise ValueError(
                     f"sequence length ({prefill_seq_len}) must be at least `num_speculative_tokens+1` ({num_logits_to_keep})"
                 )
+        # assert is_tlm and is_dlm are mutex
+        if self.is_tlm and is_dlm:
+            raise ValueError("`num_speculative_tokens` arg and `is_dlm` flag are mutually exclusive.")
         # Specializations
         decode_seq_len = num_speculative_tokens + 1 if num_speculative_tokens else 1
         if self.continuous_batching:
@@ -313,7 +312,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                     "ctx_len": ctx_len,
                 },
             ]
-            if self.is_dlm:
+            if is_dlm:
                 specializations.append(
                     {
                         "full_batch_size": full_batch_size,
@@ -328,7 +327,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             ]
             if prefill_seq_len != 1:
                 specializations.append({"batch_size": batch_size, "seq_len": decode_seq_len, "ctx_len": ctx_len})
-            if self.is_dlm:
+            if is_dlm:
                 specializations.append(
                     {"batch_size": batch_size, "seq_len": 2, "ctx_len": ctx_len},
                 )
@@ -359,6 +358,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
             num_speculative_tokens=num_speculative_tokens,
+            is_dlm=is_dlm,
             aic_num_cores=num_cores,
             **compiler_options,
         )
