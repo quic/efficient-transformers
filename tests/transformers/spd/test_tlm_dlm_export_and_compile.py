@@ -129,7 +129,7 @@ def test_llama_dlm_logit_dims(
     vocab_size = len(tokenizer)
 
     # export and compile tlm model
-    qeff_model = AutoModelForCausalLM.from_pretrained(model_name, continuous_batching=continuous_batching, is_dlm=True)
+    qeff_model = AutoModelForCausalLM.from_pretrained(model_name, continuous_batching=continuous_batching)
     qpc_path: str = qeff_model.compile(
         num_devices=len(device_group),
         num_cores=16,
@@ -138,6 +138,7 @@ def test_llama_dlm_logit_dims(
         ctx_len=ctx_len,
         mxfp6_matmul=True,
         full_batch_size=full_batch_size,
+        is_dlm=True,
     )
 
     # init qaic session

@@ -204,6 +204,7 @@ class QEFFBaseModel(ABC):
         custom_io: Optional[Dict[str, str]] = None,
         mdp_ts_num_devices: int = 1,
         num_speculative_tokens: Optional[int] = None,
+        is_dlm: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -250,8 +251,8 @@ class QEFFBaseModel(ABC):
         if num_speculative_tokens:
             compile_hash.update(to_hashable({"num_speculative_tokens": num_speculative_tokens}))
 
-        if self.is_dlm:
-            compile_hash.update(to_hashable({"is_dlm": self.is_dlm}))
+        if is_dlm:
+            compile_hash.update(to_hashable({"is_dlm": is_dlm}))
 
         # Check if already compiled
         compile_hash = compile_hash.hexdigest()[:16]
