@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from QEfficient.transformers.modeling_spd_utils import filter_hidden_states
+from QEfficient.transformers.spd.modeling_spd_utils import filter_hidden_states
 
 
 def tlm_forward(
