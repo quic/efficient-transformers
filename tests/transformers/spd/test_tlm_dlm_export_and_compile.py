@@ -84,7 +84,7 @@ def test_llama_tlm_logit_dims(
     prefill_inputs = dict(
         input_ids=np.zeros((prefill_bsz, prefill_seq_len), dtype=np.int64),
         position_ids=np.arange(prefill_seq_len, dtype=np.int64).reshape(-1, 1).repeat(prefill_bsz, 1).transpose(),
-        num_logits_to_keep=np.arange(num_logits_to_keep).reshape(num_logits_to_keep, 1),
+        num_logits_to_keep=np.arange(1).reshape(1, 1),
     )
     # decode dummy inputs
     decode_bsz = full_batch_size if full_batch_size is not None else prefill_bsz
@@ -97,7 +97,7 @@ def test_llama_tlm_logit_dims(
         prefill_inputs["batch_index"] = np.arange(prefill_bsz, dtype=np.int64).reshape(prefill_bsz, 1)
         decode_inputs["batch_index"] = np.arange(decode_bsz, dtype=np.int64).reshape(-1, 1)
     # create dummy logits
-    prefill_logits = dict(logits=np.random.randn(prefill_bsz, num_logits_to_keep, vocab_size).astype(np.float32))
+    prefill_logits = dict(logits=np.random.randn(prefill_bsz, 1, vocab_size).astype(np.float32))
     decode_logits = dict(logits=np.random.randn(decode_bsz, num_logits_to_keep, vocab_size).astype(np.float32))
     # get prefill/decode logits
     session.set_buffers(prefill_logits)

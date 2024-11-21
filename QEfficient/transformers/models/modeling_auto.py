@@ -334,8 +334,11 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 )
 
         if self.is_tlm:
-            for specialization in specializations:
-                specialization.update({"num_logits_to_keep": num_speculative_tokens + 1})
+            for i,specialization in enumerate(specializations):
+                if i:
+                    specialization.update({"num_logits_to_keep": num_speculative_tokens + 1})
+                else:
+                    specialization.update({"num_logits_to_keep": 1})
 
         # Custom IO
         custom_io = {}
