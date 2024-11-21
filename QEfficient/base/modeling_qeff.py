@@ -203,6 +203,7 @@ class QEFFBaseModel(ABC):
         specializations: Optional[List[Dict[str, int]]] = None,
         custom_io: Optional[Dict[str, str]] = None,
         mdp_ts_num_devices: int = 1,
+        num_speculative_tokens: Optional[int] = None,
         **compiler_options,
     ) -> str:
         """
@@ -219,11 +220,7 @@ class QEFFBaseModel(ABC):
                 - convert_to_fp16=True -> -convert-to-fp16
         """
         if onnx_path is None and self.onnx_path is None:
-            if self.num_speculative_tokens is not None:
-                prefill_seq_len = specializations[0]["seq_len"]
-                self.export(seq_len=prefill_seq_len)
-            else:
-                self.export()
+            self.export()
 
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
@@ -250,8 +247,8 @@ class QEFFBaseModel(ABC):
         if mdp_ts_num_devices > 1:
             compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
 
-        if self.num_speculative_tokens:
-            compile_hash.update(to_hashable({"num_speculative_tokens": self.num_speculative_tokens}))
+        if num_speculative_tokens:
+            compile_hash.update(to_hashable({"num_speculative_tokens": num_speculative_tokens}))
 
         if self.is_dlm:
             compile_hash.update(to_hashable({"is_dlm": self.is_dlm}))

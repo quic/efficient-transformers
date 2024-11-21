@@ -51,7 +51,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -61,7 +61,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model)
+        return cls(model, is_tlm=is_tlm)
 
     @property
     def model_name(self) -> str:
@@ -82,6 +82,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
+        mhash.update(to_hashable({"is_tlm": self.is_tlm}))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -171,7 +172,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
 
-        self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, *args, **kwargs)
         self.continuous_batching = continuous_batching
         self.is_dlm = is_dlm
         return self
@@ -187,11 +188,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mhash = mhash.hexdigest()[:16]
         return mhash
 
-    def export(
-        self,
-        export_dir: Optional[str] = None,
-        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
-    ) -> str:
+    def export(self, export_dir: Optional[str] = None) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
         We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
@@ -203,14 +200,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         Returns:
             :str: Path of the generated ``ONNX`` graph.
         """
-        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        if self.num_speculative_tokens is not None:
-            num_logits_to_keep = self.num_speculative_tokens + 1
-            if seq_len < num_logits_to_keep:
-                raise ValueError(
-                    f"sequence length ({seq_len}) must be at least `num_speculative_tokens+1` ({num_logits_to_keep})"
-                )
-
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
@@ -245,9 +236,10 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
             dynamic_axes["batch_index"] = {0: "batch_size"}
 
-        if self.num_speculative_tokens is not None:
-            example_inputs["num_logits_to_keep"] = torch.arange(self.num_speculative_tokens + 1).view(
-                self.num_speculative_tokens + 1, 1
+        if self.is_tlm:
+            nlk = constants.ONNX_EXPORT_EXAMPLE_NLK # Number of Logits to Keep
+            example_inputs["num_logits_to_keep"] = torch.arange(nlk).view(
+                nlk, 1
             )
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
 
@@ -296,8 +288,18 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
+        # assert num_speculative_tokens cfg is acceptable if defined
+        if num_speculative_tokens is not None or self.is_tlm:
+            assert num_speculative_tokens is not None and self.is_tlm, f"if `num_speculative_tokens` is specified or `is_tlm` is True, they must both be defined."
+            if not isinstance(num_speculative_tokens, int) or num_speculative_tokens < 2:
+                ValueError("`num_speculative_tokens` arg should be an integer greater than 1.")
+            num_logits_to_keep = num_speculative_tokens + 1
+            if prefill_seq_len < num_logits_to_keep:
+                raise ValueError(
+                    f"sequence length ({prefill_seq_len}) must be at least `num_speculative_tokens+1` ({num_logits_to_keep})"
+                )
         # Specializations
-        decode_seq_len = self.num_speculative_tokens + 1 if self.num_speculative_tokens else 1
+        decode_seq_len = num_speculative_tokens + 1 if num_speculative_tokens else 1
         if self.continuous_batching:
             if full_batch_size is None:
                 raise TypeError("missing required argument: 'full_batch_size'")
@@ -332,13 +334,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 )
 
         if self.is_tlm:
-            if num_speculative_tokens is None:
-                raise AttributeError("Please pass valid integer as input to num_speculative_tokens parameter")
-            if num_speculative_tokens is not None:
-                if not isinstance(num_speculative_tokens, int) or num_speculative_tokens < 2:
-                    ValueError("`num_speculative_tokens` arg should be an integer greater than 1.")
             for specialization in specializations:
-                specialization.update({"num_logits_to_keep": self.num_speculative_tokens + 1})
+                specialization.update({"num_logits_to_keep": num_speculative_tokens + 1})
 
         # Custom IO
         custom_io = {}
@@ -358,6 +355,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
+            num_speculative_tokens=num_speculative_tokens,
             aic_num_cores=num_cores,
             **compiler_options,
         )

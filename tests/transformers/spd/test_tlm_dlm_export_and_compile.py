@@ -9,7 +9,6 @@ from typing import List, Optional
 
 import numpy as np
 import pytest
-import torch
 from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
@@ -60,8 +59,9 @@ def test_llama_tlm_logit_dims(
     vocab_size = len(tokenizer)
 
     # export and compile tlm model
+    is_tlm = num_speculative_tokens is not None
     qeff_model = AutoModelForCausalLM.from_pretrained(
-        model_name, continuous_batching=continuous_batching, num_speculative_tokens=num_speculative_tokens
+        model_name, continuous_batching=continuous_batching, is_tlm=is_tlm
     )
     qpc_path: str = qeff_model.compile(
         num_devices=len(device_group),
@@ -71,6 +71,7 @@ def test_llama_tlm_logit_dims(
         ctx_len=ctx_len,
         mxfp6_matmul=True,
         full_batch_size=full_batch_size,
+        num_speculative_tokens=num_speculative_tokens,
     )
 
     # init qaic session
@@ -79,17 +80,18 @@ def test_llama_tlm_logit_dims(
     session.skip_buffers(set([x for x in session.input_names if x.startswith("past_")]))
     session.skip_buffers(set([x for x in session.output_names if x.endswith("_RetainedState")]))
     # prefill dummy inputs
+    num_logits_to_keep = num_speculative_tokens + 1
     prefill_inputs = dict(
         input_ids=np.zeros((prefill_bsz, prefill_seq_len), dtype=np.int64),
         position_ids=np.arange(prefill_seq_len, dtype=np.int64).reshape(-1, 1).repeat(prefill_bsz, 1).transpose(),
-        num_logits_to_keep=torch.arange(num_speculative_tokens + 1).view(num_speculative_tokens + 1, 1).numpy(),
+        num_logits_to_keep=np.arange(num_logits_to_keep).reshape(num_logits_to_keep, 1),
     )
     # decode dummy inputs
-    num_logits_to_keep = num_speculative_tokens + 1
     decode_bsz = full_batch_size if full_batch_size is not None else prefill_bsz
     decode_inputs = dict(
         input_ids=np.zeros((decode_bsz, num_logits_to_keep), dtype=np.int64),
         position_ids=np.full((decode_bsz, num_logits_to_keep), -1, dtype=np.int64),
+        num_logits_to_keep=np.arange(num_logits_to_keep).reshape(num_logits_to_keep, 1),
     )
     if full_batch_size is not None:
         prefill_inputs["batch_index"] = np.arange(prefill_bsz, dtype=np.int64).reshape(prefill_bsz, 1)
