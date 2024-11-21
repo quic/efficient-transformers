@@ -15,7 +15,7 @@ from QEfficient.utils import get_num_layers_from_config, get_padding_shape_from_
 
 class InputHandler:
     def __init__(
-        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size, num_logits_to_keep: Optional[int]
+        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size, num_logits_to_keep: Optional[int] = None
     ):
         """
         Initialization

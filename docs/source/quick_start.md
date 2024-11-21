@@ -156,8 +156,8 @@ Draft-based speculative decoding is the approach where a small Draft Language Mo
 To export both DLM/TLM, add below flags to `from_pretrained`:
 
 ```Python
-tlm_name = "meta-llama/Llama-3.1-405B"
-dlm_name = "meta-llama/Llama-3.1-8B"
+tlm_name = "meta-llama/Llama-2-70b-chat-hf"
+dlm_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 k = 3 # DLM will make `k` speculations
 tlm = AutoModelForCausalLM.from_pretrained(tlm_name, num_speculative_tokens=k)
 dlm = AutoModelForCausalLM.from_pretrained(dlm_name, is_dlm=True)

@@ -9,6 +9,7 @@ from typing import Optional
 
 import torch
 
+
 def filter_hidden_states(
     hidden_states: torch.Tensor,
     position_ids: torch.Tensor,
@@ -34,7 +35,7 @@ def filter_hidden_states(
         # return the last logit
         return hidden_states[batch_indices.view(-1, 1), logit_index]
     # gather approach
-    lower_idx = torch.where(logit_index <= num_logits_to_keep, 0, logit_index - num_logits_to_keep).view(-1,1) # shape: [bsz, 1]
+    lower_idx = torch.where(logit_index < num_logits_to_keep, 0, logit_index+1 - num_logits_to_keep).view(-1,1) # shape: [bsz, 1]
     spec_idx = torch.arange(num_logits_to_keep).view(1,-1) # shape: [1, k]
     indices = torch.add(lower_idx, spec_idx).unsqueeze(2) # shape: [bsz, k, 1]
     indices = indices.repeat(1, 1, hidden_states.size(-1)) # shape: [bsz, ,k, d_model]
