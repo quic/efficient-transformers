@@ -18,7 +18,8 @@
 
 ## `QEffAutoLoraModelForCausalLM`
 ```{eval-rst}
-.. autoclass:: QEfficient.lora.auto.QEffAutoLoraModelForCausalLM
+.. autoclass:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM
+   :member-order: bysource
    :members:
 ```
 
