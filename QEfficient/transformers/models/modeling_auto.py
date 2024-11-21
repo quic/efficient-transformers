@@ -114,10 +114,11 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self,
         model: nn.Module,
         continuous_batching: bool = False,
-        num_speculative_tokens: Optional[int] = None,
+        is_tlm: bool = False,
         is_dlm: bool = False,
         **kwargs,
     ):
+        # TODO: remove from version 1.20
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -130,11 +131,15 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
-        self.num_speculative_tokens = num_speculative_tokens
         self.is_dlm = is_dlm
 
+        if is_tlm:
+            # TODO: It is possible to always apply this transform and make value of indices as last indices by default in PyTorch
+            self.model, transformed = SpDTransform.apply(self.model)
+        self.is_tlm = is_tlm
+
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, continuous_batching: bool = False, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, is_dlm: bool= False, *args, **kwargs):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
@@ -157,15 +162,9 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             # You can now execute the model
             model.generate(prompts=["Hi there!!"])
         """
-
-        num_speculative_tokens = kwargs.pop("num_speculative_tokens", None)
-        is_dlm = kwargs.pop("is_dlm", False)
-        if num_speculative_tokens is not None:
-            if not isinstance(num_speculative_tokens, int) or num_speculative_tokens < 2:
-                ValueError("`num_speculative_tokens` arg should be an integer greater than 1.")
-            if is_dlm:
-                raise ValueError("`num_speculative_tokens` arg and `is_dlm` flag are mutually exclusive.")
-            cls._pytorch_transforms.append(SpDTransform)
+        if is_tlm and is_dlm:
+            raise ValueError("`num_speculative_tokens` arg and `is_dlm` flag are mutually exclusive.")
+            
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -174,7 +173,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
         self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         self.continuous_batching = continuous_batching
-        self.num_speculative_tokens = num_speculative_tokens
         self.is_dlm = is_dlm
         return self
 
@@ -184,6 +182,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
+        mhash.update(to_hashable({"is_tlm": self.is_tlm}))
         mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
@@ -272,6 +271,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
+        num_speculative_tokens: Optional[int] = None,
         **compiler_options,
     ) -> str:
         """
@@ -331,13 +331,15 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                     {"batch_size": batch_size, "seq_len": 2, "ctx_len": ctx_len},
                 )
 
-        if self.num_speculative_tokens:
+        if self.is_tlm:
+            if num_speculative_tokens is None:
+                raise AttributeError("Please pass valid integer as input to num_speculative_tokens parameter")
+            if num_speculative_tokens is not None:
+                if not isinstance(num_speculative_tokens, int) or num_speculative_tokens < 2:
+                    ValueError("`num_speculative_tokens` arg should be an integer greater than 1.")
             for specialization in specializations:
                 specialization.update({"num_logits_to_keep": self.num_speculative_tokens + 1})
 
-        import ipdb
-
-        ipdb.set_trace()
         # Custom IO
         custom_io = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
