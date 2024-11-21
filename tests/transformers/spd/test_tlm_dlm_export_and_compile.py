@@ -9,6 +9,7 @@ from typing import List, Optional
 
 import numpy as np
 import pytest
+import torch
 from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
@@ -16,32 +17,33 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 configs = [
     pytest.param(
-        [0], # device_group
-        2, # num_speculative_tokens
-        32, # prefill_seq_len
-        128, # ctx_len
-        1, # prefill_bsz
-        8, # full_batch_size
-        "JackFram/llama-68m", # model_name
-        True, # continuous_batching
+        [0],  # device_group
+        2,  # num_speculative_tokens
+        32,  # prefill_seq_len
+        128,  # ctx_len
+        1,  # prefill_bsz
+        8,  # full_batch_size
+        "JackFram/llama-68m",  # model_name
+        True,  # continuous_batching
         id="CB llama",
     ),
     pytest.param(
-        [0], # device_group
-        2, # num_speculative_tokens
-        32, # prefill_seq_len
-        128, # ctx_len
-        1, # prefill_bsz
-        None, # full_batch_size
-        "JackFram/llama-68m", # model_name
-        False, # continuous_batching
+        [0],  # device_group
+        2,  # num_speculative_tokens
+        32,  # prefill_seq_len
+        128,  # ctx_len
+        1,  # prefill_bsz
+        None,  # full_batch_size
+        "JackFram/llama-68m",  # model_name
+        False,  # continuous_batching
         id="non-CB llama",
     ),
 ]
 
 
 @pytest.mark.parametrize(
-    "device_group,num_speculative_tokens,prefill_seq_len,ctx_len,prefill_bsz,full_batch_size,model_name,continuous_batching", configs
+    "device_group,num_speculative_tokens,prefill_seq_len,ctx_len,prefill_bsz,full_batch_size,model_name,continuous_batching",
+    configs,
 )
 def test_llama_tlm_logit_dims(
     device_group: List[int],
@@ -58,10 +60,12 @@ def test_llama_tlm_logit_dims(
     vocab_size = len(tokenizer)
 
     # export and compile tlm model
-    qeff_model = AutoModelForCausalLM.from_pretrained(model_name, continuous_batching=continuous_batching, num_speculative_tokens=num_speculative_tokens)
+    qeff_model = AutoModelForCausalLM.from_pretrained(
+        model_name, continuous_batching=continuous_batching, num_speculative_tokens=num_speculative_tokens
+    )
     qpc_path: str = qeff_model.compile(
         num_devices=len(device_group),
-        num_cores=16,
+        num_cores=14,
         batch_size=prefill_bsz,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
@@ -78,6 +82,7 @@ def test_llama_tlm_logit_dims(
     prefill_inputs = dict(
         input_ids=np.zeros((prefill_bsz, prefill_seq_len), dtype=np.int64),
         position_ids=np.arange(prefill_seq_len, dtype=np.int64).reshape(-1, 1).repeat(prefill_bsz, 1).transpose(),
+        num_logits_to_keep=torch.arange(num_speculative_tokens + 1).view(num_speculative_tokens + 1, 1).numpy(),
     )
     # decode dummy inputs
     num_logits_to_keep = num_speculative_tokens + 1
@@ -104,7 +109,8 @@ def test_llama_tlm_logit_dims(
 
 
 @pytest.mark.parametrize(
-    "device_group,num_speculative_tokens,prefill_seq_len,ctx_len,prefill_bsz,full_batch_size,model_name,continuous_batching", configs
+    "device_group,num_speculative_tokens,prefill_seq_len,ctx_len,prefill_bsz,full_batch_size,model_name,continuous_batching",
+    configs,
 )
 def test_llama_dlm_logit_dims(
     device_group: List[int],

@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-
 from typing import List, Optional, Tuple, Union
 
 import torch
@@ -12,7 +11,43 @@ import torch.nn.functional as F
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from QEfficient.transformers.spd.modeling_spd_utils import filter_hidden_states
+
+def filter_hidden_states(
+    hidden_states: torch.Tensor,
+    position_ids: torch.Tensor,
+    num_logits_to_keep: Optional[int] = None,
+) -> torch.Tensor:
+    """
+    Filter hidden states based on whether this is a TLM SpD model
+
+    ``Mandatory`` Args:
+        :hidden_states (torch.Tensor): Hidden states tensor.
+        :position_ids (torch.Tensor): Position ids tensor.
+    ``Optional`` Args:
+        :num_logits_to_keep (int, optional): Number of speculative tokens, specified only for TLM SpD model
+
+    Returns:
+        :torch.Tensor: Filtered hidden states.
+    """
+    batch_size = position_ids.size(0)
+    batch_indices = torch.arange(batch_size)
+    # Cast to INT32 to avoid issue while running in ONNXRT
+    logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+
+    if num_logits_to_keep is None:
+        # return the last logit
+        return hidden_states[batch_indices.view(-1, 1), logit_index]
+
+    # gather approach
+    num_logits_to_keep = num_logits_to_keep.shape[0]
+    lower_idx = torch.where(logit_index < num_logits_to_keep, 0, logit_index + 1 - num_logits_to_keep).view(
+        -1, 1
+    )  # shape: [bsz, 1]
+    spec_idx = torch.arange(num_logits_to_keep).view(1, -1)  # shape: [1, k]
+    indices = torch.add(lower_idx, spec_idx).unsqueeze(2)  # shape: [bsz, k, 1]
+    indices = indices.repeat(1, 1, hidden_states.size(-1))  # shape: [bsz, ,k, d_model]
+    hidden_states = torch.gather(hidden_states, dim=1, index=indices)  # shape: [bsz, k, d_model]
+    return hidden_states
 
 
 def tlm_forward(
@@ -29,7 +64,7 @@ def tlm_forward(
     output_hidden_states: Optional[bool] = None,
     return_dict: Optional[bool] = None,
     cache_position: Optional[torch.LongTensor] = None,
-    #num_logits_to_keep: Optional[torch.LongTensor] = None, # explicit passing is not currently supported
+    num_logits_to_keep: Optional[torch.LongTensor] = None,
 ) -> Union[Tuple, CausalLMOutputWithPast]:
     r"""
     Args:
@@ -77,8 +112,6 @@ def tlm_forward(
         cache_position=cache_position,
     )
 
-    # Cast to INT32 to avoid issue while running in ONNXRT
-    num_logits_to_keep = getattr(self, "num_logits_to_keep", None)
     hidden_states = filter_hidden_states(outputs[0], position_ids, num_logits_to_keep)
     if self.config.pretraining_tp > 1:
         lm_head_slices = self.lm_head.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
