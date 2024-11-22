@@ -199,10 +199,9 @@ def get_qpc_dir_path(
 ):
     # Create a unique directory name for the QPC model based on all parameters
     qpc_base_dir_name = (
-        f"qpc_{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos" + f"_{num_speculative_tokens}nst"
-        if num_speculative_tokens
-        else ""
+        f"qpc_{num_cores}cores_{batch_size}bs_{prompt_len}pl_{ctx_len}cl_{mos}mos" 
         + f"{f'_{full_batch_size}fbs_' if full_batch_size is not None else '_'}"
+        + f"{f'_{num_speculative_tokens}nst_' if num_speculative_tokens is not None else ''}"
         + f"{len(device_group) if device_group is not None else 1}"
         + "devices"
         + ("_mxfp6_mxint8" if (mxfp6 and mxint8) else "_mxfp6" if mxfp6 else "_fp16_mxint8" if mxint8 else "_fp16")
