@@ -95,6 +95,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     ``Mandatory`` Args:
         :model (nn.Module):  PyTorch model
         :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
+        :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
 
 
     .. code-block:: python
@@ -145,7 +146,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
         Args:
             :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
-            :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
+            :continuous_batching (bool): Whether this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
+            :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
             :args, kwargs: Additional arguments to pass to transformers.AutoModelForCausalLM.
 
         .. code-block:: python
@@ -190,7 +192,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
         ``Optional`` Args:
             :export_dir (str, optional): The directory path to store ONNX-graph.
-            :seq_len (int, optional): The length of the pytorch prompt inputs.. ``Defaults to 32``.
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
@@ -278,6 +279,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :full_batch_size (int, optional): Continuous batching batch size.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
             :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
+            :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
+            :is_dlm (bool, optional): Whether this is a Speculative Decoding draft-model. ``Defaults to False``.
             :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
 

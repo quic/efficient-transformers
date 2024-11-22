@@ -288,7 +288,7 @@ class KVCacheTransform(ModuleMappingTransform):
 
 class SpDTransform:
     """
-    Apply generic QEffForCausalLM forward pass to extract `num_speculative_tokens+1` hidden states before computing logits.
+    Apply generic QEffForCausalLM forward pass to extract `num_speculative_tokens+1` hidden states before computing logits during decode phase and extract last predicted token during prefill.
     This is only needed if user is exporting Target Language Model (TLM) for Speculative Decoding to validate output logits
     against the speculated tokens from a smaller model.
     Other than the computed logits, there should be no difference between the SpD Transformed model and its corresponding cunterpart.
