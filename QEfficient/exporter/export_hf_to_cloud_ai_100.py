@@ -112,7 +112,7 @@ def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, 
 
     # Run onnxrt inference
     input_names, ort_outputs = run_model_on_ort(
-        onnx_path=os.path.join(onnx_dir_path, f"{model_name}.onnx"),
+        onnx_path="/local/mnt/workspace/amitraj/amit_efficient/efficient-transformers/model_base_name.onnx",
         inputs=inputs,
         output_names=output_names,
         pt_outputs=pt_outputs,
