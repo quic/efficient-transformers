@@ -5,6 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
+from QEfficient.transformers.quantizers.auto import (  # noqa: F401
+    replace_transformers_quantizers,
+    undo_transformers_quantizers,
+)
 from QEfficient.utils._utils import (  # noqa: F401
     check_and_assign_cache_dir,
     get_num_layers_from_config,
