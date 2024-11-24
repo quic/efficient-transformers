@@ -55,7 +55,7 @@ def main(args):
             if attn.head_dim % 8 != 0:
                 raise ValueError(f"the value attn.head_dim={attn.head_dim} is not divisible by 8 which is \
                                  according to the assumption that model is 4-bit quantized.")
-            if attn.hidden_size % k_proj.group_size != 0 or attn.hidden_size % v_proj.group_size:
+            if attn.hidden_size % k_proj.group_size != 0:
                 raise ValueError(f"The value of attn.hidden_size={attn.hidden_size} is not divisible by \
                                 K_proj.group_size={k_proj.group_size}")
 
