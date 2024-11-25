@@ -100,6 +100,17 @@
 </li>
 </ul>
 </li>
+<li class="toctree-l2"><a class="reference internal" href="#qeffautoloramodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.download_adapter"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM.download_adapter()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.load_adapter"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM.load_adapter()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.unload_adapter"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM.unload_adapter()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.export"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM.export()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.generate"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM.generate()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">export</span></code></a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.exporter.export_hf_to_cloud_ai_100.qualcomm_efficient_converter"><code class="docutils literal notranslate"><span class="pre">qualcomm_efficient_converter()</span></code></a></li>
 </ul>
@@ -388,6 +399,12 @@ Once exported and compiled for an adapter, the same can be utilized for another 
 <dt class="field-odd">pretrained_name_or_path (str)<span class="colon">:</span></dt>
 <dd class="field-odd"><p>Model card name from huggingface or local path to model directory.</p>
 </dd>
+<dt class="field-even">finite_adapters (bool)<span class="colon">:</span></dt>
+<dd class="field-even"><p>set True to enable finite adapter mode with QEffAutoLoraModelForCausalLM class. Please refer to QEffAutoLoraModelForCausalLM for API specification.</p>
+</dd>
+<dt class="field-odd">adapter_name (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Name used to identify loaded adapter.</p>
+</dd>
 <dt class="field-even">args, kwargs<span class="colon">:</span></dt>
 <dd class="field-even"><p>Additional arguments to pass to peft.AutoPeftModelForCausalLM.</p>
 </dd>
@@ -492,6 +509,152 @@ If the model has not been exported yet, this method will handle the export proce
 </dd>
 <dt class="field-odd">kwargs<span class="colon">:</span></dt>
 <dd class="field-odd"><p>Additional parameters for generation_config or to be passed to the model while generating.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="qeffautoloramodelforcausallm">
+<h2><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM</span></code><a class="headerlink" href="#qeffautoloramodelforcausallm" title="Permalink to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.peft.lora.auto.</span></span><span class="sig-name descname"><span class="pre">QEffAutoLoraModelForCausalLM</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Module</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">continuous_batching</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/peft/lora/auto.html#QEffAutoLoraModelForCausalLM"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM" title="Permalink to this definition"></a></dt>
+<dd><p>QEff class for loading models with multiple LoRA adapters. Currently only Mistral and Llama model are supported.
+Once exported and compiled, the qpc can perform mixed batch inference with provided <cite>prompt_to_adapter_mapping</cite>.</p>
+<dl class="simple">
+<dt>Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">model (nn.Module)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>PyTorch model</p>
+</dd>
+<dt class="field-even">continuous_batching (bool)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">QEfficient.peft.lora</span> <span class="kn">import</span> <span class="n">QEffAutoLoraModelForCausalLM</span>
+
+<span class="n">m</span> <span class="o">=</span> <span class="n">QEffAutoPeftModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;mistralai/Mistral-7B-v0.1&quot;</span><span class="p">)</span>
+<span class="n">m</span><span class="o">.</span><span class="n">load_adapter</span><span class="p">(</span><span class="s2">&quot;predibase/gsm8k&quot;</span><span class="p">,</span> <span class="s2">&quot;gsm8k&quot;</span><span class="p">)</span>
+<span class="n">m</span><span class="o">.</span><span class="n">load_adapter</span><span class="p">(</span><span class="s2">&quot;predibase/magicoder&quot;</span><span class="p">,</span> <span class="s2">&quot;magicoder&quot;</span><span class="p">)</span>
+<span class="n">m</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">num_cores</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">device_group</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+<span class="n">prompts</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;code prompt&quot;</span><span class="p">,</span> <span class="s2">&quot;math prompt&quot;</span><span class="p">,</span> <span class="s2">&quot;generic&quot;</span><span class="p">]</span>
+<span class="n">m</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompts</span><span class="p">,</span> <span class="n">device_group</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">prompt_to_adapter_mapping</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;magicoder&quot;</span><span class="p">,</span><span class="s2">&quot;gsm8k_id&quot;</span><span class="p">,</span><span class="s2">&quot;base&quot;</span><span class="p">])</span>
+</pre></div>
+</div>
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.download_adapter">
+<span class="sig-name descname"><span class="pre">download_adapter</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">adapter_model_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">adapter_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">adapter_weight</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">adapter_config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PeftConfig</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/peft/lora/auto.html#QEffAutoLoraModelForCausalLM.download_adapter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.download_adapter" title="Permalink to this definition"></a></dt>
+<dd><p>Loads a new adapter from huggingface hub or local path into CPU cache</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">adapter_model_id (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Adapter model ID from huggingface hub or local path</p>
+</dd>
+<dt class="field-even">adapter_name (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Adapter name to be used to downloaded this adapter</p>
+</dd>
+</dl>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">adapter_weight (dict)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Adapter weight tensors in dictionary format</p>
+</dd>
+<dt class="field-even">adapter_config (PeftConfig)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Adapter config in the format of PeftConfig</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.load_adapter">
+<span class="sig-name descname"><span class="pre">load_adapter</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">adapter_model_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">adapter_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">adapter_weight</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">adapter_config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PeftConfig</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/peft/lora/auto.html#QEffAutoLoraModelForCausalLM.load_adapter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.load_adapter" title="Permalink to this definition"></a></dt>
+<dd><p>Load adapter into CPU cache and set it as active</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">adapter_model_id (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Adapter model ID from huggingface hub or local path</p>
+</dd>
+<dt class="field-even">adapter_name (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Adapter name to be used to load this adapter</p>
+</dd>
+</dl>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">adapter_weight (dict)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Adapter weight tensors in dictionary format</p>
+</dd>
+<dt class="field-even">adapter_config (PeftConfig)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Adapter config in the format of PeftConfig</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.unload_adapter">
+<span class="sig-name descname"><span class="pre">unload_adapter</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">adapter_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/peft/lora/auto.html#QEffAutoLoraModelForCausalLM.unload_adapter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.unload_adapter" title="Permalink to this definition"></a></dt>
+<dd><p>Deactivate adpater and remove it from CPU cache</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">adapter_name (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Adapter name to be unloaded</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.export">
+<span class="sig-name descname"><span class="pre">export</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">export_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/peft/lora/auto.html#QEffAutoLoraModelForCausalLM.export"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.export" title="Permalink to this definition"></a></dt>
+<dd><p>Exports the model to <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> format using <code class="docutils literal notranslate"><span class="pre">torch.onnx.export</span></code>.
+We currently don’t support exporting non-transformed models. Please refer to the <code class="docutils literal notranslate"><span class="pre">convert_to_cloud_bertstyle</span></code> function in the <strong>Low-Level API</strong> for a legacy function that supports this.”</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><p>does not any arguments.</p>
+</dd>
+<dt>Returns:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">str<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path of the generated <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> graph.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.generate">
+<span class="sig-name descname"><span class="pre">generate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PreTrainedTokenizerFast</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">PreTrainedTokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompts</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_to_adapter_mapping</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">runtime</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'AI_100'</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/peft/lora/auto.html#QEffAutoLoraModelForCausalLM.generate"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.generate" title="Permalink to this definition"></a></dt>
+<dd><p>This method generates output until <code class="docutils literal notranslate"><span class="pre">eos</span></code> or <code class="docutils literal notranslate"><span class="pre">generation_len</span></code> by executing the compiled <code class="docutils literal notranslate"><span class="pre">qpc</span></code> on <code class="docutils literal notranslate"><span class="pre">Cloud</span> <span class="pre">AI</span> <span class="pre">100</span></code> Hardware cards.
+This is a sequential execution based on the <code class="docutils literal notranslate"><span class="pre">batch_size</span></code> of the compiled model and the number of prompts passed.
+If the number of prompts cannot be divided by the <code class="docutils literal notranslate"><span class="pre">batch_size</span></code>, the last unfulfilled batch will be dropped.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">tokenizer (PreTrainedTokenizerFast or PreTrainedTokenizer)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The tokenizer used in the inference</p>
+</dd>
+<dt class="field-even">prompts (List[str])<span class="colon">:</span></dt>
+<dd class="field-even"><p>List of prompts to run the execution.</p>
+</dd>
+<dt class="field-odd">device_id (List[int])<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model</p>
+</dd>
+<dt class="field-even">prompt_to_adapter_mapping (List[str])<span class="colon">:</span></dt>
+<dd class="field-even"><p>The sequence of the adapter names will be matched with sequence of prompts and corresponding adapters will be used for the prompts.”base” for base model (no adapter).</p>
+</dd>
+</dl>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">optional</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">runtime (str, optional)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Only <code class="docutils literal notranslate"><span class="pre">AI_100</span></code> runtime is supported as of now; <code class="docutils literal notranslate"><span class="pre">ONNXRT</span></code> and <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> coming soon. Defaults to “AI_100”.</p>
 </dd>
 </dl>
 </dd>
@@ -674,7 +837,7 @@ Generates tensor-slicing configuration if multiple devices are passed in <code c
 
 <dl class="py function">
 <dt class="sig sig-object py" id="QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv">
-<span class="sig-prename descclassname"><span class="pre">QEfficient.generation.text_generation_inference.</span></span><span class="sig-name descname"><span class="pre">cloud_ai_100_exec_kv</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PreTrainedTokenizer</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">PreTrainedTokenizerFast</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qpc_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompts_txt_file_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generation_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_debug_logs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">write_io_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">automation</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/generation/text_generation_inference.html#cloud_ai_100_exec_kv"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv" title="Permalink to this definition"></a></dt>
+<span class="sig-prename descclassname"><span class="pre">QEfficient.generation.text_generation_inference.</span></span><span class="sig-name descname"><span class="pre">cloud_ai_100_exec_kv</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PreTrainedTokenizer</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">PreTrainedTokenizerFast</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qpc_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompts_txt_file_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generation_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_debug_logs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">write_io_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">automation</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_to_lora_id_mapping</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/generation/text_generation_inference.html#cloud_ai_100_exec_kv"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv" title="Permalink to this definition"></a></dt>
 <dd><p>This method generates output until <code class="docutils literal notranslate"><span class="pre">eos</span></code> or <code class="docutils literal notranslate"><span class="pre">generation_len</span></code> by executing the compiled <code class="docutils literal notranslate"><span class="pre">qpc</span></code> on <code class="docutils literal notranslate"><span class="pre">Cloud</span> <span class="pre">AI</span> <span class="pre">100</span></code> Hardware cards.
 This is a sequential execution based on the <code class="docutils literal notranslate"><span class="pre">batch_size</span></code> of the compiled model and the number of prompts passed.
 If the number of prompts cannot be divided by the <code class="docutils literal notranslate"><span class="pre">batch_size</span></code>, the last unfulfilled batch will be dropped.</p>
