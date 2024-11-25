@@ -39,7 +39,6 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
     Args:
         :model (nn.Module): PyTorch model
-        :finite_adapters (bool): set True to enable finite adapter mode with QEffAutoLoraModelForCausalLM class. Please refer to QEffAutoLoraModelForCausalLM for API specification.
 
     .. code-block:: python
 
