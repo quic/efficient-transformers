@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import torch
-from transformers.quantizers.quantizer_gptq import GptqHfQuantizer
+from transformers.quantizers import HfQuantizer
 from transformers.utils.quantization_config import GPTQConfig
 
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
@@ -38,7 +38,7 @@ class QEffGPTQConfig(GPTQConfig):
             raise ValueError("damp_percent must be between 0 and 1.")
 
 
-class QEffGPTQQuantizer(GptqHfQuantizer):
+class QEffGPTQQuantizer(HfQuantizer):
     """
     Quantizer class for QEffGPTQ, extending HfQuantizer.
     This class handles the initialization, environment validation, dtype updating, and model processing for quantization.
