@@ -8,12 +8,10 @@
 import numpy as np
 import pytest
 from transformers import AutoModelForCausalLM
-from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, QEffAwqQuantizer
-from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig, QEffGPTQQuantizer
+from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils import hf_download
 from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
@@ -39,13 +37,6 @@ test_models = [
     "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
     "ibm-granite/granite-20b-code-base",
 ]
-
-
-# TODO: Make this a fixture? Or better, always update the quantizer and config in transformers.
-# When a user imports QEfficient, these are always available.
-def replace_transformers_quantizers():
-    AUTO_QUANTIZER_MAPPING.update({"awq": QEffAwqQuantizer, "gptq": QEffGPTQQuantizer})
-    AUTO_QUANTIZATION_CONFIG_MAPPING.update({"awq": QEffAwqConfig, "gptq": QEffGPTQConfig})
 
 
 def load_causal_lm_model(model_config):

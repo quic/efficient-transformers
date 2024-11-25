@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import torch
-from transformers.quantizers.quantizer_gptq import HfQuantizer
+from transformers.quantizers import HfQuantizer
 from transformers.utils.quantization_config import GPTQConfig
 
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
