@@ -132,9 +132,7 @@ class QEFFBaseModel(ABC):
         """
         export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
         export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
-        model_name = f"{self.model_name}.onnx"
-        onnx_path = export_dir / model_name
-        # TODO: need to add hash to onnx
+        onnx_path = export_dir / f"{self.model_name}.onnx"
         if onnx_path.is_file():
             self.onnx_path = onnx_path
             return onnx_path

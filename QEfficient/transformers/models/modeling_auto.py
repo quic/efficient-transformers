@@ -51,7 +51,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -61,7 +61,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model, is_tlm=is_tlm)
+        return cls(model)
 
     @property
     def model_name(self) -> str:
@@ -139,7 +139,9 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self.is_tlm = is_tlm
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, *args, **kwargs):
+    def from_pretrained(
+        cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, *args, **kwargs
+    ):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
@@ -163,15 +165,16 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             # You can now execute the model
             model.generate(prompts=["Hi there!!"])
         """
-            
+
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
 
-        self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, *args, **kwargs)
+        self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         self.continuous_batching = continuous_batching
+        self.is_tlm = is_tlm
         return self
 
     @property
@@ -233,10 +236,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             dynamic_axes["batch_index"] = {0: "batch_size"}
 
         if self.is_tlm:
-            nlk = constants.ONNX_EXPORT_EXAMPLE_NLK # Number of Logits to Keep
-            example_inputs["num_logits_to_keep"] = torch.arange(nlk).view(
-                nlk, 1
-            )
+            nlk = constants.ONNX_EXPORT_EXAMPLE_NLK  # Number of Logits to Keep
+            example_inputs["num_logits_to_keep"] = torch.arange(nlk).view(nlk, 1)
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
 
         return self._export(
@@ -287,60 +288,61 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-        # assert num_speculative_tokens cfg is acceptable if defined
-        if num_speculative_tokens is not None or self.is_tlm:
-            assert num_speculative_tokens is not None and self.is_tlm, f"if `num_speculative_tokens` is specified or `is_tlm` is True, they must both be defined."
-            if not isinstance(num_speculative_tokens, int) or num_speculative_tokens < 2:
-                ValueError("`num_speculative_tokens` arg should be an integer greater than 1.")
+        # raise error if is_tlm and is_dlm aren't mutex
+        if self.is_tlm and is_dlm:
+            raise ValueError("`num_speculative_tokens` arg and `is_dlm` flag are mutually exclusive.")
+
+        if self.is_tlm:
+            # assert num_speculative_tokens cfg is acceptable if defined
+            if num_speculative_tokens is None:
+                raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` is True.")
+            if not isinstance(num_speculative_tokens, int) and num_speculative_tokens < 2:
+                ValueError(
+                    f"`num_speculative_tokens` arg should be an integer greater than 1, got {num_speculative_tokens}"
+                )
             num_logits_to_keep = num_speculative_tokens + 1
             if prefill_seq_len < num_logits_to_keep:
                 raise ValueError(
                     f"sequence length ({prefill_seq_len}) must be at least `num_speculative_tokens+1` ({num_logits_to_keep})"
                 )
-        # assert is_tlm and is_dlm are mutex
-        if self.is_tlm and is_dlm:
-            raise ValueError("`num_speculative_tokens` arg and `is_dlm` flag are mutually exclusive.")
-        # Specializations
-        decode_seq_len = num_speculative_tokens + 1 if num_speculative_tokens else 1
-        if self.continuous_batching:
-            if full_batch_size is None:
-                raise TypeError("missing required argument: 'full_batch_size'")
 
-            specializations = [
-                {"full_batch_size": full_batch_size, "batch_size": 1, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
-                {
-                    "full_batch_size": full_batch_size,
-                    "batch_size": full_batch_size,
-                    "seq_len": decode_seq_len,
-                    "ctx_len": ctx_len,
-                },
-            ]
-            if is_dlm:
-                specializations.append(
-                    {
-                        "full_batch_size": full_batch_size,
-                        "batch_size": full_batch_size,
-                        "seq_len": 2,
-                        "ctx_len": ctx_len,
-                    },
-                )
-        else:
-            specializations = [
-                {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
-            ]
-            if prefill_seq_len != 1:
-                specializations.append({"batch_size": batch_size, "seq_len": decode_seq_len, "ctx_len": ctx_len})
-            if is_dlm:
-                specializations.append(
-                    {"batch_size": batch_size, "seq_len": 2, "ctx_len": ctx_len},
-                )
+        if self.continuous_batching and full_batch_size is None:
+            raise TypeError("missing required argument: 'full_batch_size'")
 
-        if self.is_tlm:
-            for i,specialization in enumerate(specializations):
-                if i:
-                    specialization.update({"num_logits_to_keep": num_speculative_tokens + 1})
-                else:
-                    specialization.update({"num_logits_to_keep": 1})
+        # Define prefill specialization
+        prefill_specialization = {
+            # Prefill is always run with single BS for continuous batching.
+            "batch_size": 1 if self.continuous_batching else batch_size,
+            "seq_len": prefill_seq_len,
+            "ctx_len": ctx_len,
+        }
+        prefill_specialization.update({"full_batch_size": full_batch_size}) if self.continuous_batching else None
+        prefill_specialization.update({"num_logits_to_keep": 1}) if self.is_tlm else None
+        specializations = [
+            prefill_specialization,
+        ]
+
+        # Skip decode specialization if we are not in continuous batching and prefill_seq_len=1 as this repeats prefill specialization
+        if prefill_seq_len != 1 or self.continuous_batching:
+            decode_specialization = {
+                "batch_size": full_batch_size if self.continuous_batching else batch_size,
+                "seq_len": num_speculative_tokens + 1 if self.is_tlm else 1,
+                "ctx_len": ctx_len,
+            }
+            decode_specialization.update({"full_batch_size": full_batch_size}) if self.continuous_batching else None
+            decode_specialization.update({"num_logits_to_keep": num_speculative_tokens + 1}) if self.is_tlm else None
+            specializations.append(decode_specialization)
+
+        # Extra Specializations based on case
+        if is_dlm:
+            dlm_specialization = {
+                "batch_size": full_batch_size if self.continuous_batching else batch_size,
+                "seq_len": 2,
+                "ctx_len": ctx_len,
+            }
+            dlm_specialization.update({"full_batch_size": full_batch_size}) if self.continuous_batching else None
+            specializations.append(dlm_specialization)
+            self.is_dlm = True
 
         # Custom IO
         custom_io = {}
@@ -390,6 +392,10 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             raise ValueError("Only AI_100 runtime is supported right now via generate API")
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
+        if self.is_tlm or getattr(self, "is_dlm", False):
+            raise NotImplementedError(
+                "generate method is not yet supported for tlm or dlm models used in Speculative Decoding"
+            )
         generation_len = kwargs.pop("generation_len", None)
         return QEfficient.cloud_ai_100_exec_kv(
             tokenizer,
