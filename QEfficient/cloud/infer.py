@@ -192,7 +192,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--full_batch_size",
-        "--full_batch_size",
+        "--full-batch-size",
         type=int,
         default=None,
         help="Set full batch size to enable continuous batching mode, default is None",
