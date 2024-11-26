@@ -11,7 +11,6 @@ import shutil
 
 import pytest
 
-from QEfficient.transformers.modeling_utils import get_lists_of_cb_qeff_models
 from QEfficient.utils import get_onnx_dir_name
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
@@ -271,12 +270,6 @@ def pytest_collection_modifyitems(config, items):
             if item.module.__name__ in ["test_export", "test_compile", "test_execute", "test_infer"]:
                 if hasattr(item, "callspec"):
                     params = item.callspec.params
-                    model_class = model_class_dict[params["model_name"]]
-                    if (
-                        params["full_batch_size"] is not None
-                        and model_class not in get_lists_of_cb_qeff_models.architectures
-                    ):
-                        item.add_marker(pytest.mark.skip(reason="Skipping because FULL BATCH SIZE does not support..."))
 
             if item.module.__name__ in ["test_export", "test_compile", "test_execute"]:
                 if hasattr(item, "callspec"):

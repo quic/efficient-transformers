@@ -137,25 +137,6 @@ from .models.starcoder2.modeling_starcoder2 import (
 # Required for the Automation tool
 ModelArchitectures = namedtuple("ModelArchitectures", ["architectures"])
 
-get_lists_of_cb_qeff_models = ModelArchitectures(
-    [
-        LlamaForCausalLM.__name__,
-        GemmaForCausalLM.__name__,
-        Gemma2ForCausalLM.__name__,
-        MistralForCausalLM.__name__,
-        MixtralForCausalLM.__name__,
-        Starcoder2ForCausalLM.__name__,
-        Qwen2ForCausalLM.__name__,
-        Phi3ForCausalLM.__name__,
-        PhiForCausalLM.__name__,
-        CodeGenForCausalLM.__name__,
-        GPT2LMHeadModel.__name__,
-        GPTJForCausalLM.__name__,
-        MptForCausalLM.__name__,
-        FalconForCausalLM.__name__,
-        GPTBigCodeForCausalLM.__name__,
-    ]
-)
 # Create an instance of the named tuple
 qeff_supported_architectures = ModelArchitectures(
     [
