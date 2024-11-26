@@ -315,7 +315,6 @@ def export_for_cloud(
     seq_length: int = Constants.SEQ_LEN,
     full_batch_size: Optional[int] = None,
 ) -> str:
-
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
         return export_lm_model_for_cloud(
