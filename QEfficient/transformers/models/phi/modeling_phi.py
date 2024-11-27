@@ -8,6 +8,7 @@
 """PyTorch Phi model."""
 
 import math
+import warnings
 from typing import List, Optional, Tuple, Union
 
 import torch
@@ -411,8 +412,10 @@ class QEffPhiForCausalLM(PhiForCausalLM):
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         'This is an example script .\n\n\n\nfrom typing import List\n\ndef find_most_common_letter(words: List[str'
         ```"""
-        logger.warning(
-            "Deprecation warning : The Phi1 and Phi2 models are deprecated. Users may experience performance or accuracy issues.",
+        warnings.warn(
+            "\033[93mThe Phi1 and Phi2 models are deprecated. Users may experience performance or accuracy issues.",
+            DeprecationWarning,
+            stacklevel=2,
         )
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
