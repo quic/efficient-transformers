@@ -161,7 +161,7 @@ class QEffPhiModel(PhiModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-    ) -> Union[Tuple, BaseModelOutputWithPast]:
+    ) -> Union[Tuple, BaseModelOutputWithPast]:   
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -411,7 +411,9 @@ class QEffPhiForCausalLM(PhiForCausalLM):
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         'This is an example script .\n\n\n\nfrom typing import List\n\ndef find_most_common_letter(words: List[str'
         ```"""
-
+        logger.warning(
+            "Deprecation warning : The Phi1 and Phi2 models are deprecated. Users may experience performance or accuracy issues.",
+        )
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states

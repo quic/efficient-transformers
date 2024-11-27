@@ -22,7 +22,6 @@ test_models = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
     "gpt2",
     "Salesforce/codegen-350M-mono",
-    "microsoft/phi-2",
     "microsoft/Phi-3-mini-4k-instruct",
     "tiiuae/falcon-7b",
     "Qwen/Qwen2-0.5B",
@@ -31,6 +30,7 @@ test_models = [
     "wtang06/mpt-125m-c4",
     "hakurei/gpt-j-random-tinier",
     "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    "meta-llama/Llama-3.2-1B",
     "unsloth/gemma-2b",
     "unsloth/gemma-2-2b",
     "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
