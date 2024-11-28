@@ -1,16 +1,16 @@
 from functools import partial
 
-from dataset.alpaca_dataset import (
+from QEfficient.finetune.dataset.alpaca_dataset import (
     InstructionDataset as get_alpaca_dataset,
 )
-from dataset.custom_dataset import (
+from QEfficient.finetune.dataset.custom_dataset import (
     get_custom_dataset,
     get_data_collator,
 )
-from dataset.grammer_dataset import (
+from QEfficient.finetune.dataset.grammer_dataset import (
     get_dataset as get_grammar_dataset,
 )
-from dataset.samsum_dataset import (
+from QEfficient.finetune.dataset.samsum_dataset import (
     get_preprocessed_samsum as get_samsum_dataset,
 )
 
