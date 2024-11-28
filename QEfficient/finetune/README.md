@@ -26,14 +26,14 @@ export QAIC_DEBUG=1 # To understand the CPU fallback ops
 ```
 
 ```python
-python finetune.py qaic:0
+python -m QEfficient.cloud.finetune --device qaic:0
 ```
 You can switch between different hardwares by replacing qaic with cuda or cpu. But remember to install torch specific to CUDA to run on GPU
 
 Also, you can configure various training parameters, for more details, checkout: configs/training.py, Below is example command line
 
 ```python
-python finetune.py qaic:0 --use-peft --output_dir ./meta-sam --num_epochs 2 --context_length 256 
+python -m QEfficient.cloud.finetune --device qaic:0 --use-peft --output_dir ./meta-sam --num_epochs 2 --context_length 256 
 ```
 
 ## Dataset Details
