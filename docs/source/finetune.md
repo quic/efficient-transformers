@@ -4,11 +4,7 @@ This repository provides the infrastructure for finetuning models using differen
 
 ## Installation
 
-First, install the required dependencies:
-
-```bash
-pip install -r requirements.txt
-```
+Same as QEfficient along with QAic Eager mode
 
 ## Finetuning
 To finetune a model, run the following command:
