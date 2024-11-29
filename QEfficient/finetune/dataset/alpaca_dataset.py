@@ -41,7 +41,7 @@ class InstructionDataset(Dataset):
         return len(self.ann)
 
     def __getitem__(self, index):
-        IGNORE_INDEX = -100  # The default setting in CrossEntropyLoss
+        IGNORE_INDEX = -100  # The default setting
 
         ann = self.ann[index]
         if ann.get("input", "") == "":

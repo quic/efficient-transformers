@@ -29,9 +29,6 @@ class grammar(Dataset):
             )
             raise e
 
-        # self.dataset = load_dataset("wikihow", "all", data_dir="data/", split=type_path)
-        # if num_samples:
-        #    self.dataset = self.dataset.select(list(range(0, num_samples)))
         self.tokenizer = tokenizer
         self.print_text = False  # print_text
 
