@@ -5,8 +5,9 @@
 #
 # ----------------------------------------------------------------------------
 
-import pytest
 import platform
+
+import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridCache
@@ -223,7 +224,7 @@ def test_kv_cache_transform(
 
 @pytest.mark.parametrize("in_features", [2048, 4096])
 @pytest.mark.parametrize("out_features", [2048, 4096])
-@pytest.mark.skipif(platform.machine() == 'aarch64', reason="Test skipped on aarch64 platform")
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Test skipped on aarch64 platform")
 def test_awq_to_matmulnbits_transform(in_features, out_features):
     wqlinear = WQLinear_GEMM(bits=4, group_size=128, in_features=in_features, out_features=out_features, bias=False)
 
