@@ -15,7 +15,7 @@ from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id
 
-configs = [pytest.param("gpt2", 2, None, 128, id="llama_config")]
+configs = [pytest.param("gpt2", 2, None, 32, id="gpt2_config")]
 
 
 def load_causal_lm_model(model_config):
@@ -90,7 +90,7 @@ def test_generate_text_stream(
     text_generator = TextGeneration(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
-        device_id=[7],
+        device_id=device_id,
         ctx_len=ctx_len,
         full_batch_size=full_batch_size,
     )
@@ -98,4 +98,6 @@ def test_generate_text_stream(
     for decoded_tokens in text_generator.generate_stream_tokens(Constants.INPUT_STR, generation_len=max_gen_len):
         stream_tokens.extend(decoded_tokens)
 
-    assert cloud_ai_100_output == stream_tokens, f"Deviation found: {cloud_ai_100_output[0].split()} != {stream_tokens}"
+    assert (
+        cloud_ai_100_output == stream_tokens
+    ), f"Deviation in output observed while comparing regular execution and streamed output: {cloud_ai_100_output} != {stream_tokens}"
