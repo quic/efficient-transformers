@@ -245,6 +245,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
+        enable_qnn: bool = False,
+        qnn_config: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -266,6 +268,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+            :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
+            :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
 
         Returns:
             :str: Path of the compiled ``qpc`` package.
@@ -311,28 +315,48 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             decode_specialization.update({"num_logits_to_keep": num_speculative_tokens + 1}) if self.is_tlm else None
             specializations.append(decode_specialization)
 
-        # Custom IO
-        custom_io = {}
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
-        for suffix in ["", "_RetainedState"]:
-            for i in range(self.num_layers):
-                for kv in ["key", "value"]:
-                    custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+        if enable_qnn:
+            if compiler_options:
+                logger.warning("Extra arguments to QNN compilation are supported via qnn_config.json only")
 
-        return self._compile(
-            onnx_path,
-            compile_dir,
-            compile_only=True,
-            retained_state=True,
-            specializations=specializations,
-            convert_to_fp16=True,
-            mxfp6_matmul=mxfp6_matmul,
-            custom_io=custom_io,
-            mdp_ts_num_devices=num_devices,
-            num_speculative_tokens=num_speculative_tokens,
-            aic_num_cores=num_cores,
-            **compiler_options,
-        )
+            qpc_path = self._qnn_compile(
+                onnx_path,
+                compile_dir,
+                specializations=specializations,
+                prefill_seq_len=prefill_seq_len,
+                ctx_len=ctx_len,
+                batch_size=batch_size,
+                full_batch_size=full_batch_size,
+                mdp_ts_num_devices=num_devices,
+                num_cores=num_cores,
+                mxfp6_matmul=mxfp6_matmul,
+                mxint8_kv_cache=mxint8_kv_cache,
+                qnn_config=qnn_config,
+            )
+        else:
+            # Custom IO
+            custom_io = {}
+            kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+            for suffix in ["", "_RetainedState"]:
+                for i in range(self.num_layers):
+                    for kv in ["key", "value"]:
+                        custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+
+            qpc_path = self._compile(
+                onnx_path,
+                compile_dir,
+                compile_only=True,
+                retained_state=True,
+                specializations=specializations,
+                convert_to_fp16=True,
+                mxfp6_matmul=mxfp6_matmul,
+                custom_io=custom_io,
+                mdp_ts_num_devices=num_devices,
+                num_speculative_tokens=num_speculative_tokens,
+                aic_num_cores=num_cores,
+                **compiler_options,
+            )
+        return qpc_path
 
     # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate
     def generate(
