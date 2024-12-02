@@ -236,6 +236,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
+        enable_qnn: bool = False,
+        qnn_config: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -256,6 +258,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
             :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+            :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
+            :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
 
         Returns:
             :str: Path of the compiled ``qpc`` package.
@@ -276,27 +280,44 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             if prefill_seq_len != 1:
                 specializations.append({"batch_size": batch_size, "seq_len": 1, "ctx_len": ctx_len})
 
-        # Custom IO
-        custom_io = {}
-        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
-        for suffix in ["", "_RetainedState"]:
-            for i in range(self.num_layers):
-                for kv in ["key", "value"]:
-                    custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+        if enable_qnn:
+            qpc_path = self._qnn_compile(
+                onnx_path,
+                compile_dir,
+                specializations=specializations,
+                prefill_seq_len=prefill_seq_len,
+                ctx_len=ctx_len,
+                batch_size=batch_size,
+                full_batch_size=full_batch_size,
+                mdp_ts_num_devices=num_devices,
+                num_cores=num_cores,
+                mxfp6_matmul=mxfp6_matmul,
+                mxint8_kv_cache=mxint8_kv_cache,
+                qnn_config=qnn_config,
+            )
+        else:
+            # Custom IO
+            custom_io = {}
+            kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+            for suffix in ["", "_RetainedState"]:
+                for i in range(self.num_layers):
+                    for kv in ["key", "value"]:
+                        custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
 
-        return self._compile(
-            onnx_path,
-            compile_dir,
-            compile_only=True,
-            retained_state=True,
-            specializations=specializations,
-            convert_to_fp16=True,
-            mxfp6_matmul=mxfp6_matmul,
-            custom_io=custom_io,
-            mdp_ts_num_devices=num_devices,
-            aic_num_cores=num_cores,
-            **compiler_options,
-        )
+            qpc_path = self._compile(
+                onnx_path,
+                compile_dir,
+                compile_only=True,
+                retained_state=True,
+                specializations=specializations,
+                convert_to_fp16=True,
+                mxfp6_matmul=mxfp6_matmul,
+                custom_io=custom_io,
+                mdp_ts_num_devices=num_devices,
+                aic_num_cores=num_cores,
+                **compiler_options,
+            )
+        return qpc_path
 
     # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate
     def generate(
