@@ -9,6 +9,10 @@ from typing import Tuple
 
 import transformers
 from torch import nn
+
+
+
+
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,
@@ -184,6 +188,8 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
 )
 
 
+
+
 class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
         GemmaRMSNorm: GemmaCustomRMSNormAIC,
@@ -193,6 +199,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         MixtralRMSNorm: CustomRMSNormAIC,
         Phi3RMSNorm: CustomRMSNormAIC,
         Qwen2RMSNorm: CustomRMSNormAIC,
+        nn.LayerNorm: CustomRMSNormAIC
     }
 
 
@@ -278,6 +285,7 @@ class KVCacheTransform(ModuleMappingTransform):
 
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        import ipdb; ipdb.set_trace()
         model, transformed = super().apply(model)
         # FIXME: see if we can merge into _module_mapping dict
         transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update

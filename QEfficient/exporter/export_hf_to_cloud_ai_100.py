@@ -62,7 +62,9 @@ def convert_to_cloud_bertstyle(
 def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, seq_len) -> str:
     model_base_name = model_name.replace("/", "_") + "_bertstyle"
     os.makedirs(onnx_dir_path, exist_ok=True)
+    from transformers import AutoTokenizer, AutoModel
 
+    model = AutoModel.from_pretrained(model_name)
     input_str = Constants.INPUT_STR
     # Preprocess inputs
     if seq_len > 0:
@@ -351,14 +353,13 @@ def export_lm_model_for_cloud(
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
-
-    model_name = export_kvstyle_transformed_model_to_onnx(
+    import ipdb; ipdb.set_trace()
+    model_name = export_bertstyle_model_to_onnx(
         model_name=model_name,
-        transformed_model=qeff_model.model,
+        model=qeff_model.model,
         tokenizer=tokenizer,
         onnx_dir_path=onnx_dir_path,
         seq_len=seq_length,
-        full_batch_size=full_batch_size,
     )
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
@@ -415,6 +416,7 @@ def qualcomm_efficient_converter(
     )
 
     # Get model_kv first
+    import ipdb; ipdb.set_trace()
     model_kv = (
         model_kv
         if model_kv

@@ -55,6 +55,9 @@ def get_hf_model_type(hf_model_path: str) -> QEFF_MODEL_TYPE:
         return_unused_kwargs=True,
     )
 
+
+    # Here we directly mapping with the causal_lm_mapping, instead nwe need a function like huffingface that will 
+    
     if config.__class__ in MODEL_FOR_CAUSAL_LM_MAPPING:
         return QEFF_MODEL_TYPE.CAUSALLM
     else:
