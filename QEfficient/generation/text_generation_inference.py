@@ -38,12 +38,6 @@ class PerfMetrics:
     total_perf: float
     total_time: float
 
-    def __init__(self, prefill_time, decode_perf, total_perf, total_time):
-        self.prefill_time = prefill_time
-        self.decode_perf = decode_perf
-        self.total_perf = total_perf
-        self.total_time = total_time
-
 
 @dataclass
 class CloudAI100ExecInfo:
@@ -161,7 +155,7 @@ def latency_stats_bertstyle(
 def get_compilation_dims(qpc_path: str) -> Tuple[int, int, Optional[int]]:
     """
     Function to fetch compilation dimensions from specializations.json.
-    Uses qpc path to compute path to specilaizations.json.
+    Uses qpc path to compute path to specializations.json.
 
     Args:
         qpc_path (str): Path to directory comprising generated binary file after compilation.
@@ -311,7 +305,7 @@ def cloud_ai_100_exec_kv(
         base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
         qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0])
         tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
-        execinfo = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_id=[0])
+        exec_info = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_id=[0])
 
     """
     batch_size, ctx_len, full_batch_size = get_compilation_dims(qpc_path)
@@ -510,6 +504,15 @@ class QEffTextGenerationBase:
         return decode_inputs
 
     def _fetch_next_token_id(self, outputs):
+        """
+        Fetches the next token ID from the model's output logits.
+        The method identifies the token with the highest probability using argmax along the last dimension.
+        Args:
+            outputs (dict): A dictionary containing the model's output logits. The key "logits" should map to a numpy array of shape (batch_size, sequence_length, vocab_size) or (batch_size, vocab_size).
+
+        Returns:
+            numpy.ndarray: An array of the next token IDs for each sequence in the batch.
+        """
         logits = outputs["logits"]
         if len(logits.shape) == 2:
             logits = np.expand_dims(logits, 1)
@@ -528,12 +531,23 @@ class QEffTextGenerationBase:
         self.generation_len = np.zeros((execution_batch_size, 1), np.int64)
 
     def initialize_lora_id_mapping(self, prompt_to_lora_id_mapping):
+        """
+        Initializes the LoRA ID mapping for prefill and decode phases.
+
+        Args:
+            prompt_to_lora_id_mapping (list): An iterable containing the mapping of prompts to LoRA IDs.
+
+        Sets:
+            self._prompt_to_lora_id_mapping_prefill (deque): A deque containing the prompt to LoRA ID mapping for the prefill phase.
+            self._prompt_to_lora_id_mapping_decode (iterable or deque): The prompt to LoRA ID mapping for the decode phase. If full_batch_size is set, it uses the original iterable; otherwise, it converts it to a deque.
+        """
         self._prompt_to_lora_id_mapping_prefill = deque(prompt_to_lora_id_mapping)
         if self.full_batch_size:
             self._prompt_to_lora_id_mapping_decode = prompt_to_lora_id_mapping
         else:
             self._prompt_to_lora_id_mapping_decode = deque(prompt_to_lora_id_mapping)
 
+    
     def update_decode_input(self, outputs, position_ids, generation_len, decode_batch_id=None):
         """
         Updates the decode input with the generated values.
@@ -769,7 +783,6 @@ class QEffTextGenerationBase:
             token_id (int): The token generated in the decoding process.
         """
         finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
-        num_token = 0
         for num_token in range(1, generation_len):
             yield decode_inputs["input_ids"]
             outputs = self._session.run(decode_inputs)
@@ -786,6 +799,7 @@ class QEffTextGenerationBase:
 
             if finished_sequences.all():
                 break
+        yield decode_inputs["input_ids"] # yield the last token
 
 
 class TextGeneration:
@@ -931,7 +945,7 @@ class TextGeneration:
     ):
         """
         Executes the model for a given list of prompts and a specified generation length.
-        This method runs the prefill, prepares the decode inputs, and then runs the decode. The tokens are decoded and streamed as they are generated. Latency metrics are calculated and can be retreived
+        This method runs the prefill, prepares the decode inputs, and then runs the decode. The tokens are decoded and streamed as they are generated. Latency metrics are calculated and can be retrieved
         after all tokens are streamed.
 
         Args:
