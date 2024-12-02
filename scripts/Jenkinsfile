@@ -4,6 +4,9 @@ pipeline {
            label 'qeff_node'
        }
    }
+   options {
+        disableConcurrentBuilds()
+    }
 
    stages {
        stage('Install QEfficient') {
@@ -14,7 +17,7 @@ pipeline {
                    docker exec ${BUILD_TAG} bash -c "
                    cd /efficient-transformers &&
                    apt update &&
-                   apt install -y python3-venv &&
+                   apt install -y python3.10-venv &&
                    python3.10 -m venv preflight_qeff &&
                    . preflight_qeff/bin/activate &&
                    pip install --upgrade pip setuptools &&
