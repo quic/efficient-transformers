@@ -81,6 +81,7 @@ class QEffCodeGenAttention(CodeGenAttention):
         use_cache: Optional[bool] = False,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[
         Tuple[torch.Tensor, Tuple[torch.Tensor]],
         Optional[Tuple[torch.Tensor, Tuple[torch.Tensor], Tuple[torch.Tensor, ...]]],
@@ -180,6 +181,7 @@ class QEffCodeGenModel(CodeGenModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -267,6 +269,9 @@ class QEffCodeGenModel(CodeGenModel):
                 )
                 use_cache = False
 
+        if position_ids is None:
+            position_ids = cache_position.unsqueeze(0)
+
         presents = () if use_cache else None
         all_self_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
@@ -284,6 +289,7 @@ class QEffCodeGenModel(CodeGenModel):
                     head_mask[i],
                     use_cache,
                     output_attentions,
+                    cache_position,
                 )
             elif batch_index is not None:
                 outputs = block(
@@ -295,6 +301,7 @@ class QEffCodeGenModel(CodeGenModel):
                     head_mask=head_mask[i],
                     use_cache=use_cache,
                     output_attentions=output_attentions,
+                    cache_position=cache_position,
                 )
             else:
                 outputs = block(
@@ -305,6 +312,7 @@ class QEffCodeGenModel(CodeGenModel):
                     head_mask=head_mask[i],
                     use_cache=use_cache,
                     output_attentions=output_attentions,
+                    cache_position=cache_position,
                 )
 
             hidden_states = outputs[0]
@@ -355,6 +363,7 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -377,6 +386,7 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            cache_position=cache_position,
         )
 
         # make sure sampling in fp16 works correctly and
@@ -427,6 +437,7 @@ class QeffCodeGenBlock(CodeGenBlock):
         head_mask: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple[torch.Tensor], Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor, ...]]]]:
         residual = hidden_states
         hidden_states = self.ln_1(hidden_states)
@@ -439,6 +450,7 @@ class QeffCodeGenBlock(CodeGenBlock):
             head_mask=head_mask,
             use_cache=use_cache,
             output_attentions=output_attentions,
+            cache_position=cache_position,
         )
         attn_output = attn_outputs[0]  # output_attn: a, present, (attentions)
         outputs = attn_outputs[1:]

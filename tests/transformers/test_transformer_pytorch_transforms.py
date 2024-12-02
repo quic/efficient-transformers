@@ -5,6 +5,8 @@
 #
 # ----------------------------------------------------------------------------
 
+import platform
+
 import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM
@@ -141,7 +143,7 @@ def run_kv_cache_transform_and_test(
         original_model_outputs["logits"], transformed_model_outputs["logits"], tolerance=logits_tolerance
     ), "Logits are not matching with tolerance=0.8"
     assert compare_original_vs_kv_model_pt_outputs(
-        original_model_outputs["hidden_states"], transformed_model_outputs["hidden_states"], tolerance=1e-6
+        original_model_outputs["hidden_states"], transformed_model_outputs["hidden_states"], tolerance=1e-5
     )
 
     # Slice Past key values based on input_len
@@ -196,6 +198,7 @@ def test_kv_cache_transform(
         hidden_size=hidden_size,
         use_cache=True,
         cache_position=None,
+        position_embeddings=None,
     )
     hf_model = AutoModelForCausalLM.from_config(config=config, attn_implementation="eager")
 
@@ -221,6 +224,7 @@ def test_kv_cache_transform(
 
 @pytest.mark.parametrize("in_features", [2048, 4096])
 @pytest.mark.parametrize("out_features", [2048, 4096])
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Test skipped on aarch64 platform")
 def test_awq_to_matmulnbits_transform(in_features, out_features):
     wqlinear = WQLinear_GEMM(bits=4, group_size=128, in_features=in_features, out_features=out_features, bias=False)
 

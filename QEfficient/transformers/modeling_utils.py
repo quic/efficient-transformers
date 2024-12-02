@@ -64,6 +64,7 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralRMSNorm,
     MixtralSparseMoeBlock,
 )
+from transformers.models.mllama.modeling_mllama import MllamaForCausalLM
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 from transformers.models.phi.modeling_phi import PhiAttention, PhiForCausalLM, PhiModel
 from transformers.models.phi3.modeling_phi3 import Phi3Attention, Phi3ForCausalLM, Phi3Model, Phi3RMSNorm
@@ -155,6 +156,7 @@ qeff_supported_architectures = ModelArchitectures(
         Qwen2ForCausalLM.__name__,
         Starcoder2ForCausalLM.__name__,
         GPTBigCodeForCausalLM.__name__,
+        MllamaForCausalLM.__name__,
     ]
 )
 
