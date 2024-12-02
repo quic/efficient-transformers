@@ -149,3 +149,20 @@ Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/s
 qeff_model.generate(prompts=["My name is"])
 ```
 End to End demo examples for various models are available in **notebooks** directory. Please check them out.
+
+### Draft-Based Speculative Decoding
+Draft-based speculative decoding is the approach where a small Draft Language Model (DLM) makes `num_logits_to_keep` autoregressive speculations ahead of the Target Language Model (TLM). The objective is to predict what the TLM would have predicted if it would have been used instead of the DLM. This approach is beneficial when the autoregressive decode phase of the TLM is memory bound and thus, we can leverage the extra computing resources of our hardware by batching the speculations of the DLM.  
+
+To export both DLM/TLM, add below flags to `from_pretrained`:
+
+```Python
+tlm_name = "meta-llama/Llama-3.1-405B"
+dlm_name = "meta-llama/Llama-3.1-8B"
+k = 3 # DLM will make `k` speculations
+tlm = AutoModelForCausalLM.from_pretrained(tlm_name, num_speculative_tokens=k)
+dlm = AutoModelForCausalLM.from_pretrained(dlm_name, is_dlm=True)
+```
+Once done, the same high-level python APIs of `export` and `compile` can be used to generate QPC. 
+
+When `num_speculative_tokens` is specified, QEfficient transforms the TLM to always output `num_speculative_tokens+1` logits per batch for both prefill and decode. While only the last logit corresponding to the last autoregressive token is needed in prefill, for decode phase, we take in as batch input the speculations from the DLM. As for the DLM, the only addition of adding the `is_dlm=True` flag is that an extra specialization file with `seq_len=2` is created to account for the "bonus" token that happens when all speculations are correct. 
+> NOTE: due to some compiler limitations, it is currently not possible to create an onnx-graph that parametrizes `num_speculative_tokens`. Because of this, a unique onnx-graph will be created per unique-specified `num_speculative_tokens`. This is also why `num_speculative_tokens+1` will be returned for both prefill and decode. 
