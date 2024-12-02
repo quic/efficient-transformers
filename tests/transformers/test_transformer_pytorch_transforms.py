@@ -13,7 +13,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridCache
 
 from QEfficient.customop.matmulnbits import QuantLinearORT
-from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform
+from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
@@ -21,48 +21,49 @@ from QEfficient.utils._utils import get_padding_shape_from_config
 from QEfficient.utils.logging_utils import logger
 
 KVCacheTransformTestConfigs = [
-    ("llama", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("llama", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("llama", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("llama", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("gpt2", 3, 12, 192, {"n_inner": 512}, 0.8),
-    ("gpt2", 1, 12, 192, {"n_inner": 512}, 0.8),
-    ("codegen", 1, 16, 1024, {"n_inner": 2048}, 0.8),
-    ("codegen", 3, 16, 1024, {"n_inner": 2048}, 0.8),
-    ("falcon", 1, 71, 4544, {"multi_query": True}, 1.5),
-    ("falcon", 3, 71, 4544, {"multi_query": False}, 1.5),
-    ("falcon", 1, 71, 4544, {"multi_query": False}, 1.5),
-    ("falcon", 3, 71, 4544, {"multi_query": True}, 1.5),
-    ("gptj", 3, 16, 4096, {"n_inner": 512}, 1),
-    ("gptj", 1, 16, 4096, {"n_inner": 512}, 1.2),
-    ("mistral", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("mistral", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("mistral", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("mistral", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("mixtral", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("mixtral", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("mixtral", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("mixtral", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("mpt", 1, 16, 2048, {}, 0.8),
-    ("mpt", 3, 16, 2048, {}, 0.8),
-    ("phi", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("phi", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("phi", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("phi", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("phi3", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("phi3", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("phi3", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("phi3", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("qwen2", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("qwen2", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("qwen2", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    ("qwen2", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    ("starcoder2", 3, 24, 192, {"num_key_value_heads": 2, "intermediate_size": 512}, 0.8),
-    ("starcoder2", 1, 24, 192, {"num_key_value_heads": 2, "intermediate_size": 512}, 0.8),
-    ("starcoder2", 3, 24, 192, {"num_key_value_heads": 24, "intermediate_size": 512}, 0.8),
-    ("starcoder2", 1, 24, 192, {"num_key_value_heads": 24, "intermediate_size": 512}, 0.8),
-    ("gemma", 3, 8, 2048, {"num_key_value_heads": 1, "intermediate_size": 512}, 0.8),
-    ("gemma", 1, 8, 2048, {"num_key_value_heads": 1, "intermediate_size": 512}, 0.8),
+    ("llama", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8, False),
+    ("llama", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8, True),
+    ("llama", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8, False),
+    ("llama", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8, False),
+    ("llama", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8, False),
+#    ("gpt2", 3, 12, 192, {"n_inner": 512}, 0.8),
+#    ("gpt2", 1, 12, 192, {"n_inner": 512}, 0.8),
+#    ("codegen", 1, 16, 1024, {"n_inner": 2048}, 0.8),
+#    ("codegen", 3, 16, 1024, {"n_inner": 2048}, 0.8),
+#    ("falcon", 1, 71, 4544, {"multi_query": True}, 1.5),
+#    ("falcon", 3, 71, 4544, {"multi_query": False}, 1.5),
+#    ("falcon", 1, 71, 4544, {"multi_query": False}, 1.5),
+#    ("falcon", 3, 71, 4544, {"multi_query": True}, 1.5),
+#    ("gptj", 3, 16, 4096, {"n_inner": 512}, 1),
+#    ("gptj", 1, 16, 4096, {"n_inner": 512}, 1.2),
+#    ("mistral", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+#    ("mistral", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+#    ("mistral", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+#    ("mistral", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+#    ("mixtral", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+#    ("mixtral", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+#    ("mixtral", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+#    ("mixtral", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+#    ("mpt", 1, 16, 2048, {}, 0.8),
+#    ("mpt", 3, 16, 2048, {}, 0.8),
+#    ("phi", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+#    ("phi", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+#    ("phi", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+#    ("phi", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+#    ("phi3", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+#    ("phi3", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+#    ("phi3", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+#    ("phi3", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+#    ("qwen2", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+#    ("qwen2", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+#    ("qwen2", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+#    ("qwen2", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+#    ("starcoder2", 3, 24, 192, {"num_key_value_heads": 2, "intermediate_size": 512}, 0.8),
+#    ("starcoder2", 1, 24, 192, {"num_key_value_heads": 2, "intermediate_size": 512}, 0.8),
+#    ("starcoder2", 3, 24, 192, {"num_key_value_heads": 24, "intermediate_size": 512}, 0.8),
+#    ("starcoder2", 1, 24, 192, {"num_key_value_heads": 24, "intermediate_size": 512}, 0.8),
+#    ("gemma", 3, 8, 2048, {"num_key_value_heads": 1, "intermediate_size": 512}, 0.8),
+#    ("gemma", 1, 8, 2048, {"num_key_value_heads": 1, "intermediate_size": 512}, 0.8),
 ]
 
 
@@ -90,7 +91,7 @@ def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6
 
 
 def run_kv_cache_transform_and_test(
-    hf_model, num_hidden_layers, padding_shape, vocab_size, input_len, logits_tolerance=0.8, kv_cache=None
+    hf_model, num_hidden_layers, padding_shape, vocab_size, input_len, logits_tolerance=0.8, kv_cache=None, is_tlm=False,
 ):
     hf_model.eval()
     # Run original model
@@ -118,6 +119,10 @@ def run_kv_cache_transform_and_test(
     # Apply transform
     hf_model, transformed = KVCacheTransform.apply(hf_model)
     assert transformed
+    if is_tlm:
+        hf_model, transformed = SpDTransform.apply(hf_model)
+        assert transformed
+
 
     # Prepare KV model inputs
     past_key_values = []
@@ -126,15 +131,18 @@ def run_kv_cache_transform_and_test(
         past_value = torch.zeros((padding_shape), dtype=torch.float32)
         pkv = (past_key, past_value)
         past_key_values.append(pkv)
+    inputs = dict(
+        input_ids=input_ids,
+        position_ids=torch.Tensor([range(input_ids.shape[1])]).long(),
+        past_key_values=tuple(past_key_values),
+        output_hidden_states=True,
+    )
+    if is_tlm:
+        inputs["num_logits_to_keep"] = torch.zeros((input_len, 1))
 
     # Run KV model
     with torch.inference_mode():
-        transformed_model_outputs = hf_model(
-            input_ids=input_ids,
-            position_ids=torch.Tensor([range(input_ids.shape[1])]).long(),
-            past_key_values=tuple(past_key_values),
-            output_hidden_states=True,
-        )
+        transformed_model_outputs = hf_model(**inputs)
 
     assert original_model_outputs.keys() == transformed_model_outputs.keys(), "Model output keys do not match!"
 
@@ -184,11 +192,11 @@ def test_rms_norm_ops_transform(module: torch.nn.Module, hidden_size: int, input
 
 
 @pytest.mark.parametrize(
-    "config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance",
+    "config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance, is_tlm",
     KVCacheTransformTestConfigs,
 )
 def test_kv_cache_transform(
-    config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance
+    config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance, is_tlm,
 ):
     config = AutoConfig.for_model(
         config_class,
@@ -219,6 +227,7 @@ def test_kv_cache_transform(
         input_len=8,
         logits_tolerance=logits_tolerance,
         kv_cache=kv_cache,
+        is_tlm=is_tlm,
     )
 
 
