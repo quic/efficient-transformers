@@ -4,6 +4,9 @@ pipeline {
            label 'qeff_node'
        }
    }
+   options {
+        disableConcurrentBuilds()
+    }
 
    stages {
        stage('Install QEfficient') {
