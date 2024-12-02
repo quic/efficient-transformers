@@ -547,7 +547,6 @@ class QEffTextGenerationBase:
         else:
             self._prompt_to_lora_id_mapping_decode = deque(prompt_to_lora_id_mapping)
 
-    
     def update_decode_input(self, outputs, position_ids, generation_len, decode_batch_id=None):
         """
         Updates the decode input with the generated values.
@@ -799,7 +798,7 @@ class QEffTextGenerationBase:
 
             if finished_sequences.all():
                 break
-        yield decode_inputs["input_ids"] # yield the last token
+        yield decode_inputs["input_ids"]  # yield the last token
 
 
 class TextGeneration:

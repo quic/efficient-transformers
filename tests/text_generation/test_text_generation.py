@@ -85,7 +85,7 @@ def test_generate_text_stream(
 
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR, generation_len=max_gen_len)
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
-    cloud_ai_100_output =[tokenizer.decode(token, skip_special_tokens=True) for token in cloud_ai_100_tokens[0]]
+    cloud_ai_100_output = [tokenizer.decode(token, skip_special_tokens=True) for token in cloud_ai_100_tokens[0]]
 
     text_generator = TextGeneration(
         tokenizer=tokenizer,
@@ -97,7 +97,5 @@ def test_generate_text_stream(
     stream_tokens = []
     for decoded_tokens in text_generator.generate_stream_tokens(Constants.INPUT_STR, generation_len=max_gen_len):
         stream_tokens.extend(decoded_tokens)
-    
-    assert (
-        cloud_ai_100_output == stream_tokens
-    ), f"Deviation found: {cloud_ai_100_output[0].split()} != {stream_tokens}"
+
+    assert cloud_ai_100_output == stream_tokens, f"Deviation found: {cloud_ai_100_output[0].split()} != {stream_tokens}"
