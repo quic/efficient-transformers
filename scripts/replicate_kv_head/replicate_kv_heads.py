@@ -22,11 +22,15 @@ def duplicate_weights_for_linear_layer(
     new_kv_heads = repeat * orig_kv_heads
     if isinstance(layer, (WQLinear_GEMM, QuantLinearGPTQ)):
         if head_dim % 8 != 0:
-            raise ValueError(f"the value head_dim={head_dim} is not divisible by 8 which is \
-                                according to the assumption that model is 4-bit quantized.")
+            raise ValueError(
+                f"the value head_dim={head_dim} is not divisible by 8 which is \
+                                according to the assumption that model is 4-bit quantized."
+            )
         if hidden_size % layer.group_size != 0:
-            raise ValueError(f"The value of hidden_size={hidden_size} is not divisible by \
-                            K_proj.group_size={layer.group_size}")
+            raise ValueError(
+                f"The value of hidden_size={hidden_size} is not divisible by \
+                            K_proj.group_size={layer.group_size}"
+            )
 
         # Duplication of quantized weights
         layer.qweight.data = torch.repeat_interleave(
