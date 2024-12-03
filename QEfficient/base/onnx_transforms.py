@@ -53,6 +53,7 @@ class FP16ClipTransform(OnnxTransform):
                 new_tensor = numpy_helper.from_array(nptensor, tensor.name)
                 tensor.CopyFrom(new_tensor)
                 transformed = True
+        print("Transformed value-->", transformed)
         return model, transformed
 
 

@@ -216,6 +216,7 @@ class QEFFBaseModel(ABC):
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
         """
+        import ipdb; ipdb.set_trace()
         if onnx_path is None and self.onnx_path is None:
             self.export()
 
