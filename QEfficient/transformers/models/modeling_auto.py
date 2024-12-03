@@ -392,9 +392,9 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             raise ValueError("Only AI_100 runtime is supported right now via generate API")
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
-        if self.is_tlm or getattr(self, "is_dlm", False):
+        if getattr(self, "is_dlm", False):
             raise NotImplementedError(
-                "generate method is not yet supported for tlm or dlm models used in Speculative Decoding"
+                "generate method is not yet supported for dlm models used in Speculative Decoding"
             )
         generation_len = kwargs.pop("generation_len", None)
         return QEfficient.cloud_ai_100_exec_kv(
@@ -403,6 +403,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             prompt=prompts,
             device_id=device_id,
             generation_len=generation_len,
+            is_tlm=self.is_tlm,
         )
 
 
