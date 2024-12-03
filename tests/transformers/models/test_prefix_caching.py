@@ -92,6 +92,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         mxfp6=False,
         aic_enable_depth_first=False,
         full_batch_size=full_batch_size,
+        cache_size_multiplier=4,
     )
     print(f"qpc_path={qpc_path}")
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)

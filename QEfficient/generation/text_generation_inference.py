@@ -721,21 +721,20 @@ class QEffTextGenerationBase:
                 "We currently don't handle cases where KV cache batch size is not multiplier of full batch size"
             )
         cache_size_multiplier = self.full_batch_size // self.batch_size
-
-        for loop_index in range(self.batch_size):
+        for loop_index in range(cache_size_multiplier):
             decode_inputs = {
                 "input_ids": decode_inputs_copy["input_ids"][
-                    loop_index * cache_size_multiplier : (loop_index + 1) * cache_size_multiplier, :
+                    loop_index * self.batch_size : (loop_index + 1) * self.batch_size, :
                 ],
                 "position_ids": decode_inputs_copy["position_ids"][
-                    loop_index * cache_size_multiplier : (loop_index + 1) * cache_size_multiplier, :
+                    loop_index * self.batch_size : (loop_index + 1) * self.batch_size, :
                 ],
                 "batch_index": decode_inputs_copy["batch_index"][
-                    loop_index * cache_size_multiplier : (loop_index + 1) * cache_size_multiplier, :
+                    loop_index * self.batch_size : (loop_index + 1) * self.batch_size, :
                 ],
             }
             current_decode_ongoing = current_decode_ongoing_global[
-                loop_index * cache_size_multiplier : (loop_index + 1) * cache_size_multiplier, :
+                loop_index * self.batch_size : (loop_index + 1) * self.batch_size, :
             ]
 
             while prompt_queue or current_decode_ongoing.any():
@@ -746,14 +745,12 @@ class QEffTextGenerationBase:
                 if len(logits.shape) == 2:
                     logits = np.expand_dims(logits, 1)
                 next_token_id = logits.argmax(2)
-                print(f"loop_index={loop_index}, next_token_id={next_token_id}")
 
                 for decode_batch_id in range(self.batch_size):
-                    decode_batch_id = loop_index * cache_size_multiplier + decode_batch_id
-                    print(f"decode_batch_id={decode_batch_id}")
+                    decode_batch_id = loop_index * self.batch_size + decode_batch_id
 
                     if (
-                        next_token_id[decode_batch_id % cache_size_multiplier] == self.tokenizer.eos_token_id
+                        next_token_id[decode_batch_id % self.batch_size] == self.tokenizer.eos_token_id
                         or generated_id_current_index[decode_batch_id] >= self.generation_len[decode_batch_id]
                     ):
                         if prompt_queue:
@@ -782,16 +779,16 @@ class QEffTextGenerationBase:
                                 ]
 
                         else:
-                            current_decode_ongoing[decode_batch_id % cache_size_multiplier] = False
+                            current_decode_ongoing[decode_batch_id % self.batch_size] = False
                     else:
                         # If the generated sequence is valid and within generation len prepare for next decode
-                        decode_inputs["input_ids"][decode_batch_id % cache_size_multiplier] = next_token_id[
-                            decode_batch_id % cache_size_multiplier
+                        decode_inputs["input_ids"][decode_batch_id % self.batch_size] = next_token_id[
+                            decode_batch_id % self.batch_size
                         ]
-                        decode_inputs["position_ids"][decode_batch_id % cache_size_multiplier] += 1
+                        decode_inputs["position_ids"][decode_batch_id % self.batch_size] += 1
                         self.generated_ids[
                             batch_id_map[decode_batch_id], generated_id_current_index[decode_batch_id]
-                        ] = next_token_id[decode_batch_id % cache_size_multiplier]
+                        ] = next_token_id[decode_batch_id % self.batch_size]
 
                         generated_id_current_index[decode_batch_id] += 1
 
