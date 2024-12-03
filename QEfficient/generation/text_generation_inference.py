@@ -701,12 +701,10 @@ class QEffTextGenerationBase:
         """
 
         # Set logits placeholder for decode
-        logits_out_placeholder = np.zeros(
-            (self.full_batch_size, self._decode_seq_len, self._vocab_size), dtype=np.float32
-        )
-        self._session.set_buffers({"logits": logits_out_placeholder})
+        logits_out_placeholder = np.zeros((self.batch_size, 1, self.vocab_size), dtype=np.float32)
+        self.session.set_buffers({"logits": logits_out_placeholder})
         # Generate flag for tracking progress for each batch ID
-        current_decode_ongoing = np.full((self.full_batch_size, 1), True)
+        current_decode_ongoing_global = np.full((self.full_batch_size, 1), True)
 
         # Generate an array for maintaining the tokens generated in each batch ID
         generated_id_current_index = np.ones((self.full_batch_size, 1), np.int64)
@@ -716,56 +714,86 @@ class QEffTextGenerationBase:
         batch_id_map = {i: i for i in range(self.full_batch_size)}
         decode_pause_time = 0
         # Prepare decode inputs inputs.
-        decode_inputs = self.prepare_decode_inputs()
+        decode_inputs_copy = self.prepare_decode_inputs()
 
-        while prompt_queue or current_decode_ongoing.any():
-            outputs = self._session.run(decode_inputs)
+        if self.full_batch_size % self.batch_size != 0:
+            raise NotImplementedError(
+                "We currently don't handle cases where KV cache batch size is not multiplier of full batch size"
+            )
+        cache_size_multiplier = self.full_batch_size // self.batch_size
 
-            # Prepare inputs for next iteration
-            logits = outputs["logits"]
-            if len(logits.shape) == 2:
-                logits = np.expand_dims(logits, 1)
-            next_token_id = logits.argmax(2)
+        for loop_index in range(self.batch_size):
+            decode_inputs = {
+                "input_ids": decode_inputs_copy["input_ids"][
+                    loop_index * cache_size_multiplier : (loop_index + 1) * cache_size_multiplier, :
+                ],
+                "position_ids": decode_inputs_copy["position_ids"][
+                    loop_index * cache_size_multiplier : (loop_index + 1) * cache_size_multiplier, :
+                ],
+                "batch_index": decode_inputs_copy["batch_index"][
+                    loop_index * cache_size_multiplier : (loop_index + 1) * cache_size_multiplier, :
+                ],
+            }
+            current_decode_ongoing = current_decode_ongoing_global[
+                loop_index * cache_size_multiplier : (loop_index + 1) * cache_size_multiplier, :
+            ]
 
-            for decode_batch_id in range(self.full_batch_size):
-                if (
-                    next_token_id[decode_batch_id, -1] == self.tokenizer.eos_token_id
-                    or generated_id_current_index[decode_batch_id] >= self.generation_len[decode_batch_id]
-                ):
-                    if prompt_queue:
-                        start = perf_counter()
-                        # run prefill for next prompt input.
-                        outputs, position_ids, generation_len = self.run_prefill(
-                            prompt_queue.popleft(),
-                            generation_len,
-                            decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1),
-                        )
+            while prompt_queue or current_decode_ongoing.any():
+                outputs = self.session.run(decode_inputs)
 
-                        new_token_id = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
+                # Prepare inputs for next iteration
+                logits = outputs["logits"]
+                if len(logits.shape) == 2:
+                    logits = np.expand_dims(logits, 1)
+                next_token_id = logits.argmax(2)
+                print(f"loop_index={loop_index}, next_token_id={next_token_id}")
 
-                        batch_id_map[decode_batch_id] = max(batch_id_map.values()) + 1
-                        self.generated_ids[batch_id_map[decode_batch_id], 0] = new_token_id.squeeze(1)
-                        generated_id_current_index[decode_batch_id] = 1
+                for decode_batch_id in range(self.batch_size):
+                    decode_batch_id = loop_index * cache_size_multiplier + decode_batch_id
+                    print(f"decode_batch_id={decode_batch_id}")
 
-                        self._session.set_buffers({"logits": logits_out_placeholder})
-                        decode_pause_time += perf_counter() - start
+                    if (
+                        next_token_id[decode_batch_id % cache_size_multiplier] == self.tokenizer.eos_token_id
+                        or generated_id_current_index[decode_batch_id] >= self.generation_len[decode_batch_id]
+                    ):
+                        if prompt_queue:
+                            start = perf_counter()
+                            # run prefill for next prompt input.
+                            outputs, position_ids, generation_len = self.run_prefill(
+                                prompt_queue.popleft(),
+                                generation_len,
+                                decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1),
+                            )
 
-                        if self._prompt_to_lora_id_mapping_decode:
-                            decode_inputs["lora_ids"][decode_batch_id] = self._prompt_to_lora_id_mapping_decode[
-                                batch_id_map[decode_batch_id]
-                            ]
+                            new_token_id = self._update_decode_input(
+                                outputs, position_ids, generation_len, decode_batch_id
+                            )
 
+                            batch_id_map[decode_batch_id] = max(batch_id_map.values()) + 1
+                            self.generated_ids[batch_id_map[decode_batch_id], 0] = new_token_id.squeeze(1)
+                            generated_id_current_index[decode_batch_id] = 1
+
+                            self.session.set_buffers({"logits": logits_out_placeholder})
+                            decode_pause_time += perf_counter() - start
+
+                            if self.prompt_to_lora_id_mapping_decode:
+                                decode_inputs["lora_ids"][decode_batch_id] = self.prompt_to_lora_id_mapping_decode[
+                                    batch_id_map[decode_batch_id]
+                                ]
+
+                        else:
+                            current_decode_ongoing[decode_batch_id % cache_size_multiplier] = False
                     else:
-                        current_decode_ongoing[decode_batch_id] = False
-                else:
-                    # If the generated sequence is valid and within generation len prepare for next decode
-                    decode_inputs["input_ids"][decode_batch_id, -1] = next_token_id[decode_batch_id, -1]
-                    decode_inputs["position_ids"][decode_batch_id, -1] += 1
-                    self.generated_ids[batch_id_map[decode_batch_id], generated_id_current_index[decode_batch_id]] = (
-                        next_token_id[decode_batch_id, -1]
-                    )
+                        # If the generated sequence is valid and within generation len prepare for next decode
+                        decode_inputs["input_ids"][decode_batch_id % cache_size_multiplier] = next_token_id[
+                            decode_batch_id % cache_size_multiplier
+                        ]
+                        decode_inputs["position_ids"][decode_batch_id % cache_size_multiplier] += 1
+                        self.generated_ids[
+                            batch_id_map[decode_batch_id], generated_id_current_index[decode_batch_id]
+                        ] = next_token_id[decode_batch_id % cache_size_multiplier]
 
-                    generated_id_current_index[decode_batch_id] += 1
+                        generated_id_current_index[decode_batch_id] += 1
 
         return decode_pause_time
 
@@ -1043,7 +1071,23 @@ class TextGeneration:
             latency_stats (tuple): A tuple containing the generated texts, performance metrics.
         """
 
-        if self._full_batch_size is not None:
+        # Skip inputs/outputs
+        self.session.skip_buffers(
+            [x for x in self.session.input_names + self.session.output_names if x.startswith("past_")]
+        )
+
+        # Create a prompt queue.
+        prompt_queue = deque(prompt)
+
+        max_gen_length = self.ctx_len if not generation_len else max(self.ctx_len, generation_len)
+
+        # initialize np arrays for storing the prefill output for all the decode batch size.
+        self.generated_ids = np.full((len(prompt_queue), max_gen_length), self.tokenizer.pad_token_id)
+        self.decode_input_ids = np.zeros((self.full_batch_size, 1), np.int64)
+        self.decode_pos_ids = np.zeros((self.full_batch_size, 1), np.int64)
+        self.generation_len = np.zeros((self.full_batch_size, 1), np.int64)
+
+        if self.full_batch_size is not None:
             logger.warning("Streamer is currently unavailable for continuous batch execution.")
             perf_metrics, generated_texts = self._continuous_batching_execution(
                 prompt, generation_len, prompt_to_lora_id_mapping
