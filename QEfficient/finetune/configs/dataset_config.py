@@ -31,6 +31,13 @@ class alpaca_dataset:
 
 
 @dataclass
+class gsm8k_dataset:
+    dataset: str = "gsm8k_dataset"
+    train_split: str = "train"
+    test_split: str = "test"
+
+
+@dataclass
 class custom_dataset:
     dataset: str = "custom_dataset"
     file: str = "dataset/custom_dataset.py"
