@@ -41,7 +41,7 @@ test_models = [
 ]
 
 spd_test_models = [
-    "JackFram/llama-68m",
+    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
 ]
 
 def load_causal_lm_model(model_config):
