@@ -13,55 +13,53 @@ from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils.device_utils import get_available_device_id
 
 configs = [
     pytest.param(
-        [0],  # device_group
         2,  # num_speculative_tokens
         32,  # prefill_seq_len
         128,  # ctx_len
         1,  # prefill_bsz
         8,  # full_batch_size
         "JackFram/llama-68m",  # model_name
-        True,  # continuous_batching
         id="CB llama",
     ),
     pytest.param(
-        [0],  # device_group
         2,  # num_speculative_tokens
         32,  # prefill_seq_len
         128,  # ctx_len
         1,  # prefill_bsz
         None,  # full_batch_size
         "JackFram/llama-68m",  # model_name
-        False,  # continuous_batching
         id="non-CB llama",
     ),
 ]
 
 
 @pytest.mark.parametrize(
-    "device_group,num_speculative_tokens,prefill_seq_len,ctx_len,prefill_bsz,full_batch_size,model_name,continuous_batching",
+    "num_speculative_tokens,prefill_seq_len,ctx_len,prefill_bsz,full_batch_size,model_name",
     configs,
 )
 def test_llama_tlm_logit_dims(
-    device_group: List[int],
     num_speculative_tokens: int,
     prefill_seq_len: int,
     ctx_len: int,
     prefill_bsz: int,
     full_batch_size: Optional[int],
     model_name: str,
-    continuous_batching: bool,
 ):
+    device_group = get_available_device_id()
+    if not device_group:
+        pytest.skip("No available devices to run model on Cloud AI 100")
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     vocab_size = len(tokenizer)
 
     # export and compile tlm model
-    is_tlm = num_speculative_tokens is not None
+    continuous_batching = full_batch_size is not None
     qeff_model = AutoModelForCausalLM.from_pretrained(
-        model_name, continuous_batching=continuous_batching, is_tlm=is_tlm
+        model_name, continuous_batching=continuous_batching, is_tlm=True
     )
     qpc_path: str = qeff_model.compile(
         num_devices=len(device_group),
@@ -111,24 +109,26 @@ def test_llama_tlm_logit_dims(
 
 
 @pytest.mark.parametrize(
-    "device_group,num_speculative_tokens,prefill_seq_len,ctx_len,prefill_bsz,full_batch_size,model_name,continuous_batching",
+    "num_speculative_tokens,prefill_seq_len,ctx_len,prefill_bsz,full_batch_size,model_name",
     configs,
 )
 def test_llama_dlm_logit_dims(
-    device_group: List[int],
     num_speculative_tokens: int,
     prefill_seq_len: int,
     ctx_len: int,
     prefill_bsz: int,
     full_batch_size: Optional[int],
     model_name: str,
-    continuous_batching: bool,
 ):
+    device_group = get_available_device_id()
+    if not device_group:
+        pytest.skip("No available devices to run model on Cloud AI 100")
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     vocab_size = len(tokenizer)
 
     # export and compile tlm model
+    continuous_batching = full_batch_size is not None
     qeff_model = AutoModelForCausalLM.from_pretrained(model_name, continuous_batching=continuous_batching)
     qpc_path: str = qeff_model.compile(
         num_devices=len(device_group),
