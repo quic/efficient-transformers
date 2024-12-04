@@ -51,7 +51,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -61,7 +61,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model)
+        return cls(model, is_tlm=is_tlm)
 
     @property
     def model_name(self) -> str:
@@ -172,9 +172,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
 
-        self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, *args, **kwargs)
         self.continuous_batching = continuous_batching
-        self.is_tlm = is_tlm
         return self
 
     @property
