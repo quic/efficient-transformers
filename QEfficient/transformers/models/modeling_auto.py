@@ -353,7 +353,7 @@ class QEffAutoModel(QEFFTransformersBase):
             'attention_mask': {1: 'seq_len'}
         }
         
-        output_names=['output1', 'output2']
+        output_names=['output']
         
         return self._export(
             example_inputs,
@@ -386,10 +386,32 @@ class QEffAutoModel(QEFFTransformersBase):
             **compiler_options,
         )
         
+    def generate(
+        self,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
+        prompt: List[str],
+        qpc_path,
+        device_id: List[int] = [0],
+        runtime: str = "AI_100",
+        **kwargs,
+    ):
+        import ipdb; ipdb.set_trace()
+        if runtime != "AI_100":
+            raise ValueError("Only AI_100 runtime is supported right now via generate API")
+        
+        
+        return QEfficient.cloud_ai_100_exec_bert(
+            tokenizer=tokenizer,
+            prompt=prompt,
+            qpc_path=qpc_path,
+            device_id=device_id
+        )
+        
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         
         
         self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         
+      
         return self

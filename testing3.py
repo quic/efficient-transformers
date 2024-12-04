@@ -14,7 +14,7 @@ model = AutoModel.from_pretrained(model_name, add_pooling_layer=False)
 
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 # Dummy input for the model
-text = "This is a sample input"
+text = "My name is"
 inputs = tokenizer(text, return_tensors="pt")
 
 # Export the model to ONNX

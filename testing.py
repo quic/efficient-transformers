@@ -32,7 +32,7 @@ import ipdb; ipdb.set_trace()
 print("B")
 
 # Define the path to the pre-trained model you want to use
-modelPath = "sentence-transformers/all-MiniLM-l6-v2"
+modelPath = "BAAI/bge-large-en-v1.5"
 
 # Create a dictionary with model configuration options, specifying to use the CPU for computations
 model_kwargs = {'device':'cpu'}
@@ -44,15 +44,40 @@ encode_kwargs = {'normalize_embeddings': False}
 embeddings = HuggingFaceEmbeddings(
     model_name=modelPath,     # Provide the pre-trained model's path
     model_kwargs=model_kwargs, # Pass the model configuration options
-    encode_kwargs=encode_kwargs # Pass the encoding options
 )
 import ipdb; ipdb.set_trace()
 
 print("c")
 
-text = "This is a test document."
+text = "This is a sample input"
 query_result = embeddings.embed_query(text)
 query_result[:3]
+
+
+from transformers import AutoTokenizer, AutoModel,AutoConfig
+import onnx
+import onnxruntime as ort
+import numpy as np
+import torch
+from QEfficient.transformers.pytorch_transforms import CustomOpsTransform
+# Load the model and tokenizer
+model_name = 'BAAI/bge-large-en-v1.5'
+config = AutoConfig.from_pretrained(model_name)
+config.add_pooling_layer = False  
+
+import ipdb; ipdb.set_trace()
+model = AutoModel.from_pretrained(model_name)
+
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+# Dummy input for the model
+text = "This is a sample input"
+inputs = tokenizer(text, return_tensors="pt")
+
+    
+with torch.no_grad():
+    pt_outputs1 = model(**inputs)    
+
+import ipdb; ipdb.set_trace()
 
 #vector store
 db = FAISS.from_documents(docs, embeddings,)
