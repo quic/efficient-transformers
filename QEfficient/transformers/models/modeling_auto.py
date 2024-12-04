@@ -260,7 +260,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
-        is_dlm: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -280,17 +279,12 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
             :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
-            :is_dlm (bool, optional): Whether this is a Speculative Decoding draft-model. ``Defaults to False``.
             :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
 
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-        # raise error if is_tlm and is_dlm aren't mutex
-        if self.is_tlm and is_dlm:
-            raise ValueError("`num_speculative_tokens` arg and `is_dlm` flag are mutually exclusive.")
-
         if self.is_tlm:
             # assert num_speculative_tokens cfg is acceptable if defined
             if num_speculative_tokens is None:
@@ -332,17 +326,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             decode_specialization.update({"num_logits_to_keep": num_speculative_tokens + 1}) if self.is_tlm else None
             specializations.append(decode_specialization)
 
-        # Extra Specializations based on case
-        if is_dlm:
-            dlm_specialization = {
-                "batch_size": full_batch_size if self.continuous_batching else batch_size,
-                "seq_len": 2,
-                "ctx_len": ctx_len,
-            }
-            dlm_specialization.update({"full_batch_size": full_batch_size}) if self.continuous_batching else None
-            specializations.append(dlm_specialization)
-            self.is_dlm = True
-
         # Custom IO
         custom_io = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
@@ -362,7 +345,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
             num_speculative_tokens=num_speculative_tokens,
-            is_dlm=is_dlm,
             aic_num_cores=num_cores,
             **compiler_options,
         )
@@ -391,10 +373,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             raise ValueError("Only AI_100 runtime is supported right now via generate API")
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
-        if getattr(self, "is_dlm", False):
-            raise NotImplementedError(
-                "generate method is not yet supported for dlm models used in Speculative Decoding"
-            )
         generation_len = kwargs.pop("generation_len", None)
         return QEfficient.cloud_ai_100_exec_kv(
             tokenizer,
