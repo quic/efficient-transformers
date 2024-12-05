@@ -151,9 +151,9 @@ qeff_model.generate(prompts=["My name is"])
 End to End demo examples for various models are available in **notebooks** directory. Please check them out.
 
 ### Draft-Based Speculative Decoding
-Draft-based speculative decoding is the approach where a small Draft Language Model (DLM) makes `num_speculative_tokens` autoregressive speculations ahead of the Target Language Model (TLM). The objective is to predict what the TLM would have predicted if it would have been used instead of the DLM. This approach is beneficial when the autoregressive decode phase of the TLM is memory bound and thus, we can leverage the extra computing resources of our hardware by batching the speculations of the DLM as an input to TLM to validate the speculations.  
+Draft-based speculative decoding is a technique where a small Draft Language Model (DLM) makes `num_speculative_tokens` autoregressive speculations ahead of the Target Language Model (TLM). The objective is to predict what the TLM would have predicted if it would have been used instead of the DLM. This approach is beneficial when the autoregressive decode phase of the TLM is memory bound and thus, we can leverage the extra computing resources of our hardware by batching the speculations of the DLM as an input to TLM to validate the speculations.  
 
-To export and compile both DLM/TLM, add corresponding `is_tlm`, `num_speculative_tokens`, and `is_dlm` arguments:
+To export and compile both DLM/TLM, add corresponding `is_tlm` and `num_speculative_tokens` for TLM and export DLM as you would any other QEfficient LLM model:
 
 ```Python
 tlm_name = "meta-llama/Llama-2-70b-chat-hf"
@@ -162,7 +162,7 @@ k = 3 # DLM will make `k` speculations
 tlm = AutoModelForCausalLM.from_pretrained(tlm_name, is_tlm=True)
 dlm = AutoModelForCausalLM.from_pretrained(dlm_name)
 tlm.compile(num_speculative_tokens=k)
-dlm.compile(is_dlm=True)
+dlm.compile()
 ```
 
-The `is_tlm` flag is fed during the instantiation of the model because making it a TLM requires slight changes to the ONNX graph. Once complete, the user can specify `num_speculative_tokens` to define the actual number of speculations that the TLM will take as input during the decode phase. As for the DLM, no new changes are required at the ONNX level. The only change is that the model now receives an additional specialization during the compilation step to account for feeding the "bonus" token in the case where all speculations are accepted.
+The `is_tlm` flag is fed during the instantiation of the model because slight changes to the ONNX graph are required. Once complete, the user can specify `num_speculative_tokens` to define the actual number of speculations that the TLM will take as input during the decode phase. As for the DLM, no new changes are required at the ONNX or compile level. 
