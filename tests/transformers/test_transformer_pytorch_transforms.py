@@ -13,6 +13,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridCache
 
 from QEfficient.customop.matmulnbits import QuantLinearORT
+from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
@@ -72,6 +73,43 @@ SpDTransformTestConfigs = [
     ("llama", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
 ]
 
+def create_qaic_model_inputs(
+    input_len: int, 
+    vocab_size: int, 
+    padding_shape: tuple, 
+    num_hidden_layers: int, 
+    is_tlm: bool = False
+) -> dict:
+    """create pytorch QEff model inputs
+
+    ``Mandatory`` Args:
+        :input_len (int): input length.
+        :vocab_size (int): vocab size.
+        :padding_shape (tuple): padding shape of KV$.
+        :num_hidden_layers (int): number of hidden layers.
+    ``Optional`` Args:
+        :is_tlm (bool, optional): whether this is an SpD TLM model. Defaults to False.
+
+    Returns:
+        :dict: pytorch QEff model inputs
+    """
+    input_ids = torch.randint(0, vocab_size, size=(1, input_len))
+    past_key_values = []
+    for _ in range(num_hidden_layers):
+        past_key = torch.zeros((padding_shape), dtype=torch.float32)
+        past_value = torch.zeros((padding_shape), dtype=torch.float32)
+        pkv = (past_key, past_value)
+        past_key_values.append(pkv)
+    inputs = dict(
+        input_ids=input_ids,
+        position_ids=torch.Tensor([range(input_ids.shape[1])]).long(),
+        past_key_values=tuple(past_key_values),
+        output_hidden_states=True,
+    )
+    if is_tlm:
+        inputs["num_logits_to_keep"] = torch.zeros((input_len, 1))
+    return inputs
+
 def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6) -> bool:
     # Base case
     if original_val is None:
@@ -96,11 +134,12 @@ def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6
 
 
 def run_kv_cache_transform_and_test(
-    hf_model, num_hidden_layers, padding_shape, vocab_size, input_len, logits_tolerance=0.8, kv_cache=None, is_tlm=False,
+    hf_model, qaic_model_inputs, logits_tolerance=0.8, kv_cache=None, is_tlm=False,
 ):
     hf_model.eval()
     # Run original model
-    input_ids = torch.randint(0, vocab_size, size=(1, input_len))
+    input_ids = qaic_model_inputs["input_ids"]
+    input_len = input_ids.shape[1]
     with torch.inference_mode():
         if isinstance(kv_cache, type(None)):
             original_model_outputs = hf_model(
@@ -121,33 +160,13 @@ def run_kv_cache_transform_and_test(
         else:
             original_model_outputs = hf_model(input_ids=input_ids, output_hidden_states=True)
 
-    # Apply transform
-    hf_model, transformed = KVCacheTransform.apply(hf_model)
-    assert transformed
-    if is_tlm:
-        hf_model, transformed = SpDTransform.apply(hf_model)
-        assert transformed
+    # Apply transforms
+    hf_model = QEFFAutoModelForCausalLM(hf_model, is_tlm=is_tlm).model
 
-
-    # Prepare KV model inputs
-    past_key_values = []
-    for _ in range(num_hidden_layers):
-        past_key = torch.zeros((padding_shape), dtype=torch.float32)
-        past_value = torch.zeros((padding_shape), dtype=torch.float32)
-        pkv = (past_key, past_value)
-        past_key_values.append(pkv)
-    inputs = dict(
-        input_ids=input_ids,
-        position_ids=torch.Tensor([range(input_ids.shape[1])]).long(),
-        past_key_values=tuple(past_key_values),
-        output_hidden_states=True,
-    )
-    if is_tlm:
-        inputs["num_logits_to_keep"] = torch.zeros((input_len, 1))
 
     # Run KV model
     with torch.inference_mode():
-        transformed_model_outputs = hf_model(**inputs)
+        transformed_model_outputs = hf_model(**qaic_model_inputs)
 
     assert original_model_outputs.keys() == transformed_model_outputs.keys(), "Model output keys do not match!"
 
@@ -224,12 +243,12 @@ def test_kv_cache_transform(
 
     padding_shape = get_padding_shape_from_config(config=config, batch_size=1, seq_len=32)
 
+    # Prepare KV model inputs
+    qaic_model_inputs = create_qaic_model_inputs(input_len=8, vocab_size=config.vocab_size, padding_shape=padding_shape, num_hidden_layers=num_hidden_layers)
+
     run_kv_cache_transform_and_test(
         hf_model,
-        num_hidden_layers=num_hidden_layers,
-        padding_shape=padding_shape,
-        vocab_size=config.vocab_size,
-        input_len=8,
+        qaic_model_inputs=qaic_model_inputs,
         logits_tolerance=logits_tolerance,
         kv_cache=kv_cache,
     )
@@ -263,12 +282,12 @@ def test_spd_transform(
 
     padding_shape = get_padding_shape_from_config(config=config, batch_size=1, seq_len=32)
 
+    # Prepare KV model inputs
+    qaic_model_inputs = create_qaic_model_inputs(input_len=8, vocab_size=config.vocab_size, padding_shape=padding_shape, num_hidden_layers=num_hidden_layers, is_tlm=True)
+
     run_kv_cache_transform_and_test(
         hf_model,
-        num_hidden_layers=num_hidden_layers,
-        padding_shape=padding_shape,
-        vocab_size=config.vocab_size,
-        input_len=8,
+        qaic_model_inputs=qaic_model_inputs,
         logits_tolerance=logits_tolerance,
         kv_cache=kv_cache,
         is_tlm=True,
