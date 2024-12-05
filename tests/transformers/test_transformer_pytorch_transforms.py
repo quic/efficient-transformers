@@ -134,7 +134,7 @@ def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6
 
 
 def run_kv_cache_transform_and_test(
-    hf_model, qaic_model_inputs, logits_tolerance=0.8, kv_cache=None, is_tlm=False,
+    hf_model, qaic_model_inputs, logits_tolerance=0.8, kv_cache=None,
 ):
     hf_model.eval()
     # Run original model
@@ -161,6 +161,7 @@ def run_kv_cache_transform_and_test(
             original_model_outputs = hf_model(input_ids=input_ids, output_hidden_states=True)
 
     # Apply transforms
+    is_tlm = "num_logits_to_keep" in qaic_model_inputs
     hf_model = QEFFAutoModelForCausalLM(hf_model, is_tlm=is_tlm).model
 
 
@@ -290,7 +291,6 @@ def test_spd_transform(
         qaic_model_inputs=qaic_model_inputs,
         logits_tolerance=logits_tolerance,
         kv_cache=kv_cache,
-        is_tlm=True,
     )
 
 
