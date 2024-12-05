@@ -8,12 +8,19 @@
 import argparse
 import logging
 import os
+import time
 from typing import List, Optional
 
 import QEfficient
 from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
+from QEfficient.utils import (
+    check_and_assign_cache_dir,
+    get_qpc_dir_path,
+    load_hf_tokenizer,
+    qpc_exists,
+    tabulate_measurements,
+)
 from QEfficient.utils.logging_utils import logger
 
 
@@ -35,6 +42,7 @@ def main(
     local_model_dir: Optional[str] = None,
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
+    benchmark: bool = False,
 ) -> None:
     """
     1. Check if compiled qpc for given config already exists, if it does jump to execute, else
@@ -78,8 +86,11 @@ def main(
     )
 
     # Handle qpc generation
+
     if qpc_exists(qpc_dir_path):
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
+        compile_time = "pre-compiled"
+
     else:
         # Handle onnx model generation
         onnx_model_path = get_onnx_model_path(
@@ -89,6 +100,9 @@ def main(
         #########
         # Compile
         #########
+
+        compile_start_time = time.perf_counter()
+
         _ = QEfficient.compile(
             onnx_path=onnx_model_path,
             qpc_path=os.path.dirname(
@@ -106,10 +120,13 @@ def main(
             full_batch_size=full_batch_size,
         )
 
+        compile_time = (time.perf_counter() - compile_start_time) // 1
+
     #########
     # Execute
     #########
-    cloud_ai_100_exec_kv(
+
+    execinfo = cloud_ai_100_exec_kv(
         tokenizer=tokenizer,
         qpc_path=qpc_dir_path,
         device_id=device_group,
@@ -117,6 +134,27 @@ def main(
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
     )
+
+    #########
+    # Log
+    #########
+
+    if benchmark:
+        _ = tabulate_measurements(
+            model_name=model_name,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            batch_size=batch_size,
+            full_batch_size=full_batch_size,
+            prompt_len=prompt_len,
+            ctx_len=ctx_len,
+            num_cores=num_cores,
+            device_group=device_group,
+            mxfp6=mxfp6,
+            mxint8=mxint8,
+            compile_time=compile_time,
+            execinfo=execinfo,
+        )
 
 
 if __name__ == "__main__":
@@ -197,9 +235,15 @@ if __name__ == "__main__":
         default=None,
         help="Set full batch size to enable continuous batching mode, default is None",
     )
-
+    parser.add_argument(
+        "--benchmark",
+        "-b",
+        action="store_true",
+        help="store measurements into a csv table at model_card_dir",
+    )
     args = parser.parse_args()
     if args.verbose:
         logger.setLevel(logging.INFO)
     del args.verbose  # type: ignore
+
     main(**args.__dict__)
