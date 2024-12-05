@@ -14,7 +14,8 @@ import QEfficient
 from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
 from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.constants import QEFF_MODELS_DIR
+from QEfficient.utils.logging_utils import MemoryTracker, logger, tabulate_measurements
 
 
 def main(
@@ -35,6 +36,7 @@ def main(
     local_model_dir: Optional[str] = None,
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
+    benchmark: bool = False,
 ) -> None:
     """
     1. Check if compiled qpc for given config already exists, if it does jump to execute, else
@@ -78,8 +80,16 @@ def main(
     )
 
     # Handle qpc generation
+
+    if benchmark:
+        mem_tracker = MemoryTracker()
+
     if qpc_exists(qpc_dir_path):
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
+
+        compile_time = "NA"
+        peak_mem_use_compile = "NA"
+
     else:
         # Handle onnx model generation
         onnx_model_path = get_onnx_model_path(
@@ -89,6 +99,10 @@ def main(
         #########
         # Compile
         #########
+
+        if benchmark:
+            mem_tracker.start()
+
         _ = QEfficient.compile(
             onnx_path=onnx_model_path,
             qpc_path=os.path.dirname(
@@ -106,10 +120,19 @@ def main(
             full_batch_size=full_batch_size,
         )
 
+        if benchmark:
+            mem_tracker.stop()
+            compile_time = mem_tracker.duration
+            peak_mem_use_compile = mem_tracker.max_mem_usage
+
     #########
     # Execute
     #########
-    cloud_ai_100_exec_kv(
+
+    if benchmark:
+        mem_tracker.start()
+
+    execinfo = cloud_ai_100_exec_kv(
         tokenizer=tokenizer,
         qpc_path=qpc_dir_path,
         device_id=device_group,
@@ -117,6 +140,47 @@ def main(
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
     )
+
+    if benchmark:
+        mem_tracker.stop()
+        peak_mem_use_runtime = mem_tracker.max_mem_usage
+
+    #########
+    # Log
+    #########
+
+    if benchmark:
+        input_len = max([len(x) for x in tokenizer(prompt, return_tensors="np").input_ids])
+        num_chunks = -(input_len // -prompt_len)
+        input_len = num_chunks * prompt_len
+
+        fields = {
+            "MODEL\nNAME": model_name,
+            "BATCH\nSIZE": batch_size,
+            "FULL\nBATCH_SIZE": full_batch_size,
+            "CPL": prompt_len,
+            "PL": input_len,
+            "GL": generation_len,
+            "CL": ctx_len,
+            "CORES": num_cores,
+            "NUM\nSOCS": len(device_group),
+            "DEVICE\nID": device_group,
+            "MXFP6\nW": mxfp6,
+            "MXINT8\n$KV": mxint8,
+            "COMPILE_RAM\nUSAGE (MB)": peak_mem_use_compile,
+            "COMPILE\nTIME (S)": compile_time,
+            "RUNTIME_RAM\nUSAGE (MB)": peak_mem_use_runtime,
+            "PREFILL\nTIME (S)": round(execinfo.prefill_time, 2),
+            "DECODE\nTOK/S": round(execinfo.decode_perf, 2),
+            "TOTAL\nTOK/S": round(execinfo.total_perf, 2),
+            "TOTAL\nTIME (S)": round(execinfo.total_time, 2),
+        }
+
+        model_card_dir = os.path.join(QEFF_MODELS_DIR, str(model_name))
+        os.makedirs(model_card_dir, exist_ok=True)
+        model_name = model_name.replace("/", "-")
+        file = f"{model_card_dir}/{model_name}_benchmarking.csv"
+        tabulate_measurements(fields, file)
 
 
 if __name__ == "__main__":
@@ -197,9 +261,15 @@ if __name__ == "__main__":
         default=None,
         help="Set full batch size to enable continuous batching mode, default is None",
     )
-
+    parser.add_argument(
+        "--benchmark",
+        "-b",
+        action="store_true",
+        help="store measurements into a csv table at model_card_dir",
+    )
     args = parser.parse_args()
     if args.verbose:
         logger.setLevel(logging.INFO)
     del args.verbose  # type: ignore
+
     main(**args.__dict__)
