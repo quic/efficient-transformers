@@ -76,6 +76,12 @@ if __name__ == "__main__":
         default=None,
         help="Set full batch size to enable continuous batching mode, default is None",
     )
+    parser.add_argument(
+        "--allow-mxint8-mdp-io",
+        "--allow_mxint8_mdp_io",
+        action="store_true",
+        help="If passed, this option allows MXINT8 compression of MDP IO traffic",
+    )
     # FIXME(ochougul): Allow extra compilation arguments
     args = parser.parse_args()
     QEfficient.compile(**vars(args))
