@@ -231,6 +231,7 @@ def cloud_ai_100_exec_kv(
     write_io_dir: Optional[str] = None,
     automation=False,
     prompt_to_lora_id_mapping: Optional[List[int]] = None,
+    is_tlm: bool = False,
 ):
     """
     This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -279,6 +280,7 @@ def cloud_ai_100_exec_kv(
         write_io_dir=write_io_dir,
         full_batch_size=full_batch_size,
         prompt_to_lora_id_mapping=prompt_to_lora_id_mapping,
+        is_tlm=is_tlm,
     )
     if full_batch_size is None:
         exec_info = [
@@ -322,6 +324,7 @@ class TextGeneration:
         enable_debug_logs: bool = False,
         stream: bool = True,
         write_io_dir: Optional[str] = None,
+        is_tlm: Optional[int] = None,
     ) -> None:
         self.tokenizer = tokenizer
         self.prompt = prompt
@@ -333,6 +336,7 @@ class TextGeneration:
         self.stream = stream
 
         self.write_io_dir = write_io_dir
+        self.is_tlm = is_tlm
 
         # Load QPC
         self.session = QAICInferenceSession(qpc_path, device_id, enable_debug_logs=enable_debug_logs)
@@ -341,6 +345,7 @@ class TextGeneration:
         # Fetch the variables from the QPC
         self.vocab_size = self._fetch_vocab_size()  # Fetch Vocab size
         self.batch_size, self.prefill_seq_len = self._fetch_batch_size_prefill_seq_len()
+        self.decode_seq_len = self._fetch_decode_seq_len()
         self.full_batch_size = (
             full_batch_size if full_batch_size else self._fetch_full_batch_size()
         )  # Check and fetch full batch size if CB is enabled
@@ -427,6 +432,22 @@ class TextGeneration:
             batch_size, prefill_seq_len = self.session.bindings[self.session.binding_index_map["input_ids"]].dims
         return batch_size, prefill_seq_len
 
+    def _fetch_decode_seq_len(
+        self,
+    ):
+        """
+        Fetches the decode sequence length from the session's bindings or allowed shapes.
+
+        Returns:
+            decode_seq_len: The decode sequence length fetched from the session's bindings or allowed shapes.
+        """
+        decode_seq_len = None
+        if self.session.allowed_shapes:
+            decode_seq_len = min(
+                [x[self.session.binding_index_map["input_ids"]][1][1] for x in self.session.allowed_shapes]
+            )
+        return decode_seq_len
+
     def _fetch_vocab_size(
         self,
     ):
@@ -471,9 +492,19 @@ class TextGeneration:
         Returns:
             dict: The decode inputs.
         """
+        batch_size = self.full_batch_size if self.full_batch_size is not None else self.batch_size
         decode_inputs = {}
-        decode_inputs["input_ids"] = self.decode_input_ids
-        decode_inputs["position_ids"] = self.decode_pos_ids
+        if self.is_tlm:
+            position_ids = np.full((batch_size, self.decode_seq_len), -1, dtype=np.int64)
+            position_ids[:, -1] = self.decode_pos_ids.flatten()
+            input_ids = np.zeros((batch_size, self.decode_seq_len), dtype=np.int64)
+            input_ids[:,-1] = self.decode_input_ids.flatten()
+            decode_inputs["input_ids"] = input_ids
+            decode_inputs["position_ids"] = position_ids
+            decode_inputs["num_logits_to_keep"] = np.zeros((self.decode_seq_len,1))
+        else:
+            decode_inputs["input_ids"] = self.decode_input_ids
+            decode_inputs["position_ids"] = self.decode_pos_ids
         if self.batch_index is not None:
             decode_inputs["batch_index"] = self.batch_index
 
@@ -574,6 +605,8 @@ class TextGeneration:
 
         if decode_batch_id is not None:
             inputs["batch_index"] = decode_batch_id
+        if self.is_tlm:
+            inputs["num_logits_to_keep"] = np.zeros((1,1))
 
         if self.prompt_to_lora_id_mapping_prefill:
             if self.full_batch_size:
@@ -614,7 +647,7 @@ class TextGeneration:
         """
 
         # Set logits placeholder for decode
-        logits_out_placeholder = np.zeros((self.full_batch_size, 1, self.vocab_size), dtype=np.float32)
+        logits_out_placeholder = np.zeros((self.full_batch_size, self.decode_seq_len, self.vocab_size), dtype=np.float32)
         self.session.set_buffers({"logits": logits_out_placeholder})
         # Generate flag for tracking progress for each batch ID
         current_decode_ongoing = np.full((self.full_batch_size, 1), True)
@@ -640,7 +673,7 @@ class TextGeneration:
 
             for decode_batch_id in range(self.full_batch_size):
                 if (
-                    next_token_id[decode_batch_id] == self.tokenizer.eos_token_id
+                    next_token_id[decode_batch_id,-1] == self.tokenizer.eos_token_id
                     or generated_id_current_index[decode_batch_id] >= self.generation_len[decode_batch_id]
                 ):
                     if prompt_queue:
@@ -670,10 +703,10 @@ class TextGeneration:
                         current_decode_ongoing[decode_batch_id] = False
                 else:
                     # If the generated sequence is valid and within generation len prepare for next decode
-                    decode_inputs["input_ids"][decode_batch_id] = next_token_id[decode_batch_id]
-                    decode_inputs["position_ids"][decode_batch_id] += 1
+                    decode_inputs["input_ids"][decode_batch_id, -1] = next_token_id[decode_batch_id, -1]
+                    decode_inputs["position_ids"][decode_batch_id, -1] += 1
                     self.generated_ids[batch_id_map[decode_batch_id], generated_id_current_index[decode_batch_id]] = (
-                        next_token_id[decode_batch_id]
+                        next_token_id[decode_batch_id, -1]
                     )
 
                     generated_id_current_index[decode_batch_id] += 1
@@ -706,8 +739,8 @@ class TextGeneration:
 
             # Prepare inputs for next iteration
             decode_inputs["input_ids"] = outputs["logits"].argmax(2)
-            decode_inputs["position_ids"] += 1
-            self.generated_ids[:, num_token] = decode_inputs["input_ids"].squeeze(1)
+            decode_inputs["position_ids"][:,-1] += 1
+            self.generated_ids[:, num_token] = decode_inputs["input_ids"][:,-1]
             finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
 
             if finished_sequences.all():
@@ -731,6 +764,9 @@ class TextGeneration:
             prompt, generation_len, prefill_logit_bs=self.batch_size
         )
         self._update_decode_input(outputs, position_ids, generation_len)
+        if self.is_tlm:
+            logits_out_placeholder = np.zeros((self.batch_size, self.decode_seq_len, self.vocab_size), dtype=np.float32)
+            self.session.set_buffers({"logits": logits_out_placeholder})
 
         decode_inputs = self.prepare_decode_inputs()
 
@@ -838,3 +874,8 @@ class TextGeneration:
             total_time=total_time,
         )
         return latency_stats
+
+    def validate_tlm_gen_tokens(self):
+        gen_len = (self.generated_ids)
+        self.prefill_seq_len
+

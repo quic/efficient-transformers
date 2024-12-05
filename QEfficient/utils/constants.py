@@ -46,6 +46,7 @@ QEFF_MODELS_DIR = get_models_dir()
 ONNX_EXPORT_EXAMPLE_BATCH_SIZE = 1
 ONNX_EXPORT_EXAMPLE_SEQ_LEN = 32
 ONNX_EXPORT_EXAMPLE_FBS = 4
+ONNX_EXPORT_EXAMPLE_NLK = 2  # Number of Logits to Keep
 ONNX_EXPORT_OPSET = 13
 
 COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-aic-hw-version=2.0"]
@@ -60,3 +61,4 @@ class Constants:
     GB = 2**30
     MAX_QPC_LIMIT = 30
     MAX_RETRIES = 5  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
+    NUM_SPECULATIVE_TOKENS = 2

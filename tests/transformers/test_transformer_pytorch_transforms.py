@@ -11,7 +11,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.cache_utils import HybridCache
 
 from QEfficient.customop.matmulnbits import QuantLinearORT
-from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
+from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
@@ -63,6 +63,12 @@ KVCacheTransformTestConfigs = [
     ("gemma", 1, 8, 2048, {"num_key_value_heads": 1, "intermediate_size": 512}, 0.8),
 ]
 
+SpDTransformTestConfigs = [
+    ("llama", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+    ("llama", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+    ("llama", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+    ("llama", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+]
 
 def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6) -> bool:
     # Base case
@@ -88,7 +94,7 @@ def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6
 
 
 def run_kv_cache_transform_and_test(
-    hf_model, num_hidden_layers, padding_shape, vocab_size, input_len, logits_tolerance=0.8, kv_cache=None
+    hf_model, num_hidden_layers, padding_shape, vocab_size, input_len, logits_tolerance=0.8, kv_cache=None, is_tlm=False,
 ):
     hf_model.eval()
     # Run original model
@@ -116,6 +122,10 @@ def run_kv_cache_transform_and_test(
     # Apply transform
     hf_model, transformed = KVCacheTransform.apply(hf_model)
     assert transformed
+    if is_tlm:
+        hf_model, transformed = SpDTransform.apply(hf_model)
+        assert transformed
+
 
     # Prepare KV model inputs
     past_key_values = []
@@ -124,15 +134,18 @@ def run_kv_cache_transform_and_test(
         past_value = torch.zeros((padding_shape), dtype=torch.float32)
         pkv = (past_key, past_value)
         past_key_values.append(pkv)
+    inputs = dict(
+        input_ids=input_ids,
+        position_ids=torch.Tensor([range(input_ids.shape[1])]).long(),
+        past_key_values=tuple(past_key_values),
+        output_hidden_states=True,
+    )
+    if is_tlm:
+        inputs["num_logits_to_keep"] = torch.zeros((input_len, 1))
 
     # Run KV model
     with torch.inference_mode():
-        transformed_model_outputs = hf_model(
-            input_ids=input_ids,
-            position_ids=torch.Tensor([range(input_ids.shape[1])]).long(),
-            past_key_values=tuple(past_key_values),
-            output_hidden_states=True,
-        )
+        transformed_model_outputs = hf_model(**inputs)
 
     assert original_model_outputs.keys() == transformed_model_outputs.keys(), "Model output keys do not match!"
 
@@ -216,6 +229,46 @@ def test_kv_cache_transform(
         input_len=8,
         logits_tolerance=logits_tolerance,
         kv_cache=kv_cache,
+    )
+
+
+@pytest.mark.parametrize(
+    "config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance",
+    SpDTransformTestConfigs,
+)
+def test_spd_transform(
+    config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance
+):
+    config = AutoConfig.for_model(
+        config_class,
+        **kwargs,
+        num_hidden_layers=num_hidden_layers,
+        num_attention_heads=num_attention_heads,
+        hidden_size=hidden_size,
+        use_cache=True,
+        cache_position=None,
+        position_embeddings=None,
+    )
+    hf_model = AutoModelForCausalLM.from_config(config=config, attn_implementation="eager")
+
+    kv_cache = None
+    if hasattr(config, "cache_implementation") and config.cache_implementation == "hybrid":
+        # Create a KV Cache from HybridCache class to pass as an object for models which use Hybrid KV Cache
+        # Refer https://github.com/huggingface/transformers/issues/32896 for more info
+        # This requires torch._dynamo present in torch>=2.3.0
+        kv_cache = HybridCache(config=config, max_batch_size=1, max_cache_len=32)
+
+    padding_shape = get_padding_shape_from_config(config=config, batch_size=1, seq_len=32)
+
+    run_kv_cache_transform_and_test(
+        hf_model,
+        num_hidden_layers=num_hidden_layers,
+        padding_shape=padding_shape,
+        vocab_size=config.vocab_size,
+        input_len=8,
+        logits_tolerance=logits_tolerance,
+        kv_cache=kv_cache,
+        is_tlm=True,
     )
 
 
