@@ -1066,8 +1066,3 @@ class TextGeneration:
             perf_metrics=perf_metrics,
         )
         return latency_stats
-
-    def validate_tlm_gen_tokens(self):
-        gen_len = (self.generated_ids)
-        self.prefill_seq_len
-
