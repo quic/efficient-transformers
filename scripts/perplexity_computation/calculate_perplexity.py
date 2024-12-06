@@ -150,7 +150,7 @@ class PytorchInferenceSession(InferenceSession):
 
 def generate_tokens(ctx_len, input_len, cache_index, model_type):
     if isinstance(model_type, str) and model_type == "qpc":
-        for num_token in range(1, ctx_len - input_len.max()):
+        for num_token in range(1, (ctx_len - input_len.max()) + 1):
             yield num_token
     else:
         while cache_index < ctx_len:
@@ -291,9 +291,11 @@ def calculate_perplexity(
                 if logits.dtype == np.float16:
                     logits = logits.astype(np.float32)
 
-                inputs["input_ids"] = inp_ids[:, cache_index]
-                targets_label.append(torch.from_numpy(inputs["input_ids"]))
-                inputs["position_ids"] += 1
+                cache_index += 1
+                if cache_index < ctx_len:
+                    inputs["input_ids"] = inp_ids[:, cache_index]
+                    targets_label.append(torch.from_numpy(inputs["input_ids"]))
+                    inputs["position_ids"] += 1
 
                 if not is_qaic:
                     for i, iname in enumerate(input_names):
@@ -308,10 +310,9 @@ def calculate_perplexity(
                                 axis=2,
                             )
 
-                cache_index += 1
                 outputs_logits.append(torch.tensor(logits))
 
-            outputs_logits = torch.cat(outputs_logits, dim=1)
+            outputs_logits = torch.cat(outputs_logits[:-1], dim=1)
             targets_label = torch.cat(targets_label, dim=1)
 
             if pad_input_batch is not None:
@@ -326,7 +327,7 @@ def calculate_perplexity(
             total_tokens += targets_label.numel()
 
             with open(log_file, "a") as fp:
-                fp.write(f"sample_no:{cnt} \t avg_loss: {loss.item():.4f}\n")
+                fp.write(f"sample_no:{cnt} \t avg_loss: {loss.item():.6f}\n")
             cnt += 1
 
             loop_time = time.time() - loop_s
@@ -399,9 +400,9 @@ def main():
     )
 
     # Log results
-    logger.info(f"{args.model_type.upper()} Perplexity: {perplexity:.4f}")
-    logger.info(f"{args.model_type.upper()} Loss: {loss:.4f}")
-    logger.info(f"Total time for evaluation: {(time.time() - start_time) / 3600.0:.2f} hrs")
+    logger.info(f"{args.model_type.upper()} Perplexity: {perplexity:.8f}")
+    logger.info(f"{args.model_type.upper()} Loss: {loss:.8f}")
+    logger.info(f"Total time for evaluation: {(time.time() - start_time) / 3600.0:.4f} hrs")
 
     with open(f"{args.log_file}", "a") as fp:
         print(f"\nLoading Dataset: {args.dataset_name}", file=fp)
