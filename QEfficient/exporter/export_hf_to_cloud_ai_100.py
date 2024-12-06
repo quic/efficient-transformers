@@ -16,7 +16,6 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 from QEfficient.base.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
-from QEfficient.transformers.modeling_utils import get_lists_of_cb_qeff_models
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
@@ -62,9 +61,7 @@ def convert_to_cloud_bertstyle(
 def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, seq_len) -> str:
     model_base_name = model_name.replace("/", "_") + "_bertstyle"
     os.makedirs(onnx_dir_path, exist_ok=True)
-    from transformers import AutoModel
 
-    model = AutoModel.from_pretrained(model_name)
     input_str = Constants.INPUT_STR
     # Preprocess inputs
     if seq_len > 0:
@@ -114,7 +111,7 @@ def export_bertstyle_model_to_onnx(model_name, model, tokenizer, onnx_dir_path, 
 
     # Run onnxrt inference
     input_names, ort_outputs = run_model_on_ort(
-        onnx_path="/local/mnt/workspace/amitraj/amit_efficient/efficient-transformers/model_base_name.onnx",
+        onnx_path=os.path.join(onnx_dir_path, f"{model_name}.onnx"),
         inputs=inputs,
         output_names=output_names,
         pt_outputs=pt_outputs,
@@ -318,14 +315,6 @@ def export_for_cloud(
     seq_length: int = Constants.SEQ_LEN,
     full_batch_size: Optional[int] = None,
 ) -> str:
-    # Check if model architecture is supported for continuous batching.
-    if full_batch_size and qeff_model.model.config.architectures[0].lower() not in {
-        x.lower() for x in get_lists_of_cb_qeff_models.architectures
-    }:
-        raise NotImplementedError(
-            f"Continuous batching is not supported for {qeff_model.model.config.architectures[0]}"
-        )
-
     # FIXME: move all this to class instead of here, and just call qeff_model.export here.
     if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
         return export_lm_model_for_cloud(
@@ -353,15 +342,14 @@ def export_lm_model_for_cloud(
     if os.path.exists(onnx_dir_path):
         logger.warning(f"Overriding {onnx_dir_path}")
         shutil.rmtree(onnx_dir_path)
-    import ipdb
 
-    ipdb.set_trace()
-    model_name = export_bertstyle_model_to_onnx(
+    model_name = export_kvstyle_transformed_model_to_onnx(
         model_name=model_name,
-        model=qeff_model.model,
+        transformed_model=qeff_model.model,
         tokenizer=tokenizer,
         onnx_dir_path=onnx_dir_path,
         seq_len=seq_length,
+        full_batch_size=full_batch_size,
     )
     return os.path.join(onnx_dir_path, f"{model_name}.onnx")
 
@@ -418,9 +406,6 @@ def qualcomm_efficient_converter(
     )
 
     # Get model_kv first
-    import ipdb
-
-    ipdb.set_trace()
     model_kv = (
         model_kv
         if model_kv

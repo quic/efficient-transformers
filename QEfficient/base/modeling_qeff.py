@@ -120,12 +120,6 @@ class QEFFBaseModel(ABC):
             :str: Path of the compiled ``qpc`` package.
         """
 
-    @abstractmethod
-    def generate(self, *args, **kwargs) -> Path:
-        """
-        Generate method
-        """
-
     def _export(
         self,
         example_inputs: Dict[str, torch.Tensor],
