@@ -391,7 +391,7 @@ class QEffAutoModel(QEFFTransformersBase):
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
 
-        return QEfficient.cloud_ai_100_exec_bert(
+        return QEfficient.cloud_ai_100_exec_embedd(
             tokenizer=tokenizer, prompt=prompt, qpc_path=self.qpc_path, device_id=device_id
         )
 

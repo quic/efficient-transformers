@@ -193,7 +193,6 @@ class CustomOpsTransform(ModuleMappingTransform):
         MixtralRMSNorm: CustomRMSNormAIC,
         Phi3RMSNorm: CustomRMSNormAIC,
         Qwen2RMSNorm: CustomRMSNormAIC,
-        nn.LayerNorm: CustomRMSNormAIC,
     }
 
 

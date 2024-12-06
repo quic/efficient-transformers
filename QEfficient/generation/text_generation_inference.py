@@ -308,15 +308,12 @@ def cloud_ai_100_exec_kv(
     return exec_info
 
 
-def cloud_ai_100_exec_bert(
+def cloud_ai_100_exec_embedd(
     tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
     prompt: List[str],
     qpc_path: str,
     device_id: List[int] = [0],
 ):
-    import ipdb
-
-    ipdb.set_trace()
     session = QAICInferenceSession(qpc_path, device_ids=device_id)
     seq_len = session.bindings[0].dims[1]
     inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)

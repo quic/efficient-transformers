@@ -9,8 +9,6 @@ import onnxscript
 import torch
 from torch import nn
 
-from QEfficient.utils import constants
-
 ops = getattr(onnxscript, "opset" + str(14))
 
 
