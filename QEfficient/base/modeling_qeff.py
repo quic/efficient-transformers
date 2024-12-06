@@ -201,6 +201,7 @@ class QEFFBaseModel(ABC):
         specializations: Optional[List[Dict[str, int]]] = None,
         custom_io: Optional[Dict[str, str]] = None,
         mdp_ts_num_devices: int = 1,
+        num_speculative_tokens: Optional[int] = None,
         **compiler_options,
     ) -> str:
         """
@@ -212,6 +213,7 @@ class QEFFBaseModel(ABC):
             :specializations (list): List of specializations to compile for
             :custom_io (dict): Custom IO to specify the input and outputs in different formats than default
             :mdp_ts_num_devices (int): Number of devices to partition to use Multi-Device Partitioning with tensor-slicing.
+            :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :compiler_options: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
@@ -243,6 +245,9 @@ class QEFFBaseModel(ABC):
 
         if mdp_ts_num_devices > 1:
             compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
+
+        if num_speculative_tokens:
+            compile_hash.update(to_hashable({"num_speculative_tokens": num_speculative_tokens}))
 
         # Check if already compiled
         compile_hash = compile_hash.hexdigest()[:16]
