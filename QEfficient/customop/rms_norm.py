@@ -11,7 +11,7 @@ from torch import nn
 
 from QEfficient.utils import constants
 
-ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
+ops = getattr(onnxscript, "opset" + str(14))
 
 
 @onnxscript.script(onnxscript.values.Opset(domain="com.qti.aisw.onnx", version=1))

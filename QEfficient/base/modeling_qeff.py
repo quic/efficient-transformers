@@ -14,12 +14,11 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, Union
-import numpy as np
+from typing import Dict, List, Optional
 
+import numpy as np
 import onnx
 import torch
-from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
@@ -45,7 +44,12 @@ class QEFFBaseModel(ABC):
 
     @classmethod
     def _transform_names(cls) -> List[str]:
-        return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
+        transform_names = []
+        if hasattr(cls, "_pytorch_transforms") and cls._pytorch_transforms:
+            transform_names.extend(x.__name__ for x in cls._pytorch_transforms)
+        if hasattr(cls, "_onnx_transforms") and cls._onnx_transforms:
+            transform_names.extend(x.__name__ for x in cls._onnx_transforms)
+        return transform_names
 
     def __init__(self, model: torch.nn.Module) -> None:
         super().__init__()
@@ -56,12 +60,18 @@ class QEFFBaseModel(ABC):
 
         # Apply the transformations
         any_transformed = False
-        for transform in self._pytorch_transforms:
-            self.model, transformed = transform.apply(self.model)
-            any_transformed = any_transformed or transformed
+        import ipdb
+
+        ipdb.set_trace()
+        if hasattr(self, "_pytorch_transforms") and self._pytorch_transforms:
+            for transform in self._pytorch_transforms:
+                self.model, transformed = transform.apply(self.model)
+                any_transformed = any_transformed or transformed
 
         if not any_transformed:
-            warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
+            warnings.warn(
+                f"No transforms applied to model: {self.model_name}. It may be a model with `BertModel` architecture or an unsupported model!"
+            )
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
@@ -111,8 +121,9 @@ class QEFFBaseModel(ABC):
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
+
     @abstractmethod
-    def generate(self, *args, **kwargs)-> Path:
+    def generate(self, *args, **kwargs) -> Path:
         """
         Generate method
         """
@@ -137,6 +148,9 @@ class QEFFBaseModel(ABC):
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
         """
+        import ipdb
+
+        ipdb.set_trace()
         export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
         export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
         onnx_path = export_dir / f"{self.model_name}.onnx"
@@ -158,8 +172,13 @@ class QEFFBaseModel(ABC):
                         input_names.append(f"past_value.{i}")
                 else:
                     input_names.append(param)
+        import ipdb
 
+        ipdb.set_trace()
         try:
+            import ipdb
+
+            ipdb.set_trace()
             export_kwargs = {} if export_kwargs is None else export_kwargs
             torch.onnx.export(
                 self.model,
@@ -223,7 +242,9 @@ class QEFFBaseModel(ABC):
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
         """
-        import ipdb; ipdb.set_trace()
+        import ipdb
+
+        ipdb.set_trace()
         if onnx_path is None and self.onnx_path is None:
             self.export()
 
@@ -328,22 +349,24 @@ class QEFFBaseModel(ABC):
         qpc_path: str,
         device_id: List[int] = [0],
     ):
-        import ipdb; ipdb.set_trace()
+        import ipdb
+
+        ipdb.set_trace()
         session = QAICInferenceSession(qpc_path, device_ids=[0])
-        import ipdb; ipdb.set_trace()
-        seq_len=session.bindings[0].dims[1]
-        inputs = tokenizer(prompt, return_tensors="pt",padding="max_length", max_length=seq_len)
-        
-        
+        import ipdb
+
+        ipdb.set_trace()
+        seq_len = session.bindings[0].dims[1]
+        inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
+
         prefill_inputs = dict(
-            input_ids = inputs['input_ids'].numpy(),
-            attention_mask = inputs['attention_mask'].numpy(),
+            input_ids=inputs["input_ids"].numpy(),
+            attention_mask=inputs["attention_mask"].numpy(),
         )
         prefill_logits = {
-            'output': np.random.randn(1,seq_len, session.bindings[2].dims[2]).astype(np.float32),
+            "output": np.random.randn(1, seq_len, session.bindings[2].dims[2]).astype(np.float32),
         }
-        
+
         session.set_buffers(prefill_logits)
         prefill_outputs = session.run(prefill_inputs)
         return prefill_outputs
-        

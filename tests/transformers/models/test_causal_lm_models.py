@@ -6,12 +6,14 @@
 # -----------------------------------------------------------------------------
 
 import numpy as np
+import onnxruntime as ort
 import pytest
-from transformers import AutoModelForCausalLM
+import torch
+from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.transformers.models.modeling_auto import QEffAutoModel, QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, QEffAwqQuantizer
 from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig, QEffGPTQQuantizer
 from QEfficient.utils import hf_download
@@ -178,6 +180,83 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
 
 
+def check_embed_pytorch_vs_ort_vs_ai100(
+    model_name: str,
+    seq_len: int = Constants.CTX_LEN,
+):
+    model_path = hf_download(
+        repo_id=model_name,
+        ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
+    )
+    
+    
+     # Try to initialize with add_pooling_layer parameter
+    try: 
+        model = AutoModel.from_pretrained(model_name, add_pooling_layer=False)
+        qeff_model = QEffAutoModel.from_pretrained(pretrained_model_name_or_path=model_path, add_pooling_layer=False)
+    except TypeError:
+        # If it fails, initialize without the parameter
+        model = AutoModel.from_pretrained(model_name)
+        qeff_model = QEffAutoModel.from_pretrained(pretrained_model_name_or_path=model_path, add_pooling_layer=False)
+    text = "My name is"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    inputs = tokenizer(text, return_tensors="pt", padding="max_length", max_length=seq_len)
+
+    # PyTorch output
+    with torch.no_grad():
+        pt_outputs = model(**inputs)
+
+    # ONNX output
+    # example_inputs = {
+    #     "input_ids":  torch.zeros((1, seq_len), dtype=torch.int64),
+    #     "attention_mask": torch.ones((1, seq_len), dtype=torch.int64)
+    # }
+    # torch.onnx.export(
+    # qeff_model,
+    # (example_inputs,),
+    # "test1.onnx",
+    # input_names=['input_ids', 'attention_mask'],
+    # output_names=['output1', 'output2'],
+    # dynamic_axes={'input_ids': {1: 'seq_len'}, 'attention_mask': {1: 'seq_len'}},
+    # opset_version=11,
+    # )
+
+    # model=onnx.load("test1.onnx")
+    # model, fp16_fix=FP16ClipTransform.apply(model)
+    # onnx.save(model, "test1_transformed.onnx")
+    ipdb.set_trace()
+    onnx_model = qeff_model.export()
+    ort_session = ort.InferenceSession(str(onnx_model))
+    # Prepare the inputs for ONNX Runtime
+    onnx_inputs = {"input_ids": inputs["input_ids"].numpy(), "attention_mask": inputs["attention_mask"].numpy()}
+    # Run inference
+    onnx_outputs = ort_session.run(None, onnx_inputs)
+
+    ipdb.set_trace()
+    # Extract the embeddings from PyTorch and ONNX outputs
+    pt_embeddings = pt_outputs[0].numpy()
+    onnx_embeddings = onnx_outputs[0]
+
+    # Calculate Mean Absolute Deviation (MAD)
+    mad = np.mean(np.abs(pt_embeddings - onnx_embeddings))
+    print("Mad for onnx and pytorch is ", mad)
+    assert mad <= 10**-3, f"MAD is too high for onnx and Pytorch: {mad}"
+
+    # Compare with cloud AI100
+
+    qeff_model.compile(
+        num_cores=14,
+    )
+    ai100_output = qeff_model.generate(tokenizer=tokenizer, prompt=["My name is"])
+
+    mad = np.mean(np.abs(ai100_output["output"] - onnx_outputs[0]))
+    print("Mad for onnx and AI 100 output is ", mad)
+    import ipdb
+
+    ipdb.set_trace()
+    assert mad <= 10**-5, f"MAD is too high for onnx and Pytorch: {mad}"
+
+
 # FIXME: there should be a CB test here
 @pytest.mark.parametrize("model_name", ["gpt2"], ids=lambda x: x)
 def test_causal_lm_export_with_deprecated_api(model_name):
@@ -233,3 +312,8 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
     prompt_len = 1
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
+
+
+def test_bert_model_pytorch_vs_onnx_aioo():
+    model_name = "BAAI/bge-small-en-v1.5"
+    check_embed_pytorch_vs_ort_vs_ai100(model_name=model_name, seq_len=32)
