@@ -16,7 +16,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import numpy as np
 import onnx
 import torch
 
@@ -67,9 +66,7 @@ class QEFFBaseModel(ABC):
                 any_transformed = any_transformed or transformed
 
         if not any_transformed:
-            warnings.warn(
-                f"No transforms applied to model: {self.model_name}. It may be a model with `BertModel` architecture or an unsupported model!"
-            )
+            warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
@@ -190,6 +187,7 @@ class QEFFBaseModel(ABC):
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
             logger.info("ONNX transforms applied")
+
             onnx.save(model, onnx_path)
             logger.info("Transformed onnx saved")
 
@@ -323,32 +321,3 @@ class QEFFBaseModel(ABC):
 
         self.qpc_path = qpc_path
         return qpc_path
-
-    def _generate(
-        self,
-        tokenizer,
-        prompt: List[str],
-        qpc_path: str,
-        device_id: List[int] = [0],
-    ):
-        import ipdb
-
-        ipdb.set_trace()
-        session = QAICInferenceSession(qpc_path, device_ids=[0])
-        import ipdb
-
-        ipdb.set_trace()
-        seq_len = session.bindings[0].dims[1]
-        inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
-
-        prefill_inputs = dict(
-            input_ids=inputs["input_ids"].numpy(),
-            attention_mask=inputs["attention_mask"].numpy(),
-        )
-        prefill_logits = {
-            "output": np.random.randn(1, seq_len, session.bindings[2].dims[2]).astype(np.float32),
-        }
-
-        session.set_buffers(prefill_logits)
-        prefill_outputs = session.run(prefill_inputs)
-        return prefill_outputs
