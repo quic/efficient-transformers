@@ -180,7 +180,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
 
 
-def check_embedd_pytorch_vs_ort_vs_ai100(
+def check_embed_pytorch_vs_ort_vs_ai100(
     model_name: str,
     seq_len: int = Constants.CTX_LEN,
     n_layer: int = 1,
@@ -197,14 +197,12 @@ def check_embedd_pytorch_vs_ort_vs_ai100(
     except TypeError:
         # If it fails, initialize without the parameter
         model = AutoModel.from_pretrained(model_name)
-        qeff_model = QEffAutoModel.from_pretrained(pretrained_model_name_or_path=model_path, add_pooling_layer=False)
+        qeff_model = QEffAutoModel.from_pretrained(pretrained_model_name_or_path=model_path)
     text = "My name is"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     inputs = tokenizer(text, return_tensors="pt", padding="max_length", max_length=seq_len)
 
-    # PyTorch output
-    with torch.no_grad():
-        pt_outputs = model(**inputs)
+    pt_outputs=qeff_model.generate(tokenizer=tokenizer, prompt="My name is", runtime_ai100=False)
 
     onnx_model = qeff_model.export()
     ort_session = ort.InferenceSession(str(onnx_model))
@@ -213,22 +211,19 @@ def check_embedd_pytorch_vs_ort_vs_ai100(
     # Run inference
     onnx_outputs = ort_session.run(None, onnx_inputs)
 
-    # Extract the embeddings from PyTorch and ONNX outputs
-    pt_embeddings = pt_outputs[0].numpy()
+    # Compare PyTorch and ONNX outputs
+    pt_embeddings = pt_outputs[0].detach().numpy()
     onnx_embeddings = onnx_outputs[0]
-
-    # Calculate Mean Absolute Deviation (MAD)
     mad = np.mean(np.abs(pt_embeddings - onnx_embeddings))
     print("Mad for onnx and pytorch is ", mad)
     assert mad <= 10**-5, f"MAD is too high for onnx and Pytorch: {mad}"
-
-    # Compare with cloud AI100
 
     qeff_model.compile(
         num_cores=14,
     )
     ai100_output = qeff_model.generate(tokenizer=tokenizer, prompt=["My name is"])
 
+    # Compare ONNX and AI 100 outputs
     mad = np.mean(np.abs(ai100_output["output"] - onnx_outputs[0]))
     print("Mad for onnx and AI 100 output is ", mad)
     assert mad <= 10**-2, f"MAD is too high for onnx and Pytorch: {mad}"
@@ -290,7 +285,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
 
-
-def test_embedd_model_pytorch_vs_onnx_vs_ai100():
+@pytest.mark.on_qaic
+def test_embed_model_pytorch_vs_onnx_vs_ai100():
     model_name = "BAAI/bge-small-en-v1.5"
-    check_embedd_pytorch_vs_ort_vs_ai100(model_name=model_name, seq_len=32, n_layer=1)
+    check_embed_pytorch_vs_ort_vs_ai100(model_name=model_name, seq_len=32, n_layer=1)

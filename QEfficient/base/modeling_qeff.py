@@ -43,12 +43,7 @@ class QEFFBaseModel(ABC):
 
     @classmethod
     def _transform_names(cls) -> List[str]:
-        transform_names = []
-        if hasattr(cls, "_pytorch_transforms") and cls._pytorch_transforms:
-            transform_names.extend(x.__name__ for x in cls._pytorch_transforms)
-        if hasattr(cls, "_onnx_transforms") and cls._onnx_transforms:
-            transform_names.extend(x.__name__ for x in cls._onnx_transforms)
-        return transform_names
+        return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
     def __init__(self, model: torch.nn.Module) -> None:
         super().__init__()
@@ -59,11 +54,9 @@ class QEFFBaseModel(ABC):
 
         # Apply the transformations
         any_transformed = False
-
-        if hasattr(self, "_pytorch_transforms") and self._pytorch_transforms:
-            for transform in self._pytorch_transforms:
-                self.model, transformed = transform.apply(self.model)
-                any_transformed = any_transformed or transformed
+        for transform in self._pytorch_transforms:
+            self.model, transformed = transform.apply(self.model)
+            any_transformed = any_transformed or transformed
 
         if not any_transformed:
             warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
@@ -137,7 +130,6 @@ class QEFFBaseModel(ABC):
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
         """
-
         export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
         export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
         onnx_path = export_dir / f"{self.model_name}.onnx"
@@ -224,7 +216,6 @@ class QEFFBaseModel(ABC):
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
         """
-
         if onnx_path is None and self.onnx_path is None:
             self.export()
 

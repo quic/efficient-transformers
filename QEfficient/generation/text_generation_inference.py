@@ -308,7 +308,7 @@ def cloud_ai_100_exec_kv(
     return exec_info
 
 
-def cloud_ai_100_exec_embedd(
+def cloud_ai_100_exec_embed(
     tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
     prompt: List[str],
     qpc_path: str,

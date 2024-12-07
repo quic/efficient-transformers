@@ -379,17 +379,20 @@ class QEffAutoModel(QEFFTransformersBase):
         tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
         prompt: List[str],
         device_id: List[int] = [0],
-        runtime: str = "AI_100",
-        **kwargs,
+        runtime_ai100: bool = True,
+        seq_len: int = constants.Constants.CTX_LEN,
     ):
-        if runtime != "AI_100":
-            raise ValueError("Only AI_100 runtime is supported right now via generate API")
-        if not isinstance(self.qpc_path, Path):
-            raise TypeError("Please run compile API first!")
+        if runtime_ai100:
+            if not isinstance(self.qpc_path, Path):
+                raise TypeError("Please run compile API first!")        
 
-        return QEfficient.cloud_ai_100_exec_embedd(
-            tokenizer=tokenizer, prompt=prompt, qpc_path=self.qpc_path, device_id=device_id
-        )
+            return QEfficient.cloud_ai_100_exec_embed(
+                tokenizer=tokenizer, prompt=prompt, qpc_path=self.qpc_path, device_id=device_id
+            )
+        else:
+            inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
+            return self.model(**inputs)
+            
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):

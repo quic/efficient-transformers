@@ -217,7 +217,7 @@ def fix_onnx_fp16(
     Return:
         :str: Updated base name of exported ONNX model.
     """
-    model = onnx.load("/local/mnt/workspace/amitraj/amit_efficient/efficient-transformers/model_base_name.onnx")
+    model = onnx.load(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
     # TODO: Remove this `fix_onnx_fp16` function and replace with this transform
     # as we're not utilizing the validations done in this function
     model, fp16_fix = FP16ClipTransform.apply(model, onnx_base_dir=gen_models_path)
