@@ -40,7 +40,8 @@ def run_prefill_on_draft_and_target(
     )
     inputs["position_ids"] = (np.cumsum(inputs["attention_mask"][0:1], 1) - 1) * inputs["attention_mask"][0:1]
 
-    inputs["position_ids"][not inputs["attention_mask"][0:1]] = -1
+    # FIXME "not" does not work for below line in place of the "== False" check, but code formatter recommends it
+    inputs["position_ids"][inputs["attention_mask"][0:1] == False] = -1
     cache_index = np.array([[0]], np.int64)
     batch_index = np.array([[slot_idx]], np.int64)
     inputs["batch_index"] = batch_index
@@ -65,17 +66,14 @@ def run_prefill_on_draft_and_target(
         dlm_logits = np.expand_dims(dlm_logits, 1)
 
     tlm_decode_start_pos_id = inputs["attention_mask"][0:1].sum(1, keepdims=True)
-    # valid tlm_prefill_logit is from the last valid position as a modulo of prompt chunk size
-    tlm_last_valid_index_in_chunk = (tlm_decode_start_pos_id[0, 0] - 1) % prompt_len
-    tlm_prefill_logit = tlm_logits[:, tlm_last_valid_index_in_chunk : tlm_last_valid_index_in_chunk + 1]
-    tlm_decode_start_input_id = tlm_prefill_logit.argmax(2)
+    tlm_decode_start_input_id = tlm_logits.argmax(2)
     dlm_decode_start_input_id = dlm_logits.argmax(2)
     dlm_decode_start_pos_id = inputs["attention_mask"][0:1].sum(1, keepdims=True)
 
     inputs.pop("attention_mask")
 
     tlm_decode_start_input = {
-        "logits": tlm_prefill_logit,
+        "logits": tlm_logits,
         "input_ids": tlm_decode_start_input_id,
         "position_ids": tlm_decode_start_pos_id,
         "batch_index": batch_index,
@@ -120,6 +118,13 @@ def populate_inputs(source, dest, index=None):
             # during prefill with bs=1
             dest[k][index] = source[k]
 
+def split_dlm_bonus_token_inputs(dlm_decode_inputs):
+    bonus_token_inputs = dict()
+    bonus_token_inputs["input_ids"] = dlm_decode_inputs["input_ids"][:,0:1]
+    bonus_token_inputs["position_ids"] = dlm_decode_inputs["input_ids"][:,0:1]
+    dlm_decode_inputs["input_ids"] = dlm_decode_inputs["input_ids"][:,1:]
+    dlm_decode_inputs["position_ids"] = dlm_decode_inputs["position_ids"][:,1:]
+    return bonus_token_inputs, dlm_decode_inputs
 
 def test_spec_decode_inference(
     prompt: List[str],
@@ -140,36 +145,17 @@ def test_spec_decode_inference(
     vocab_size = len(tokenizer)
 
     # export_and_compile tlm and dlm
-    target_model = AutoModelForCausalLM.from_pretrained(
-        target_model_name, num_speculative_tokens=num_speculative_tokens
-    )
-    draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, is_dlm=True)
+    target_model = AutoModelForCausalLM.from_pretrained(target_model_name, continuous_batching=True,is_tlm=True)
+    draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, continuous_batching=True)
 
     num_devices = len(device_group)
-    target_model_qpc_path: str = target_model.compile(
-        num_cores=11,
-        num_devices=num_devices,
-        batch_size=prefill_bsz,
-        prefill_seq_len=prompt_len,
-        ctx_len=ctx_len,
-        mxfp6_matmul=True,
-        mxint8_kv_cache=True,
-        full_batch_size=full_batch_size,
-    )
-    draft_model_qpc_path: str = draft_model.compile(
-        num_cores=5,
-        num_devices=num_devices,
-        batch_size=prefill_bsz,
-        prefill_seq_len=prompt_len,
-        ctx_len=ctx_len,
-        mxfp6_matmul=True,
-        mxint8_kv_cache=True,
-        full_batch_size=full_batch_size,
-    )
+    target_model_qpc_path: str = target_model.compile(num_cores=11,num_devices=num_devices,prefill_seq_len=prompt_len,ctx_len=ctx_len,mxfp6_matmul=True,aic_enable_depth_first=True, full_batch_size=full_batch_size, num_speculative_tokens=num_speculative_tokens)
+
+    draft_model_qpc_path: str = draft_model.compile(is_dlm=False, num_cores=5,prefill_seq_len=prompt_len,ctx_len=ctx_len,mxfp6_matmul=True,aic_enable_depth_first=True, full_batch_size=full_batch_size)
 
     # init qaic session
-    target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=device_group)
-    draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=device_group)
+    target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=[2])
+    draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=[3])
 
     # skip inputs/outputs buffers
     target_model_session.skip_buffers(set([x for x in target_model_session.input_names if x.startswith("past_")]))
@@ -210,9 +196,9 @@ def test_spec_decode_inference(
     generation_done = False
     max_gen_len = [ctx_len] * decode_batch_size
     num_logits_to_keep = num_speculative_tokens+1
-    all_accept = np.full((decode_batch_size, num_speculative_tokens), False, dtype=np.bool)
-    tlm_prefill_logits_ph = np.zeros((prefill_bsz, num_logits_to_keep, vocab_size), dtype=np.float32)
-    dlm_prefill_logits_ph = np.zeros((prefill_bsz, num_logits_to_keep, vocab_size), dtype=np.float32)
+    all_accept = np.full((decode_batch_size, num_speculative_tokens), False, dtype=bool)
+    tlm_prefill_logits_ph = np.zeros((prefill_bsz, 1, vocab_size), dtype=np.float32)
+    dlm_prefill_logits_ph = np.zeros((prefill_bsz, 1, vocab_size), dtype=np.float32)
     decode_logits_ph = np.zeros((decode_batch_size, 1, vocab_size), dtype=np.float32)
     precode_logits_ph = np.zeros((decode_batch_size, num_logits_to_keep, vocab_size), dtype=np.float32)
 
@@ -239,6 +225,7 @@ def test_spec_decode_inference(
 
     target_model_session.set_buffers({"logits": precode_logits_ph})
     draft_model_session.set_buffers({"logits": decode_logits_ph})
+    dlm_run_bonus_token = False
     while not generation_done:
         # compute the processed context length before each iteration to prepare the position id inputs
         processed_context = [len(generated_ids[j]) + input_lengths[j] for j in range(decode_batch_size)]
@@ -250,6 +237,7 @@ def test_spec_decode_inference(
             if np.any(all_accept):
                 input_ids = []
                 position_ids = []
+                dlm_run_bonus_token = True
                 for bi in range(decode_batch_size):
                     if all_accept[bi]:
                         # both last DLM token and bonus TLM token to be passed as input to DLM
@@ -274,6 +262,12 @@ def test_spec_decode_inference(
             # dlm_decode_inputs["position_ids"] = len(generated_ids per batch)
             # dlm_decode_inputs["input_ids"] = (last gen dlm token) + last true token from TLM
         for k_ in range(num_speculative_tokens):
+            if dlm_run_bonus_token:
+                #running decode one extra time in the first speculative iteration
+                # workaround to avoid the incorrect precode with 3-specialized multi-batch DLM
+                bonus_token_inputs, dlm_decode_inputs = split_dlm_bonus_token_inputs(dlm_decode_inputs)
+                dlm_outputs = draft_model_session.run(bonus_token_inputs)
+                dlm_run_bonus_token = False
             dlm_outputs = draft_model_session.run(dlm_decode_inputs)
             draft_logits.append(dlm_outputs["logits"])
             dlm_decode_inputs["input_ids"] = dlm_outputs["logits"].argmax(-1)
