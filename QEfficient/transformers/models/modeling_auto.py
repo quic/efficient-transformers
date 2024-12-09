@@ -440,7 +440,7 @@ class QEffAutoModel(QEFFTransformersBase):
         device_id: List[int] = [0],
         runtime_ai100: bool = True,
         seq_len: int = constants.Constants.CTX_LEN,
-    ):
+    ) -> str:
         if runtime_ai100:
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")        

@@ -369,7 +369,7 @@ def cloud_ai_100_exec_embed(
     return prefill_outputs
 
 
-class TextGeneration:
+class QEffTextGenerationBase:
     def __init__(
         self,
         tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
