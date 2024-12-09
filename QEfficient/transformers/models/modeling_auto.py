@@ -186,7 +186,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     def export(self, export_dir: Optional[str] = None) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
-        We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
 
         ``Optional`` Args:
             :export_dir (str, optional): The directory path to store ONNX-graph.
@@ -393,7 +392,7 @@ class QEffAutoModel(QEFFTransformersBase):
         from QEfficient import QEffAutoModel
 
         model = QEffAutoModel.from_pretrained(model_name, num_hidden_layers=2)
-        model.compile(prefill_seq_len=32, ctx_len=1024)
+        model.compile()
 
         model.generate(prompts=["Hello, world!"])
     """
@@ -402,12 +401,49 @@ class QEffAutoModel(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform]
 
-    def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs):
+    def __init__(self, model: nn.Module, **kwargs):
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
+    
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+        """
+        This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModel.
+        Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
+
+        Args:
+            :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
+            :args, kwargs: Additional arguments to pass to transformers.AutoModel.
+
+        .. code-block:: python
+
+            from QEfficient import QEFFAutoModel
+
+            # Initialize the model using from_pretrained similar to transformers.AutoModel.
+            model = QEFFAutoModel.from_pretrained("BAAI/bge-small-en-v1.5")
+
+            # Now you can directly compile the model for Cloud AI 100
+            model.compile(num_cores=14, device_group=[0])  # Considering you have a Cloud AI 100 Standard SKU
+
+            # You can now execute the model
+            model.generate(prompts=["Hi there!!"])
+        """
+        
+        self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+        return self
 
     def export(self, export_dir: Optional[str] = None) -> str:
+        """
+        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+
+        ``Optional`` Args:
+            does not any arguments.
+
+        Returns:
+            :str: Path of the generated ``ONNX`` graph.
+        """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
@@ -437,6 +473,21 @@ class QEffAutoModel(QEFFTransformersBase):
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         **compiler_options,
     ) -> str:
+        """
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+
+        ``Optional`` Args:
+            :onnx_path (str, optional): Path to pre-exported onnx model.
+            :compile_dir (str, optional): Path for saving the qpc generated.
+            :seq_len (int, optional): The length of the prompt should be less that ``seq_len``. ``Defaults to 32``.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :num_cores (int): Number of cores used to compile the model.
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
+        """
+
         specializations = [
             {"batch_size": batch_size, "seq_len": seq_len},
         ]
@@ -459,6 +510,22 @@ class QEffAutoModel(QEFFTransformersBase):
         runtime_ai100: bool = True,
         seq_len: int = constants.Constants.CTX_LEN,
     ) -> str:
+        """
+        This method generates output by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
+        If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
+
+        ``Mandatory`` Args:
+            :prompts (List[str]): List of prompts to run the execution.
+            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
+        ``optional`` Args:
+            :runtime_ai100 (bool), optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
+
+        Returns:
+            :str: Output from the ``AI_100`` or ``PyTorch`` runtime.
+        """
+
+        # AI_100 runtime
         if runtime_ai100:
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
@@ -466,12 +533,8 @@ class QEffAutoModel(QEFFTransformersBase):
             return QEfficient.cloud_ai_100_exec_embed(
                 tokenizer=tokenizer, prompt=prompt, qpc_path=self.qpc_path, device_id=device_id
             )
+        # PyTorch runtime
         else:
             inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
             return self.model(**inputs)
 
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
-        self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-
-        return self
