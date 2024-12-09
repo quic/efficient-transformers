@@ -353,7 +353,7 @@ class QEffAutoModel(QEFFTransformersBase):
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
-    
+
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         """
@@ -377,7 +377,7 @@ class QEffAutoModel(QEFFTransformersBase):
             # You can now execute the model
             model.generate(prompts=["Hi there!!"])
         """
-        
+
         self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         return self
@@ -457,7 +457,7 @@ class QEffAutoModel(QEFFTransformersBase):
         device_id: List[int] = [0],
         runtime_ai100: bool = True,
         seq_len: int = constants.Constants.CTX_LEN,
-    ) -> str:
+    ) -> dict:
         """
         This method generates output by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
         This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
@@ -470,7 +470,7 @@ class QEffAutoModel(QEFFTransformersBase):
             :runtime_ai100 (bool), optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
 
         Returns:
-            :str: Output from the ``AI_100`` or ``PyTorch`` runtime.
+            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
 
         # AI_100 runtime
@@ -485,4 +485,3 @@ class QEffAutoModel(QEFFTransformersBase):
         else:
             inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
             return self.model(**inputs)
-

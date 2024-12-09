@@ -182,10 +182,12 @@ def check_embed_pytorch_vs_ort_vs_ai100(
 
     # Try to initialize with add_pooling_layer parameter
     try:
-        qeff_model = QEffAutoModel.from_pretrained(pretrained_model_name_or_path=model_path, add_pooling_layer=False)
+        qeff_model = QEffAutoModel.from_pretrained(
+            pretrained_model_name_or_path=model_path, add_pooling_layer=False, num_hidden_layers=n_layer
+        )
     except TypeError:
         # If it fails, initialize without the parameter
-        qeff_model = QEffAutoModel.from_pretrained(pretrained_model_name_or_path=model_path)
+        qeff_model = QEffAutoModel.from_pretrained(pretrained_model_name_or_path=model_path, num_hidden_layers=n_layer)
     text = "My name is"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     inputs = tokenizer(text, return_tensors="pt", padding="max_length", max_length=seq_len)
@@ -204,7 +206,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     onnx_embeddings = onnx_outputs[0]
     mad = np.mean(np.abs(pt_embeddings - onnx_embeddings))
     print("Mad for onnx and pytorch is ", mad)
-    assert mad <= 10**-5, f"MAD is too high for onnx and Pytorch: {mad}"
+    assert mad <= 10**-6, f"MAD is too high for onnx and Pytorch: {mad}"
 
     qeff_model.compile(
         num_cores=14,
@@ -214,7 +216,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     # Compare ONNX and AI 100 outputs
     mad = np.mean(np.abs(ai100_output["output"] - onnx_outputs[0]))
     print("Mad for onnx and AI 100 output is ", mad)
-    assert mad <= 10**-2, f"MAD is too high for onnx and Pytorch: {mad}"
+    assert mad <= 10**-3, f"MAD is too high for onnx and Pytorch: {mad}"
 
 
 # FIXME: there should be a CB test here
@@ -274,7 +276,18 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
 
 
+embed_test_models = [
+    "intfloat/e5-mistral-7b-instruct",  # MistralModel
+    "sentence-transformers/multi-qa-mpnet-base-cos-v1",  # MPNetForMaskedLM
+    "BAAI/bge-reranker-v2-m3",  # XLMRobertaForSequenceClassification
+    "BAAI/bge-small-en-v1.5",  # BertModel
+]
+
+
 @pytest.mark.on_qaic
-def test_embed_model_pytorch_vs_onnx_vs_ai100():
-    model_name = "BAAI/bge-small-en-v1.5"
+@pytest.mark.parametrize("model_name", embed_test_models)
+def test_embed_model_pytorch_vs_onnx_vs_ai100(model_name):
+    """
+    Test function to validate the Pytorch model, ONNX model and
+    """
     check_embed_pytorch_vs_ort_vs_ai100(model_name=model_name, seq_len=32, n_layer=1)
