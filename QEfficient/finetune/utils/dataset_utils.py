@@ -7,7 +7,7 @@
 
 import torch
 
-from QEfficient.finetune.data.concatenator import ConcatDataset
+#from QEfficient.finetune.data.concatenator import ConcatDataset
 from QEfficient.finetune.dataset.dataset_config import DATALOADER_COLLATE_FUNC, DATASET_PREPROC
 from QEfficient.finetune.utils.config_utils import get_dataloader_kwargs
 
@@ -37,8 +37,8 @@ def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"
     dataset = get_preprocessed_dataset(tokenizer, dataset_config, split)
     dl_kwargs = get_dataloader_kwargs(train_config, dataset, tokenizer, split)
 
-    if split == "train" and train_config.batching_strategy == "packing":
-        dataset = ConcatDataset(dataset, chunk_size=train_config.context_length)
+    #if split == "train" and train_config.batching_strategy == "packing":
+    #    dataset = ConcatDataset(dataset, chunk_size=train_config.context_length)
 
     # Create data loader
     dataloader = torch.utils.data.DataLoader(

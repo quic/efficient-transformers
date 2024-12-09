@@ -11,7 +11,11 @@ import warnings
 import fire
 import numpy as np
 import torch
+import torch.utils.data
 import torch.optim as optim
+import torch.distributed as dist
+import torch.nn as nn
+
 from peft import PeftModel, get_peft_model
 from torch.optim.lr_scheduler import StepLR
 
@@ -44,6 +48,17 @@ def main(**kwargs):
     # update the configuration for the training process
     train_config = TRAIN_CONFIG()
     update_config(train_config, **kwargs)
+    device = train_config.device
+    
+    # dist init
+    if train_config.enable_ddp:
+        # TODO: may have to init qccl backend, next try run with torchrun command
+        torch_device = torch.device(device)
+        assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
+        assert torch_device.index is None, f"DDP requires specification of device type only, however provided device index as well: {torch_device}"
+        dist.init_process_group(backend=train_config.dist_backend)
+        # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
+        getattr(torch, torch_device.type).set_device(dist.get_rank())
 
     # Set the seeds for reproducibility
     torch.manual_seed(train_config.seed)
@@ -156,6 +171,11 @@ def main(**kwargs):
         weight_decay=train_config.weight_decay,
     )
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
+    
+    # wrap model with DDP
+    if train_config.enable_ddp:
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[dist.get_rank()])
+
 
     _ = train(
         model,
@@ -167,9 +187,14 @@ def main(**kwargs):
         train_config.gradient_accumulation_steps,
         train_config,
         train_config.device,
-        None,
+        dist.get_rank() if train_config.enable_ddp else None,
         None,
     )
+    
+    # finalize torch distributed
+    if train_config.enable_ddp:
+        dist.destroy_process_group()
+
 
 
 if __name__ == "__main__":
