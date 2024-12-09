@@ -174,7 +174,8 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int, Optional[int]]:
         raise FileNotFoundError(f"expected specializations.json file at path, {qpc_base_path}")
 
     compilation_batch_size = int(data["specializations"][0]["batch_size"])
-    compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
+    if compilation_ctx_len := data["specializations"][0].get("ctx_len", None):
+        compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
     if compilation_fbs := data["specializations"][0].get("full_batch_size", None):
         compilation_fbs = int(compilation_fbs)
     return compilation_batch_size, compilation_ctx_len, compilation_fbs
@@ -349,25 +350,25 @@ def cloud_ai_100_exec_kv(
 
 def cloud_ai_100_exec_embed(
     tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
-    prompt: List[str],
     qpc_path: str,
-    device_id: List[int] = [0],
+    prompt: List[str],
+    device_id: List[int] = [0],    
 ):
     session = QAICInferenceSession(qpc_path, device_ids=device_id)
+    batch_size = session.bindings[0].dims[0]
     seq_len = session.bindings[0].dims[1]
     inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
 
-    prefill_inputs = dict(
+    inputs = dict(
         input_ids=inputs["input_ids"].numpy(),
         attention_mask=inputs["attention_mask"].numpy(),
     )
-    prefill_logits = {
-        "output": np.random.randn(1, seq_len, session.bindings[2].dims[2]).astype(np.float32),
+    output = {
+        "output": np.random.randn(batch_size, seq_len, session.bindings[2].dims[2]).astype(np.float32),
     }
-    session.set_buffers(prefill_logits)
-    prefill_outputs = session.run(prefill_inputs)
-    return prefill_outputs
-
+    session.set_buffers(output)
+    outputs = session.run(inputs)
+    return outputs
 
 class QEffTextGenerationBase:
     def __init__(
