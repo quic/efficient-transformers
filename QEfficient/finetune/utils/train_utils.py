@@ -15,7 +15,7 @@ from tqdm import tqdm
 from contextlib import nullcontext
 from torch.utils.tensorboard import SummaryWriter
 
-from configs.training import train_config as TRAIN_CONFIG
+from QEfficient.finetune.configs.training import train_config as TRAIN_CONFIG
 
 try:
     import torch_qaic

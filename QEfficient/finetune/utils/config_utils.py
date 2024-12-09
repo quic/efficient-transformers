@@ -8,6 +8,9 @@
 import inspect
 from dataclasses import asdict
 
+import torch.utils.data as data_utils
+import torch.distributed as dist
+
 from peft import (
     AdaptionPromptConfig,
     LoraConfig,
@@ -37,9 +40,9 @@ def update_config(config, **kwargs):
                         setattr(config, param_name, v)
                     else:
                         # In case of specialized config we can warn user
-                        print(f"Warning: {config_name} does not accept parameter: {k}")
+                        assert False, f"Warning: {config_name} does not accept parameter: {k}"
             elif isinstance(config, train_config):
-                print(f"Warning: unknown parameter {k}")
+                assert False, f"Warning: unknown parameter {k}"
 
 
 def generate_peft_config(train_config, kwargs):
@@ -87,10 +90,13 @@ def generate_dataset_config(train_config, kwargs):
 #     return kwargs
 
 
-def get_dataloader_kwargs(train_config, dataset, dataset_processer, mode):
+def get_dataloader_kwargs(train_config: train_config, dataset, dataset_processer, mode):
     kwargs = {}
     batch_size = train_config.batch_size_training if mode == "train" else train_config.val_batch_size
     kwargs["batch_size"] = batch_size
     kwargs["drop_last"] = True
     kwargs["collate_fn"] = default_data_collator
+    # use a distributed sampler to split data between devices
+    if train_config.enable_ddp:
+        kwargs["sampler"] = data_utils.DistributedSampler(dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=False)
     return kwargs
