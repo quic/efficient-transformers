@@ -12,7 +12,7 @@ from dataclasses import dataclass
 class train_config:
     model_name: str = "meta-llama/Llama-3.2-1B"
     tokenizer_name: str = "meta-llama/Llama-3.2-1B"
-    run_validation: bool = False
+    run_validation: bool = True
     batch_size_training: int = 1
     context_length: int = 512
     gradient_accumulation_steps: int = 4
