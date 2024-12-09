@@ -42,6 +42,7 @@ def test_compile(setup, mocker):
         mxfp6=ms.mxfp6,
         mxint8=ms.mxint8,
         full_batch_size=ms.full_batch_size,
+        enable_qnn=ms.enable_qnn,
     )
 
     assert os.path.isdir(ms.qpc_dir_path())
