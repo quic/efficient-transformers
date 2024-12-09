@@ -272,7 +272,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :prefill_seq_len (int, optional): The length of the Prefill prompt should be less that ``prefill_seq_len``. ``Defaults to 32``.
             :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
             :full_batch_size (int, optional): Continuous batching batch size.
-            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
+            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
             :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
@@ -381,6 +381,23 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
 
 class QEffAutoModel(QEFFTransformersBase):
+    """
+    The QEffAutoModel class is designed for manipulating any transformer model from the HuggingFace hub.
+    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+
+    ``Mandatory`` Args:
+        :model (nn.Module): PyTorch model
+
+    .. code-block:: python
+
+        from QEfficient import QEffAutoModel
+
+        model = QEffAutoModel.from_pretrained(model_name, num_hidden_layers=2)
+        model.compile(prefill_seq_len=32, ctx_len=1024)
+
+        model.generate(prompts=["Hello, world!"])
+    """
+
     _hf_auto_class = AutoModel
     _pytorch_transforms = [CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform]
@@ -391,14 +408,15 @@ class QEffAutoModel(QEFFTransformersBase):
         self.num_layers = model.config.num_hidden_layers
 
     def export(self, export_dir: Optional[str] = None) -> str:
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
         example_inputs = {
-            "input_ids": torch.zeros((1, seq_len), dtype=torch.int64),
-            "attention_mask": torch.ones((1, seq_len), dtype=torch.int64),
+            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+            "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
         }
 
-        dynamic_axes = {"input_ids": {1: "seq_len"}, "attention_mask": {1: "seq_len"}}
+        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "attention_mask": {0: "batch_size", 1: "seq_len"}}
 
         output_names = ["output"]
 
@@ -415,11 +433,12 @@ class QEffAutoModel(QEFFTransformersBase):
         compile_dir: Optional[str] = None,
         *,
         seq_len: int = 32,
-        num_cores: int = 14,  # FIXME: Make this mandatory arg
+        batch_size: int = 1,
+        num_cores: int = 16,  # FIXME: Make this mandatory arg
         **compiler_options,
     ) -> str:
         specializations = [
-            {"seq_len": seq_len},
+            {"batch_size": batch_size, "seq_len": seq_len},
         ]
 
         return self._compile(
