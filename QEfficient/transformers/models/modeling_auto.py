@@ -66,21 +66,6 @@ class QEFFTransformersBase(QEFFBaseModel):
             mname = mname[4:]
         return mname
 
-    @property
-    def model_hash(self) -> str:
-        # NOTE: model_config.to_diff_dict() has "_name_or_path" attribute which is the model card name or path.
-        # Using same card name will result in same hash. But, using a relative path for one run and
-        # absolute path for another run will result in different hash.
-        # The added complexity to resolve different paths to same location is not worth pursuing.
-        # Instead, advise the user to always provide same relative paths or absolute paths for local models.
-
-        # Compute the hash with: model_config, transforms
-        mhash = hashlib.sha256()
-        mhash.update(to_hashable(self.model.config.to_diff_dict()))
-        mhash.update(to_hashable(self._transform_names()))
-        mhash = mhash.hexdigest()[:16]
-        return mhash
-
 
 class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
@@ -107,6 +92,10 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs):
+        model_class_name = model.__class__.__name__
+        if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
+            raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
+
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -381,6 +370,21 @@ class QEffAutoModel(QEFFTransformersBase):
         self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         return self
+
+    @property
+    def model_hash(self) -> str:
+        # NOTE: model_config.to_diff_dict() has "_name_or_path" attribute which is the model card name or path.
+        # Using same card name will result in same hash. But, using a relative path for one run and
+        # absolute path for another run will result in different hash.
+        # The added complexity to resolve different paths to same location is not worth pursuing.
+        # Instead, advise the user to always provide same relative paths or absolute paths for local models.
+
+        # Compute the hash with: model_config, transforms
+        mhash = hashlib.sha256()
+        mhash.update(to_hashable(self.model.config.to_diff_dict()))
+        mhash.update(to_hashable(self._transform_names()))
+        mhash = mhash.hexdigest()[:16]
+        return mhash
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
