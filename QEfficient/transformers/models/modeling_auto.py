@@ -66,22 +66,6 @@ class QEFFTransformersBase(QEFFBaseModel):
             mname = mname[4:]
         return mname
 
-    @property
-    def model_hash(self) -> str:
-        # NOTE: model_config.to_diff_dict() has "_name_or_path" attribute which is the model card name or path.
-        # Using same card name will result in same hash. But, using a relative path for one run and
-        # absolute path for another run will result in different hash.
-        # The added complexity to resolve different paths to same location is not worth pursuing.
-        # Instead, advise the user to always provide same relative paths or absolute paths for local models.
-
-        # Compute the hash with: model_config, transforms
-        mhash = hashlib.sha256()
-        mhash.update(to_hashable(self.model.config.to_diff_dict()))
-        mhash.update(to_hashable(self._transform_names()))
-        mhash.update(to_hashable({"is_tlm": self.is_tlm}))
-        mhash = mhash.hexdigest()[:16]
-        return mhash
-
 
 class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
@@ -349,8 +333,9 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self,
         tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
         prompts: List[str],
-        device_id: List[int] = None,
-        runtime: str = "AI_100",
+        device_id: List[int] = [0],
+        runtime_ai100: bool = True,
+        seq_len: int = constants.Constants.CTX_LEN,
         **kwargs,
     ):
         """
@@ -362,21 +347,24 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :prompts (List[str]): List of prompts to run the execution.
             :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
         ``optional`` Args:
-            :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to "AI_100".
+            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
+
         """
-        if runtime != "AI_100":
-            raise ValueError("Only AI_100 runtime is supported right now via generate API")
-        if not isinstance(self.qpc_path, Path):
-            raise TypeError("Please run compile API first!")
-        generation_len = kwargs.pop("generation_len", None)
-        return QEfficient.cloud_ai_100_exec_kv(
-            tokenizer,
-            self.qpc_path,
-            prompt=prompts,
-            device_id=device_id,
-            generation_len=generation_len,
-            is_tlm=self.is_tlm,
-        )
+        if runtime_ai100:
+            if not isinstance(self.qpc_path, Path):
+                raise TypeError("Please run compile API first!")
+            generation_len = kwargs.pop("generation_len", None)
+            return QEfficient.cloud_ai_100_exec_kv(
+                tokenizer,
+                self.qpc_path,
+                prompt=prompts,
+                device_id=device_id,
+                generation_len=generation_len,
+                is_tlm=self.is_tlm,
+            )
+        else:
+            inputs = tokenizer(prompts, return_tensors="pt", padding="max_length", max_length=seq_len)
+            return self.model(**inputs)
 
 
 class QEffAutoModel(QEFFTransformersBase):
@@ -405,7 +393,7 @@ class QEffAutoModel(QEFFTransformersBase):
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
-    
+
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         """
@@ -429,10 +417,25 @@ class QEffAutoModel(QEFFTransformersBase):
             # You can now execute the model
             model.generate(prompts=["Hi there!!"])
         """
-        
+
         self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         return self
+
+    @property
+    def model_hash(self) -> str:
+        # NOTE: model_config.to_diff_dict() has "_name_or_path" attribute which is the model card name or path.
+        # Using same card name will result in same hash. But, using a relative path for one run and
+        # absolute path for another run will result in different hash.
+        # The added complexity to resolve different paths to same location is not worth pursuing.
+        # Instead, advise the user to always provide same relative paths or absolute paths for local models.
+
+        # Compute the hash with: model_config, transforms
+        mhash = hashlib.sha256()
+        mhash.update(to_hashable(self.model.config.to_diff_dict()))
+        mhash.update(to_hashable(self._transform_names()))
+        mhash = mhash.hexdigest()[:16]
+        return mhash
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
@@ -470,7 +473,9 @@ class QEffAutoModel(QEFFTransformersBase):
         *,
         seq_len: int = 32,
         batch_size: int = 1,
+        num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
+        mxfp6_matmul: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -498,6 +503,8 @@ class QEffAutoModel(QEFFTransformersBase):
             compile_only=True,
             specializations=specializations,
             convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             **compiler_options,
         )
@@ -505,11 +512,11 @@ class QEffAutoModel(QEFFTransformersBase):
     def generate(
         self,
         tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
-        prompt: List[str],
+        prompts: List[str],
         device_id: List[int] = [0],
         runtime_ai100: bool = True,
         seq_len: int = constants.Constants.CTX_LEN,
-    ) -> str:
+    ) -> dict:
         """
         This method generates output by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
         This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
@@ -519,10 +526,10 @@ class QEffAutoModel(QEFFTransformersBase):
             :prompts (List[str]): List of prompts to run the execution.
             :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
         ``optional`` Args:
-            :runtime_ai100 (bool), optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
+            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
 
         Returns:
-            :str: Output from the ``AI_100`` or ``PyTorch`` runtime.
+            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
 
         # AI_100 runtime
@@ -531,10 +538,9 @@ class QEffAutoModel(QEFFTransformersBase):
                 raise TypeError("Please run compile API first!")
 
             return QEfficient.cloud_ai_100_exec_embed(
-                tokenizer=tokenizer, prompt=prompt, qpc_path=self.qpc_path, device_id=device_id
+                tokenizer=tokenizer, prompt=prompts, qpc_path=self.qpc_path, device_id=device_id
             )
         # PyTorch runtime
         else:
-            inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
+            inputs = tokenizer(prompts, return_tensors="pt", padding="max_length", max_length=seq_len)
             return self.model(**inputs)
-

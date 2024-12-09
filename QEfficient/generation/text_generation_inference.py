@@ -174,8 +174,7 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int, Optional[int]]:
         raise FileNotFoundError(f"expected specializations.json file at path, {qpc_base_path}")
 
     compilation_batch_size = int(data["specializations"][0]["batch_size"])
-    if compilation_ctx_len := data["specializations"][0].get("ctx_len", None):
-        compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
+    compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
     if compilation_fbs := data["specializations"][0].get("full_batch_size", None):
         compilation_fbs = int(compilation_fbs)
     return compilation_batch_size, compilation_ctx_len, compilation_fbs
@@ -352,8 +351,24 @@ def cloud_ai_100_exec_embed(
     tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
     qpc_path: str,
     prompt: List[str],
-    device_id: List[int] = [0],    
-):
+    device_id: List[int] = [0],
+) -> dict:
+    """
+    This method generates output by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+    This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
+    If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
+
+    ``Mandatory`` Args:
+        :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Model tokenizer.
+        :qpc_path (str): Path to the saved generated binary file after compilation.
+        :prompt (str): Sample prompt for the model text generation.
+    ``Optional`` Args:
+        :device_id (List[int]): Device IDs to be used for execution. If ``len(device_id) > 1``, it enables multiple card setup. If ``None``, auto-device-picker will be used. ``Defaults to None``.
+
+    Returns:
+        :dict: Output from the ``AI_100`` runtime.
+    """
+
     session = QAICInferenceSession(qpc_path, device_ids=device_id)
     batch_size = session.bindings[0].dims[0]
     seq_len = session.bindings[0].dims[1]
@@ -368,7 +383,9 @@ def cloud_ai_100_exec_embed(
     }
     session.set_buffers(output)
     outputs = session.run(inputs)
+    session.deactivate()
     return outputs
+
 
 class QEffTextGenerationBase:
     def __init__(
