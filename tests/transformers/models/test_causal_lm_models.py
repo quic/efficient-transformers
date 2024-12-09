@@ -10,7 +10,7 @@ from typing import Optional
 import numpy as np
 import onnxruntime as ort
 import pytest
-from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.models.modeling_auto import QEffAutoModel, QEFFAutoModelForCausalLM
@@ -192,17 +192,15 @@ def check_embed_pytorch_vs_ort_vs_ai100(
 
     # Try to initialize with add_pooling_layer parameter
     try:
-        model = AutoModel.from_pretrained(model_name, add_pooling_layer=False)
         qeff_model = QEffAutoModel.from_pretrained(pretrained_model_name_or_path=model_path, add_pooling_layer=False)
     except TypeError:
         # If it fails, initialize without the parameter
-        model = AutoModel.from_pretrained(model_name)
         qeff_model = QEffAutoModel.from_pretrained(pretrained_model_name_or_path=model_path)
     text = "My name is"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     inputs = tokenizer(text, return_tensors="pt", padding="max_length", max_length=seq_len)
 
-    pt_outputs=qeff_model.generate(tokenizer=tokenizer, prompt="My name is", runtime_ai100=False)
+    pt_outputs = qeff_model.generate(tokenizer=tokenizer, prompt="My name is", runtime_ai100=False)
 
     onnx_model = qeff_model.export()
     ort_session = ort.InferenceSession(str(onnx_model))
@@ -302,6 +300,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
     prompt_len = 1
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
+
 
 @pytest.mark.on_qaic
 def test_embed_model_pytorch_vs_onnx_vs_ai100():

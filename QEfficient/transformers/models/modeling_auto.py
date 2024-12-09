@@ -35,7 +35,6 @@ class QEFFTransformersBase(QEFFBaseModel):
     _hf_auto_class: type
 
     def __init__(self, model: nn.Module) -> None:
-
         if hasattr(model.config, "quantization_config") and not isinstance(
             model.config.quantization_config, tuple(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values())
         ):
@@ -443,7 +442,7 @@ class QEffAutoModel(QEFFTransformersBase):
     ) -> str:
         if runtime_ai100:
             if not isinstance(self.qpc_path, Path):
-                raise TypeError("Please run compile API first!")        
+                raise TypeError("Please run compile API first!")
 
             return QEfficient.cloud_ai_100_exec_embed(
                 tokenizer=tokenizer, prompt=prompt, qpc_path=self.qpc_path, device_id=device_id
@@ -451,7 +450,6 @@ class QEffAutoModel(QEFFTransformersBase):
         else:
             inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
             return self.model(**inputs)
-            
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):

@@ -305,9 +305,6 @@ class KVCacheTransform(ModuleMappingTransform):
 
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
-        import ipdb
-
-        ipdb.set_trace()
         model, transformed = super().apply(model)
         # FIXME: see if we can merge into _module_mapping dict
         transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update
