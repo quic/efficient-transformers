@@ -82,6 +82,20 @@ if __name__ == "__main__":
         action="store_true",
         help="If passed, this option allows MXINT8 compression of MDP IO traffic",
     )
+    parser.add_argument(
+        "--enable_qnn",
+        "--enable-qnn",
+        action="store_true",
+        default=False,
+        help="Enables QNN. Optionally, a configuration file can be provided with [--enable_qnn CONFIG_FILE].\
+             If not provided, the default configuration will be used.\
+             Sample Config: QEfficient/cloud/compile/qnn_config.json",
+    )
+    parser.add_argument(
+        "qnn_config",
+        nargs="?",
+        type=str,
+    )
     # FIXME(ochougul): Allow extra compilation arguments
     args = parser.parse_args()
     QEfficient.compile(**vars(args))
