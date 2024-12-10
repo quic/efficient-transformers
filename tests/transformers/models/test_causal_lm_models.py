@@ -44,6 +44,7 @@ spd_test_models = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
 ]
 
+
 def load_causal_lm_model(model_config):
     """
     Function to load model from huggingface and transform to KV model
@@ -166,7 +167,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         mxfp6=False,
         aic_enable_depth_first=False,
         full_batch_size=full_batch_size,
-        num_speculative_tokens=num_speculative_tokens
+        num_speculative_tokens=num_speculative_tokens,
     )
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
@@ -237,7 +238,9 @@ def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     else:
         n_layer = 1
 
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, n_layer=n_layer, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS
+    )
 
 
 @pytest.mark.on_qaic

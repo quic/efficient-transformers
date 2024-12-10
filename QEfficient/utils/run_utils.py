@@ -198,7 +198,7 @@ class ApiRunner:
         generated_ids = []
         inputs = self.input_handler.prepare_ort_inputs()
         if is_tlm:
-            nltk = np.zeros((1,1), dtype=np.int64)
+            nltk = np.zeros((1, 1), dtype=np.int64)
             inputs["num_logits_to_keep"] = nltk
         ort_outputs = self.run_ort_session(inputs, session)
         ort_outputs = self.input_handler.update_ort_outputs(ort_outputs)

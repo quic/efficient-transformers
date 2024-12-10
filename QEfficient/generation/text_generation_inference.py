@@ -512,10 +512,10 @@ class QEffTextGenerationBase:
             position_ids = np.full((batch_size, self._decode_seq_len), -1, dtype=np.int64)
             position_ids[:, -1] = self.decode_pos_ids.flatten()
             input_ids = np.zeros((batch_size, self._decode_seq_len), dtype=np.int64)
-            input_ids[:,-1] = self.decode_input_ids.flatten()
+            input_ids[:, -1] = self.decode_input_ids.flatten()
             decode_inputs["input_ids"] = input_ids
             decode_inputs["position_ids"] = position_ids
-            decode_inputs["num_logits_to_keep"] = np.zeros((self._decode_seq_len,1))
+            decode_inputs["num_logits_to_keep"] = np.zeros((self._decode_seq_len, 1))
         else:
             decode_inputs["input_ids"] = self.decode_input_ids
             decode_inputs["position_ids"] = self.decode_pos_ids
@@ -660,7 +660,7 @@ class QEffTextGenerationBase:
         if decode_batch_id is not None:
             inputs["batch_index"] = decode_batch_id
         if self.is_tlm:
-            inputs["num_logits_to_keep"] = np.zeros((1,1))
+            inputs["num_logits_to_keep"] = np.zeros((1, 1))
 
         if self._prompt_to_lora_id_mapping_prefill:
             if self.full_batch_size:
@@ -701,7 +701,9 @@ class QEffTextGenerationBase:
         """
 
         # Set logits placeholder for decode
-        logits_out_placeholder = np.zeros((self.full_batch_size, self._decode_seq_len, self._vocab_size), dtype=np.float32)
+        logits_out_placeholder = np.zeros(
+            (self.full_batch_size, self._decode_seq_len, self._vocab_size), dtype=np.float32
+        )
         self._session.set_buffers({"logits": logits_out_placeholder})
         # Generate flag for tracking progress for each batch ID
         current_decode_ongoing = np.full((self.full_batch_size, 1), True)
@@ -727,7 +729,7 @@ class QEffTextGenerationBase:
 
             for decode_batch_id in range(self.full_batch_size):
                 if (
-                    next_token_id[decode_batch_id,-1] == self.tokenizer.eos_token_id
+                    next_token_id[decode_batch_id, -1] == self.tokenizer.eos_token_id
                     or generated_id_current_index[decode_batch_id] >= self.generation_len[decode_batch_id]
                 ):
                     if prompt_queue:
@@ -781,7 +783,9 @@ class QEffTextGenerationBase:
             num_token (int): The number of tokens processed in the decoding process.
         """
         if self.is_tlm:
-            logits_out_placeholder = np.zeros((self.batch_size, self._decode_seq_len, self._vocab_size), dtype=np.float32)
+            logits_out_placeholder = np.zeros(
+                (self.batch_size, self._decode_seq_len, self._vocab_size), dtype=np.float32
+            )
             self._session.set_buffers({"logits": logits_out_placeholder})
         finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
         num_token = 0
@@ -796,8 +800,8 @@ class QEffTextGenerationBase:
 
             # Prepare inputs for next iteration
             decode_inputs["input_ids"] = outputs["logits"].argmax(2)
-            decode_inputs["position_ids"][:,-1] += 1
-            self.generated_ids[:, num_token] = decode_inputs["input_ids"][:,-1]
+            decode_inputs["position_ids"][:, -1] += 1
+            self.generated_ids[:, num_token] = decode_inputs["input_ids"][:, -1]
             finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
 
             if finished_sequences.all():

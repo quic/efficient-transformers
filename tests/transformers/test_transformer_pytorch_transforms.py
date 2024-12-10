@@ -14,7 +14,7 @@ from transformers.cache_utils import HybridCache
 
 from QEfficient.customop.matmulnbits import QuantLinearORT
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
+from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
@@ -73,12 +73,9 @@ SpDTransformTestConfigs = [
     ("llama", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
 ]
 
+
 def create_qaic_model_inputs(
-    input_len: int, 
-    vocab_size: int, 
-    padding_shape: tuple, 
-    num_hidden_layers: int, 
-    is_tlm: bool = False
+    input_len: int, vocab_size: int, padding_shape: tuple, num_hidden_layers: int, is_tlm: bool = False
 ) -> dict:
     """create pytorch QEff model inputs
 
@@ -110,6 +107,7 @@ def create_qaic_model_inputs(
         inputs["num_logits_to_keep"] = torch.zeros((input_len, 1))
     return inputs
 
+
 def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6) -> bool:
     # Base case
     if original_val is None:
@@ -134,7 +132,10 @@ def compare_original_vs_kv_model_pt_outputs(original_val, kv_val, tolerance=1e-6
 
 
 def run_kv_cache_transform_and_test(
-    hf_model, qaic_model_inputs, logits_tolerance=0.8, kv_cache=None,
+    hf_model,
+    qaic_model_inputs,
+    logits_tolerance=0.8,
+    kv_cache=None,
 ):
     hf_model.eval()
     # Run original model
@@ -163,7 +164,6 @@ def run_kv_cache_transform_and_test(
     # Apply transforms
     is_tlm = "num_logits_to_keep" in qaic_model_inputs
     hf_model = QEFFAutoModelForCausalLM(hf_model, is_tlm=is_tlm).model
-
 
     # Run KV model
     with torch.inference_mode():
@@ -245,7 +245,9 @@ def test_kv_cache_transform(
     padding_shape = get_padding_shape_from_config(config=config, batch_size=1, seq_len=32)
 
     # Prepare KV model inputs
-    qaic_model_inputs = create_qaic_model_inputs(input_len=8, vocab_size=config.vocab_size, padding_shape=padding_shape, num_hidden_layers=num_hidden_layers)
+    qaic_model_inputs = create_qaic_model_inputs(
+        input_len=8, vocab_size=config.vocab_size, padding_shape=padding_shape, num_hidden_layers=num_hidden_layers
+    )
 
     run_kv_cache_transform_and_test(
         hf_model,
@@ -259,9 +261,7 @@ def test_kv_cache_transform(
     "config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance",
     SpDTransformTestConfigs,
 )
-def test_spd_transform(
-    config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance
-):
+def test_spd_transform(config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance):
     config = AutoConfig.for_model(
         config_class,
         **kwargs,
@@ -284,7 +284,13 @@ def test_spd_transform(
     padding_shape = get_padding_shape_from_config(config=config, batch_size=1, seq_len=32)
 
     # Prepare KV model inputs
-    qaic_model_inputs = create_qaic_model_inputs(input_len=8, vocab_size=config.vocab_size, padding_shape=padding_shape, num_hidden_layers=num_hidden_layers, is_tlm=True)
+    qaic_model_inputs = create_qaic_model_inputs(
+        input_len=8,
+        vocab_size=config.vocab_size,
+        padding_shape=padding_shape,
+        num_hidden_layers=num_hidden_layers,
+        is_tlm=True,
+    )
 
     run_kv_cache_transform_and_test(
         hf_model,
