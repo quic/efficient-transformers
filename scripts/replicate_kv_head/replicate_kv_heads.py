@@ -65,7 +65,7 @@ def main(args):
     model_kwargs = {"attn_implementation": "eager"}
     if args.num_hidden_layers:
         model_kwargs["num_hidden_layers"] = args.num_hidden_layers
-    
+
     model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
 
     # Undo the effect of replace_transformers_quantizers
