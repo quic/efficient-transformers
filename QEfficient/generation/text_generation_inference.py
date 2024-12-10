@@ -37,6 +37,7 @@ class PerfMetrics:
     decode_perf: float
     total_perf: float
     total_time: float
+    is_matching: Optional[bool]
 
 
 @dataclass
@@ -274,6 +275,7 @@ def cloud_ai_100_exec_kv(
     write_io_dir: Optional[str] = None,
     automation=False,
     prompt_to_lora_id_mapping: Optional[List[int]] = None,
+    is_tlm: bool = False,
 ):
     """
     This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -319,6 +321,7 @@ def cloud_ai_100_exec_kv(
         enable_debug_logs=enable_debug_logs,
         write_io_dir=write_io_dir,
         full_batch_size=full_batch_size,
+        is_tlm=is_tlm,
     )
     if full_batch_size is None:
         exec_info = [
@@ -355,9 +358,11 @@ class QEffTextGenerationBase:
         device_id: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
+        is_tlm: Optional[int] = None,
     ) -> None:
         self._ctx_len = ctx_len
         self._write_io_dir = write_io_dir
+        self.is_tlm = is_tlm
 
         # Load QPC
         self._session = QAICInferenceSession(qpc_path, device_id, enable_debug_logs=enable_debug_logs)
@@ -365,6 +370,7 @@ class QEffTextGenerationBase:
         # Fetch the variables from the QPC
         self._vocab_size = self._fetch_vocab_size()  # Fetch Vocab size
         self.batch_size, self._prefill_seq_len = self._fetch_batch_size_prefill_seq_len()
+        self._decode_seq_len = self._fetch_decode_seq_len()
         self.full_batch_size = (
             full_batch_size if full_batch_size else self._fetch_full_batch_size()
         )  # Check and fetch full batch size if CB is enabled
@@ -441,6 +447,22 @@ class QEffTextGenerationBase:
             batch_size, prefill_seq_len = self._session.bindings[self._session.binding_index_map["input_ids"]].dims
         return batch_size, prefill_seq_len
 
+    def _fetch_decode_seq_len(
+        self,
+    ):
+        """
+        Fetches the decode sequence length from the session's bindings or allowed shapes.
+
+        Returns:
+            decode_seq_len: The decode sequence length fetched from the session's bindings or allowed shapes.
+        """
+        decode_seq_len = None
+        if self._session.allowed_shapes:
+            decode_seq_len = min(
+                [x[self._session.binding_index_map["input_ids"]][1][1] for x in self._session.allowed_shapes]
+            )
+        return decode_seq_len
+
     def _fetch_vocab_size(
         self,
     ):
@@ -485,9 +507,19 @@ class QEffTextGenerationBase:
         Returns:
             dict: The decode inputs.
         """
+        batch_size = self.full_batch_size if self.full_batch_size is not None else self.batch_size
         decode_inputs = {}
-        decode_inputs["input_ids"] = self.decode_input_ids
-        decode_inputs["position_ids"] = self.decode_pos_ids
+        if self.is_tlm:
+            position_ids = np.full((batch_size, self._decode_seq_len), -1, dtype=np.int64)
+            position_ids[:, -1] = self.decode_pos_ids.flatten()
+            input_ids = np.zeros((batch_size, self._decode_seq_len), dtype=np.int64)
+            input_ids[:,-1] = self.decode_input_ids.flatten()
+            decode_inputs["input_ids"] = input_ids
+            decode_inputs["position_ids"] = position_ids
+            decode_inputs["num_logits_to_keep"] = np.zeros((self._decode_seq_len,1))
+        else:
+            decode_inputs["input_ids"] = self.decode_input_ids
+            decode_inputs["position_ids"] = self.decode_pos_ids
         if self.batch_index is not None:
             decode_inputs["batch_index"] = self.batch_index
 
@@ -628,6 +660,8 @@ class QEffTextGenerationBase:
 
         if decode_batch_id is not None:
             inputs["batch_index"] = decode_batch_id
+        if self.is_tlm:
+            inputs["num_logits_to_keep"] = np.zeros((1,1))
 
         if self._prompt_to_lora_id_mapping_prefill:
             if self.full_batch_size:
@@ -668,7 +702,7 @@ class QEffTextGenerationBase:
         """
 
         # Set logits placeholder for decode
-        logits_out_placeholder = np.zeros((self.full_batch_size, 1, self._vocab_size), dtype=np.float32)
+        logits_out_placeholder = np.zeros((self.full_batch_size, self._decode_seq_len, self._vocab_size), dtype=np.float32)
         self._session.set_buffers({"logits": logits_out_placeholder})
         # Generate flag for tracking progress for each batch ID
         current_decode_ongoing = np.full((self.full_batch_size, 1), True)
@@ -694,7 +728,7 @@ class QEffTextGenerationBase:
 
             for decode_batch_id in range(self.full_batch_size):
                 if (
-                    next_token_id[decode_batch_id] == self.tokenizer.eos_token_id
+                    next_token_id[decode_batch_id,-1] == self.tokenizer.eos_token_id
                     or generated_id_current_index[decode_batch_id] >= self.generation_len[decode_batch_id]
                 ):
                     if prompt_queue:
@@ -724,10 +758,10 @@ class QEffTextGenerationBase:
                         current_decode_ongoing[decode_batch_id] = False
                 else:
                     # If the generated sequence is valid and within generation len prepare for next decode
-                    decode_inputs["input_ids"][decode_batch_id] = next_token_id[decode_batch_id]
-                    decode_inputs["position_ids"][decode_batch_id] += 1
+                    decode_inputs["input_ids"][decode_batch_id, -1] = next_token_id[decode_batch_id, -1]
+                    decode_inputs["position_ids"][decode_batch_id, -1] += 1
                     self.generated_ids[batch_id_map[decode_batch_id], generated_id_current_index[decode_batch_id]] = (
-                        next_token_id[decode_batch_id]
+                        next_token_id[decode_batch_id, -1]
                     )
 
                     generated_id_current_index[decode_batch_id] += 1
@@ -747,6 +781,9 @@ class QEffTextGenerationBase:
         Returns:
             num_token (int): The number of tokens processed in the decoding process.
         """
+        if self.is_tlm:
+            logits_out_placeholder = np.zeros((self.batch_size, self._decode_seq_len, self._vocab_size), dtype=np.float32)
+            self._session.set_buffers({"logits": logits_out_placeholder})
         finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
         num_token = 0
         for num_token in range(1, generation_len):
@@ -760,8 +797,8 @@ class QEffTextGenerationBase:
 
             # Prepare inputs for next iteration
             decode_inputs["input_ids"] = outputs["logits"].argmax(2)
-            decode_inputs["position_ids"] += 1
-            self.generated_ids[:, num_token] = decode_inputs["input_ids"].squeeze(1)
+            decode_inputs["position_ids"][:,-1] += 1
+            self.generated_ids[:, num_token] = decode_inputs["input_ids"][:,-1]
             finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
 
             if finished_sequences.all():
@@ -800,6 +837,44 @@ class QEffTextGenerationBase:
                 break
         yield decode_inputs["input_ids"]  # yield the last token
 
+    def is_spd_acceptance_rate_fully_matching(self):
+
+        batch_size = self.generated_ids.shape[0]
+        valid_batch_indices = list(range(batch_size))
+        inputs = dict( 
+            input_ids = np.zeros((batch_size, self._decode_seq_len)),
+            position_ids = np.hstack([self.decode_pos_ids-self._decode_seq_len+i for i in range(self._decode_seq_len)]),
+            batch_index = np.arange(batch_size).reshape(-1,1)
+        )
+        i = 0
+        while True:
+            # Prepare inputs.
+            inputs["input_ids"] = self.generated_ids[valid_batch_indices, i:i+self._decode_seq_len]
+            inputs["position_ids"] = inputs["position_ids"][valid_batch_indices]+self._decode_seq_len
+            # Remove `valid_batch_indices` that pass ctx_len limit or have eos token.
+            passed_max_limit = (inputs["position_ids"] > self._ctx_len-1).any(1)
+            passed_indices = np.where(passed_max_limit)[0].tolist()
+            contains_eos = (inputs["input_ids"] == self.tokenizer.eos_token_id).any(1)
+            eos_indices = np.where(contains_eos)[0].tolist()
+            rm_indices = np.unique(np.concatenate((passed_indices, eos_indices))).tolist()
+            if rm_indices:
+                rm_indices = sorted(rm_indices)[::-1]
+                for rm_indice in rm_indices:
+                    del valid_batch_indices[rm_indice]
+            if not valid_batch_indices:
+                break
+            # Get predictions and perform validation step.
+            outputs = self._session.run(inputs)
+            input_ids = outputs["logits"][valid_batch_indices].argmax(2) # shape: [len(valid_batch_indices), self._decode_seq_len]
+            matching = (input_ids == self.generated_ids[valid_batch_indices, i+1:i+1+self._decode_seq_len])
+            if not matching.all():
+                logger.critical(f"TLM model does not have a 100% acceptance rate with itself!")
+                return False
+            i += self._decode_seq_len
+
+        return True
+
+
 
 class TextGeneration:
     def __init__(
@@ -811,9 +886,10 @@ class TextGeneration:
         device_id: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
+        is_tlm: bool = False,
     ) -> None:
         self._qaic_model = QEffTextGenerationBase(
-            tokenizer, qpc_path, full_batch_size, ctx_len, device_id, enable_debug_logs, write_io_dir
+            tokenizer, qpc_path, full_batch_size, ctx_len, device_id, enable_debug_logs, write_io_dir, is_tlm
         )
         self._full_batch_size = self._qaic_model.full_batch_size
         self._tokenizer = self._qaic_model.tokenizer
@@ -894,7 +970,13 @@ class TextGeneration:
         prefill_time, decode_perf, total_perf, total_time = calculate_latency(
             total_decode_tokens, loop_start, start, end
         )
-        self._perf_metrics = PerfMetrics(prefill_time, decode_perf, total_perf, total_time)
+        # Find whether SpD acceptance rate is fully matching (100% acceptance rate).
+        is_matching = None
+        if self.is_tlm:
+            is_matching = self._qaic_model.is_spd_acceptance_rate_fully_matching()
+            if not is_matching:
+                logger.warning(f"SpD TLM model acceptance rate with itself is not 100%!")
+        self._perf_metrics = PerfMetrics(prefill_time, decode_perf, total_perf, total_time, is_matching)
         return self._perf_metrics, generated_texts
 
     def _continuous_batching_execution(

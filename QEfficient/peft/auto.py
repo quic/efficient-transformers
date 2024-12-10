@@ -24,7 +24,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.peft.lora import QEffAutoLoraModelForCausalLM
 from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
 from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
-from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
+from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils import constants
 from QEfficient.utils._utils import get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable

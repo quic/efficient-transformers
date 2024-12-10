@@ -18,7 +18,7 @@ from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, P
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
-from QEfficient.transformers.pytorch_transforms import CustomOpsTransform, KVCacheTransform
+from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import constants, get_padding_shape_from_config
@@ -51,7 +51,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -61,7 +61,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model)
+        return cls(model, is_tlm=is_tlm)
 
     @property
     def model_name(self) -> str:
@@ -82,6 +82,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
+        mhash.update(to_hashable({"is_tlm": self.is_tlm}))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -94,6 +95,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     ``Mandatory`` Args:
         :model (nn.Module):  PyTorch model
         :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
+        :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
 
 
     .. code-block:: python
@@ -110,7 +112,14 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs):
+    def __init__(
+        self,
+        model: nn.Module,
+        continuous_batching: bool = False,
+        is_tlm: bool = False,
+        **kwargs,
+    ):
+        # TODO: remove from version 1.20
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -124,15 +133,23 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
 
+        if is_tlm:
+            # TODO: It is possible to always apply this transform and make value of indices as last indices by default in PyTorch
+            self.model, transformed = SpDTransform.apply(self.model)
+        self.is_tlm = is_tlm
+
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, continuous_batching: bool = False, *args, **kwargs):
+    def from_pretrained(
+        cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, *args, **kwargs
+    ):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
 
         Args:
             :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
-            :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
+            :continuous_batching (bool): Whether this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
+            :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
             :args, kwargs: Additional arguments to pass to transformers.AutoModelForCausalLM.
 
         .. code-block:: python
@@ -155,7 +172,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
 
-        self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, *args, **kwargs)
         self.continuous_batching = continuous_batching
         return self
 
@@ -165,6 +182,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
+        mhash.update(to_hashable({"is_tlm": self.is_tlm}))
         mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
@@ -175,20 +193,20 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
 
         ``Optional`` Args:
-            does not any arguments.
+            :export_dir (str, optional): The directory path to store ONNX-graph.
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
         """
-        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(bs, seq_len),
+            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(self.num_layers)],
         }
         dynamic_axes = {
@@ -216,6 +234,11 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
             dynamic_axes["batch_index"] = {0: "batch_size"}
 
+        if self.is_tlm:
+            nlk = constants.ONNX_EXPORT_EXAMPLE_NLK  # Number of Logits to Keep
+            example_inputs["num_logits_to_keep"] = torch.arange(nlk).view(nlk, 1)
+            dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
+
         return self._export(
             example_inputs,
             output_names,
@@ -236,6 +259,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
+        num_speculative_tokens: Optional[int] = None,
         **compiler_options,
     ) -> str:
         """
@@ -254,27 +278,53 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :full_batch_size (int, optional): Continuous batching batch size.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
             :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
+            :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
 
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-        # Specializations
-        if self.continuous_batching:
-            if full_batch_size is None:
-                raise TypeError("missing required argument: 'full_batch_size'")
+        if self.is_tlm:
+            # assert num_speculative_tokens cfg is acceptable if defined
+            if num_speculative_tokens is None:
+                raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` is True.")
+            if not isinstance(num_speculative_tokens, int) and num_speculative_tokens < 2:
+                ValueError(
+                    f"`num_speculative_tokens` arg should be an integer greater than 1, got {num_speculative_tokens}"
+                )
+            num_logits_to_keep = num_speculative_tokens + 1
+            if prefill_seq_len < num_logits_to_keep:
+                raise ValueError(
+                    f"sequence length ({prefill_seq_len}) must be at least `num_speculative_tokens+1` ({num_logits_to_keep})"
+                )
 
-            specializations = [
-                {"full_batch_size": full_batch_size, "batch_size": 1, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
-                {"full_batch_size": full_batch_size, "batch_size": full_batch_size, "seq_len": 1, "ctx_len": ctx_len},
-            ]
-        else:
-            specializations = [
-                {"batch_size": batch_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len},
-            ]
-            if prefill_seq_len != 1:
-                specializations.append({"batch_size": batch_size, "seq_len": 1, "ctx_len": ctx_len})
+        if self.continuous_batching and full_batch_size is None:
+            raise TypeError("missing required argument: 'full_batch_size'")
+
+        # Define prefill specialization
+        prefill_specialization = {
+            # Prefill is always run with single BS for continuous batching.
+            "batch_size": 1 if self.continuous_batching else batch_size,
+            "seq_len": prefill_seq_len,
+            "ctx_len": ctx_len,
+        }
+        prefill_specialization.update({"full_batch_size": full_batch_size}) if self.continuous_batching else None
+        prefill_specialization.update({"num_logits_to_keep": 1}) if self.is_tlm else None
+        specializations = [
+            prefill_specialization,
+        ]
+
+        # Skip decode specialization if we are not in continuous batching and prefill_seq_len=1 as this repeats prefill specialization
+        if prefill_seq_len != 1 or self.continuous_batching:
+            decode_specialization = {
+                "batch_size": full_batch_size if self.continuous_batching else batch_size,
+                "seq_len": num_speculative_tokens + 1 if self.is_tlm else 1,
+                "ctx_len": ctx_len,
+            }
+            decode_specialization.update({"full_batch_size": full_batch_size}) if self.continuous_batching else None
+            decode_specialization.update({"num_logits_to_keep": num_speculative_tokens + 1}) if self.is_tlm else None
+            specializations.append(decode_specialization)
 
         # Custom IO
         custom_io = {}
@@ -294,6 +344,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
+            num_speculative_tokens=num_speculative_tokens,
             aic_num_cores=num_cores,
             **compiler_options,
         )
@@ -329,6 +380,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             prompt=prompts,
             device_id=device_id,
             generation_len=generation_len,
+            is_tlm=self.is_tlm,
         )
 
 
