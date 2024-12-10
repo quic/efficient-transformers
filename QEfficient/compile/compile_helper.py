@@ -52,6 +52,7 @@ def compile_kv_model_on_cloud_ai_100(
     mxfp6: bool,
     custom_io_path: str,
     aic_enable_depth_first: bool,
+    allow_mxint8_mdp_io: bool,
     mos: int = -1,
     device_group: Optional[List[int]] = None,
     **kwargs,
@@ -92,6 +93,8 @@ def compile_kv_model_on_cloud_ai_100(
         command.append(f"-mos={mos}")
     if aic_enable_depth_first:
         command.append("-aic-enable-depth-first")
+    if allow_mxint8_mdp_io:
+        command.append("-allow-mxint8-mdp-io")
     if device_group is not None and len(device_group) > 1:
         mdp_ts_config = {
             "connections": [{"devices": list(range(len(device_group))), "type": "p2p"}],
@@ -129,6 +132,7 @@ def compile(
     mxint8: bool = False,
     custom_io_file_path: Optional[str] = None,
     full_batch_size: Optional[int] = None,
+    allow_mxint8_mdp_io: Optional[bool] = False,
     **kwargs,
 ) -> str:
     """
@@ -152,6 +156,7 @@ def compile(
         :mxfp6 (bool): Enable compilation for ``MXFP6`` precision.  ``Defaults to True.``
         :mxint8 (bool): Compress Present/Past KV to ``MXINT8`` using ``CustomIO`` config. ``Defaults to False.``
         :custom_io_file_path (str): Path to ``customIO`` file (formatted as a string). ``Defaults to None.``
+        :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic ``Defaults to False.``
 
     Returns:
         :str: Path to compiled ``qpc`` package.
@@ -189,6 +194,7 @@ def compile(
         base_path=qpc_path,
         mxfp6=mxfp6,
         aic_enable_depth_first=aic_enable_depth_first,
+        allow_mxint8_mdp_io=allow_mxint8_mdp_io,
         mos=mos,
         device_group=device_group,
     )
