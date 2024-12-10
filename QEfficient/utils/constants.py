@@ -83,7 +83,7 @@ class QnnConstants:
     # Convertor Arguments
     FLOAT_BITWIDTH = 16
     FLOAT_BIAS_BITWIDTH = 32
-    CONVERTOR_DEFAULT_ARGS = "--keep_int64_inputs --onnx_no_simplification "
+    CONVERTOR_DEFAULT_ARGS = "--keep_int64_inputs --onnx_no_simplification --onnx_defer_loading "
 
     # Context-Binary-Generator Arguments
     LOG_LEVEL = "error"
