@@ -9,7 +9,7 @@ import hashlib
 import logging
 import warnings
 from pathlib import Path
-from typing import Any, List, Optional, Union
+from typing import List, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -35,10 +35,6 @@ class QEFFTransformersBase(QEFFBaseModel):
     _hf_auto_class: type
 
     def __init__(self, model: nn.Module) -> None:
-        model_class_name = model.__class__.__name__
-        if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
-            raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
-
         if hasattr(model.config, "quantization_config") and not isinstance(
             model.config.quantization_config, tuple(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values())
         ):
@@ -70,21 +66,6 @@ class QEFFTransformersBase(QEFFBaseModel):
             mname = mname[4:]
         return mname
 
-    @property
-    def model_hash(self) -> str:
-        # NOTE: model_config.to_diff_dict() has "_name_or_path" attribute which is the model card name or path.
-        # Using same card name will result in same hash. But, using a relative path for one run and
-        # absolute path for another run will result in different hash.
-        # The added complexity to resolve different paths to same location is not worth pursuing.
-        # Instead, advise the user to always provide same relative paths or absolute paths for local models.
-
-        # Compute the hash with: model_config, transforms
-        mhash = hashlib.sha256()
-        mhash.update(to_hashable(self.model.config.to_diff_dict()))
-        mhash.update(to_hashable(self._transform_names()))
-        mhash = mhash.hexdigest()[:16]
-        return mhash
-
 
 class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
@@ -111,6 +92,10 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs):
+        model_class_name = model.__class__.__name__
+        if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
+            raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
+
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
@@ -172,7 +157,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     def export(self, export_dir: Optional[str] = None) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
-        We currently don't support exporting non-transformed models. Please refer to the ``convert_to_cloud_bertstyle`` function in the **Low-Level API** for a legacy function that supports this."
 
         ``Optional`` Args:
             does not any arguments.
@@ -252,7 +236,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :prefill_seq_len (int, optional): The length of the Prefill prompt should be less that ``prefill_seq_len``. ``Defaults to 32``.
             :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
             :full_batch_size (int, optional): Continuous batching batch size.
-            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
+            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
             :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
             :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
@@ -333,12 +317,175 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
 
 class QEffAutoModel(QEFFTransformersBase):
+    """
+    The QEffAutoModel class is designed for manipulating any transformer model from the HuggingFace hub.
+    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+
+    ``Mandatory`` Args:
+        :model (nn.Module): PyTorch model
+
+    .. code-block:: python
+
+        from QEfficient import QEffAutoModel
+
+        model = QEffAutoModel.from_pretrained(model_name, num_hidden_layers=2)
+        model.compile()
+
+        model.generate(prompts=["Hello, world!"])
+    """
+
     _hf_auto_class = AutoModel
-    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _pytorch_transforms = [CustomOpsTransform]
+    _onnx_transforms = [FP16ClipTransform]
 
-    def export(self):
-        raise NotImplementedError("Reached too far!!")
+    def __init__(self, model: nn.Module, **kwargs):
+        super().__init__(model)
+        self.model.config.use_cache = True
+        self.num_layers = model.config.num_hidden_layers
 
-    def compile(self, *args, **kwargs) -> Any:
-        raise NotImplementedError("Reached too far!!")
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+        """
+        This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModel.
+        Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
+
+        Args:
+            :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
+            :args, kwargs: Additional arguments to pass to transformers.AutoModel.
+
+        .. code-block:: python
+
+            from QEfficient import QEFFAutoModel
+
+            # Initialize the model using from_pretrained similar to transformers.AutoModel.
+            model = QEFFAutoModel.from_pretrained("BAAI/bge-small-en-v1.5")
+
+            # Now you can directly compile the model for Cloud AI 100
+            model.compile(num_cores=14, device_group=[0])  # Considering you have a Cloud AI 100 Standard SKU
+
+            # You can now execute the model
+            model.generate(prompts=["Hi there!!"])
+        """
+
+        self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+        return self
+
+    @property
+    def model_hash(self) -> str:
+        # NOTE: model_config.to_diff_dict() has "_name_or_path" attribute which is the model card name or path.
+        # Using same card name will result in same hash. But, using a relative path for one run and
+        # absolute path for another run will result in different hash.
+        # The added complexity to resolve different paths to same location is not worth pursuing.
+        # Instead, advise the user to always provide same relative paths or absolute paths for local models.
+
+        # Compute the hash with: model_config, transforms
+        mhash = hashlib.sha256()
+        mhash.update(to_hashable(self.model.config.to_diff_dict()))
+        mhash.update(to_hashable(self._transform_names()))
+        mhash = mhash.hexdigest()[:16]
+        return mhash
+
+    def export(self, export_dir: Optional[str] = None) -> str:
+        """
+        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+
+        ``Optional`` Args:
+            does not any arguments.
+
+        Returns:
+            :str: Path of the generated ``ONNX`` graph.
+        """
+        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
+        example_inputs = {
+            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+            "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
+        }
+
+        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "attention_mask": {0: "batch_size", 1: "seq_len"}}
+
+        output_names = ["output"]
+
+        return self._export(
+            example_inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+        )
+
+    def compile(
+        self,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        seq_len: int = 32,
+        batch_size: int = 1,
+        num_cores: int = 16,  # FIXME: Make this mandatory arg
+        **compiler_options,
+    ) -> str:
+        """
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+
+        ``Optional`` Args:
+            :onnx_path (str, optional): Path to pre-exported onnx model.
+            :compile_dir (str, optional): Path for saving the qpc generated.
+            :seq_len (int, optional): The length of the prompt should be less that ``seq_len``. ``Defaults to 32``.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :num_cores (int): Number of cores used to compile the model.
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
+        """
+
+        specializations = [
+            {"batch_size": batch_size, "seq_len": seq_len},
+        ]
+
+        return self._compile(
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            specializations=specializations,
+            convert_to_fp16=True,
+            aic_num_cores=num_cores,
+            **compiler_options,
+        )
+
+    def generate(
+        self,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
+        prompt: List[str],
+        device_id: List[int] = [0],
+        runtime_ai100: bool = True,
+        seq_len: int = constants.Constants.CTX_LEN,
+    ) -> dict:
+        """
+        This method generates output by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of prompts passed.
+        If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
+
+        ``Mandatory`` Args:
+            :prompts (List[str]): List of prompts to run the execution.
+            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
+        ``optional`` Args:
+            :runtime_ai100 (bool), optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
+
+        Returns:
+            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
+        """
+
+        # AI_100 runtime
+        if runtime_ai100:
+            if not isinstance(self.qpc_path, Path):
+                raise TypeError("Please run compile API first!")
+
+            return QEfficient.cloud_ai_100_exec_embed(
+                tokenizer=tokenizer, prompt=prompt, qpc_path=self.qpc_path, device_id=device_id
+            )
+        # PyTorch runtime
+        else:
+            inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
+            return self.model(**inputs)
