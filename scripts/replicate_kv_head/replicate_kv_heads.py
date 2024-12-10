@@ -61,11 +61,13 @@ def main(args):
     model_base_name = model_name.split("/")[-1]
     # Replace quantizers for loading Quantized AWQ/GPTQ models on CPU.
     replace_transformers_quantizers()
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        # num_hidden_layers=1,  # Use for generating smaller model
-        attn_implementation="eager",
-    )
+    # Prepare kwargs for model loading
+    model_kwargs = {"attn_implementation": "eager"}
+    if args.num_hidden_layers:
+        model_kwargs["num_hidden_layers"] = args.num_hidden_layers
+    
+    model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
+
     # Undo the effect of replace_transformers_quantizers
     undo_transformers_quantizers()
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -136,6 +138,13 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="Set full batch size to enable continuous batching mode, default is None",
+    )
+    parser.add_argument(
+        "--num_hidden_layers",
+        "--num-hidden-layers",
+        type=int,
+        default=None,
+        help="Number of hidden layers to use, default is None",
     )
 
     args = parser.parse_args()
