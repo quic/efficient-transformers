@@ -271,7 +271,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :onnx_path (str, optional): Path to pre-exported onnx model.
             :compile_dir (str, optional): Path for saving the qpc generated.
             :num_cores (int): Number of cores used to compile the model.
-            :num_devices (List[int]): Number of devices for tensor-slicing is invoked, defaults to None, and automatically chooses suitable device.
+            :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
             :batch_size (int, optional): Batch size. ``Defaults to 1``.
             :prefill_seq_len (int, optional): The length of the Prefill prompt should be less that ``prefill_seq_len``. ``Defaults to 32``.
             :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
