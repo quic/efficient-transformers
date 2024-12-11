@@ -8,17 +8,34 @@
 from typing import List, Optional
 
 import numpy as np
+import pytest
 from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils.device_utils import get_available_device_id
+
+configs = [
+    pytest.param(
+        ["My name is", "Hello", "Hi", "My name is"], # prompt
+        2, # num_speculative_tokens
+        32, # prefill_seq_len
+        128, # ctx_len
+        1, # prefill_bsz
+        "JackFram/llama-68m", # draft_model_name
+        "JackFram/llama-68m", # target_model_name
+        4, # full_batch_size
+        id="CB llama",
+    ),
+]
+
 
 
 def run_prefill_on_draft_and_target(
     tlm_session: QAICInferenceSession, 
     dlm_session: QAICInferenceSession, 
     prompt: dict, 
-    prompt_len: int, 
+    prefill_seq_len: int, 
     ctx_len: int, 
     prefill_batch_size: int, 
     decode_batch_size: int, 
@@ -28,8 +45,8 @@ def run_prefill_on_draft_and_target(
     dlm_decode_start_input = dict()
     inputs = prompt
     input_len = prompt.input_ids.shape[1]
-    num_chunks = -(input_len // -prompt_len)  # ceil divide without float
-    input_len = num_chunks * prompt_len  # Convert input_len to a multiple of prompt_len
+    num_chunks = -(input_len // -prefill_seq_len)  # ceil divide without float
+    input_len = num_chunks * prefill_seq_len  # Convert input_len to a multiple of prefill_seq_len
     assert input_len <= ctx_len, "input_len should be less than ctx_len"
     # pad the prompt tokens to match the input_len
     inputs = prompt
@@ -49,16 +66,17 @@ def run_prefill_on_draft_and_target(
     # Run chunked prefill
     for i in range(num_chunks):
         chunk_inputs = inputs.copy()
-        chunk_inputs["input_ids"] = inputs["input_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prompt_len]
-        chunk_inputs["position_ids"] = inputs["position_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prompt_len]
+        chunk_inputs["input_ids"] = inputs["input_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len]
+        chunk_inputs["position_ids"] = inputs["position_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len]
 
         chunk_inputs.pop("attention_mask")
         tlm_outputs = tlm_session.run(chunk_inputs)
         dlm_outputs = dlm_session.run(chunk_inputs)
-        cache_index += prompt_len
+        cache_index += prefill_seq_len
 
     tlm_logits = tlm_outputs["logits"]
     dlm_logits = dlm_outputs["logits"]
+    assert (tlm_logits == dlm_logits).sum().all()
 
     if len(tlm_logits.shape) == 2:
         tlm_logits = np.expand_dims(tlm_logits, 1)
@@ -90,20 +108,20 @@ def run_prefill_on_draft_and_target(
     return tlm_decode_start_input, dlm_decode_start_input
 
 
-def get_padded_input_len(input_len: int, prompt_len: int, ctx_len: int):
-    """return padded input length (must be factor of `prompt_len`)
+def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
+    """return padded input length (must be factor of `prefill_seq_len`)
 
     Args:
         input_len (int): prompt length
-        prompt_len (int): prefill sequence length 
+        prefill_seq_len (int): prefill sequence length 
         ctx_len (int): context length
 
     Returns:
         input_len_padded (int): padded input length
     """
-    num_chunks = -(input_len // -prompt_len)  # ceil divide without float
-    input_len_padded = num_chunks * prompt_len  # Convert input_len to a multiple of prompt_len
-    assert input_len_padded <= ctx_len, "input_len rounded to nearest prompt_len multiple should be less than ctx_len"
+    num_chunks = -(input_len // -prefill_seq_len)  # ceil divide without float
+    input_len_padded = num_chunks * prefill_seq_len  # Convert input_len to a multiple of prefill_seq_len
+    assert input_len_padded <= ctx_len, "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
     return input_len_padded
 
 
@@ -126,17 +144,24 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     dlm_decode_inputs["position_ids"] = dlm_decode_inputs["position_ids"][:,1:]
     return bonus_token_inputs, dlm_decode_inputs
 
+@pytest.mark.parametrize(
+    "prompt, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, draft_model_name, target_model_name, full_batch_size",
+    configs,
+)
 def test_spec_decode_inference(
     prompt: List[str],
-    device_group: List[int],
     num_speculative_tokens: int,
-    prompt_len: int,
+    prefill_seq_len: int,
     ctx_len: int,
     prefill_bsz: int,
     draft_model_name: str,
     target_model_name: str,
-    full_batch_size: Optional[int] = None,
+    full_batch_size: Optional[int],
 ):
+    # get device group
+    device_group: List[int] = get_available_device_id()
+    if not device_group:
+        pytest.skip("No available devices to run model on Cloud AI 100")
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(target_model_name)
@@ -145,17 +170,26 @@ def test_spec_decode_inference(
     vocab_size = len(tokenizer)
 
     # export_and_compile tlm and dlm
-    target_model = AutoModelForCausalLM.from_pretrained(target_model_name, continuous_batching=True,is_tlm=True)
-    draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, continuous_batching=True)
+    continuous_batching = full_batch_size is not None
+    target_model = AutoModelForCausalLM.from_pretrained(target_model_name, continuous_batching=continuous_batching, is_tlm=True)
+    draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, continuous_batching=continuous_batching)
 
     num_devices = len(device_group)
-    target_model_qpc_path: str = target_model.compile(num_cores=11,num_devices=num_devices,prefill_seq_len=prompt_len,ctx_len=ctx_len,mxfp6_matmul=True,aic_enable_depth_first=True, full_batch_size=full_batch_size, num_speculative_tokens=num_speculative_tokens)
-
-    draft_model_qpc_path: str = draft_model.compile(is_dlm=False, num_cores=5,prefill_seq_len=prompt_len,ctx_len=ctx_len,mxfp6_matmul=True,aic_enable_depth_first=True, full_batch_size=full_batch_size)
-
+    target_model_qpc_path: str = target_model.compile(num_cores=11,
+                                                      num_devices=num_devices,
+                                                      prefill_seq_len=prefill_seq_len,
+                                                      ctx_len=ctx_len,
+                                                      aic_enable_depth_first=True, 
+                                                      full_batch_size=full_batch_size, 
+                                                      num_speculative_tokens=num_speculative_tokens)
+    draft_model_qpc_path: str = draft_model.compile(num_cores=5,
+                                                    prefill_seq_len=prefill_seq_len,
+                                                    ctx_len=ctx_len,
+                                                    aic_enable_depth_first=True,
+                                                    full_batch_size=full_batch_size)
     # init qaic session
-    target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=[2])
-    draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=[3])
+    target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=device_group)
+    draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=device_group)
 
     # skip inputs/outputs buffers
     target_model_session.skip_buffers(set([x for x in target_model_session.input_names if x.startswith("past_")]))
@@ -176,7 +210,7 @@ def test_spec_decode_inference(
     prompts_tokenized: List[dict] = []
     for p in prompts:
         input_len: int = tokenizer(p, return_tensors="np", padding=True).input_ids.shape[1]
-        input_len_padded: int = get_padded_input_len(input_len, prompt_len, ctx_len)
+        input_len_padded: int = get_padded_input_len(input_len, prefill_seq_len, ctx_len)
         p_tok: dict = tokenizer(p, return_tensors="np", padding="max_length", max_length=input_len_padded)
         prompts_tokenized.append(p_tok)
     # create caches to hold generated ids and input prompt lengths
@@ -210,7 +244,7 @@ def test_spec_decode_inference(
             tlm_session=target_model_session,
             dlm_session=draft_model_session,
             prompt=prompts_tokenized[bi],
-            prompt_len=prompt_len,
+            prefill_seq_len=prefill_seq_len,
             ctx_len=ctx_len,
             prefill_batch_size=prefill_bsz,
             decode_batch_size=decode_batch_size,
@@ -225,6 +259,7 @@ def test_spec_decode_inference(
 
     target_model_session.set_buffers({"logits": precode_logits_ph})
     draft_model_session.set_buffers({"logits": decode_logits_ph})
+    num_tokens_selected_per_validation = []
     dlm_run_bonus_token = False
     while not generation_done:
         # compute the processed context length before each iteration to prepare the position id inputs
@@ -307,6 +342,7 @@ def test_spec_decode_inference(
         num_tokens_selected = np.argmin(matching, axis=1)
         all_accept = matching[np.arange(decode_batch_size), num_tokens_selected]
         num_tokens_selected = np.where(all_accept, matching.shape[1], num_tokens_selected)
+        num_tokens_selected_per_validation.append(num_tokens_selected)
 
         # append selected tokens to the generated_ids
         for bi in range(decode_batch_size):
@@ -331,19 +367,9 @@ def test_spec_decode_inference(
         is_prefill = False
         draft_logits = []
         target_logits = []
+    num_tokens_selected_per_validation = np.concatenate(num_tokens_selected_per_validation).reshape(len(num_tokens_selected_per_validation), decode_batch_size)
+    mean_num_accepted_tokens_per_batch = num_tokens_selected_per_validation.mean(axis=0)
+    print("mean number of accepted tokens per batch = ", mean_num_accepted_tokens_per_batch)
     print("max generation len = ", max_gen_len)
     print("actual generation len = ", [len(gid) for gid in generated_ids])
     print(tokenizer.batch_decode(generated_ids))
-
-
-test_spec_decode_inference(
-    ["My name is", "Hello", "Hi", "My name is"],
-    [0],
-    5,
-    32,
-    128,
-    1,
-    "JackFram/llama-68m",
-    "JackFram/llama-68m",
-    4,
-)
