@@ -167,7 +167,7 @@ class ApiRunner:
         ort_outputs = dict(zip(output_names, outputs_data))
         return ort_outputs
 
-    def run_kv_model_on_ort(self, model_path):
+    def run_kv_model_on_ort(self, model_path, is_tlm=False):
         """
         Function responsible for running ``ONNX`` model on onnxruntime and return the output tokens
 
@@ -197,12 +197,17 @@ class ApiRunner:
 
         generated_ids = []
         inputs = self.input_handler.prepare_ort_inputs()
+        if is_tlm:
+            nltk = np.zeros((1, 1), dtype=np.int64)
+            inputs["num_logits_to_keep"] = nltk
         ort_outputs = self.run_ort_session(inputs, session)
         ort_outputs = self.input_handler.update_ort_outputs(ort_outputs)
 
         for _ in range(1, self.gen_len):
             generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
             inputs = self.input_handler.update_ort_inputs(inputs, ort_outputs)
+            if is_tlm:
+                inputs["num_logits_to_keep"] = nltk
             ort_outputs = self.run_ort_session(inputs, session)
             ort_outputs = self.input_handler.update_ort_outputs(ort_outputs)
 
