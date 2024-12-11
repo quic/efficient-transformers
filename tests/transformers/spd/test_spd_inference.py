@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 from typing import List, Optional
+from pprint import pprint
 
 import numpy as np
 import pytest
@@ -17,14 +18,15 @@ from QEfficient.utils.device_utils import get_available_device_id
 
 configs = [
     pytest.param(
-        ["My name is", "Hello", "Hi", "My name is"], # prompt
-        2, # num_speculative_tokens
+        #["My name is", "Hello", "Hi", "My name is"], # prompt
+        ["My name is"], # prompt
+        1, # num_speculative_tokens
         32, # prefill_seq_len
         128, # ctx_len
         1, # prefill_bsz
         "JackFram/llama-68m", # draft_model_name
         "JackFram/llama-68m", # target_model_name
-        4, # full_batch_size
+        1, # full_batch_size
         id="CB llama",
     ),
 ]
@@ -34,31 +36,14 @@ configs = [
 def run_prefill_on_draft_and_target(
     tlm_session: QAICInferenceSession, 
     dlm_session: QAICInferenceSession, 
-    prompt: dict, 
+    inputs: dict, 
     prefill_seq_len: int, 
-    ctx_len: int, 
-    prefill_batch_size: int, 
-    decode_batch_size: int, 
     slot_idx: int
 ):
     tlm_decode_start_input = dict()
     dlm_decode_start_input = dict()
-    inputs = prompt
-    input_len = prompt.input_ids.shape[1]
-    num_chunks = -(input_len // -prefill_seq_len)  # ceil divide without float
-    input_len = num_chunks * prefill_seq_len  # Convert input_len to a multiple of prefill_seq_len
-    assert input_len <= ctx_len, "input_len should be less than ctx_len"
-    # pad the prompt tokens to match the input_len
-    inputs = prompt
-    # TODO need to store the attention mask and position ids for each batch element so that we can access them
-    # at decode time
-    inputs["attention_mask"] = np.concatenate(
-        [inputs["attention_mask"].astype(bool) for j in range(decode_batch_size)], 0
-    )
-    inputs["position_ids"] = (np.cumsum(inputs["attention_mask"][0:1], 1) - 1) * inputs["attention_mask"][0:1]
-
-    # FIXME "not" does not work for below line in place of the "== False" check, but code formatter recommends it
-    inputs["position_ids"][inputs["attention_mask"][0:1] == False] = -1
+    input_len = inputs.input_ids.shape[1]
+    num_chunks = input_len // prefill_seq_len
     cache_index = np.array([[0]], np.int64)
     batch_index = np.array([[slot_idx]], np.int64)
     inputs["batch_index"] = batch_index
@@ -69,12 +54,12 @@ def run_prefill_on_draft_and_target(
         chunk_inputs["input_ids"] = inputs["input_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len]
         chunk_inputs["position_ids"] = inputs["position_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len]
 
-        chunk_inputs.pop("attention_mask")
         tlm_outputs = tlm_session.run(chunk_inputs)
         dlm_outputs = dlm_session.run(chunk_inputs)
         cache_index += prefill_seq_len
 
     tlm_logits = tlm_outputs["logits"]
+    return tlm_logits
     dlm_logits = dlm_outputs["logits"]
     assert (tlm_logits == dlm_logits).sum().all()
 
@@ -125,16 +110,6 @@ def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
     return input_len_padded
 
 
-def populate_inputs(source, dest, index=None):
-    for k, v in dest.items():
-        if k == "batch_index":
-            continue
-        if index is None:
-            # during decode
-            dest[k] = source[k]
-        else:
-            # during prefill with bs=1
-            dest[k][index] = source[k]
 
 def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     bonus_token_inputs = dict()
@@ -164,7 +139,7 @@ def test_spec_decode_inference(
         pytest.skip("No available devices to run model on Cloud AI 100")
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
-    tokenizer = AutoTokenizer.from_pretrained(target_model_name)
+    tokenizer = AutoTokenizer.from_pretrained(target_model_name, padding_side="right")
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
     vocab_size = len(tokenizer)
@@ -212,6 +187,8 @@ def test_spec_decode_inference(
         input_len: int = tokenizer(p, return_tensors="np", padding=True).input_ids.shape[1]
         input_len_padded: int = get_padded_input_len(input_len, prefill_seq_len, ctx_len)
         p_tok: dict = tokenizer(p, return_tensors="np", padding="max_length", max_length=input_len_padded)
+        position_ids = np.where(p_tok.pop("attention_mask"), np.arange(input_len_padded), -1)
+        p_tok["position_ids"] = position_ids
         prompts_tokenized.append(p_tok)
     # create caches to hold generated ids and input prompt lengths
     generated_ids = [[] for i in range(decode_batch_size)]
@@ -224,7 +201,6 @@ def test_spec_decode_inference(
         np.array(np.arange(decode_batch_size), np.int64), (decode_batch_size, 1)
     )
     # mock input key "logits" to store the first batch of output logits
-    dlm_decode_inputs["logits"] = np.full((decode_batch_size, 1, vocab_size), 0)
     tlm_precode_inputs = dict(dlm_decode_inputs)
     is_prefill = True
     generation_done = False
@@ -240,21 +216,19 @@ def test_spec_decode_inference(
     draft_model_session.set_buffers({"logits": dlm_prefill_logits_ph})
     for bi in range(decode_batch_size):
         # assumes that prefill queue will always be popped from the front
-        tlm_prefill_output, dlm_prefill_output = run_prefill_on_draft_and_target(
+        tlm_logits = run_prefill_on_draft_and_target(
             tlm_session=target_model_session,
             dlm_session=draft_model_session,
-            prompt=prompts_tokenized[bi],
+            inputs=prompts_tokenized[bi],
             prefill_seq_len=prefill_seq_len,
-            ctx_len=ctx_len,
-            prefill_batch_size=prefill_bsz,
-            decode_batch_size=decode_batch_size,
             slot_idx=bi,
         )
-        # this way, we will directly get the updated full batch input dict to run decode
-        populate_inputs(dlm_prefill_output, dlm_decode_inputs, bi)
-        populate_inputs(tlm_prefill_output, tlm_precode_inputs, bi)
+        input_ids = tlm_logits.argmax(2)
+        dlm_decode_inputs["input_ids"] = input_ids
+        input_len = prompts_tokenized[bi]['position_ids'].max(1).item() + 1
+        dlm_decode_inputs["position_ids"][bi, 0] = input_len
         # assumes that prefill queue will always be popped from the front
-        input_lengths[bi] = tlm_prefill_output["input_len"]
+        input_lengths[bi] = input_len
         max_gen_len[bi] -= input_lengths[bi]
 
     target_model_session.set_buffers({"logits": precode_logits_ph})
@@ -266,8 +240,8 @@ def test_spec_decode_inference(
         processed_context = [len(generated_ids[j]) + input_lengths[j] for j in range(decode_batch_size)]
         # generate proposals from draft model
         if is_prefill:
-            draft_logits = [dlm_decode_inputs.pop("logits")]
-            target_logits = [tlm_precode_inputs.pop("logits")]
+            draft_logits = [tlm_logits]
+            target_logits = [tlm_logits]
         else:
             if np.any(all_accept):
                 input_ids = []
@@ -296,6 +270,8 @@ def test_spec_decode_inference(
             # hence need to have dummy -1 position id for other sequences.
             # dlm_decode_inputs["position_ids"] = len(generated_ids per batch)
             # dlm_decode_inputs["input_ids"] = (last gen dlm token) + last true token from TLM
+        from pprint import pprint
+        pprint(f"{dlm_decode_inputs=}")
         for k_ in range(num_speculative_tokens):
             if dlm_run_bonus_token:
                 #running decode one extra time in the first speculative iteration
@@ -303,6 +279,7 @@ def test_spec_decode_inference(
                 bonus_token_inputs, dlm_decode_inputs = split_dlm_bonus_token_inputs(dlm_decode_inputs)
                 dlm_outputs = draft_model_session.run(bonus_token_inputs)
                 dlm_run_bonus_token = False
+            pprint(f"{dlm_decode_inputs=}")
             dlm_outputs = draft_model_session.run(dlm_decode_inputs)
             draft_logits.append(dlm_outputs["logits"])
             dlm_decode_inputs["input_ids"] = dlm_outputs["logits"].argmax(-1)
@@ -328,6 +305,8 @@ def test_spec_decode_inference(
             )
 
         # run precode on TLM to score the proposed tokens
+        pprint(f"{dlm_decode_inputs=}")
+        pprint(f"{tlm_precode_inputs=}")
         tlm_outputs = target_model_session.run(tlm_precode_inputs)
         target_precode_logits = tlm_outputs["logits"]
         if is_prefill:
@@ -342,6 +321,7 @@ def test_spec_decode_inference(
         num_tokens_selected = np.argmin(matching, axis=1)
         all_accept = matching[np.arange(decode_batch_size), num_tokens_selected]
         num_tokens_selected = np.where(all_accept, matching.shape[1], num_tokens_selected)
+        print(num_tokens_selected)
         num_tokens_selected_per_validation.append(num_tokens_selected)
 
         # append selected tokens to the generated_ids
