@@ -11,11 +11,10 @@ import warnings
 import fire
 import numpy as np
 import torch
-import torch.utils.data
-import torch.optim as optim
 import torch.distributed as dist
 import torch.nn as nn
-
+import torch.optim as optim
+import torch.utils.data
 from peft import PeftModel, get_peft_model
 from torch.optim.lr_scheduler import StepLR
 
@@ -30,7 +29,7 @@ from QEfficient.finetune.utils.dataset_utils import (
     get_custom_data_collator,
     get_preprocessed_dataset,
 )
-from QEfficient.finetune.utils.train_utils import print_model_size, train
+from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
 
 try:
     import torch_qaic  # noqa: F401
@@ -49,13 +48,15 @@ def main(**kwargs):
     train_config = TRAIN_CONFIG()
     update_config(train_config, **kwargs)
     device = train_config.device
-    
+
     # dist init
     if train_config.enable_ddp:
         # TODO: may have to init qccl backend, next try run with torchrun command
         torch_device = torch.device(device)
         assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
-        assert torch_device.index is None, f"DDP requires specification of device type only, however provided device index as well: {torch_device}"
+        assert (
+            torch_device.index is None
+        ), f"DDP requires specification of device type only, however provided device index as well: {torch_device}"
         dist.init_process_group(backend=train_config.dist_backend)
         # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
         getattr(torch, torch_device.type).set_device(dist.get_rank())
@@ -88,6 +89,7 @@ def main(**kwargs):
         model.resize_token_embeddings(len(tokenizer))
 
     print_model_size(model, train_config)
+
     # print the datatype of the model parameters
     # print(get_parameter_dtypes(model))
 
@@ -108,15 +110,11 @@ def main(**kwargs):
 
     # Load and preprocess the dataset for training and validation
     dataset_train = get_preprocessed_dataset(
-        dataset_processer,
-        dataset_config,
-        split="train",
+        dataset_processer, dataset_config, split="train", context_length=train_config.context_length
     )
 
     dataset_val = get_preprocessed_dataset(
-        dataset_processer,
-        dataset_config,
-        split="test",
+        dataset_processer, dataset_config, split="test", context_length=train_config.context_length
     )
 
     # TODO: vbaddi, check if its necessary to do this?
@@ -156,7 +154,6 @@ def main(**kwargs):
             pin_memory=True,
             **val_dl_kwargs,
         )
-        print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
         if len(eval_dataloader) == 0:
             raise ValueError(
                 f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"
@@ -164,6 +161,13 @@ def main(**kwargs):
         else:
             print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
 
+    longest_seq_length, longest_seq_ix = get_longest_seq_length(
+        torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset])
+    )
+    print(
+        f"The longest sequence length in the train data is {longest_seq_length}, and the model's context length is"
+        f" {model.config.max_position_embeddings}"
+    )
     model.to(train_config.device)
     optimizer = optim.AdamW(
         model.parameters(),
@@ -171,11 +175,10 @@ def main(**kwargs):
         weight_decay=train_config.weight_decay,
     )
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
-    
+
     # wrap model with DDP
     if train_config.enable_ddp:
         model = nn.parallel.DistributedDataParallel(model, device_ids=[dist.get_rank()])
-
 
     _ = train(
         model,
@@ -190,11 +193,10 @@ def main(**kwargs):
         dist.get_rank() if train_config.enable_ddp else None,
         None,
     )
-    
+
     # finalize torch distributed
     if train_config.enable_ddp:
         dist.destroy_process_group()
-
 
 
 if __name__ == "__main__":

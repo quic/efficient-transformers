@@ -12,7 +12,6 @@ import fire
 import numpy as np
 import torch
 from configs.training import train_config as TRAIN_CONFIG
-from data.concatenator import ConcatDataset
 from peft import AutoPeftModelForCausalLM
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from utils.config_utils import (
@@ -88,16 +87,15 @@ def main(**kwargs):
 
     # Load and preprocess the dataset for training and validation
     dataset_val = get_preprocessed_dataset(
-        dataset_processer,
-        dataset_config,
-        split="test",
+        dataset_processer, dataset_config, split="test", context_length=train_config.context_length
     )
 
     eval_dataloader = None
     custom_data_collator = get_custom_data_collator(dataset_processer, dataset_config)
     if train_config.run_validation:
-        if train_config.batching_strategy == "packing":
-            dataset_val = ConcatDataset(dataset_val, chunk_size=train_config.context_length)
+        # TODO: vbaddi enable packing later in entire infra.
+        # if train_config.batching_strategy == "packing":
+        #    dataset_val = ConcatDataset(dataset_val, chunk_size=train_config.context_length)
 
         val_dl_kwargs = get_dataloader_kwargs(train_config, dataset_val, dataset_processer, "val")
         if custom_data_collator:

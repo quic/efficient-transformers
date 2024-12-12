@@ -4,8 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-
-import torch
 from dataclasses import dataclass
 
 
@@ -27,7 +25,7 @@ class train_config:
     gamma: float = 0.85  # multiplicatively decay the learning rate by gamma after each epoch
     seed: int = 42
     use_fp16: bool = True
-    use_autocast: bool = False
+    use_autocast: bool = True
     val_batch_size: int = 1
     dataset = "samsum_dataset"
     peft_method: str = "lora"
