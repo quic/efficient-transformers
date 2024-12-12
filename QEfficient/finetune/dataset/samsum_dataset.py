@@ -24,7 +24,7 @@ def load_samsum(split, _):
     return ds
 
 
-def get_preprocessed_samsum(dataset_config, tokenizer, split):
+def get_preprocessed_samsum(dataset_config, tokenizer, split, context_length=None):
     dataset = load_samsum(split)
 
     prompt = "Summarize this dialog:\n{dialog}\n---\nSummary:\n"
@@ -38,8 +38,18 @@ def get_preprocessed_samsum(dataset_config, tokenizer, split):
     dataset = dataset.map(apply_prompt_template, remove_columns=list(dataset.features))
 
     def tokenize_add_label(sample):
-        prompt = tokenizer.encode(tokenizer.bos_token + sample["prompt"], add_special_tokens=False)
-        summary = tokenizer.encode(sample["summary"] + tokenizer.eos_token, add_special_tokens=False)
+        prompt = tokenizer.encode(
+            tokenizer.bos_token + sample["prompt"],
+            add_special_tokens=False,
+            max_length=context_length,
+            pad_to_max_length=True,
+        )
+        summary = tokenizer.encode(
+            sample["summary"] + tokenizer.eos_token,
+            add_special_tokens=False,
+            max_length=context_length,
+            pad_to_max_length=True,
+        )
 
         sample = {
             "input_ids": prompt + summary,
