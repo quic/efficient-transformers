@@ -102,7 +102,7 @@ def main(
         batch_size=batch_size,
         mos=mos,
         mxint8_kv_cache=mxint8,
-        num_devices = (0 if device_group is None else len(device_group)),
+        num_devices=(0 if device_group is None else len(device_group)),
         full_batch_size=full_batch_size,
         allow_mxint8_mdp_io=allow_mxint8_mdp_io,
         enable_qnn=enable_qnn,
