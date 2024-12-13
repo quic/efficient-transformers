@@ -7,13 +7,11 @@
 
 import argparse
 import logging
-import os
+import sys
 from typing import List, Optional
 
-import QEfficient
-from QEfficient.cloud.export import get_onnx_model_path
-from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
+from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
 
@@ -36,6 +34,7 @@ def main(
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
     allow_mxint8_mdp_io: bool = False,
+    **kwargs,
 ) -> None:
     """
     1. Check if compiled qpc for given config already exists, if it does jump to execute, else
@@ -75,51 +74,41 @@ def main(
         hf_token=hf_token,
     )
 
-    qpc_dir_path = get_qpc_dir_path(
-        model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
+    if '--mxfp6' in sys.argv:
+        if args.mxfp6:
+            logger.warning("mxfp6 is going to be deprecated in a future release, use -mxfp6_matmul instead.")
+    if '--mxint8' in sys.argv:
+        if args.mxint8:
+            logger.warning("mxint8 is going to be deprecated in a future release, use -mxint8_kv_cache instead.")
+
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name)
+
+    #########
+    # Compile
+    #########
+    _ = qeff_model.compile(
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
+        num_cores=num_cores,
+        mxfp6_matmul=mxfp6,
+        aic_enable_depth_first=aic_enable_depth_first,
+        batch_size=batch_size,
+        mos=mos,
+        mxint8_kv_cache=mxint8,
+        num_devices=len(device_group),
+        full_batch_size=full_batch_size,
+        allow_mxint8_mdp_io=allow_mxint8_mdp_io,
+        **kwargs,
     )
-
-    # Handle qpc generation
-    if qpc_exists(qpc_dir_path):
-        logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
-    else:
-        # Handle onnx model generation
-        onnx_model_path = get_onnx_model_path(
-            model_name, cache_dir, tokenizer, hf_token, local_model_dir, full_batch_size
-        )  # , base_dir_name)
-
-        #########
-        # Compile
-        #########
-        _ = QEfficient.compile(
-            onnx_path=onnx_model_path,
-            qpc_path=os.path.dirname(
-                qpc_dir_path
-            ),  # We need to pass parent directory of qpc_dir_path, as the compile function handles the qpcs directory creation
-            num_cores=num_cores,
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            mxfp6=mxfp6,
-            mxint8=mxint8,
-            aic_enable_depth_first=aic_enable_depth_first,
-            mos=mos,
-            device_group=device_group,
-            full_batch_size=full_batch_size,
-            allow_mxint8_mdp_io=allow_mxint8_mdp_io,
-        )
 
     #########
     # Execute
     #########
-    cloud_ai_100_exec_kv(
-        tokenizer=tokenizer,
-        qpc_path=qpc_dir_path,
-        device_id=device_group,
-        prompt=prompt,
-        prompts_txt_file_path=prompts_txt_file_path,
-        generation_len=generation_len,
-    )
+    _ = qeff_model.generate(tokenizer,
+                            prompts=prompt,
+                            device_id=device_group,
+                            prompts_txt_file_path=prompts_txt_file_path,
+                            generation_len=generation_len,)
 
 
 if __name__ == "__main__":
@@ -146,10 +135,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("--ctx-len", "--ctx_len", default=128, type=int, help="Context length for text generation.")
     parser.add_argument(
-        "--mxfp6", action="store_true", help="Compress constant MatMul weights to MXFP6 E2M3, default is no compression"
+        "--mxfp6",
+        "--mxfp6_matmul",
+        "--mxfp6-matmul",
+        action="store_true",
+        help="Compress constant MatMul weights to MXFP6 E2M3, default is no compression"
     )
     parser.add_argument(
         "--mxint8",
+        "--mxint8_kv_cache",
+        "--mxint8-kv-cache",
         action="store_true",
         help="Compress Present/Past KV to MXINT8 using CustomIO config, default is False",
     )
@@ -207,8 +202,16 @@ if __name__ == "__main__":
         help="If passed, this option allows MXINT8 compression of MDP IO traffic",
     )
 
-    args = parser.parse_args()
+    args, compiler_options = parser.parse_known_args()
+    compiler_options_dict = {}
+    for i in range(0, len(compiler_options)):
+        if (compiler_options[i].startswith('--')):
+            key = compiler_options[i].lstrip('-')
+            value = compiler_options[i+1] if i+1 < len(compiler_options) and not compiler_options[i+1].startswith('-') else True
+            compiler_options_dict[key] = value
+
     if args.verbose:
         logger.setLevel(logging.INFO)
     del args.verbose  # type: ignore
-    main(**args.__dict__)
+
+    main(**args.__dict__, **compiler_options_dict)
