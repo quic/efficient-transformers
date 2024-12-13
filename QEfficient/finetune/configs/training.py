@@ -13,12 +13,12 @@ class train_config:
     tokenizer_name: str = "meta-llama/Llama-3.2-1B"
     run_validation: bool = True
     batch_size_training: int = 1
-    context_length: int = 512
+    context_length: int = None
     gradient_accumulation_steps: int = 4
     num_epochs: int = 1
     max_train_step: int = 0
     max_eval_step: int = 0
-    device: str = "qaic:0"
+    device: str = "qaic"
     num_workers_dataloader: int = 1
     lr: float = 3e-4
     weight_decay: float = 0.0
