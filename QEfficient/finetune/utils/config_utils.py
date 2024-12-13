@@ -8,9 +8,8 @@
 import inspect
 from dataclasses import asdict
 
-import torch.utils.data as data_utils
 import torch.distributed as dist
-
+import torch.utils.data as data_utils
 from peft import (
     AdaptionPromptConfig,
     LoraConfig,
@@ -98,5 +97,7 @@ def get_dataloader_kwargs(train_config: train_config, dataset, dataset_processer
     kwargs["collate_fn"] = default_data_collator
     # use a distributed sampler to split data between devices
     if train_config.enable_ddp:
-        kwargs["sampler"] = data_utils.DistributedSampler(dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=False)
+        kwargs["sampler"] = data_utils.DistributedSampler(
+            dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=False
+        )
     return kwargs
