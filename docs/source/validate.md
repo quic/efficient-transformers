@@ -29,6 +29,7 @@
 | [Llama-3.1-70B](https://huggingface.co/meta-llama/Llama-3.1-70B) |✔️ |
 | [Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) |✔️ |
 | [Llama-3.2-3B](https://huggingface.co/meta-llama/Llama-3.2-3B) |✔️ |
+| [Llama-3.3-70B-Instruct](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct) |✔️ |
 | [MPT-7b](https://huggingface.co/mosaicml/mpt-7b) |✔️ |
 | [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1) |✔️ |
 | [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) |✔️ |

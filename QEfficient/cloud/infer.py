@@ -35,6 +35,7 @@ def main(
     local_model_dir: Optional[str] = None,
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
+    allow_mxint8_mdp_io: bool = False,
 ) -> None:
     """
     1. Check if compiled qpc for given config already exists, if it does jump to execute, else
@@ -60,6 +61,7 @@ def main(
         :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
         :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to None.``
         :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
+        :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
 
     .. code-block:: bash
 
@@ -104,6 +106,7 @@ def main(
             mos=mos,
             device_group=device_group,
             full_batch_size=full_batch_size,
+            allow_mxint8_mdp_io=allow_mxint8_mdp_io,
         )
 
     #########
@@ -196,6 +199,12 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="Set full batch size to enable continuous batching mode, default is None",
+    )
+    parser.add_argument(
+        "--allow-mxint8-mdp-io",
+        "--allow_mxint8_mdp_io",
+        action="store_true",
+        help="If passed, this option allows MXINT8 compression of MDP IO traffic",
     )
 
     args = parser.parse_args()

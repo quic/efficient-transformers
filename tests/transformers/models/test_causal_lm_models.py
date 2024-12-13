@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+from typing import Optional
+
 import numpy as np
 import pytest
 from transformers import AutoModelForCausalLM
@@ -38,6 +40,10 @@ test_models = [
     "ibm-granite/granite-20b-code-base",
 ]
 
+spd_test_models = [
+    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+]
+
 
 def load_causal_lm_model(model_config):
     """
@@ -69,6 +75,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     prompt_len: int = Constants.PROMPT_LEN,
     ctx_len: int = Constants.CTX_LEN,
     n_layer: int = 1,
+    num_speculative_tokens: Optional[int] = None,
 ):
     """
     Validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
@@ -98,7 +105,8 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
-    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    is_tlm = False if num_speculative_tokens is None else True
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, is_tlm=is_tlm)
 
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
@@ -107,7 +115,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
     onnx_model_path = qeff_model.export()
-    ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path)
+    ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
 
     assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
 
@@ -120,6 +128,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         num_cores=14,
         mxfp6=False,
         aic_enable_depth_first=False,
+        num_speculative_tokens=num_speculative_tokens,
     )
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
@@ -145,7 +154,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
     pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
 
-    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=True)
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=True, is_tlm=is_tlm)
     onnx_model_path = qeff_model.export()
 
     if not get_available_device_id():
@@ -158,6 +167,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         mxfp6=False,
         aic_enable_depth_first=False,
         full_batch_size=full_batch_size,
+        num_speculative_tokens=num_speculative_tokens,
     )
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
@@ -213,6 +223,24 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         n_layer = 1
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
+
+
+@pytest.mark.on_qaic
+@pytest.mark.parametrize("model_name", spd_test_models)
+def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    if model_name == "microsoft/Phi-3-mini-4k-instruct":
+        n_layer = 2  # test only 2 layer models
+    else:
+        n_layer = 1
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, n_layer=n_layer, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS
+    )
 
 
 @pytest.mark.on_qaic
