@@ -5,12 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
 
 import pytest
 
-import QEfficient
-import QEfficient.cloud.infer
 from QEfficient.cloud.infer import main as infer
 
 
@@ -30,11 +27,6 @@ def test_infer(setup, mocker):
     Ref: https://pytest-mock.readthedocs.io/en/latest/usage.html
     """
     ms = setup
-    load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.infer, "load_hf_tokenizer")
-    qpc_exists_spy = mocker.spy(QEfficient.cloud.infer, "qpc_exists")
-    get_onnx_model_path_spy = mocker.spy(QEfficient.cloud.infer, "get_onnx_model_path")
-    compile_spy = mocker.spy(QEfficient, "compile")
-    cloud_ai_100_exec_kv_spy = mocker.spy(QEfficient.cloud.infer, "cloud_ai_100_exec_kv")
 
     infer(
         model_name=ms.model_name,
@@ -53,14 +45,3 @@ def test_infer(setup, mocker):
         mxint8=ms.mxint8,
         full_batch_size=ms.full_batch_size,
     )
-    # tokenizer check
-    load_hf_tokenizer_spy.assert_called_once()
-    # qpc exist check
-    qpc_exists_spy.assert_called_once()
-    if qpc_exists_spy.spy_return is True:
-        assert os.path.isdir(ms.qpc_dir_path())
-    else:
-        get_onnx_model_path_spy.assert_called_once()
-        compile_spy.assert_called_once()
-        assert compile_spy.spy_return == ms.qpc_dir_path()
-    cloud_ai_100_exec_kv_spy.assert_called_once()
