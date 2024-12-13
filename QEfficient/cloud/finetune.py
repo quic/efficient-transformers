@@ -165,8 +165,9 @@ def main(**kwargs):
         torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset])
     )
     print(
-        f"The longest sequence length in the train data is {longest_seq_length}, and the model's context length is"
-        f" {model.config.max_position_embeddings}"
+        f"The longest sequence length in the train data is {longest_seq_length},"
+        f"passed context length is {train_config.context_length} and overall model's context length is"
+        f"{model.config.max_position_embeddings}"
     )
     model.to(train_config.device)
     optimizer = optim.AdamW(
