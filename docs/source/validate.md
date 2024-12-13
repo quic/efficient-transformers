@@ -41,7 +41,7 @@
 | [Vicuna-v1.3](https://huggingface.co/lmsys/vicuna-13b-v1.3) |✔️ |
 | [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5) |✔️ |
 
-(coming_soon_models)=
+(models_coming_soon)=
 # Models Coming Soon
 
 * [Baichuan2-7B-Base](https://huggingface.co/baichuan-inc/Baichuan2-7B-Base)

@@ -22,13 +22,12 @@ For other models, there is comprehensive documentation to inspire upon the chang
 
 ***Latest news*** : <br>
 
-
+- [coming soon] Support for more popular [models](models_coming_soon)<br>
 - [11/2024] [finite adapters support](https://github.com/quic/efficient-transformers/pull/153) allows mixed adapter usage for peft models.
 - [11/2024] [Speculative decoding TLM](https://github.com/quic/efficient-transformers/pull/119) QEFFAutoModelForCausalLM model can be compiled for returning more than 1 logits during decode for TLM.
 - [11/2024] Added support for [Meta-Llama-3.3-70B-Instruct](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct), [Meta-Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) and [Meta-Llama-3.2-3B](https://huggingface.co/meta-llama/Llama-3.2-3B)
-- [09/2024] [AWQ](https://arxiv.org/abs/2306.00978)/[GPTQ](https://arxiv.org/abs/2210.17323) 4-bit quantized models are supported <br>
+- [09/2024] [AWQ](https://arxiv.org/abs/2306.00978)/[GPTQ](https://arxiv.org/abs/2210.17323) 4-bit quantized models are supported
 - [09/2024] Now we support [PEFT](https://huggingface.co/docs/peft/index) models
-
 <details>
 <summary>More</summary>
 
