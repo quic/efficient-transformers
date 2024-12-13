@@ -55,42 +55,11 @@ def run_prefill_on_draft_and_target(
         chunk_inputs["position_ids"] = inputs["position_ids"][:, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len]
 
         tlm_outputs = tlm_session.run(chunk_inputs)
-        dlm_outputs = dlm_session.run(chunk_inputs)
+        _ = dlm_session.run(chunk_inputs)
         cache_index += prefill_seq_len
 
     tlm_logits = tlm_outputs["logits"]
     return tlm_logits
-    dlm_logits = dlm_outputs["logits"]
-    assert (tlm_logits == dlm_logits).sum().all()
-
-    if len(tlm_logits.shape) == 2:
-        tlm_logits = np.expand_dims(tlm_logits, 1)
-    if len(dlm_logits.shape) == 2:
-        dlm_logits = np.expand_dims(dlm_logits, 1)
-
-    tlm_decode_start_pos_id = inputs["attention_mask"][0:1].sum(1, keepdims=True)
-    tlm_decode_start_input_id = tlm_logits.argmax(2)
-    dlm_decode_start_input_id = dlm_logits.argmax(2)
-    dlm_decode_start_pos_id = inputs["attention_mask"][0:1].sum(1, keepdims=True)
-
-    inputs.pop("attention_mask")
-
-    tlm_decode_start_input = {
-        "logits": tlm_logits,
-        "input_ids": tlm_decode_start_input_id,
-        "position_ids": tlm_decode_start_pos_id,
-        "batch_index": batch_index,
-        "input_len": tlm_decode_start_pos_id[0, 0],
-    }
-    dlm_decode_start_input = {
-        "logits": dlm_logits,
-        "input_ids": dlm_decode_start_input_id,
-        "position_ids": dlm_decode_start_pos_id,
-        "batch_index": batch_index,
-        "input_len": tlm_decode_start_pos_id[0, 0],
-    }
-
-    return tlm_decode_start_input, dlm_decode_start_input
 
 
 def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
@@ -113,10 +82,12 @@ def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
 
 def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     bonus_token_inputs = dict()
-    bonus_token_inputs["input_ids"] = dlm_decode_inputs["input_ids"][:,0:1]
-    bonus_token_inputs["position_ids"] = dlm_decode_inputs["input_ids"][:,0:1]
-    dlm_decode_inputs["input_ids"] = dlm_decode_inputs["input_ids"][:,1:]
-    dlm_decode_inputs["position_ids"] = dlm_decode_inputs["position_ids"][:,1:]
+    bonus, regular = np.hsplit(dlm_decode_inputs["input_ids"], 2)
+    bonus_token_inputs["input_ids"] = bonus
+    dlm_decode_inputs["input_ids"] = regular
+    bonus, regular = np.hsplit(dlm_decode_inputs["position_ids"], 2)
+    bonus_token_inputs["position_ids"] = bonus
+    dlm_decode_inputs["position_ids"] = regular
     return bonus_token_inputs, dlm_decode_inputs
 
 @pytest.mark.parametrize(
@@ -134,7 +105,8 @@ def test_spec_decode_inference(
     full_batch_size: Optional[int],
 ):
     # get device group
-    device_group: List[int] = get_available_device_id()
+    #device_group: List[int] = get_available_device_id()
+    device_group: List[int] = [1]
     if not device_group:
         pytest.skip("No available devices to run model on Cloud AI 100")
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
@@ -201,11 +173,15 @@ def test_spec_decode_inference(
         np.array(np.arange(decode_batch_size), np.int64), (decode_batch_size, 1)
     )
     # mock input key "logits" to store the first batch of output logits
-    tlm_precode_inputs = dict(dlm_decode_inputs)
-    is_prefill = True
+    tlm_precode_inputs = dict(
+        input_ids = np.zeros((decode_batch_size, num_speculative_tokens+1), dtype=np.int64),
+        position_ids = np.zeros((decode_batch_size, num_speculative_tokens+1), dtype=np.int64),
+        batch_index = np.arange(decode_batch_size, dtype=np.int64).reshape(-1, 1)
+    )
     generation_done = False
     max_gen_len = [ctx_len] * decode_batch_size
     num_logits_to_keep = num_speculative_tokens+1
+    # setup buffers
     all_accept = np.full((decode_batch_size, num_speculative_tokens), False, dtype=bool)
     tlm_prefill_logits_ph = np.zeros((prefill_bsz, 1, vocab_size), dtype=np.float32)
     dlm_prefill_logits_ph = np.zeros((prefill_bsz, 1, vocab_size), dtype=np.float32)
@@ -223,130 +199,96 @@ def test_spec_decode_inference(
             prefill_seq_len=prefill_seq_len,
             slot_idx=bi,
         )
-        input_ids = tlm_logits.argmax(2)
+        input_ids = tlm_logits.argmax(2).astype(np.int64)
         dlm_decode_inputs["input_ids"] = input_ids
+        tlm_precode_inputs["input_ids"][bi, 0] = input_ids.item()
         input_len = prompts_tokenized[bi]['position_ids'].max(1).item() + 1
         dlm_decode_inputs["position_ids"][bi, 0] = input_len
+        tlm_precode_inputs["position_ids"][bi] = np.arange(input_len, input_len+num_speculative_tokens+1, dtype=np.int64)
         # assumes that prefill queue will always be popped from the front
         input_lengths[bi] = input_len
         max_gen_len[bi] -= input_lengths[bi]
 
+    # set decode logits buffers
     target_model_session.set_buffers({"logits": precode_logits_ph})
     draft_model_session.set_buffers({"logits": decode_logits_ph})
+    # start decode phase
+    valid_batch_indices = list(range(decode_batch_size))[::-1]
     num_tokens_selected_per_validation = []
-    dlm_run_bonus_token = False
-    while not generation_done:
-        # compute the processed context length before each iteration to prepare the position id inputs
-        processed_context = [len(generated_ids[j]) + input_lengths[j] for j in range(decode_batch_size)]
+    all_accept = False
+    it = 0
+    break_idx = 1000
+    while True:
+        print('-'*60)
+        print(f"{it=}")
         # generate proposals from draft model
-        if is_prefill:
-            draft_logits = [tlm_logits]
-            target_logits = [tlm_logits]
-        else:
-            if np.any(all_accept):
-                input_ids = []
-                position_ids = []
-                dlm_run_bonus_token = True
-                for bi in range(decode_batch_size):
-                    if all_accept[bi]:
-                        # both last DLM token and bonus TLM token to be passed as input to DLM
-                        input_ids.append([generated_ids[bi][-2], generated_ids[bi][-1]])
-                        position_ids.append([processed_context[bi] - 2, processed_context[bi] - 1])
-                    else:
-                        # only the correct token from TLM from previous iteration and the pad_token as a dummy
-                        input_ids.append([generated_ids[bi][-1], tokenizer.pad_token_id])
-                        position_ids.append([processed_context[bi] - 1, -1])
-                dlm_decode_inputs["input_ids"] = np.array(input_ids)
-                dlm_decode_inputs["position_ids"] = np.array(position_ids)
-            else:
-                dlm_decode_inputs["input_ids"] = np.array([gid[-1] for gid in generated_ids], dtype=np.int64).reshape(
-                    (decode_batch_size, 1)
-                )
-                dlm_decode_inputs["position_ids"] = np.array(
-                    [(pc - 1) for pc in processed_context], dtype=np.int64
-                ).reshape((decode_batch_size, 1))
-            # prepare the inputs for the dlm speculation
-            # TODO in case of even one of the batch having all_accept, we have to use the seqlen=2 specialization
-            # hence need to have dummy -1 position id for other sequences.
-            # dlm_decode_inputs["position_ids"] = len(generated_ids per batch)
-            # dlm_decode_inputs["input_ids"] = (last gen dlm token) + last true token from TLM
-        from pprint import pprint
-        pprint(f"{dlm_decode_inputs=}")
         for k_ in range(num_speculative_tokens):
-            if dlm_run_bonus_token:
+            if all_accept:
                 #running decode one extra time in the first speculative iteration
                 # workaround to avoid the incorrect precode with 3-specialized multi-batch DLM
                 bonus_token_inputs, dlm_decode_inputs = split_dlm_bonus_token_inputs(dlm_decode_inputs)
-                dlm_outputs = draft_model_session.run(bonus_token_inputs)
-                dlm_run_bonus_token = False
-            pprint(f"{dlm_decode_inputs=}")
+                pprint(f"{bonus_token_inputs=}")
+                _ = draft_model_session.run(bonus_token_inputs)
             dlm_outputs = draft_model_session.run(dlm_decode_inputs)
-            draft_logits.append(dlm_outputs["logits"])
-            dlm_decode_inputs["input_ids"] = dlm_outputs["logits"].argmax(-1)
-            dlm_decode_inputs["position_ids"] = dlm_decode_inputs["position_ids"][:, -1:] + 1
-
-        draft_logits = np.array(draft_logits).squeeze(2).transpose((1, 0, 2))
-        # greedy sampling from draft model
-        draft_tokens = draft_logits.argmax(-1)
-
-        # construct precode inputs
-        tlm_precode_inputs["input_ids"] = draft_tokens
-        if not is_prefill:
-            last_genid = np.array([gid[-1] for gid in generated_ids], dtype=np.int64).reshape(decode_batch_size, 1)
-            tlm_precode_inputs["input_ids"] = np.concatenate((last_genid, tlm_precode_inputs["input_ids"]), axis=1)
-            # in case of general precode, first token in input sequence is = last generated TLM token (kv cache backfill)
-            tlm_precode_inputs["position_ids"] = np.array(
-                [np.arange(start=pc - 1, stop=pc + num_speculative_tokens) for pc in processed_context], dtype=np.int64
-            )
-        else:
-            # in case of just first precode, we are feeding in all new positions
-            tlm_precode_inputs["position_ids"] = np.array(
-                [np.arange(start=pc, stop=pc + num_speculative_tokens + 1) for pc in processed_context], dtype=np.int64
-            )
-
+            pprint(f"{dlm_decode_inputs=}")
+            pprint(f"{tlm_precode_inputs=}")
+            input_ids = dlm_outputs["logits"].argmax(2)
+            tlm_precode_inputs["input_ids"][:, k_+1] = input_ids.flatten()
+            dlm_decode_inputs["input_ids"] = input_ids
+            dlm_decode_inputs["position_ids"][valid_batch_indices] += 1
         # run precode on TLM to score the proposed tokens
         pprint(f"{dlm_decode_inputs=}")
         pprint(f"{tlm_precode_inputs=}")
+        if it == break_idx: breakpoint()
         tlm_outputs = target_model_session.run(tlm_precode_inputs)
-        target_precode_logits = tlm_outputs["logits"]
-        if is_prefill:
-            target_logits = np.concatenate((target_logits[0], target_precode_logits), axis=1)
-            # stack the prefill output logit and precode logits into a single tensor
-        else:
-            target_logits = target_precode_logits
+        target_logits = tlm_outputs["logits"][valid_batch_indices]
         # greedy sampling from target model
-        target_tokens = target_logits.argmax(-1)
+        target_tokens = target_logits.argmax(-1) # shape: [len(valid_batch_indices), num_speculative_tokens+1]
         # exact matching between draft and target tokens
+        draft_tokens = tlm_precode_inputs["input_ids"][valid_batch_indices,1:] # shape: [len(valid_batch_indices), num_speculative_tokens]
         matching = draft_tokens == target_tokens[:, :-1]
-        num_tokens_selected = np.argmin(matching, axis=1)
-        all_accept = matching[np.arange(decode_batch_size), num_tokens_selected]
-        num_tokens_selected = np.where(all_accept, matching.shape[1], num_tokens_selected)
-        print(num_tokens_selected)
+        num_tokens_selected = matching.cumprod(axis=1).sum(axis=1) # shape: [len(valid_batch_indices)]
+        all_accept = (num_tokens_selected == num_speculative_tokens).all()
         num_tokens_selected_per_validation.append(num_tokens_selected)
+        print(f"{target_tokens=}")
+        print(f"{num_tokens_selected=}")
+        print(f"{all_accept=}")
+        if it == break_idx: breakpoint()
+        if num_tokens_selected.item() == 0: breakpoint()
 
         # append selected tokens to the generated_ids
-        for bi in range(decode_batch_size):
+        for bi in valid_batch_indices:
+            accepted_tokens = num_tokens_selected[bi]
+            if all_accept:
+                accepted_tokens += 1
+            num_tokens_to_append = min(accepted_tokens, max_gen_len[bi] - len(generated_ids[bi]))
+            generated_ids[bi].extend(target_tokens[bi, :num_tokens_to_append].tolist())
             if len(generated_ids[bi]) >= max_gen_len[bi]:
+                del valid_batch_indices[bi]
                 continue
-            num_tokens_to_append = min(num_tokens_selected[bi], max_gen_len[bi] - len(generated_ids[bi]))
-            generated_ids[bi] += list(draft_tokens[bi, :num_tokens_to_append])
-        # append bonus/corrected token where applicable
-        for bi in range(decode_batch_size):
-            if len(generated_ids[bi]) >= max_gen_len[bi]:
-                continue
-            if all_accept[bi]:
-                # bonus token
-                generated_ids[bi].append(target_tokens[bi, -1])
-            else:
-                # correct token
-                generated_ids[bi].append(target_tokens[bi, num_tokens_selected[bi]])
-        generation_done = True
-        for bi in range(decode_batch_size):
-            if len(generated_ids[bi]) < max_gen_len[bi]:
-                generation_done = False
-        is_prefill = False
-        draft_logits = []
-        target_logits = []
+        # check if all generations are done
+        if not valid_batch_indices: break
+        # prepare decode inputs for next decode iteration
+        common_input_ids = target_tokens[:, num_tokens_selected[valid_batch_indices]].reshape(len(valid_batch_indices), 1)
+        common_position_ids = tlm_precode_inputs["position_ids"][valid_batch_indices, num_tokens_selected[valid_batch_indices]].reshape(len(valid_batch_indices), 1)+1
+        if all_accept:
+            # all_accept input_ids
+            input_ids = np.zeros((decode_batch_size, 2), dtype=np.int64)
+            input_ids[valid_batch_indices] = np.concatenate([target_tokens[:, num_tokens_selected-1].reshape(-1,1), common_input_ids], axis=1)
+            dlm_decode_inputs["input_ids"] = input_ids
+            # all_accept position_ids
+            position_ids = np.zeros((decode_batch_size, 2), dtype=np.int64)
+            position_ids[valid_batch_indices] = np.concatenate([tlm_precode_inputs["position_ids"][valid_batch_indices, num_tokens_selected-1].reshape(-1,1)+1, common_position_ids], axis=1)
+            dlm_decode_inputs["position_ids"] = position_ids
+        else:
+            dlm_decode_inputs["input_ids"][valid_batch_indices] = common_input_ids
+            dlm_decode_inputs["position_ids"][valid_batch_indices] = common_position_ids
+        tlm_precode_inputs["input_ids"][valid_batch_indices,0] = common_input_ids
+        tlm_precode_inputs["position_ids"][valid_batch_indices] += num_tokens_selected.reshape(len(valid_batch_indices),1)+1
+        pprint(dlm_decode_inputs)
+        pprint(tlm_precode_inputs)
+        if it == break_idx: breakpoint()
+        it += 1
     num_tokens_selected_per_validation = np.concatenate(num_tokens_selected_per_validation).reshape(len(num_tokens_selected_per_validation), decode_batch_size)
     mean_num_accepted_tokens_per_batch = num_tokens_selected_per_validation.mean(axis=0)
     print("mean number of accepted tokens per batch = ", mean_num_accepted_tokens_per_batch)
