@@ -16,17 +16,18 @@ from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.device_utils import get_available_device_id
 
+fbs = 2
 configs = [
     pytest.param(
         #["My name is", "Hello", "Hi", "My name is"], # prompt
-        ["My name is"], # prompt
+        ["My name is"]*fbs, # prompt
         1, # num_speculative_tokens
         32, # prefill_seq_len
         128, # ctx_len
         1, # prefill_bsz
         "JackFram/llama-68m", # draft_model_name
         "JackFram/llama-68m", # target_model_name
-        1, # full_batch_size
+        fbs, # full_batch_size
         id="CB llama",
     ),
 ]
@@ -40,8 +41,6 @@ def run_prefill_on_draft_and_target(
     prefill_seq_len: int, 
     slot_idx: int
 ):
-    tlm_decode_start_input = dict()
-    dlm_decode_start_input = dict()
     input_len = inputs.input_ids.shape[1]
     num_chunks = input_len // prefill_seq_len
     cache_index = np.array([[0]], np.int64)
@@ -88,6 +87,7 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     bonus, regular = np.hsplit(dlm_decode_inputs["position_ids"], 2)
     bonus_token_inputs["position_ids"] = bonus
     dlm_decode_inputs["position_ids"] = regular
+    bonus_token_inputs["batch_index"] = dlm_decode_inputs["batch_index"]
     return bonus_token_inputs, dlm_decode_inputs
 
 @pytest.mark.parametrize(
@@ -178,7 +178,6 @@ def test_spec_decode_inference(
         position_ids = np.zeros((decode_batch_size, num_speculative_tokens+1), dtype=np.int64),
         batch_index = np.arange(decode_batch_size, dtype=np.int64).reshape(-1, 1)
     )
-    generation_done = False
     max_gen_len = [ctx_len] * decode_batch_size
     num_logits_to_keep = num_speculative_tokens+1
     # setup buffers
@@ -200,7 +199,7 @@ def test_spec_decode_inference(
             slot_idx=bi,
         )
         input_ids = tlm_logits.argmax(2).astype(np.int64)
-        dlm_decode_inputs["input_ids"] = input_ids
+        dlm_decode_inputs["input_ids"][bi, 0] = input_ids
         tlm_precode_inputs["input_ids"][bi, 0] = input_ids.item()
         input_len = prompts_tokenized[bi]['position_ids'].max(1).item() + 1
         dlm_decode_inputs["position_ids"][bi, 0] = input_len
@@ -217,10 +216,12 @@ def test_spec_decode_inference(
     num_tokens_selected_per_validation = []
     all_accept = False
     it = 0
-    break_idx = 1000
+    #break_idx = 61 
+    break_idx = 10000
     while True:
         print('-'*60)
         print(f"{it=}")
+        print(f"{valid_batch_indices=}")
         # generate proposals from draft model
         for k_ in range(num_speculative_tokens):
             if all_accept:
@@ -254,9 +255,10 @@ def test_spec_decode_inference(
         print(f"{num_tokens_selected=}")
         print(f"{all_accept=}")
         if it == break_idx: breakpoint()
-        if num_tokens_selected.item() == 0: breakpoint()
+        if not all_accept: breakpoint()
 
         # append selected tokens to the generated_ids
+        indices_to_rm = []
         for bi in valid_batch_indices:
             accepted_tokens = num_tokens_selected[bi]
             if all_accept:
@@ -264,27 +266,30 @@ def test_spec_decode_inference(
             num_tokens_to_append = min(accepted_tokens, max_gen_len[bi] - len(generated_ids[bi]))
             generated_ids[bi].extend(target_tokens[bi, :num_tokens_to_append].tolist())
             if len(generated_ids[bi]) >= max_gen_len[bi]:
-                del valid_batch_indices[bi]
-                continue
+                indices_to_rm.append(bi)
+        for idx in indices_to_rm:
+            del valid_batch_indices[idx]
+        print(f"{valid_batch_indices=}")
         # check if all generations are done
         if not valid_batch_indices: break
         # prepare decode inputs for next decode iteration
-        common_input_ids = target_tokens[:, num_tokens_selected[valid_batch_indices]].reshape(len(valid_batch_indices), 1)
+        common_input_ids = target_tokens[np.arange(len(valid_batch_indices)), num_tokens_selected[valid_batch_indices]].reshape(len(valid_batch_indices), 1)
         common_position_ids = tlm_precode_inputs["position_ids"][valid_batch_indices, num_tokens_selected[valid_batch_indices]].reshape(len(valid_batch_indices), 1)+1
         if all_accept:
             # all_accept input_ids
             input_ids = np.zeros((decode_batch_size, 2), dtype=np.int64)
-            input_ids[valid_batch_indices] = np.concatenate([target_tokens[:, num_tokens_selected-1].reshape(-1,1), common_input_ids], axis=1)
+            #if it == 61: breakpoint()
+            input_ids[valid_batch_indices] = np.concatenate([target_tokens[np.arange(len(valid_batch_indices)), num_tokens_selected[valid_batch_indices]-1].reshape(-1,1), common_input_ids], axis=1)
             dlm_decode_inputs["input_ids"] = input_ids
             # all_accept position_ids
             position_ids = np.zeros((decode_batch_size, 2), dtype=np.int64)
-            position_ids[valid_batch_indices] = np.concatenate([tlm_precode_inputs["position_ids"][valid_batch_indices, num_tokens_selected-1].reshape(-1,1)+1, common_position_ids], axis=1)
+            position_ids[valid_batch_indices] = np.concatenate([tlm_precode_inputs["position_ids"][valid_batch_indices, num_tokens_selected[valid_batch_indices]-1].reshape(-1,1)+1, common_position_ids], axis=1)
             dlm_decode_inputs["position_ids"] = position_ids
         else:
             dlm_decode_inputs["input_ids"][valid_batch_indices] = common_input_ids
             dlm_decode_inputs["position_ids"][valid_batch_indices] = common_position_ids
-        tlm_precode_inputs["input_ids"][valid_batch_indices,0] = common_input_ids
-        tlm_precode_inputs["position_ids"][valid_batch_indices] += num_tokens_selected.reshape(len(valid_batch_indices),1)+1
+        tlm_precode_inputs["input_ids"][valid_batch_indices,0] = common_input_ids.flatten()
+        tlm_precode_inputs["position_ids"][valid_batch_indices] += num_tokens_selected[valid_batch_indices].reshape(len(valid_batch_indices),1)+1
         pprint(dlm_decode_inputs)
         pprint(tlm_precode_inputs)
         if it == break_idx: breakpoint()
