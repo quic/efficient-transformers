@@ -335,7 +335,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         prompts: List[str],
         device_id: List[int] = [0],
         runtime_ai100: bool = True,
-        seq_len: int = constants.Constants.CTX_LEN,
         **kwargs,
     ):
         """
@@ -363,8 +362,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 is_tlm=self.is_tlm,
             )
         else:
-            inputs = tokenizer(prompts, return_tensors="pt", padding="max_length", max_length=seq_len)
-            return self.model(**inputs)
+            raise ValueError("Only AI_100 runtime is supported right now via generate API")
 
 
 class QEffAutoModel(QEFFTransformersBase):
@@ -395,6 +393,7 @@ class QEffAutoModel(QEFFTransformersBase):
         self.num_layers = model.config.num_hidden_layers
 
     @classmethod
+    @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModel.
@@ -417,10 +416,20 @@ class QEffAutoModel(QEFFTransformersBase):
             # You can now execute the model
             model.generate(prompts=["Hi there!!"])
         """
+        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
+            logger.warning('Updating attn_implementation="eager"')
 
-        self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        if kwargs.get("low_cpu_mem_usage", None):
+            logger.warning("Updating low_cpu_mem_usage=False")
 
-        return self
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False, "add_pooling_layer": False})
+
+        try:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        except TypeError:
+            kwargs.pop("add_pooling_layers", None)
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        return cls(model)
 
     @property
     def model_hash(self) -> str:
@@ -538,7 +547,7 @@ class QEffAutoModel(QEFFTransformersBase):
                 raise TypeError("Please run compile API first!")
 
             return QEfficient.cloud_ai_100_exec_embed(
-                tokenizer=tokenizer, prompt=prompts, qpc_path=self.qpc_path, device_id=device_id
+                tokenizer=tokenizer, prompts=prompts, qpc_path=self.qpc_path, device_id=device_id
             )
         # PyTorch runtime
         else:

@@ -350,8 +350,9 @@ def cloud_ai_100_exec_kv(
 def cloud_ai_100_exec_embed(
     tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
     qpc_path: str,
-    prompt: List[str],
+    prompts: List[str],
     device_id: List[int] = [0],
+    enable_debug_logs: bool = False,
 ) -> dict:
     """
     This method generates output by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -368,23 +369,14 @@ def cloud_ai_100_exec_embed(
     Returns:
         :dict: Output from the ``AI_100`` runtime.
     """
-
-    session = QAICInferenceSession(qpc_path, device_ids=device_id)
-    batch_size = session.bindings[0].dims[0]
-    seq_len = session.bindings[0].dims[1]
-    inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
-
-    inputs = dict(
-        input_ids=inputs["input_ids"].numpy(),
-        attention_mask=inputs["attention_mask"].numpy(),
+    generate_feature=FeatureGeneration(
+        tokenizer=tokenizer,
+        qpc_path=qpc_path,
+        device_id=device_id,
+        enable_debug_logs=enable_debug_logs,
     )
-    output = {
-        "output": np.random.randn(batch_size, seq_len, session.bindings[2].dims[2]).astype(np.float32),
-    }
-    session.set_buffers(output)
-    outputs = session.run(inputs)
-    session.deactivate()
-    return outputs
+    
+    return generate_feature.generate(prompts=prompts)
 
 
 class QEffTextGenerationBase:
@@ -405,6 +397,7 @@ class QEffTextGenerationBase:
 
         # Load QPC
         self._session = QAICInferenceSession(qpc_path, device_id, enable_debug_logs=enable_debug_logs)
+
 
         # Fetch the variables from the QPC
         self._vocab_size = self._fetch_vocab_size()  # Fetch Vocab size
@@ -1110,3 +1103,78 @@ class TextGeneration:
             perf_metrics=perf_metrics,
         )
         return latency_stats
+    
+class QEffFeatureGenerationBase:
+        
+    def __init__(
+        self,
+        tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+        qpc_path: str,
+        ctx_len: Optional[int] = None,
+        device_id: Optional[List[int]] = None,
+        enable_debug_logs: bool = False,
+    ) -> None:
+        self.ctx_len = ctx_len
+        
+        # Load QPC
+        self._session = QAICInferenceSession(qpc_path, device_id, enable_debug_logs=enable_debug_logs)
+        
+        self._batch_size = self._session.bindings[0].dims[0]
+        self._seq_len = self._session.bindings[0].dims[1]
+    
+        self.tokenizer = tokenizer
+        self._set_tokenizer_params()  # set tokenizer params
+    
+    def _set_tokenizer_params(self):
+        """
+        Sets the tokenizer parameters for the model.
+        """
+        if self.tokenizer.padding_side != "right":
+            logger.warning("Please use padding_side='right' while initializing the tokenizer")
+            self.tokenizer.padding_side = "right"
+        if self.tokenizer.pad_token_id is None:
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+    
+    
+class FeatureGeneration:
+    def __init__(
+        self,
+        tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+        qpc_path: str,
+        seq_len: Optional[int] = None,
+        device_id: Optional[List[int]] = None,
+        enable_debug_logs: bool = False,
+    ) -> None:
+        
+        self._qaic_model = QEffFeatureGenerationBase(
+        tokenizer, qpc_path, seq_len, device_id, enable_debug_logs
+        )
+        self._batch_size = self._qaic_model._batch_size
+        self._tokenizer = self._qaic_model.tokenizer
+        self._seq_len = self._qaic_model._seq_len
+        self._session = self._qaic_model._session        
+    def generate(
+        self,
+        prompts: List[str]
+    ):
+        outputs = []
+
+        for prompt in prompts:
+            inputs = self._tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=self._seq_len)
+
+            inputs = dict(
+                input_ids=inputs["input_ids"].numpy(),
+                attention_mask=inputs["attention_mask"].numpy(),
+            )
+            output = {
+                "output": np.random.randn(self._batch_size, self._seq_len, self._session.bindings[2].dims[2]).astype(
+                    np.float32
+                ),
+            }
+            self._session.set_buffers(output)
+            output = self._session.run(inputs)
+            outputs.append(output)
+        return outputs
+        
+        
+        
