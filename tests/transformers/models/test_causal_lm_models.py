@@ -8,14 +8,13 @@
 from typing import Optional
 
 import numpy as np
-import onnxruntime as ort
 import pytest
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-from QEfficient.transformers.models.modeling_auto import QEffAutoModel, QEFFAutoModelForCausalLM
+from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
-from QEfficient.utils import hf_download, padding_check_and_fix
+from QEfficient.utils import hf_download
 from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id
@@ -179,6 +178,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         ]
     ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
 
+
 # FIXME: there should be a CB test here
 @pytest.mark.parametrize("model_name", ["gpt2"], ids=lambda x: x)
 def test_causal_lm_export_with_deprecated_api(model_name):
@@ -252,4 +252,3 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
     prompt_len = 1
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
-    

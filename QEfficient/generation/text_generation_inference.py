@@ -369,13 +369,13 @@ def cloud_ai_100_exec_embed(
     Returns:
         :dict: Output from the ``AI_100`` runtime.
     """
-    generate_feature=FeatureGeneration(
+    generate_feature = FeatureGeneration(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
         device_id=device_id,
         enable_debug_logs=enable_debug_logs,
     )
-    
+
     return generate_feature.generate(prompts=prompts)
 
 
@@ -397,7 +397,6 @@ class QEffTextGenerationBase:
 
         # Load QPC
         self._session = QAICInferenceSession(qpc_path, device_id, enable_debug_logs=enable_debug_logs)
-
 
         # Fetch the variables from the QPC
         self._vocab_size = self._fetch_vocab_size()  # Fetch Vocab size
@@ -1103,9 +1102,9 @@ class TextGeneration:
             perf_metrics=perf_metrics,
         )
         return latency_stats
-    
+
+
 class QEffFeatureGenerationBase:
-        
     def __init__(
         self,
         tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
@@ -1115,16 +1114,16 @@ class QEffFeatureGenerationBase:
         enable_debug_logs: bool = False,
     ) -> None:
         self.ctx_len = ctx_len
-        
+
         # Load QPC
         self._session = QAICInferenceSession(qpc_path, device_id, enable_debug_logs=enable_debug_logs)
-        
+
         self._batch_size = self._session.bindings[0].dims[0]
         self._seq_len = self._session.bindings[0].dims[1]
-    
+
         self.tokenizer = tokenizer
         self._set_tokenizer_params()  # set tokenizer params
-    
+
     def _set_tokenizer_params(self):
         """
         Sets the tokenizer parameters for the model.
@@ -1134,8 +1133,8 @@ class QEffFeatureGenerationBase:
             self.tokenizer.padding_side = "right"
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
-    
-    
+
+
 class FeatureGeneration:
     def __init__(
         self,
@@ -1145,18 +1144,13 @@ class FeatureGeneration:
         device_id: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
     ) -> None:
-        
-        self._qaic_model = QEffFeatureGenerationBase(
-        tokenizer, qpc_path, seq_len, device_id, enable_debug_logs
-        )
+        self._qaic_model = QEffFeatureGenerationBase(tokenizer, qpc_path, seq_len, device_id, enable_debug_logs)
         self._batch_size = self._qaic_model._batch_size
         self._tokenizer = self._qaic_model.tokenizer
         self._seq_len = self._qaic_model._seq_len
-        self._session = self._qaic_model._session        
-    def generate(
-        self,
-        prompts: List[str]
-    ):
+        self._session = self._qaic_model._session
+
+    def generate(self, prompts: List[str]):
         outputs = []
 
         for prompt in prompts:
@@ -1175,6 +1169,3 @@ class FeatureGeneration:
             output = self._session.run(inputs)
             outputs.append(output)
         return outputs
-        
-        
-        

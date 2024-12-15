@@ -25,6 +25,7 @@ embed_test_models = [
     # "dunzhang/stella_en_1.5B_v5", # Qwen2ForCausalLM
 ]
 
+
 def check_embed_pytorch_vs_ort_vs_ai100(
     model_name: str,
     seq_len: int = Constants.CTX_LEN,
@@ -83,7 +84,6 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     mad = np.mean(np.abs(ai100_output[0]["output"] - onnx_outputs[0]))
     print("Mad for onnx and AI 100 output is ", mad)
     assert mad <= 10**-3, f"MAD is too high for onnx and Pytorch: {mad}"
-
 
 
 @pytest.mark.on_qaic
