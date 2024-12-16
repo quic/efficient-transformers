@@ -292,7 +292,7 @@ class LlamaSwiftKVModel(nn.Module):
         hidden_states = inputs_embeds
 
         # create position embeddings to be shared across the decoder layers
-        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        # position_embeddings = self.rotary_emb(hidden_states, position_ids)
         next_decoder_cache = None
 
         for layer_idx in range(self.config.num_key_value_layers):
@@ -305,7 +305,7 @@ class LlamaSwiftKVModel(nn.Module):
                 output_attentions=False,
                 use_cache=True,
                 cache_position=cache_position,
-                position_embeddings=position_embeddings,
+                position_embeddings=None,
             )
 
         bsz, q_len, _ = hidden_states.size()
