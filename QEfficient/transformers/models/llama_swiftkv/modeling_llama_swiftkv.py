@@ -286,7 +286,9 @@ class LlamaSwiftKVModel(nn.Module):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = self._update_causal_mask(None, inputs_embeds, cache_position, past_key_values, False)
+        causal_mask = self._update_causal_mask(
+            None, inputs_embeds, cache_position, position_ids, past_key_values, False
+        )
         hidden_states = inputs_embeds
 
         # create position embeddings to be shared across the decoder layers
