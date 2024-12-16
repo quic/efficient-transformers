@@ -355,6 +355,7 @@ class LlamaSwiftKVModel(nn.Module):
                 kv_seq_len = past_key_values.get_usable_length(kv_seq_len, self_attn.layer_idx)
 
             cos, sin = self_attn.rotary_emb(value_states, seq_len=kv_seq_len)
+<<<<<<< HEAD
             _, key_states = qeff_apply_rotary_pos_emb(torch.empty_like(key_states), key_states, cos, sin, position_ids)
             cache_kwargs = {"sin": sin, "cos": cos, "position_ids": position_ids}
             past_key_values.write_only(key_states, value_states, self_attn.layer_idx, cache_kwargs)
@@ -363,6 +364,13 @@ class LlamaSwiftKVModel(nn.Module):
         orig_hidden_states = hidden_states
         hidden_states = orig_hidden_states[:, last_pos_id[0], :]
         causal_mask = causal_mask[:, :, last_pos_id[0], :]
+=======
+            _, key_states = qeff_apply_rotary_pos_emb(
+                torch.empty_like(swiftkv_hidden_states), key_states, cos, sin, position_ids
+            )
+            cache_kwargs = {"sin": sin, "cos": cos, "position_ids": position_ids}
+            past_key_values.write_only(key_states, value_states, self_attn.layer_idx, cache_kwargs)
+>>>>>>> 5259873 (BUGFIX)
 
         hidden_states, next_decoder_cache = self._run_swiftkv_layers(
             hidden_states, position_ids, past_key_values, causal_mask
