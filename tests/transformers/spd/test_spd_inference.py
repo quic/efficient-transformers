@@ -7,6 +7,7 @@
 
 from typing import List, Optional
 from pprint import pprint
+from time import perf_counter
 
 import numpy as np
 import pytest
@@ -14,18 +15,23 @@ from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id
 
-fbs = 2
+#fbs = 4 # passed with spec_len=1
+fbs = 4
 configs = [
     pytest.param(
         #["My name is", "Hello", "Hi", "My name is"], # prompt
-        ["My name is"]*fbs, # prompt
-        1, # num_speculative_tokens
+        #Constants.INPUT_STR*fbs, # prompt
+        ['hello', 'hi', 'hola', 'bonjour'], # prompt
+        4, # num_speculative_tokens
         32, # prefill_seq_len
         128, # ctx_len
         1, # prefill_bsz
         "JackFram/llama-68m", # draft_model_name
+#        "TinyLlama/TinyLlama-1.1B-Chat-v1.0", # draft_model_name
+#        "TinyLlama/TinyLlama-1.1B-Chat-v1.0", # target_model_name
         "JackFram/llama-68m", # target_model_name
         fbs, # full_batch_size
         id="CB llama",
@@ -90,6 +96,33 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     bonus_token_inputs["batch_index"] = dlm_decode_inputs["batch_index"]
     return bonus_token_inputs, dlm_decode_inputs
 
+
+def compare_pkvs(dlm_outputs, tlm_outputs, valid_batch_indices):
+    for key in dlm_outputs:
+        if not "past" in key: continue
+        dlm_output = dlm_outputs[key][valid_batch_indices]
+        tlm_output = tlm_outputs[key][valid_batch_indices]
+        array_equal = np.array_equal(dlm_output, tlm_output)
+        if not array_equal:
+            print(f"{key} do NOT match!")
+
+def compare_idx_pkvs(dlm_outputs, tlm_outputs, valid_batch_indices, idx):
+    for key in dlm_outputs:
+        if not "past" in key: continue
+        dlm_output = dlm_outputs[key][valid_batch_indices, :, idx]
+        tlm_output = tlm_outputs[key][valid_batch_indices, :, idx]
+        array_equal = np.array_equal(dlm_output, tlm_output)
+        if not array_equal:
+            a = dlm_output.flatten()
+            b = tlm_output.flatten()
+            scalar = np.dot(a, b)
+            a_mag = np.sqrt(np.dot(a,a))
+            b_mag = np.sqrt(np.dot(b,b))
+            sim = scalar / (a_mag * b_mag)
+            print(f"{key} do NOT match! Similary sore: {sim}")
+
+
+
 @pytest.mark.parametrize(
     "prompt, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, draft_model_name, target_model_name, full_batch_size",
     configs,
@@ -106,7 +139,7 @@ def test_spec_decode_inference(
 ):
     # get device group
     #device_group: List[int] = get_available_device_id()
-    device_group: List[int] = [1]
+    device_group: List[int] = [31]
     if not device_group:
         pytest.skip("No available devices to run model on Cloud AI 100")
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
@@ -140,11 +173,11 @@ def test_spec_decode_inference(
 
     # skip inputs/outputs buffers
     target_model_session.skip_buffers(set([x for x in target_model_session.input_names if x.startswith("past_")]))
-    target_model_session.skip_buffers(
-        set([x for x in target_model_session.output_names if x.endswith("_RetainedState")])
-    )
+#    target_model_session.skip_buffers(
+#        set([x for x in target_model_session.output_names if x.endswith("_RetainedState")])
+#    )
     draft_model_session.skip_buffers(set([x for x in draft_model_session.input_names if x.startswith("past_")]))
-    draft_model_session.skip_buffers(set([x for x in draft_model_session.output_names if x.endswith("_RetainedState")]))
+    #draft_model_session.skip_buffers(set([x for x in draft_model_session.output_names if x.endswith("_RetainedState")]))
 
     is_cb = full_batch_size is not None
     if not is_cb:
@@ -189,8 +222,11 @@ def test_spec_decode_inference(
 
     target_model_session.set_buffers({"logits": tlm_prefill_logits_ph})
     draft_model_session.set_buffers({"logits": dlm_prefill_logits_ph})
+    e2e_start = perf_counter()
+    ttfts = []
     for bi in range(decode_batch_size):
         # assumes that prefill queue will always be popped from the front
+        start = perf_counter()
         tlm_logits = run_prefill_on_draft_and_target(
             tlm_session=target_model_session,
             dlm_session=draft_model_session,
@@ -198,6 +234,8 @@ def test_spec_decode_inference(
             prefill_seq_len=prefill_seq_len,
             slot_idx=bi,
         )
+        ttft = perf_counter() - start
+        ttfts.append(ttft)
         input_ids = tlm_logits.argmax(2).astype(np.int64)
         dlm_decode_inputs["input_ids"][bi, 0] = input_ids
         tlm_precode_inputs["input_ids"][bi, 0] = input_ids.item()
@@ -208,6 +246,9 @@ def test_spec_decode_inference(
         input_lengths[bi] = input_len
         max_gen_len[bi] -= input_lengths[bi]
 
+    print('# PREFILL')
+    print(f"{dlm_decode_inputs=}")
+    print(f"{tlm_precode_inputs=}")
     # set decode logits buffers
     target_model_session.set_buffers({"logits": precode_logits_ph})
     draft_model_session.set_buffers({"logits": decode_logits_ph})
@@ -218,6 +259,8 @@ def test_spec_decode_inference(
     it = 0
     #break_idx = 61 
     break_idx = 10000
+    print('# DECODE')
+    decode_start = perf_counter()
     while True:
         print('-'*60)
         print(f"{it=}")
@@ -230,6 +273,8 @@ def test_spec_decode_inference(
                 bonus_token_inputs, dlm_decode_inputs = split_dlm_bonus_token_inputs(dlm_decode_inputs)
                 pprint(f"{bonus_token_inputs=}")
                 _ = draft_model_session.run(bonus_token_inputs)
+                all_accept = False
+                compare_pkvs(_, tlm_outputs, valid_batch_indices)
             dlm_outputs = draft_model_session.run(dlm_decode_inputs)
             pprint(f"{dlm_decode_inputs=}")
             pprint(f"{tlm_precode_inputs=}")
@@ -241,6 +286,7 @@ def test_spec_decode_inference(
         pprint(f"{dlm_decode_inputs=}")
         pprint(f"{tlm_precode_inputs=}")
         if it == break_idx: breakpoint()
+        #if it == 41: breakpoint()
         tlm_outputs = target_model_session.run(tlm_precode_inputs)
         target_logits = tlm_outputs["logits"][valid_batch_indices]
         # greedy sampling from target model
@@ -251,13 +297,17 @@ def test_spec_decode_inference(
         num_tokens_selected = matching.cumprod(axis=1).sum(axis=1) # shape: [len(valid_batch_indices)]
         all_accept = (num_tokens_selected == num_speculative_tokens).all()
         num_tokens_selected_per_validation.append(num_tokens_selected)
+        print(f"{draft_tokens=}")
         print(f"{target_tokens=}")
         print(f"{num_tokens_selected=}")
         print(f"{all_accept=}")
+        if it == 41:
+            compare_idx_pkvs(dlm_outputs, tlm_outputs, valid_batch_indices, 127)
         if it == break_idx: breakpoint()
         if not all_accept: breakpoint()
 
         # append selected tokens to the generated_ids
+        tlm_precode_position_ids = tlm_precode_inputs["position_ids"][valid_batch_indices] + num_tokens_selected[valid_batch_indices].reshape(len(valid_batch_indices),1)+1
         indices_to_rm = []
         for bi in valid_batch_indices:
             accepted_tokens = num_tokens_selected[bi]
@@ -265,7 +315,9 @@ def test_spec_decode_inference(
                 accepted_tokens += 1
             num_tokens_to_append = min(accepted_tokens, max_gen_len[bi] - len(generated_ids[bi]))
             generated_ids[bi].extend(target_tokens[bi, :num_tokens_to_append].tolist())
-            if len(generated_ids[bi]) >= max_gen_len[bi]:
+            # position_ids >= ctx_len-1 result in erronous output for logits at each seq_len of TLM 
+            # (e.g., ctx_len=128 -> position_ids=[127,128,129] will give erronous output at each predicted token)
+            if len(generated_ids[bi]) >= max_gen_len[bi] or (tlm_precode_position_ids[bi] >= ctx_len-1).any():
                 indices_to_rm.append(bi)
         for idx in indices_to_rm:
             del valid_batch_indices[idx]
@@ -294,9 +346,23 @@ def test_spec_decode_inference(
         pprint(tlm_precode_inputs)
         if it == break_idx: breakpoint()
         it += 1
+    end = perf_counter()
+    decode_end = end - decode_start
+    e2e_end = end - e2e_start
     num_tokens_selected_per_validation = np.concatenate(num_tokens_selected_per_validation).reshape(len(num_tokens_selected_per_validation), decode_batch_size)
-    mean_num_accepted_tokens_per_batch = num_tokens_selected_per_validation.mean(axis=0)
-    print("mean number of accepted tokens per batch = ", mean_num_accepted_tokens_per_batch)
-    print("max generation len = ", max_gen_len)
-    print("actual generation len = ", [len(gid) for gid in generated_ids])
-    print(tokenizer.batch_decode(generated_ids))
+    mean_num_accepted_tokens_per_prompt = num_tokens_selected_per_validation.mean(axis=0)
+    mean_num_accepted_tokens = mean_num_accepted_tokens_per_prompt.mean()
+    mean_ttft = sum(ttfts) / len(ttfts)
+    generated_tokens_per_prompt = [len(gid)+1 for gid in generated_ids]
+    decode_throughput = sum(generated_tokens_per_prompt) / decode_end
+    e2e_throughput = (sum(generated_tokens_per_prompt)+decode_batch_size) / e2e_end
+    batch_decode = tokenizer.batch_decode(generated_ids)
+    print(f"Avg TLM+DLM TTFT = {mean_ttft}")
+    print(f"Decode Throughput = {decode_throughput}")
+    print(f"E2E Throughput = {e2e_throughput}")
+    print("Avg number of accepted tokens per prompt = ", mean_num_accepted_tokens_per_prompt)
+    print("Avg number of accepted tokens = ", mean_num_accepted_tokens)
+    print("Max generation len = ", max_gen_len)
+    print("Total Generated Tokens per Prompt: = ", generated_tokens_per_prompt)
+    for prompt,generation in zip(prompts, batch_decode):
+        print(f"{prompt=} {generation=}")
