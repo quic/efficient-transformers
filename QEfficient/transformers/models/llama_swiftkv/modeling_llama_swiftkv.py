@@ -22,7 +22,6 @@
 # limitations under the License.
 """Inference-only LLaMA model compatible with HuggingFace weights."""
 
-import logging
 import math
 from typing import List, Optional, Tuple, Union
 
@@ -30,7 +29,7 @@ import torch
 from torch import nn
 from transformers.cache_utils import Cache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
-from transformers.models.llama.modeling_llama import LlamaAttention, LlamaMLP, LlamaRMSNorm, repeat_kv
+from transformers.models.llama.modeling_llama import LlamaMLP, LlamaRMSNorm, logger, repeat_kv
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -40,12 +39,10 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     qeff_apply_rotary_pos_emb,
 )
 
-logger = logging.get_logger(__name__)
 
-
-class LlamaSwiftKVAttention(LlamaAttention):
+class LlamaSwiftKVAttention(nn.Module):
     def __init__(self, config, layer_idx) -> None:
-        super().__init__(config, layer_idx)
+        super().__init__()
         self.hidden_size = config.hidden_size
         self.attention_dropout = config.attention_dropout
         self.hidden_size = config.hidden_size
@@ -56,7 +53,7 @@ class LlamaSwiftKVAttention(LlamaAttention):
         self.max_position_embeddings = config.max_position_embeddings
         self.rope_theta = config.rope_theta
         self.is_causal = True
-
+        self.layer_idx = layer_idx
         self.q_proj_swiftkv = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
         self.k_proj_swiftkv = nn.Linear(
             self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias
