@@ -394,6 +394,7 @@ class LlamaSwiftKVForCausalLM(nn.Module):
         )
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.config = config
 
     def forward(
         self,
