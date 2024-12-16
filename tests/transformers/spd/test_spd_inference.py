@@ -29,10 +29,10 @@ configs = [
         32, # prefill_seq_len
         128, # ctx_len
         1, # prefill_bsz
-        "JackFram/llama-68m", # draft_model_name
-#        "TinyLlama/TinyLlama-1.1B-Chat-v1.0", # draft_model_name
-#        "TinyLlama/TinyLlama-1.1B-Chat-v1.0", # target_model_name
-        "JackFram/llama-68m", # target_model_name
+#        "JackFram/llama-68m", # draft_model_name
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0", # draft_model_name
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0", # target_model_name
+#        "JackFram/llama-68m", # target_model_name
         fbs, # full_batch_size
         id="CB llama",
     ),
@@ -254,14 +254,15 @@ def test_spec_decode_inference(
     draft_model_session.set_buffers({"logits": decode_logits_ph})
     # start decode phase
     valid_batch_indices = list(range(decode_batch_size))[::-1]
-    num_tokens_selected_per_validation = []
     all_accept = False
     it = 0
     #break_idx = 61 
     break_idx = 10000
     print('# DECODE')
     decode_start = perf_counter()
+    mean_num_accepted_tokens = 0
     while True:
+        it += 1
         print('-'*60)
         print(f"{it=}")
         print(f"{valid_batch_indices=}")
@@ -288,17 +289,19 @@ def test_spec_decode_inference(
         if it == break_idx: breakpoint()
         #if it == 41: breakpoint()
         tlm_outputs = target_model_session.run(tlm_precode_inputs)
-        target_logits = tlm_outputs["logits"][valid_batch_indices]
+        target_logits = tlm_outputs["logits"]
+        #target_logits = tlm_outputs["logits"][valid_batch_indices]
         # greedy sampling from target model
-        target_tokens = target_logits.argmax(-1) # shape: [len(valid_batch_indices), num_speculative_tokens+1]
+        target_tokens = target_logits.argmax(-1) # shape: [decode_batch_size, num_speculative_tokens+1]
         # exact matching between draft and target tokens
         draft_tokens = tlm_precode_inputs["input_ids"][valid_batch_indices,1:] # shape: [len(valid_batch_indices), num_speculative_tokens]
-        matching = draft_tokens == target_tokens[:, :-1]
+        matching = draft_tokens == target_tokens[valid_batch_indices, :-1]
         num_tokens_selected = matching.cumprod(axis=1).sum(axis=1) # shape: [len(valid_batch_indices)]
         all_accept = (num_tokens_selected == num_speculative_tokens).all()
-        num_tokens_selected_per_validation.append(num_tokens_selected)
+        mean_num_accepted_tokens += num_tokens_selected.mean().item()
+        #num_tokens_selected_per_validation.append(num_tokens_selected)
         print(f"{draft_tokens=}")
-        print(f"{target_tokens=}")
+        print(f"{target_tokens[valid_batch_indices]=}")
         print(f"{num_tokens_selected=}")
         print(f"{all_accept=}")
         if it == 41:
@@ -315,9 +318,10 @@ def test_spec_decode_inference(
                 accepted_tokens += 1
             num_tokens_to_append = min(accepted_tokens, max_gen_len[bi] - len(generated_ids[bi]))
             generated_ids[bi].extend(target_tokens[bi, :num_tokens_to_append].tolist())
-            # position_ids >= ctx_len-1 result in erronous output for logits at each seq_len of TLM 
+            # position_ids > ctx_len-1 result in erronous output for logits at each seq_len of TLM 
             # (e.g., ctx_len=128 -> position_ids=[127,128,129] will give erronous output at each predicted token)
-            if len(generated_ids[bi]) >= max_gen_len[bi] or (tlm_precode_position_ids[bi] >= ctx_len-1).any():
+            #if len(generated_ids[bi]) >= max_gen_len[bi] or (tlm_precode_position_ids[bi] > ctx_len-1).any():
+            if len(generated_ids[bi]) >= max_gen_len[bi] or (tlm_precode_position_ids[bi] > ctx_len-1).any():
                 indices_to_rm.append(bi)
         for idx in indices_to_rm:
             del valid_batch_indices[idx]
@@ -325,13 +329,14 @@ def test_spec_decode_inference(
         # check if all generations are done
         if not valid_batch_indices: break
         # prepare decode inputs for next decode iteration
-        common_input_ids = target_tokens[np.arange(len(valid_batch_indices)), num_tokens_selected[valid_batch_indices]].reshape(len(valid_batch_indices), 1)
+        common_input_ids = target_tokens[np.asarray(valid_batch_indices), num_tokens_selected[valid_batch_indices]].reshape(len(valid_batch_indices), 1)
+        #common_input_ids = target_tokens[np.arange(len(valid_batch_indices)), num_tokens_selected[valid_batch_indices]].reshape(len(valid_batch_indices), 1)
         common_position_ids = tlm_precode_inputs["position_ids"][valid_batch_indices, num_tokens_selected[valid_batch_indices]].reshape(len(valid_batch_indices), 1)+1
         if all_accept:
             # all_accept input_ids
             input_ids = np.zeros((decode_batch_size, 2), dtype=np.int64)
             #if it == 61: breakpoint()
-            input_ids[valid_batch_indices] = np.concatenate([target_tokens[np.arange(len(valid_batch_indices)), num_tokens_selected[valid_batch_indices]-1].reshape(-1,1), common_input_ids], axis=1)
+            input_ids[valid_batch_indices] = np.concatenate([target_tokens[np.asarray(valid_batch_indices), num_tokens_selected[valid_batch_indices]-1].reshape(-1,1), common_input_ids], axis=1)
             dlm_decode_inputs["input_ids"] = input_ids
             # all_accept position_ids
             position_ids = np.zeros((decode_batch_size, 2), dtype=np.int64)
@@ -345,22 +350,18 @@ def test_spec_decode_inference(
         pprint(dlm_decode_inputs)
         pprint(tlm_precode_inputs)
         if it == break_idx: breakpoint()
-        it += 1
     end = perf_counter()
     decode_end = end - decode_start
     e2e_end = end - e2e_start
-    num_tokens_selected_per_validation = np.concatenate(num_tokens_selected_per_validation).reshape(len(num_tokens_selected_per_validation), decode_batch_size)
-    mean_num_accepted_tokens_per_prompt = num_tokens_selected_per_validation.mean(axis=0)
-    mean_num_accepted_tokens = mean_num_accepted_tokens_per_prompt.mean()
     mean_ttft = sum(ttfts) / len(ttfts)
     generated_tokens_per_prompt = [len(gid)+1 for gid in generated_ids]
     decode_throughput = sum(generated_tokens_per_prompt) / decode_end
     e2e_throughput = (sum(generated_tokens_per_prompt)+decode_batch_size) / e2e_end
     batch_decode = tokenizer.batch_decode(generated_ids)
+    mean_num_accepted_tokens /= it
     print(f"Avg TLM+DLM TTFT = {mean_ttft}")
     print(f"Decode Throughput = {decode_throughput}")
     print(f"E2E Throughput = {e2e_throughput}")
-    print("Avg number of accepted tokens per prompt = ", mean_num_accepted_tokens_per_prompt)
     print("Avg number of accepted tokens = ", mean_num_accepted_tokens)
     print("Max generation len = ", max_gen_len)
     print("Total Generated Tokens per Prompt: = ", generated_tokens_per_prompt)
