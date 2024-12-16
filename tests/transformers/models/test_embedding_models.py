@@ -21,8 +21,6 @@ embed_test_models = [
     "sentence-transformers/multi-qa-mpnet-base-cos-v1",  # MPNetForMaskedLM
     "BAAI/bge-reranker-v2-m3",  # XLMRobertaForSequenceClassification
     "BAAI/bge-small-en-v1.5",  # BertModel
-    # "intfloat/e5-mistral-7b-instruct",  # MistralModel
-    # "dunzhang/stella_en_1.5B_v5", # Qwen2ForCausalLM
 ]
 
 
@@ -36,23 +34,12 @@ def check_embed_pytorch_vs_ort_vs_ai100(
         ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
 
-    # Try to initialize with add_pooling_layer parameter
-    try:
-        qeff_model = QEffAutoModel.from_pretrained(
-            pretrained_model_name_or_path=model_path,
-            add_pooling_layer=False,
-            num_hidden_layers=n_layer,
-            attn_implementation="eager",
-            trust_remote_code=True,
-        )
-    except TypeError:
-        # If it fails, initialize without the parameter
-        qeff_model = QEffAutoModel.from_pretrained(
-            pretrained_model_name_or_path=model_path,
-            num_hidden_layers=n_layer,
-            attn_implementation="eager",
-            trust_remote_code=True,
-        )
+    qeff_model = QEffAutoModel.from_pretrained(
+        pretrained_model_name_or_path=model_path,
+        num_hidden_layers=n_layer,
+        attn_implementation="eager",
+        trust_remote_code=True,
+    )
 
     prompt = "My name is"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
