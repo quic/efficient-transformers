@@ -63,7 +63,7 @@ class LlamaSwiftKVAttention(nn.Module):
         )
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
 
-        self.rotary_emb = QEffLlamaRotaryEmbedding(config=self.config)
+        self.rotary_emb = QEffLlamaRotaryEmbedding(config=config)
 
     def forward(
         self,
