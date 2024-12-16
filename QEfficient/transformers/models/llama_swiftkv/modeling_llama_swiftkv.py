@@ -123,6 +123,8 @@ class LlamaSwiftKVDecoderLayer(nn.Module):
     def __init__(self, config, layer_idx) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
+        self.num_key_value_heads = config.num_key_value_heads
+        self.head_dim = getattr(config, "head_dim", self.hidden_size // self.num_heads)
 
         self.self_attn = LlamaSwiftKVAttention(config=config, layer_idx=layer_idx)
         self.mlp = LlamaMLP(config)
@@ -318,8 +320,10 @@ class LlamaSwiftKVModel(nn.Module):
             self_attn = self.layers[layer_idx].self_attn
             key_states = self_attn.k_proj_swiftkv(swiftkv_hidden_states)
             value_states = self_attn.v_proj_swiftkv(swiftkv_hidden_states)
-            key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-            value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+            key_states = key_states.view(bsz, q_len, self_attn.num_key_value_heads, self_attn.head_dim).transpose(1, 2)
+            value_states = value_states.view(bsz, q_len, self_attn.num_key_value_heads, self_attn.head_dim).transpose(
+                1, 2
+            )
 
             kv_seq_len = key_states.shape[-2]
             if past_key_values is not None:
@@ -331,12 +335,12 @@ class LlamaSwiftKVModel(nn.Module):
                     )
                 kv_seq_len = past_key_values.get_usable_length(kv_seq_len, self.layer_idx)
 
-            cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+            cos, sin = self_attn.rotary_emb(value_states, seq_len=kv_seq_len)
             _, key_states = qeff_apply_rotary_pos_emb(
                 torch.empty_like(swiftkv_hidden_states), key_states, cos, sin, position_ids
             )
             cache_kwargs = {"sin": sin, "cos": cos, "position_ids": position_ids}
-            past_key_values.write_only(key_states, value_states, self.layer_idx, cache_kwargs)
+            past_key_values.write_only(key_states, value_states, self_attn.layer_idx, cache_kwargs)
 
         hidden_states, next_decoder_cache = self._run_swiftkv_layers(
             hidden_states, position_ids, past_key_values, causal_mask
