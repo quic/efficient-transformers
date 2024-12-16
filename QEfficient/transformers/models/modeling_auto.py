@@ -18,6 +18,7 @@ from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, P
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.generation.text_generation_inference import pytorch_feature_generate
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
@@ -99,6 +100,10 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         is_tlm: bool = False,
         **kwargs,
     ):
+        model_class_name = model.__class__.__name__
+        if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
+            raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
+
         # TODO: remove from version 1.20
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
@@ -550,5 +555,4 @@ class QEffAutoModel(QEFFTransformersBase):
             )
         # PyTorch runtime
         else:
-            inputs = tokenizer(prompts, return_tensors="pt", padding="max_length", max_length=seq_len)
-            return self.model(**inputs)
+            return pytorch_feature_generate(model=self.model, tokenizer=tokenizer, prompts=prompts, seq_len=seq_len)
