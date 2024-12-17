@@ -391,7 +391,7 @@ class QEffAutoModel(QEFFTransformersBase):
     """
 
     _hf_auto_class = AutoModel
-    _pytorch_transforms = [CustomOpsTransform]
+    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [FP16ClipTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
@@ -416,10 +416,10 @@ class QEffAutoModel(QEFFTransformersBase):
             from QEfficient import QEFFAutoModel
 
             # Initialize the model using from_pretrained similar to transformers.AutoModel.
-            model = QEFFAutoModel.from_pretrained("BAAI/bge-small-en-v1.5")
+            model = QEFFAutoModel.from_pretrained("model_name")
 
             # Now you can directly compile the model for Cloud AI 100
-            model.compile(num_cores=14, device_group=[0])  # Considering you have a Cloud AI 100 SKU
+            model.compile(num_cores=16, device_group=[0])  # Considering you have a Cloud AI 100 SKU
 
             # You can now execute the model
             model.generate(prompts=["Hi there!!"])
@@ -563,17 +563,15 @@ class QEffAutoModel(QEFFTransformersBase):
         device_ids: List[int] = [0],
     ):
         """
-        Generates features using the QAICInferenceSession for a list of prompts.
+        Generates features with list of prompts using AI 100 runtime.
 
-        This function initializes a QAICInferenceSession if not already initialized,
-        tokenizes the input prompts, and generates output features using the session.
-
-        Args:
+        ``Mandatory`` Args:
             prompts (List[str]): A list of input prompts to generate features for.
+        ``Optional`` Args:
             device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
 
         Returns:
-            List[Dict[str, np.ndarray]]: A list of dictionaries containing the generated output features.
+            List[Dict[np.ndarray]]: A list of dictionaries containing the generated output features.
         """
         if self.qpc_session is None:
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
