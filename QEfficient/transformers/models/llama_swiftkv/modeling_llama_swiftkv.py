@@ -326,13 +326,13 @@ class LlamaSwiftKVModel(nn.Module):
 
             kv_seq_len = key_states.shape[-2]
             if past_key_values is not None:
-                if self.layer_idx is None:
+                if self_attn.layer_idx is None:
                     raise ValueError(
-                        f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
+                        f"The cache structure has changed since version v4.36. If you are using {self_attn.__class__.__name__} "
                         "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                         "with a layer index."
                     )
-                kv_seq_len = past_key_values.get_usable_length(kv_seq_len, self.layer_idx)
+                kv_seq_len = past_key_values.get_usable_length(kv_seq_len, self_attn.layer_idx)
 
             cos, sin = self_attn.rotary_emb(value_states, seq_len=kv_seq_len)
             _, key_states = qeff_apply_rotary_pos_emb(
