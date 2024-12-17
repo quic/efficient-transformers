@@ -98,6 +98,6 @@ def get_dataloader_kwargs(train_config: train_config, dataset, dataset_processer
     # use a distributed sampler to split data between devices
     if train_config.enable_ddp:
         kwargs["sampler"] = data_utils.DistributedSampler(
-            dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=False
+            dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True
         )
     return kwargs

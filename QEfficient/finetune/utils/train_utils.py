@@ -96,7 +96,7 @@ def train(
 
     # Start the training loop
     for epoch in range(train_config.num_epochs):
-        print(f"Starting epoch {epoch}/{train_config.num_epochs}")
+        print(f"Starting epoch {epoch+1}/{train_config.num_epochs}")
         print(f"train_config.max_train_step: {train_config.max_train_step}")
         # stop when the maximum number of training steps is reached
         if max_steps_reached:
@@ -121,6 +121,7 @@ def train(
             #  stop when the maximum number of training steps is reached
             if train_config.max_train_step > 0 and total_train_steps > train_config.max_train_step:
                 max_steps_reached = True
+                break
             batch = {k: v.to(device) for k, v in batch.items()}  # move the batch elements to qaic device
 
             with torch.autocast(
@@ -183,7 +184,7 @@ def train(
                     model.save_pretrained(train_config.output_dir + f"/trained_weights/step_{step}")
 
             pbar.set_description(
-                f"Training Epoch: {epoch+1}/{train_config.num_epochs}, step {step}/{len(train_dataloader)} completed (loss: {loss.detach().float()})"
+                f"Training Epoch: {epoch+1}/{train_config.num_epochs}, step {step+1}/{len(train_dataloader)} completed (loss: {loss.detach().float()})"
             )
             if train_config.save_metrics:
                 save_to_json(
@@ -307,8 +308,15 @@ def evaluation(model, train_config, eval_dataloader, local_rank, tokenizer, devi
     val_step_perplexity = []
 
     eval_loss = 0.0  # Initialize evaluation loss
-    # total_eval_steps = 0
+    total_eval_steps = 0
+    # max_steps_reached = False  # Flag to indicate max eval steps reached
+
     for step, batch in enumerate(tqdm(eval_dataloader, colour="green", desc="evaluating Epoch", dynamic_ncols=True)):
+        total_eval_steps += 1
+        #  stop when the maximum number of eval steps is reached
+        if train_config.max_eval_step > 0 and total_eval_steps > train_config.max_eval_step:
+            # max_steps_reached = True
+            break
         for key in batch.keys():
             batch[key] = batch[key].to(device)
         # Ensure no gradients are computed for this scope to save memory

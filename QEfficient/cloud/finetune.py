@@ -130,21 +130,12 @@ def main(**kwargs):
         train_dl_kwargs["collate_fn"] = custom_data_collator
 
     # Create DataLoaders for the training and validation dataset
-    if train_config.enable_ddp:
-        train_dataloader = torch.utils.data.DataLoader(
-            dataset_train,
-            shuffle=True,
-            num_workers=train_config.num_workers_dataloader,
-            pin_memory=True,
-            **train_dl_kwargs,
-        )
-    else:
-        train_dataloader = torch.utils.data.DataLoader(
-            dataset_train,
-            num_workers=train_config.num_workers_dataloader,
-            pin_memory=True,
-            **train_dl_kwargs,
-        )
+    train_dataloader = torch.utils.data.DataLoader(
+        dataset_train,
+        num_workers=train_config.num_workers_dataloader,
+        pin_memory=True,
+        **train_dl_kwargs,
+    )
     print(f"--> Num of Training Set Batches loaded = {len(train_dataloader)}")
 
     eval_dataloader = None
