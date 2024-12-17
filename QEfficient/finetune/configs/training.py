@@ -48,3 +48,7 @@ class train_config:
     # dist-related
     enable_ddp: bool = False
     dist_backend: str = "cpu:gloo,qaic:qccl,cuda:gloo"
+
+    grad_scaler: bool = True
+    dump_root_dir: str = "meta-llama-samsum-mismatches/step_"
+    opByOpVerifier: bool = False

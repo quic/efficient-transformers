@@ -27,6 +27,8 @@ try:
 except ImportError as e:
     print(f"Warning: {e}. Moving ahead without these qaic modules.")
 
+from torch.amp import GradScaler
+
 
 def train(
     model,
@@ -89,6 +91,9 @@ def train(
     else:
         tensorboard_updates = SummaryWriter()
 
+    if train_config.grad_scaler:
+        scaler = GradScaler()
+
     # Start the training loop
     for epoch in range(train_config.num_epochs):
         print(f"Starting epoch {epoch}/{train_config.num_epochs}")
@@ -121,7 +126,24 @@ def train(
             with torch.autocast(
                 device_type=device, dtype=torch.float16
             ) if train_config.use_autocast else nullcontext():
-                loss = model(**batch).loss  # Forward call
+                # an additional condition can be put here to avoid opByOpVerifier getting triggered for each step
+                if train_config.opByOpVerifier:
+                    with qaic_debug.OpByOpVerifierMode(
+                        ref_device="cpu",
+                        ref_dtype=torch.float32,
+                        # adjust atol & rtol this as required
+                        atol=1e-1,
+                        use_ref_output_on_mismatch=True,
+                        # report all mismatches
+                        max_failures=None,
+                        # generate unittest for each op once
+                        repeat_same_op=True,
+                        dump_root_dir=train_config.dump_root_dir + str(step),
+                    ) as verifier:
+                        loss = model(**batch).loss  # Forward call
+                    print("Mismatches detected:", verifier.get_perop_mismatch_count())
+                else:
+                    loss = model(**batch).loss  # Forward call
 
             if train_config.enable_ddp:
                 if local_rank == 0:
@@ -137,9 +159,17 @@ def train(
                 train_step_loss.append(loss.detach().float().item())
                 train_step_perplexity.append(float(torch.exp(loss.detach().float())))
 
-            loss.backward()  # backward pass
+            if train_config.grad_scaler:
+                scaler.scale(loss).backward()  # backward pass
+            else:
+                loss.backward()  # backward pass
+
             if (step + 1) % train_config.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
-                optimizer.step()
+                if train_config.grad_scaler:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
                 optimizer.zero_grad()
                 pbar.update(1)
 
