@@ -73,7 +73,7 @@ class LlamaSwiftKVAttention(nn.Module):
         attention_mask=None,
     ) -> torch.Tensor:
         bsz, q_len, _ = hidden_states.size()
-        query, _ = self.q_proj_swiftkv(hidden_states)
+        query = self.q_proj_swiftkv(hidden_states)
 
         # Reshape the query, key, and value tensors.
         query_states = query.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
