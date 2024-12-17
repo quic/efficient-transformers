@@ -124,7 +124,7 @@ class LlamaSwiftKVDecoderLayer(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.num_key_value_heads = config.num_key_value_heads
-        self.head_dim = getattr(config, "head_dim", self.hidden_size // self.num_heads)
+        self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_heads)
 
         self.self_attn = LlamaSwiftKVAttention(config=config, layer_idx=layer_idx)
         self.mlp = LlamaMLP(config)
