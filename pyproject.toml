@@ -31,7 +31,6 @@ dependencies = [
     "numpy==1.23.0",
     "protobuf==3.20.2",
     "onnxscript==0.1.0.dev20240327",
-    "einops==0.8.0",
     "sympy",
     "torch==2.4.1; platform_machine=='aarch64'",
     # Specifying torch cpu package URL per python version, update the list once pytorch releases whl for python>3.11

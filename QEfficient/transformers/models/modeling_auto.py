@@ -11,6 +11,7 @@ import warnings
 from pathlib import Path
 from typing import List, Optional, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast
@@ -18,11 +19,12 @@ from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, P
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
-from QEfficient.generation.text_generation_inference import pytorch_feature_generate
+from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import constants, get_padding_shape_from_config
+from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.cache import to_hashable
 
 logger = logging.getLogger(__file__)
@@ -145,7 +147,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             model = QEFFAutoModelForCausalLM.from_pretrained("gpt2")
 
             # Now you can directly compile the model for Cloud AI 100
-            model.compile(num_cores=14, device_group=[0])  # Considering you have a Cloud AI 100 Standard SKU
+            model.compile(num_cores=6, device_group=[0])  # Considering you have a Cloud AI 100 Standard SKU
 
             # You can now execute the model
             model.generate(prompts=["Hi there!!"])
@@ -396,6 +398,7 @@ class QEffAutoModel(QEFFTransformersBase):
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
+        self.tokenizer = load_hf_tokenizer(self.model.config.name_or_path)
 
     @classmethod
     @with_replaced_quantizers
@@ -416,7 +419,7 @@ class QEffAutoModel(QEFFTransformersBase):
             model = QEFFAutoModel.from_pretrained("BAAI/bge-small-en-v1.5")
 
             # Now you can directly compile the model for Cloud AI 100
-            model.compile(num_cores=14, device_group=[0])  # Considering you have a Cloud AI 100 Standard SKU
+            model.compile(num_cores=14, device_group=[0])  # Considering you have a Cloud AI 100 SKU
 
             # You can now execute the model
             model.generate(prompts=["Hi there!!"])
@@ -524,9 +527,8 @@ class QEffAutoModel(QEFFTransformersBase):
 
     def generate(
         self,
-        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
         prompts: List[str],
-        device_id: List[int] = [0],
+        device_ids: List[int] = [0],
         runtime_ai100: bool = True,
         seq_len: int = constants.Constants.CTX_LEN,
     ) -> dict:
@@ -550,9 +552,73 @@ class QEffAutoModel(QEFFTransformersBase):
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
 
-            return QEfficient.cloud_ai_100_exec_embed(
-                tokenizer=tokenizer, prompts=prompts, qpc_path=self.qpc_path, device_id=device_id
-            )
+            return self.cloud_ai_100_feature_generate(prompts=prompts, device_ids=device_ids)
         # PyTorch runtime
         else:
-            return pytorch_feature_generate(model=self.model, tokenizer=tokenizer, prompts=prompts, seq_len=seq_len)
+            return self.pytorch_feature_generate(model=self.model, prompts=prompts, seq_len=seq_len)
+
+    def cloud_ai_100_feature_generate(
+        self,
+        prompts: List[str],
+        device_ids: List[int] = [0],
+    ):
+        """
+        Generates features using the QAICInferenceSession for a list of prompts.
+
+        This function initializes a QAICInferenceSession if not already initialized,
+        tokenizes the input prompts, and generates output features using the session.
+
+        Args:
+            prompts (List[str]): A list of input prompts to generate features for.
+            device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
+
+        Returns:
+            List[Dict[str, np.ndarray]]: A list of dictionaries containing the generated output features.
+        """
+        if self.qpc_session is None:
+            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
+            self.batch_size = self.qpc_session.bindings[0].dims[0]
+            self.seq_len = self.qpc_session.bindings[0].dims[1]
+        outputs = []
+
+        for prompt in prompts:
+            inputs = self.tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=self.seq_len)
+
+            inputs = dict(
+                input_ids=inputs["input_ids"].numpy(),
+                attention_mask=inputs["attention_mask"].numpy(),
+            )
+            output = {
+                "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[2]).astype(
+                    np.float32
+                ),
+            }
+            self.qpc_session.set_buffers(output)
+            output = self.qpc_session.run(inputs)
+            outputs.append(output)
+        return outputs
+
+    def pytorch_feature_generate(
+        self,
+        model,
+        prompts: List[str],
+        seq_len: int = constants.Constants.CTX_LEN,
+    ):
+        """
+        Generates features from a list of text prompts using a PyTorch model.
+
+        ``Mandatory`` Args:
+            model: The PyTorch model used for generating features.
+            prompts (List[str]): A list of text prompts to be tokenized and processed.
+        ``Optional`` Args:
+            seq_len (int, optional): The maximum sequence length for tokenization. Defaults to constants.Constants.CTX_LEN.
+
+        Returns:
+            List[torch.Tensor]: A list of output features generated by the model for each prompt.
+        """
+
+        outputs = []
+        for prompt in prompts:
+            inputs = self.tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
+            outputs.append(model(**inputs))
+        return outputs

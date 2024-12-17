@@ -9,15 +9,14 @@
 import numpy as np
 import onnxruntime as ort
 import pytest
-from transformers import AutoTokenizer
 
 from QEfficient.transformers.models.modeling_auto import QEffAutoModel
-from QEfficient.utils import hf_download, padding_check_and_fix
+from QEfficient.utils import hf_download
+from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 
 embed_test_models = [
     # model_name, architecture
-    "nomic-ai/nomic-embed-text-v1.5",  # NomicBertModel
     "sentence-transformers/multi-qa-mpnet-base-cos-v1",  # MPNetForMaskedLM
     "BAAI/bge-reranker-v2-m3",  # XLMRobertaForSequenceClassification
     "BAAI/bge-small-en-v1.5",  # BertModel
@@ -42,15 +41,13 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     )
 
     prompt = "My name is"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    padding_check_and_fix(tokenizer)
-    inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
-
-    pt_outputs = qeff_model.generate(tokenizer=tokenizer, prompts=["My name is"], runtime_ai100=False)
+    pt_outputs = qeff_model.generate(prompts=["My name is"], runtime_ai100=False)
 
     onnx_model = qeff_model.export()
     ort_session = ort.InferenceSession(str(onnx_model))
     # Prepare the inputs for ONNX Runtime
+    tokenizer = load_hf_tokenizer(model_path)
+    inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
     onnx_inputs = {"input_ids": inputs["input_ids"].numpy(), "attention_mask": inputs["attention_mask"].numpy()}
     # Run inference
     onnx_outputs = ort_session.run(None, onnx_inputs)
@@ -65,7 +62,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     qeff_model.compile(
         num_cores=14,
     )
-    ai100_output = qeff_model.generate(tokenizer=tokenizer, prompts=["My name is"])
+    ai100_output = qeff_model.generate(prompts=["My name is"])
 
     # Compare ONNX and AI 100 outputs
     mad = np.mean(np.abs(ai100_output[0]["output"] - onnx_outputs[0]))
