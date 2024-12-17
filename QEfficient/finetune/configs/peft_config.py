@@ -23,13 +23,6 @@ class lora_config:
     inference_mode: bool = False
 
 
-@dataclass
-class llama_adapter_config:
-    adapter_len: int = 10
-    adapter_layers: int = 30
-    task_type: str = "CAUSAL_LM"
-
-
 # CAUTION prefix tuning is currently not supported
 @dataclass
 class prefix_config:

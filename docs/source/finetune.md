@@ -1,10 +1,11 @@
 # Finetune Infra
 
-This repository provides the infrastructure for finetuning models using different hardware accelerators such as QAIC, CUDA, and CPU.
+This repository provides the infrastructure for finetuning models using different hardware accelerators such as QAIC.
+Same CLI can be used to run Finetuning on GPU by setting the device as CUDA
 
 ## Installation
 
-Same as QEfficient along with QAic Eager mode
+Same as QEfficient along with QAIC Eager mode
 
 ## Finetuning
 To finetune a model, run the following command:

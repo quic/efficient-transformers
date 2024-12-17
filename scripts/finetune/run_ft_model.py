@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 import warnings
 
 import torch
@@ -64,7 +65,11 @@ with torch.inference_mode():
         )
     )
 
-save_dir = "meta-llama-samsum/trained_weights/step_2000"
+trained_weights_path = os.path.join(train_config.output_dir, "trained_weights")
+list_paths = [d for d in os.listdir(trained_weights_path) if os.path.isdir(os.path.join(trained_weights_path, d))]
+max_index = max([int(path[5:]) for path in list_paths])
+
+save_dir = os.path.join(trained_weights_path, "step_" + str(max_index))
 
 # Load PEFT model on CPU
 model = AutoPeftModelForCausalLM.from_pretrained(save_dir)

@@ -18,7 +18,7 @@ from peft import (
 from transformers import default_data_collator
 
 import QEfficient.finetune.configs.dataset_config as datasets
-from QEfficient.finetune.configs.peft_config import llama_adapter_config, lora_config, prefix_config
+from QEfficient.finetune.configs.peft_config import lora_config, prefix_config
 from QEfficient.finetune.configs.training import train_config
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
 
@@ -45,7 +45,7 @@ def update_config(config, **kwargs):
 
 
 def generate_peft_config(train_config, kwargs):
-    configs = (lora_config, llama_adapter_config, prefix_config)
+    configs = (lora_config, prefix_config)
     peft_configs = (LoraConfig, AdaptionPromptConfig, PrefixTuningConfig)
     names = tuple(c.__name__.rstrip("_config") for c in configs)
 
