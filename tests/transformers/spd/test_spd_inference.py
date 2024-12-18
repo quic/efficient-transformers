@@ -20,7 +20,7 @@ from QEfficient.utils.device_utils import get_available_device_id
 configs = [
     pytest.param(
         Constants.INPUT_STR,  # prompt
-        1,  # num_speculative_tokens
+        4,  # num_speculative_tokens
         32,  # prefill_seq_len
         128,  # ctx_len
         1,  # prefill_bsz
@@ -330,10 +330,11 @@ def test_spec_decode_inference(
     ), f"mean number of accepted tokens is {mean_num_accepted_tokens} but should be {num_speculative_tokens+1}"
     del target_model_session
     del draft_model_session
+    generated_ids = np.asarray(generated_ids).flatten()
+    gen_len = generated_ids.shape[0]
     exec_info = draft_model.generate(tokenizer, Constants.INPUT_STR, device_group)
     cloud_ai_100_tokens = exec_info.generated_ids[0][
-        : max_gen_len[0]
+        :gen_len
     ]  # Because we always run for single input and single batch size
-    assert (
-        cloud_ai_100_tokens == np.asarray(generated_ids)[0]
-    ).all(), "Tokens don't match for SpD output and vanilla DLM output."
+    all_matching = np.array_equal(cloud_ai_100_tokens, generated_ids)
+    assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
