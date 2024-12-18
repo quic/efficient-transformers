@@ -24,7 +24,6 @@ from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import constants, get_padding_shape_from_config
-from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.cache import to_hashable
 
 logger = logging.getLogger(__file__)
@@ -369,7 +368,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 is_tlm=self.is_tlm,
             )
         else:
-            raise ValueError("Only AI_100 runtime is supported right now via generate API")
+            raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
 
 
 class QEFFAutoModel(QEFFTransformersBase):
@@ -401,13 +400,12 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     _hf_auto_class = AutoModel
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
-    _onnx_transforms = [FP16ClipTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
-        self.tokenizer = load_hf_tokenizer(self.model.config.name_or_path)
 
     @classmethod
     @with_replaced_quantizers
@@ -447,6 +445,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False, "add_pooling_layer": False})
         try:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+            warnings.warn("Removing pooling layer from the model if exist")
         except TypeError:
             kwargs.pop("add_pooling_layer", None)
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
@@ -545,10 +544,9 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     def generate(
         self,
-        inputs: Union[torch.Tensor, np.ndarray],
+        inputs: torch.Tensor,
         device_ids: List[int] = [0],
         runtime_ai100: bool = True,
-        seq_len: int = constants.Constants.CTX_LEN,
     ) -> dict:
         """
         This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -561,16 +559,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
-        # Prepare input
-        input_ids = torch.nn.functional.pad(
-            inputs["input_ids"], (0, seq_len - inputs["input_ids"].size(1)), "constant", 0
-        )
-        attention_mask = torch.nn.functional.pad(
-            inputs["attention_mask"], (0, seq_len - inputs["attention_mask"].size(1)), "constant", 0
-        )
-
-        inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
-
         # AI_100 runtime
         if runtime_ai100:
             if not isinstance(self.qpc_path, Path):
@@ -583,7 +571,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     def cloud_ai_100_feature_generate(
         self,
-        inputs: Union[torch.Tensor, np.ndarray],
+        inputs: torch.Tensor,
         device_ids: List[int] = [0],
     ):
         """
@@ -602,9 +590,19 @@ class QEFFAutoModel(QEFFTransformersBase):
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
             self.seq_len = self.qpc_session.bindings[0].dims[1]
+        # Prepare input
+        input_ids_len = inputs["input_ids"].shape[1]
+        input_ids = np.array(
+            torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - inputs["input_ids"].size(1)), "constant", 0)
+        )
+        attention_mask = np.array(
+            torch.nn.functional.pad(
+                inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
+            )
+        )
 
-        inputs["input_ids"] = np.array(inputs["input_ids"])
-        inputs["attention_mask"] = np.array(inputs["attention_mask"])
+        inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
+
         outputs = {
             "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[2]).astype(
                 np.float32
@@ -612,6 +610,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         }
         self.qpc_session.set_buffers(outputs)
         outputs = self.qpc_session.run(inputs)
+        outputs = outputs["output"][:, :input_ids_len, :]
         return outputs
 
     def pytorch_feature_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]):
