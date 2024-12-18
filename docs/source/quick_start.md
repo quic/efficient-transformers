@@ -59,7 +59,7 @@ python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path qeff_models/gpt2
 ```
 
 ### QEfficient.cloud.finetune
-You can run the finetune with set of predefined existing datasets on QAic using the eager pipeline
+You can run the finetune with set of predefined existing datasets on QAIC using the eager pipeline
 
 ```bash
 python -m QEfficient.cloud.finetune --device qaic:0 --use-peft --output_dir ./meta-sam --num_epochs 2 --context_length 256 

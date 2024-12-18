@@ -59,7 +59,7 @@ source/ll_api
 ```
 
 ```{toctree}
-:caption: 'QAic Finetune'
+:caption: 'QAIC Finetune'
 :maxdepth: 2
 
 source/finetune
