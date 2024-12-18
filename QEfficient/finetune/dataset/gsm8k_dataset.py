@@ -59,7 +59,13 @@ def pad_to_max_length(row: Dict[str, list], *, tokenizer, max_length: int) -> Di
     }
 
 
-def get_gsm8k_dataset(dataset_config, tokenizer, split, instruction: str = default_instruction) -> Dataset:
+def get_gsm8k_dataset(
+    dataset_config,
+    tokenizer,
+    split,
+    context_length=None,
+    instruction: str = default_instruction,
+) -> Dataset:
     ds = load_dataset("openai/gsm8k", "main", split=split)
     ds = ds.map(
         tokenize_and_mask,
@@ -67,14 +73,15 @@ def get_gsm8k_dataset(dataset_config, tokenizer, split, instruction: str = defau
         remove_columns=["question", "answer"],
     )
 
-    max_length = max(ds["length"])
-    max_length = 2 ** round(math.log2(max_length))
-    # max_length = 128
+    if context_length is None:
+        context_length = max(ds["length"])
+        context_length = 2 ** round(math.log2(context_length))
+        # context_length = 128
 
-    ds = ds.filter(lambda x: x["length"] <= max_length)
+    ds = ds.filter(lambda x: x["length"] <= context_length)
     ds = ds.map(
         pad_to_max_length,
-        fn_kwargs={"tokenizer": tokenizer, "max_length": max_length},
+        fn_kwargs={"tokenizer": tokenizer, "max_length": context_length},
         remove_columns=["length"],
     )
     ds.set_format("torch")
