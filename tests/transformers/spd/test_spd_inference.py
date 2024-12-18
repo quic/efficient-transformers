@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 from typing import List, Optional
-from pprint import pprint
 from time import perf_counter
 
 import numpy as np
@@ -20,16 +19,14 @@ from QEfficient.utils.device_utils import get_available_device_id
 
 configs = [
     pytest.param(
-        ['hello', 'hi', 'hola', 'bonjour'], # prompt
-        4, # num_speculative_tokens
+        Constants.INPUT_STR, # prompt
+        1, # num_speculative_tokens
         32, # prefill_seq_len
         128, # ctx_len
         1, # prefill_bsz
-        "JackFram/llama-68m", # draft_model_name
-        "JackFram/llama-68m", # draft_model_name
-        #"TinyLlama/TinyLlama-1.1B-Chat-v1.0", # draft_model_name
-        #"TinyLlama/TinyLlama-1.1B-Chat-v1.0", # target_model_name
-        4, # full_batch_size
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0", # draft_model_name
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0", # target_model_name
+        1, # full_batch_size
         id="CB llama",
     ),
 ]
@@ -108,9 +105,7 @@ def test_spec_decode_inference(
     full_batch_size: Optional[int],
 ):
     # get device group
-    #device_group: List[int] = get_available_device_id()
-    #device_group: List[int] = [0]
-    device_group: List[int] = [31]
+    device_group: List[int] = get_available_device_id()
     if not device_group:
         pytest.skip("No available devices to run model on Cloud AI 100")
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
@@ -207,6 +202,7 @@ def test_spec_decode_inference(
         ttft = perf_counter() - start
         ttfts.append(ttft)
         input_ids = tlm_logits.argmax(2).astype(np.int64)
+        generated_ids[bi].append(input_ids.item())
         dlm_decode_inputs["input_ids"][bi, 0] = input_ids
         tlm_precode_inputs["input_ids"][bi, 0] = input_ids.item()
         input_len = prompts_tokenized[bi]['position_ids'].max(1).item() + 1
@@ -306,7 +302,9 @@ def test_spec_decode_inference(
     for prompt,generation in zip(prompts, batch_decode):
         print(f"{prompt=} {generation=}")
     # validation check
+    assert mean_num_accepted_tokens == float(num_speculative_tokens+1), f"mean number of accepted tokens is {mean_num_accepted_tokens} but should be {num_speculative_tokens+1}"
     del target_model_session
     del draft_model_session
-    outputs = draft_model.generate(tokenizer, prompts, device_group)
-    breakpoint()
+    exec_info = draft_model.generate(tokenizer, Constants.INPUT_STR, device_group)
+    cloud_ai_100_tokens = exec_info.generated_ids[0][:max_gen_len[0]]  # Because we always run for single input and single batch size
+    assert (cloud_ai_100_tokens == np.asarray(generated_ids)[0]).all(), "Tokens don't match for SpD output and vanilla DLM output."
