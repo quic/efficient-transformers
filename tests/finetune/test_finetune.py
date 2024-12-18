@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import os
+import shutil
 
 import pytest
 import torch.optim as optim
@@ -14,6 +15,12 @@ from torch.utils.data import DataLoader
 import QEfficient
 import QEfficient.cloud.finetune
 from QEfficient.cloud.finetune import main as finetune
+
+
+def clean_up(path):
+    if os.path.exists(path):
+        shutil.rmtree(path)
+
 
 configs = [pytest.param("meta-llama/Llama-3.2-1B", 1, 1, 1, None, True, True, "cpu", id="llama_config")]
 
@@ -66,8 +73,8 @@ def test_finetune(
     print_model_size_spy.assert_called_once()
     train_spy.assert_called_once()
 
-    get_dataloader_kwargs_spy.call_count == 2
-    get_preprocessed_dataset_spy.call_count == 2
+    assert get_dataloader_kwargs_spy.call_count == 2
+    assert get_preprocessed_dataset_spy.call_count == 2
 
     args, kwargs = train_spy.call_args
     train_dataloader = args[1]
@@ -92,3 +99,7 @@ def test_finetune(
 
     saved_file = os.path.join(train_config.output_dir, "adapter_model.safetensors")
     assert os.path.isfile(saved_file)
+
+    clean_up(train_config.output_dir)
+    clean_up("runs")
+    clean_up(train_config.dump_root_dir)
