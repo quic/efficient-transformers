@@ -58,6 +58,14 @@ Once we have compiled the QPC, we can now use the precompiled QPC in execute API
 python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path qeff_models/gpt2/qpc_16cores_1BS_32PL_128CL_1devices_mxfp6/qpcs --prompt "Once upon a time in" --device_group [0]  
 ```
 
+### QEfficient.cloud.finetune
+You can run the finetune with set of predefined existing datasets on QAIC using the eager pipeline
+
+```bash
+python -m QEfficient.cloud.finetune --device qaic:0 --use-peft --output_dir ./meta-sam --num_epochs 2 --context_length 256 
+```
+For more details on finetune, checkout the subsection.
+
 ### Multi-Qranium Inference
 You can also enable MQ, just based on the number of devices. Based on the `--device-group` as input it will create TS config on the fly. If `--device-group [0,1]` it will create TS config for 2 devices and use it for compilation, if `--device-group [0]` then TS compilation is skipped and single soc execution is enabled.
 

@@ -57,7 +57,15 @@ source/hl_api
 source/ll_api
 
 ```
- 
+
+```{toctree}
+:caption: 'QAIC Finetune'
+:maxdepth: 2
+
+source/finetune
+
+```
+
 ```{toctree}
 :caption: 'Blogs'
 :maxdepth: 2
