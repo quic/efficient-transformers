@@ -36,6 +36,8 @@ def main(
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
     allow_mxint8_mdp_io: bool = False,
+    enable_qnn: Optional[bool] = False,
+    qnn_config: Optional[str] = None,
 ) -> None:
     """
     1. Check if compiled qpc for given config already exists, if it does jump to execute, else
@@ -62,6 +64,8 @@ def main(
         :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to None.``
         :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
         :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+        :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
+        :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
 
     .. code-block:: bash
 
@@ -76,7 +80,17 @@ def main(
     )
 
     qpc_dir_path = get_qpc_dir_path(
-        model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
+        model_name,
+        num_cores,
+        mos,
+        batch_size,
+        prompt_len,
+        ctx_len,
+        mxfp6,
+        mxint8,
+        device_group,
+        full_batch_size,
+        enable_qnn=enable_qnn,
     )
 
     # Handle qpc generation
@@ -107,6 +121,8 @@ def main(
             device_group=device_group,
             full_batch_size=full_batch_size,
             allow_mxint8_mdp_io=allow_mxint8_mdp_io,
+            enable_qnn=enable_qnn,
+            qnn_config=qnn_config,
         )
 
     #########
@@ -205,6 +221,20 @@ if __name__ == "__main__":
         "--allow_mxint8_mdp_io",
         action="store_true",
         help="If passed, this option allows MXINT8 compression of MDP IO traffic",
+    )
+    parser.add_argument(
+        "--enable_qnn",
+        "--enable-qnn",
+        action="store_true",
+        default=False,
+        help="Enables QNN. Optionally, a configuration file can be provided with [--enable_qnn CONFIG_FILE].\
+             If not provided, the default configuration will be used.\
+             Sample Config: QEfficient/cloud/compile/qnn_config.json",
+    )
+    parser.add_argument(
+        "qnn_config",
+        nargs="?",
+        type=str,
     )
 
     args = parser.parse_args()
