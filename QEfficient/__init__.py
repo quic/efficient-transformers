@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from QEfficient.base import QEffAutoModel, QEFFAutoModelForCausalLM, QEFFCommonLoader
+from QEfficient.base import QEFFAutoModel, QEFFAutoModelForCausalLM, QEFFCommonLoader
 from QEfficient.compile.compile_helper import compile
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
@@ -21,7 +21,7 @@ __all__ = [
     "export",
     "compile",
     "cloud_ai_100_exec_kv",
-    "QEffAutoModel",
+    "QEFFAutoModel",
     "QEFFAutoModelForCausalLM",
     "QEffAutoPeftModelForCausalLM",
     "QEFFCommonLoader",

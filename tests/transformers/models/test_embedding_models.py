@@ -9,10 +9,11 @@
 import numpy as np
 import onnxruntime as ort
 import pytest
+import torch
+from transformers import AutoModel, AutoTokenizer
 
-from QEfficient.transformers.models.modeling_auto import QEffAutoModel
+from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
 from QEfficient.utils import hf_download
-from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 
 embed_test_models = [
@@ -32,40 +33,65 @@ def check_embed_pytorch_vs_ort_vs_ai100(
         repo_id=model_name,
         ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
+    # Prepare input
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    inputs = tokenizer("My name is", return_tensors="pt")
 
-    qeff_model = QEffAutoModel.from_pretrained(
-        pretrained_model_name_or_path=model_path,
+    input_ids = torch.nn.functional.pad(inputs["input_ids"], (0, seq_len - inputs["input_ids"].size(1)), "constant", 0)
+    attention_mask = torch.nn.functional.pad(
+        inputs["attention_mask"], (0, seq_len - inputs["attention_mask"].size(1)), "constant", 0
+    )
+    inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
+
+    # Original PyTorch model
+    pt_model = AutoModel.from_pretrained(
+        model_path,
         num_hidden_layers=n_layer,
         attn_implementation="eager",
         trust_remote_code=True,
     )
 
-    prompt = "My name is"
-    pt_outputs = qeff_model.generate(prompts=["My name is"], runtime_ai100=False)
+    pt_outputs = pt_model(**inputs)
+    pt_embeddings = pt_outputs[0][0].detach().numpy()
+
+    # Pytorch transformed model
+    qeff_model = QEFFAutoModel.from_pretrained(
+        pretrained_model_name_or_path=model_path,
+        num_hidden_layers=n_layer,
+        attn_implementation="eager",
+        trust_remote_code=True,
+    )
+    qeff_pt_outputs = qeff_model.generate(inputs=inputs, runtime_ai100=False)
+    qeff_pt_embeddings = qeff_pt_outputs[0][0].detach().numpy()
+    mad = np.mean(np.abs(pt_embeddings - qeff_pt_embeddings))
+    print("Mad for PyTorch and PyTorch transformed qeff_model is ", mad)
+    assert mad <= 0, f"MAD is too high for onnx and Pytorch: {mad}"
 
     onnx_model = qeff_model.export()
     ort_session = ort.InferenceSession(str(onnx_model))
+
     # Prepare the inputs for ONNX Runtime
-    tokenizer = load_hf_tokenizer(model_path)
-    inputs = tokenizer(prompt, return_tensors="pt", padding="max_length", max_length=seq_len)
-    onnx_inputs = {"input_ids": inputs["input_ids"].numpy(), "attention_mask": inputs["attention_mask"].numpy()}
+    input_ids = np.array(input_ids)
+    attention_mask = np.array(attention_mask)
+
+    onnx_inputs = {"input_ids": input_ids, "attention_mask": attention_mask}
     # Run inference
     onnx_outputs = ort_session.run(None, onnx_inputs)
 
-    # Compare PyTorch and ONNX outputs
+    # Compare Transformed PyTorch and ONNX outputs
     pt_embeddings = pt_outputs[0][0].detach().numpy()
     onnx_embeddings = onnx_outputs[0]
     mad = np.mean(np.abs(pt_embeddings - onnx_embeddings))
-    print("Mad for onnx and pytorch is ", mad)
+    print("Mad for onnx and PyTorch is ", mad)
     assert mad <= 10**-5, f"MAD is too high for onnx and Pytorch: {mad}"
 
     qeff_model.compile(
         num_cores=14,
     )
-    ai100_output = qeff_model.generate(prompts=["My name is"])
+    ai100_output = qeff_model.generate(inputs=inputs)
 
     # Compare ONNX and AI 100 outputs
-    mad = np.mean(np.abs(ai100_output[0]["output"] - onnx_outputs[0]))
+    mad = np.mean(np.abs(ai100_output["output"] - onnx_outputs[0]))
     print("Mad for onnx and AI 100 output is ", mad)
     assert mad <= 10**-3, f"MAD is too high for onnx and Pytorch: {mad}"
 

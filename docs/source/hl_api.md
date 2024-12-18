@@ -8,7 +8,12 @@
    :member-order: bysource
    :members:
 ``` 
-
+## `QEFFAutoModel`
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel
+   :member-order: bysource
+   :members:
+``` 
 ## `QEffAutoPeftModelForCausalLM`
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
