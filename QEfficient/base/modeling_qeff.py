@@ -251,7 +251,9 @@ class QEFFBaseModel(ABC):
 
         # Check if already compiled
         compile_hash = compile_hash.hexdigest()[:16]
-        qpc_path = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
+        compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
+        qpc_path = compile_dir / "qpc"
+        qpc_path.mkdir(parents=True, exist_ok=True)
         if qpc_path.is_dir():
             if (qpc_path / "programqpc.bin").is_file():
                 self.qpc_path = qpc_path

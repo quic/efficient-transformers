@@ -76,7 +76,7 @@ class QEFFCommonLoader:
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs) -> QEFFBaseModel:
         """
-        Downloads HuggingFace model if already doesn't exist locally, returns QEffAutoModel object based on type of model.
+        Downloads HuggingFace model if already doesn't exist locally, returns QEFFAutoModel object based on type of model.
         """
         if not os.path.isdir(pretrained_model_name_or_path):
             pretrained_model_name_or_path = login_and_download_hf_lm(pretrained_model_name_or_path, *args, **kwargs)
