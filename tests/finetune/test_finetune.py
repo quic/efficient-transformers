@@ -24,7 +24,8 @@ def clean_up(path):
 
 configs = [pytest.param("meta-llama/Llama-3.2-1B", 1, 1, 1, None, True, True, "cpu", id="llama_config")]
 
-#TODO:enable this once docker is available
+
+# TODO:enable this once docker is available
 @pytest.mark.skip(reason="eager docker not available in sdk")
 @pytest.mark.parametrize(
     "model_name,max_eval_step,max_train_step,intermediate_step_save,context_length,run_validation,use_peft,device",
