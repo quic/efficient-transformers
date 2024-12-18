@@ -13,8 +13,8 @@ pipeline {
            steps {
                sh '''
                    . ~/.bashrc
-                   docker run --privileged -dit --name ${BUILD_TAG} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
-                   docker exec ${BUILD_TAG} bash -c "
+                   sudo docker run --privileged -dit --name ${BUILD_TAG} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
+                   sudo docker exec ${BUILD_TAG} bash -c "
                    cd /efficient-transformers &&
                    apt update &&
                    apt install -y python3.10-venv &&
@@ -34,7 +34,7 @@ pipeline {
                    steps {
                        timeout(time: 10, unit: 'MINUTES') {
                            sh '''
-                           docker exec ${BUILD_TAG} bash -c "
+                           sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/Non_cli_qaic &&
@@ -50,7 +50,7 @@ pipeline {
                    steps {
                        timeout(time: 60, unit: 'MINUTES') {
                            sh '''
-                           docker exec ${BUILD_TAG} bash -c "
+                           sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/Non_qaic &&
@@ -68,7 +68,7 @@ pipeline {
                    steps {
                        timeout(time: 15, unit: 'MINUTES') {
                            sh '''
-                           docker exec ${BUILD_TAG} bash -c "
+                           sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/cli &&
@@ -88,7 +88,7 @@ pipeline {
            script {
                try {
                    sh '''
-                   docker rm -f ${BUILD_TAG}
+                   sudo docker rm -f ${BUILD_TAG}
                    sudo chown -R ubuntu .
                    '''
                } catch (error) {
