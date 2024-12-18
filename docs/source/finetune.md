@@ -8,7 +8,6 @@ Same CLI can be used to run Finetuning on GPU by setting the device flag.
 Same as QEfficient along with QAIC Eager mode
 
 ## Finetuning
-To finetune a model, run the following command:
 
 Export the ENV variables to download and enable private datasets
 ```bash
@@ -23,34 +22,36 @@ export QAIC_DEBUG=1 # To understand the CPU fallback ops
 ```
 
 ## Dataset Details
+
 To download the Alpaca dataset, visit this [link](https://raw.githubusercontent.com/tatsu-lab/stanford_alpaca/refs/heads/main/alpaca_data.json). Download the dataset and place it under the **dataset** directory. Make sure to update the training configuration accordingly.
 ```bash
 wget -c https://raw.githubusercontent.com/tatsu-lab/stanford_alpaca/refs/heads/main/alpaca_data.json -P dataset/
 ```
 
-Inside eager release docker,
+To download the grammar dataset, visit this [link](https://github.com/meta-llama/llama-recipes/blob/main/src/llama_recipes/datasets/grammar_dataset/grammar_dataset_process.ipynb). Download the dataset and place it under the **datasets_grammar** directory. Make sure to update the training configuration accordingly.
 
+
+## Usage
+
+Inside eager release docker,
 ```bash
 export "LD_LIBRARY_PATH=/opt/qti-aic/dev/lib/x86_64/"   
 pip install -e . --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
-## Single SOC finetuning on QAIC
+### Single SOC finetuning on QAIC
 
 ```python
 python -m QEfficient.cloud.finetune --device qaic:0 --model_name "meta-llama/Llama-3.2-1B"
 ```
-
 Also, you can configure various training parameters, for more details, checkout: QEfficient/finetune/configs/training.py, Below is example command line
-
 ```python
 python -m QEfficient.cloud.finetune --device qaic:0 --use-peft --output_dir ./meta-sam --num_epochs 2 --context_length 256 
 ```
 
-## Distributed training(DDP) on QAIC
+### Distributed training(DDP) on QAIC
 
 ```python
 QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node 4 -m QEfficient.cloud.finetune --device qaic --enable_ddp --dist_backend qccl --num_epochs 2  --model_name "meta-llama/Llama-3.2-1B"
 ```
-
 **nproc-per-node is number of workers(gpus) running locally.

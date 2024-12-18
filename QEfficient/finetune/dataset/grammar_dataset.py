@@ -12,11 +12,7 @@ from torch.utils.data import Dataset
 
 
 class grammar(Dataset):
-    def __init__(
-        self,
-        tokenizer,
-        csv_name=None,
-    ):
+    def __init__(self, tokenizer, csv_name=None, context_length=None):
         try:
             self.dataset = load_dataset(
                 "csv",
@@ -29,6 +25,7 @@ class grammar(Dataset):
             )
             raise e
 
+        self.context_length = context_length
         self.tokenizer = tokenizer
         self.print_text = False  # print_text
 
@@ -45,8 +42,18 @@ class grammar(Dataset):
         target_ = example_batch["target"]
 
         prompt = f"Correct this to standard English: {input_}\n---\nCorrected: "
-        prompt_ids = self.tokenizer.encode(self.tokenizer.bos_token + prompt, add_special_tokens=False)
-        label_ids = self.tokenizer.encode(target_ + self.tokenizer.eos_token, add_special_tokens=False)
+        prompt_ids = self.tokenizer.encode(
+            self.tokenizer.bos_token + prompt,
+            add_special_tokens=False,
+            max_length=self.context_length,
+            pad_to_max_length=True,
+        )
+        label_ids = self.tokenizer.encode(
+            target_ + self.tokenizer.eos_token,
+            add_special_tokens=False,
+            max_length=self.context_length,
+            pad_to_max_length=True,
+        )
 
         sample = {
             "input_ids": prompt_ids + label_ids,
@@ -60,16 +67,13 @@ class grammar(Dataset):
         return self.convert_to_features(self.dataset["train"][int(index)])
 
 
-def get_dataset(dataset_config, tokenizer, csv_name=None):
+def get_dataset(dataset_config, tokenizer, csv_name=None, context_length=None):
     """cover function for handling loading the working dataset"""
     """dataset loading"""
-    if csv_name is None:
-        currPath = Path.cwd() / "datasets_grammar" / "grammar_train.csv"
-        print(f"Loading dataset {currPath}")
-        csv_name = str(currPath)
-    dataset = grammar(
-        tokenizer=tokenizer,
-        csv_name=csv_name,
-    )
+    currPath = Path.cwd() / "datasets_grammar" / "grammar_train.csv"
+    print(f"Loading dataset {currPath}")
+    csv_name = str(currPath)
+    print(csv_name)
+    dataset = grammar(tokenizer=tokenizer, csv_name=csv_name, context_length=context_length)
 
     return dataset
