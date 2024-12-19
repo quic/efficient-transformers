@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import math
 from typing import Dict
 
 from datasets import Dataset, load_dataset
@@ -73,17 +72,14 @@ def get_gsm8k_dataset(
         remove_columns=["question", "answer"],
     )
 
-    if context_length is None:
-        context_length = max(ds["length"])
-        context_length = 2 ** round(math.log2(context_length))
-        # context_length = 128
+    if context_length is not None:
+        ds = ds.filter(lambda x: x["length"] <= context_length)
+        ds = ds.map(
+            pad_to_max_length,
+            fn_kwargs={"tokenizer": tokenizer, "max_length": context_length},
+            remove_columns=["length"],
+        )
 
-    ds = ds.filter(lambda x: x["length"] <= context_length)
-    ds = ds.map(
-        pad_to_max_length,
-        fn_kwargs={"tokenizer": tokenizer, "max_length": context_length},
-        remove_columns=["length"],
-    )
     ds.set_format("torch")
 
     return ds
