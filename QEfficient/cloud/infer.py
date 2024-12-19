@@ -238,6 +238,18 @@ if __name__ == "__main__":
             )
             compiler_options_dict[key] = value
 
+    args, compiler_options = parser.parse_known_args()
+    compiler_options_dict = {}
+    for i in range(0, len(compiler_options)):
+        if compiler_options[i].startswith("--"):
+            key = compiler_options[i].lstrip("-")
+            value = (
+                compiler_options[i + 1]
+                if i + 1 < len(compiler_options) and not compiler_options[i + 1].startswith("-")
+                else True
+            )
+            compiler_options_dict[key] = value
+
     if args.verbose:
         logger.setLevel(logging.INFO)
     del args.verbose  # type: ignore
