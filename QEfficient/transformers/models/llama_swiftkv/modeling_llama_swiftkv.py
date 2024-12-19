@@ -90,7 +90,11 @@ class LlamaSwiftKVAttention(nn.Module):
 
         key_states, value_states = past_key_value.read_only(self.layer_idx, position_ids=position_ids)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, _ = qeff_apply_rotary_pos_emb(query_states, torch.empty_like(key_states), cos, sin, position_ids)
+        position_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        position_ids = position_ids[:, position_idx[0]]
+        query_states, _ = qeff_apply_rotary_pos_emb(
+            query_states, torch.empty_like(query_states), cos, sin, position_ids
+        )
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -160,9 +164,7 @@ class LlamaSwiftKVModel(nn.Module):
         self.vocab_size = config.vocab_size
         self.config = config
 
-        self.embed_tokens = nn.Embedding(
-            self.vocab_size, config.hidden_size, None
-        )  # TODO: Not sure if padding_idx shoudl eb NONE
+        self.embed_tokens = nn.Embedding(self.vocab_size, config.hidden_size, None)
         self.layers = torch.nn.ModuleList(
             [
                 QEffLlamaDecoderLayer(config=config, layer_idx=idx)
@@ -179,9 +181,9 @@ class LlamaSwiftKVModel(nn.Module):
     ) -> torch.Tensor:
         for layer_idx in range(self.config.num_key_value_layers, self.config.num_hidden_layers):
             layer = self.layers[layer_idx]
-
             hidden_states, past_key_values = layer(hidden_states, position_ids, past_key_values, causal_mask)
 
+        hidden_states = self.norm(hidden_states)
         return hidden_states, past_key_values
 
     def _update_causal_mask(
@@ -339,15 +341,21 @@ class LlamaSwiftKVModel(nn.Module):
             cache_kwargs = {"sin": sin, "cos": cos, "position_ids": position_ids}
             past_key_values.write_only(key_states, value_states, self_attn.layer_idx, cache_kwargs)
 
+        last_pos_id = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        orig_hidden_states = hidden_states
+        hidden_states = orig_hidden_states[:, last_pos_id[0], :]
+        causal_mask = causal_mask[:, :, last_pos_id[0], :]
+
         hidden_states, next_decoder_cache = self._run_swiftkv_layers(
             hidden_states, position_ids, past_key_values, causal_mask
         )
+        orig_hidden_states[:, last_pos_id[0], :] = hidden_states
         ####################################
         ## THE MAGIC OF SWIFT KV ENDS HERE
         ####################################
 
         next_cache = next_decoder_cache.to_legacy_cache()
-        return hidden_states, next_cache
+        return orig_hidden_states, next_cache
 
 
 class LlamaSwiftKVForCausalLM(nn.Module):
