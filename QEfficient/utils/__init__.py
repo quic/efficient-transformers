@@ -11,6 +11,7 @@ from QEfficient.transformers.quantizers.auto import (  # noqa: F401
 )
 from QEfficient.utils._utils import (  # noqa: F401
     check_and_assign_cache_dir,
+    create_and_dump_configs,
     get_num_layers_from_config,
     get_onnx_dir_name,
     get_padding_shape_from_config,

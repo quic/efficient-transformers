@@ -7,6 +7,7 @@
 
 import hashlib
 import logging
+import os
 import warnings
 from pathlib import Path
 from typing import List, Optional, Union
@@ -23,7 +24,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
-from QEfficient.utils import constants, get_padding_shape_from_config
+from QEfficient.utils import constants, create_and_dump_configs, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 
 logger = logging.getLogger(__file__)
