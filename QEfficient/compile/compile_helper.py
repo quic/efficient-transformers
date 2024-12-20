@@ -183,7 +183,7 @@ def compile(
     if enable_qnn:
         qpc_path = qnn_compile(
             onnx_path=onnx_path,
-            qpc_path=qpc_path,
+            qpc_base_path=qpc_path,
             num_cores=num_cores,
             batch_size=batch_size,
             prompt_len=prompt_len,
