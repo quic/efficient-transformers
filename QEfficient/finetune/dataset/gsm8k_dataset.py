@@ -45,12 +45,12 @@ def tokenize_and_mask(row: Dict[str, str], *, tokenizer, instruction) -> Dict[st
 
     labels = [-100] * len(ques_ids) + ans_ids
 
-    inputs = {"input_ids": input_ids, "labels": labels, "length": len(input_ids)}
+    inputs = {"input_ids": input_ids, "labels": labels}
     return inputs
 
 
 def pad_to_max_length(row: Dict[str, list], *, tokenizer, max_length: int) -> Dict[str, list]:
-    length = row["length"]
+    length = len(row["input_ids"])
     return {
         "input_ids": row["input_ids"] + [tokenizer.pad_token_id] * (max_length - length),
         "attention_mask": [1] * length + [0] * (max_length - length),
@@ -77,7 +77,6 @@ def get_gsm8k_dataset(
         ds = ds.map(
             pad_to_max_length,
             fn_kwargs={"tokenizer": tokenizer, "max_length": context_length},
-            remove_columns=["length"],
         )
 
     ds.set_format("torch")
