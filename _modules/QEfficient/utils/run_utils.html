@@ -76,6 +76,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../source/hl_api.html">High Level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/ll_api.html">Low Level API</a></li>
 </ul>
+<p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html">Finetune Infra</a></li>
+</ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
@@ -287,7 +291,7 @@
         <span class="n">ort_outputs</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">output_names</span><span class="p">,</span> <span class="n">outputs_data</span><span class="p">))</span>
         <span class="k">return</span> <span class="n">ort_outputs</span></div>
 
-<div class="viewcode-block" id="ApiRunner.run_kv_model_on_ort"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort">[docs]</a>    <span class="k">def</span> <span class="nf">run_kv_model_on_ort</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_path</span><span class="p">):</span>
+<div class="viewcode-block" id="ApiRunner.run_kv_model_on_ort"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort">[docs]</a>    <span class="k">def</span> <span class="nf">run_kv_model_on_ort</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_path</span><span class="p">,</span> <span class="n">is_tlm</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running ``ONNX`` model on onnxruntime and return the output tokens</span>
 
@@ -317,12 +321,17 @@
 
         <span class="n">generated_ids</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prepare_ort_inputs</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">is_tlm</span><span class="p">:</span>
+            <span class="n">nltk</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+            <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;num_logits_to_keep&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">nltk</span>
         <span class="n">ort_outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_ort_session</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">session</span><span class="p">)</span>
         <span class="n">ort_outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">update_ort_outputs</span><span class="p">(</span><span class="n">ort_outputs</span><span class="p">)</span>
 
         <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span><span class="p">):</span>
             <span class="n">generated_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ort_outputs</span><span class="p">[</span><span class="s2">&quot;logits&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
             <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">update_ort_inputs</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">ort_outputs</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">is_tlm</span><span class="p">:</span>
+                <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;num_logits_to_keep&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">nltk</span>
             <span class="n">ort_outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_ort_session</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">session</span><span class="p">)</span>
             <span class="n">ort_outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">update_ort_outputs</span><span class="p">(</span><span class="n">ort_outputs</span><span class="p">)</span>
 
@@ -347,17 +356,11 @@
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">execinfo</span> <span class="o">=</span> <span class="n">TextGeneration</span><span class="p">(</span>
             <span class="n">tokenizer</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">,</span>
-            <span class="n">prompt</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span>
             <span class="n">qpc_path</span><span class="o">=</span><span class="n">qpc_path</span><span class="p">,</span>
             <span class="n">device_id</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
             <span class="n">ctx_len</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">ctx_len</span><span class="p">,</span>
-            <span class="n">generation_len</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span><span class="p">,</span>
-            <span class="n">stream</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
             <span class="n">full_batch_size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">full_batch_size</span><span class="p">,</span>
-        <span class="p">)</span><span class="o">.</span><span class="n">cloud_ai_100_exec_kv_helper</span><span class="p">(</span>
-            <span class="n">prompt</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span>
-            <span class="n">generation_len</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span><span class="p">,</span>
-        <span class="p">)</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompt</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span> <span class="n">generation_len</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 
         <span class="n">predicted_string</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">batch_decode</span><span class="p">(</span><span class="n">execinfo</span><span class="o">.</span><span class="n">generated_ids</span><span class="p">,</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;QEff Transformed Model Outputs (Cloud AI 100): </span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>

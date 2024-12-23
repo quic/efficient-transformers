@@ -79,6 +79,10 @@
 <li class="toctree-l1"><a class="reference internal" href="hl_api.html">High Level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="ll_api.html">Low Level API</a></li>
 </ul>
+<p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="finetune.html">Finetune Infra</a></li>
+</ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
@@ -190,6 +194,15 @@
 <dt class="field-odd">hf_token (str)<span class="colon">:</span></dt>
 <dd class="field-odd"><p>HuggingFace login token to access private repos. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
 </dd>
+<dt class="field-even">allow_mxint8_mdp_io (bool)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Allows MXINT8 compression of MDP IO traffic. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-odd">enable_qnn (bool)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Enables QNN Compilation. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-even">qnn_config (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path of QNN Config parameters file. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
 </dl>
 </dd>
 </dl>
@@ -291,6 +304,15 @@ Generates tensor-slicing configuration if multiple devices are passed in <code c
 </dd>
 <dt class="field-even">custom_io_file_path (str)<span class="colon">:</span></dt>
 <dd class="field-even"><p>Path to <code class="docutils literal notranslate"><span class="pre">customIO</span></code> file (formatted as a string). <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-odd">allow_mxint8_mdp_io (bool)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Allows MXINT8 compression of MDP IO traffic <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-even">enable_qnn (bool)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Enables QNN Compilation. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-odd">qnn_config (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path of QNN Config parameters file. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
 </dd>
 </dl>
 </dd>

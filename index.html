@@ -78,6 +78,10 @@
 <li class="toctree-l1"><a class="reference internal" href="source/hl_api.html">High Level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/ll_api.html">Low Level API</a></li>
 </ul>
+<p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="source/finetune.html">Finetune Infra</a></li>
+</ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
@@ -157,6 +161,7 @@
 <li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#command-line-interface">Command Line Interface</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#qefficient-cloud-infer">QEfficient.cloud.infer</a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#qefficient-cloud-execute">QEfficient.cloud.execute</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#qefficient-cloud-finetune">QEfficient.cloud.finetune</a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#multi-qranium-inference">Multi-Qranium Inference</a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#continuous-batching">Continuous Batching</a></li>
 </ul>
@@ -165,6 +170,7 @@
 <li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#model-download-and-optimize-for-cloud-ai-100">1.  Model download and Optimize for Cloud AI 100</a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#export-and-compile-with-one-api">2. Export and Compile with one API</a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#execute">3. Execute</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#draft-based-speculative-decoding">Draft-Based Speculative Decoding</a></li>
 </ul>
 </li>
 </ul>
@@ -183,7 +189,9 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/hl_api.html">High Level API</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#qeffautomodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#qeffautomodel"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModel</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#qeffautopeftmodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#qeffautoloramodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">export</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#module-QEfficient.compile.compile_helper"><code class="docutils literal notranslate"><span class="pre">compile</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#module-QEfficient.generation.text_generation_inference"><code class="docutils literal notranslate"><span class="pre">Execute</span></code></a></li>
@@ -193,6 +201,18 @@
 <li class="toctree-l2"><a class="reference internal" href="source/ll_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_kvstyle</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/ll_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_bertstyle</span></code></a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/ll_api.html#module-QEfficient.utils.device_utils"><code class="docutils literal notranslate"><span class="pre">utils</span></code></a></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="source/finetune.html">Finetune Infra</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="source/finetune.html#installation">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/finetune.html#finetuning">Finetuning</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/finetune.html#dataset-details">Dataset Details</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/finetune.html#usage">Usage</a></li>
 </ul>
 </li>
 </ul>
@@ -250,8 +270,8 @@
     <div class="rst-other-versions">
       Versions
       <dl>
-        <dd><a href="index.html">main</a></dd>
-        <dd><a href="source/release/v1.18/index.html">release/v1.18</a></dd>
+        <dd><a href="../index.html">main</a></dd>
+        <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
       </dl>
     </div>
 </div><script>

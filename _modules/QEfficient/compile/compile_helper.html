@@ -76,6 +76,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../source/hl_api.html">High Level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/ll_api.html">Low Level API</a></li>
 </ul>
+<p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html">Finetune Infra</a></li>
+</ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
@@ -132,6 +136,7 @@
 <span class="kn">import</span> <span class="nn">warnings</span>
 <span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Tuple</span>
 
+<span class="kn">from</span> <span class="nn">QEfficient.compile.qnn_compiler</span> <span class="kn">import</span> <span class="nb">compile</span> <span class="k">as</span> <span class="n">qnn_compile</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.logging_utils</span> <span class="kn">import</span> <span class="n">logger</span>
 
 
@@ -155,6 +160,10 @@
         <span class="n">specializations</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">1</span><span class="p">][</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">full_batch_size</span><span class="p">)</span>
         <span class="n">specializations</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">1</span><span class="p">][</span><span class="s2">&quot;batch_size&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">full_batch_size</span><span class="p">)</span>
 
+    <span class="c1"># To handle repetative input in specializations when prompt_len is 1</span>
+    <span class="k">if</span> <span class="n">prompt_len</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">specializations</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+
     <span class="c1"># Dump</span>
     <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
         <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">specializations</span><span class="p">,</span> <span class="n">file</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
@@ -168,6 +177,7 @@
     <span class="n">mxfp6</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
     <span class="n">custom_io_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">aic_enable_depth_first</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+    <span class="n">allow_mxint8_mdp_io</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
     <span class="n">mos</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
     <span class="n">device_group</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
@@ -208,6 +218,8 @@
         <span class="n">command</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;-mos=</span><span class="si">{</span><span class="n">mos</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">aic_enable_depth_first</span><span class="p">:</span>
         <span class="n">command</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-aic-enable-depth-first&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">allow_mxint8_mdp_io</span><span class="p">:</span>
+        <span class="n">command</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;-allow-mxint8-mdp-io&quot;</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">device_group</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">device_group</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
         <span class="n">mdp_ts_config</span> <span class="o">=</span> <span class="p">{</span>
             <span class="s2">&quot;connections&quot;</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;devices&quot;</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">device_group</span><span class="p">))),</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;p2p&quot;</span><span class="p">}],</span>
@@ -245,6 +257,9 @@
     <span class="n">mxint8</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">custom_io_file_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">allow_mxint8_mdp_io</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">enable_qnn</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">qnn_config</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
@@ -268,6 +283,9 @@
 <span class="sd">        :mxfp6 (bool): Enable compilation for ``MXFP6`` precision.  ``Defaults to True.``</span>
 <span class="sd">        :mxint8 (bool): Compress Present/Past KV to ``MXINT8`` using ``CustomIO`` config. ``Defaults to False.``</span>
 <span class="sd">        :custom_io_file_path (str): Path to ``customIO`` file (formatted as a string). ``Defaults to None.``</span>
+<span class="sd">        :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic ``Defaults to False.``</span>
+<span class="sd">        :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``</span>
+<span class="sd">        :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``</span>
 
 <span class="sd">    Returns:</span>
 <span class="sd">        :str: Path to compiled ``qpc`` package.</span>
@@ -286,30 +304,49 @@
         <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
     <span class="p">)</span>
 
-    <span class="c1"># Select the customIO config based on the mx flag.</span>
-    <span class="n">custom_io_file_name</span> <span class="o">=</span> <span class="s2">&quot;custom_io_int8.yaml&quot;</span> <span class="k">if</span> <span class="n">mxint8</span> <span class="k">else</span> <span class="s2">&quot;custom_io_fp16.yaml&quot;</span>
-
-    <span class="k">if</span> <span class="n">custom_io_file_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">custom_io_file_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">),</span> <span class="n">custom_io_file_name</span><span class="p">)</span>
-
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">custom_io_file_path</span><span class="p">):</span>
-        <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;Custom IO file </span><span class="si">{</span><span class="n">custom_io_file_name</span><span class="si">}</span><span class="s2"> is not present at the expected path </span><span class="si">{</span><span class="n">custom_io_file_path</span><span class="si">}</span><span class="s2">. Please pass the correct file path or rerun infer/export API&quot;</span>
+    <span class="k">if</span> <span class="n">enable_qnn</span><span class="p">:</span>
+        <span class="n">qpc_path</span> <span class="o">=</span> <span class="n">qnn_compile</span><span class="p">(</span>
+            <span class="n">onnx_path</span><span class="o">=</span><span class="n">onnx_path</span><span class="p">,</span>
+            <span class="n">qpc_path</span><span class="o">=</span><span class="n">qpc_path</span><span class="p">,</span>
+            <span class="n">num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
+            <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+            <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt_len</span><span class="p">,</span>
+            <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
+            <span class="n">mxfp6</span><span class="o">=</span><span class="n">mxfp6</span><span class="p">,</span>
+            <span class="n">mxint8</span><span class="o">=</span><span class="n">mxint8</span><span class="p">,</span>
+            <span class="n">allow_mxint8_mdp_io</span><span class="o">=</span><span class="n">allow_mxint8_mdp_io</span><span class="p">,</span>
+            <span class="n">aic_enable_depth_first</span><span class="o">=</span><span class="n">aic_enable_depth_first</span><span class="p">,</span>
+            <span class="n">mos</span><span class="o">=</span><span class="n">mos</span><span class="p">,</span>
+            <span class="n">device_group</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
+            <span class="n">qnn_config</span><span class="o">=</span><span class="n">qnn_config</span><span class="p">,</span>
         <span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;QNN Compiled QPC files can be found here: </span><span class="si">{</span><span class="n">qpc_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Select the customIO config based on the mx flag.</span>
+        <span class="n">custom_io_file_name</span> <span class="o">=</span> <span class="s2">&quot;custom_io_int8.yaml&quot;</span> <span class="k">if</span> <span class="n">mxint8</span> <span class="k">else</span> <span class="s2">&quot;custom_io_fp16.yaml&quot;</span>
 
-    <span class="n">_</span><span class="p">,</span> <span class="n">qpc_path</span> <span class="o">=</span> <span class="n">compile_kv_model_on_cloud_ai_100</span><span class="p">(</span>
-        <span class="n">onnx_path</span><span class="o">=</span><span class="n">onnx_path</span><span class="p">,</span>
-        <span class="n">specializations_json</span><span class="o">=</span><span class="n">specialization_json_path</span><span class="p">,</span>
-        <span class="n">num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
-        <span class="n">custom_io_path</span><span class="o">=</span><span class="n">custom_io_file_path</span><span class="p">,</span>
-        <span class="n">base_path</span><span class="o">=</span><span class="n">qpc_path</span><span class="p">,</span>
-        <span class="n">mxfp6</span><span class="o">=</span><span class="n">mxfp6</span><span class="p">,</span>
-        <span class="n">aic_enable_depth_first</span><span class="o">=</span><span class="n">aic_enable_depth_first</span><span class="p">,</span>
-        <span class="n">mos</span><span class="o">=</span><span class="n">mos</span><span class="p">,</span>
-        <span class="n">device_group</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
-    <span class="p">)</span>
+        <span class="k">if</span> <span class="n">custom_io_file_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">custom_io_file_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">),</span> <span class="n">custom_io_file_name</span><span class="p">)</span>
 
-    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Compiled QPC files can be found here: </span><span class="si">{</span><span class="n">qpc_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">custom_io_file_path</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Custom IO file </span><span class="si">{</span><span class="n">custom_io_file_name</span><span class="si">}</span><span class="s2"> is not present at the expected path </span><span class="si">{</span><span class="n">custom_io_file_path</span><span class="si">}</span><span class="s2">. Please pass the correct file path or rerun infer/export API&quot;</span>
+            <span class="p">)</span>
+
+        <span class="n">_</span><span class="p">,</span> <span class="n">qpc_path</span> <span class="o">=</span> <span class="n">compile_kv_model_on_cloud_ai_100</span><span class="p">(</span>
+            <span class="n">onnx_path</span><span class="o">=</span><span class="n">onnx_path</span><span class="p">,</span>
+            <span class="n">specializations_json</span><span class="o">=</span><span class="n">specialization_json_path</span><span class="p">,</span>
+            <span class="n">num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
+            <span class="n">custom_io_path</span><span class="o">=</span><span class="n">custom_io_file_path</span><span class="p">,</span>
+            <span class="n">base_path</span><span class="o">=</span><span class="n">qpc_path</span><span class="p">,</span>
+            <span class="n">mxfp6</span><span class="o">=</span><span class="n">mxfp6</span><span class="p">,</span>
+            <span class="n">aic_enable_depth_first</span><span class="o">=</span><span class="n">aic_enable_depth_first</span><span class="p">,</span>
+            <span class="n">allow_mxint8_mdp_io</span><span class="o">=</span><span class="n">allow_mxint8_mdp_io</span><span class="p">,</span>
+            <span class="n">mos</span><span class="o">=</span><span class="n">mos</span><span class="p">,</span>
+            <span class="n">device_group</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Compiled QPC files can be found here: </span><span class="si">{</span><span class="n">qpc_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">qpc_path</span></div>
 </pre></div>
 
