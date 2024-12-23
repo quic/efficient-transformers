@@ -76,6 +76,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../source/hl_api.html">High Level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/ll_api.html">Low Level API</a></li>
 </ul>
+<p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html">Finetune Infra</a></li>
+</ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
@@ -132,7 +136,7 @@
 
 <span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
 <span class="kn">import</span> <span class="nn">torch</span>
-<span class="kn">from</span> <span class="nn">peft</span> <span class="kn">import</span> <span class="n">AutoPeftModelForCausalLM</span><span class="p">,</span> <span class="n">PeftModelForCausalLM</span><span class="p">,</span> <span class="n">load_peft_weights</span>
+<span class="kn">from</span> <span class="nn">peft</span> <span class="kn">import</span> <span class="n">AutoPeftModelForCausalLM</span><span class="p">,</span> <span class="n">PeftConfig</span><span class="p">,</span> <span class="n">PeftModelForCausalLM</span><span class="p">,</span> <span class="n">load_peft_weights</span>
 <span class="kn">from</span> <span class="nn">torch</span> <span class="kn">import</span> <span class="n">nn</span>
 <span class="kn">from</span> <span class="nn">transformers</span> <span class="kn">import</span> <span class="n">GenerationConfig</span><span class="p">,</span> <span class="n">StoppingCriteria</span><span class="p">,</span> <span class="n">StoppingCriteriaList</span>
 <span class="kn">from</span> <span class="nn">transformers.generation.streamers</span> <span class="kn">import</span> <span class="n">BaseStreamer</span>
@@ -141,9 +145,10 @@
 <span class="kn">from</span> <span class="nn">QEfficient.base.onnx_transforms</span> <span class="kn">import</span> <span class="n">FP16ClipTransform</span><span class="p">,</span> <span class="n">OnnxTransform</span><span class="p">,</span> <span class="n">SplitTensorsTransform</span>
 <span class="kn">from</span> <span class="nn">QEfficient.base.pytorch_transforms</span> <span class="kn">import</span> <span class="n">PytorchTransform</span>
 <span class="kn">from</span> <span class="nn">QEfficient.generation.cloud_infer</span> <span class="kn">import</span> <span class="n">QAICInferenceSession</span>
+<span class="kn">from</span> <span class="nn">QEfficient.peft.lora</span> <span class="kn">import</span> <span class="n">QEffAutoLoraModelForCausalLM</span>
 <span class="kn">from</span> <span class="nn">QEfficient.peft.onnx_transforms</span> <span class="kn">import</span> <span class="n">AdapterWeightsToInputsTransform</span>
 <span class="kn">from</span> <span class="nn">QEfficient.peft.pytorch_transforms</span> <span class="kn">import</span> <span class="n">PeftModelInputsTransform</span>
-<span class="kn">from</span> <span class="nn">QEfficient.transformers.pytorch_transforms</span> <span class="kn">import</span> <span class="n">CustomOpsTransform</span><span class="p">,</span> <span class="n">KVCacheTransform</span>
+<span class="kn">from</span> <span class="nn">QEfficient.transformers.models.pytorch_transforms</span> <span class="kn">import</span> <span class="n">CustomOpsTransform</span><span class="p">,</span> <span class="n">KVCacheTransform</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">constants</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils._utils</span> <span class="kn">import</span> <span class="n">get_padding_shape_from_config</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.cache</span> <span class="kn">import</span> <span class="n">to_hashable</span>
@@ -199,6 +204,9 @@
             <span class="p">}</span>
             <span class="k">for</span> <span class="n">adapter_name</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">peft_config</span>
         <span class="p">}</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="fm">__repr__</span><span class="p">()</span>
 
     <span class="nd">@property</span>
     <span class="k">def</span> <span class="nf">model_name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -265,6 +273,8 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Args:</span>
 <span class="sd">            :pretrained_name_or_path (str): Model card name from huggingface or local path to model directory.</span>
+<span class="sd">            :finite_adapters (bool): set True to enable finite adapter mode with QEffAutoLoraModelForCausalLM class. Please refer to QEffAutoLoraModelForCausalLM for API specification.</span>
+<span class="sd">            :adapter_name (str): Name used to identify loaded adapter.</span>
 <span class="sd">            :args, kwargs: Additional arguments to pass to peft.AutoPeftModelForCausalLM.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">):</span>
@@ -272,7 +282,22 @@
         <span class="k">if</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;use_cache&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="kc">False</span><span class="p">:</span>
             <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s2">&quot;Overriding to use_cache=True&quot;</span><span class="p">)</span>
         <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;use_cache&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
-        <span class="n">obj</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_from_pretrained</span><span class="p">(</span><span class="n">pretrained_name_or_path</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;finite_adapters&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>  <span class="c1"># initialize through finite_adapters class</span>
+            <span class="n">obj</span> <span class="o">=</span> <span class="n">QEffAutoLoraModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+                <span class="n">pretrained_model_name_or_path</span><span class="o">=</span><span class="n">PeftConfig</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+                    <span class="n">pretrained_name_or_path</span>
+                <span class="p">)</span><span class="o">.</span><span class="n">base_model_name_or_path</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">if</span> <span class="n">adapter_name</span> <span class="o">:=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;adapter_name&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">):</span>
+                <span class="n">obj</span><span class="o">.</span><span class="n">load_adapter</span><span class="p">(</span><span class="n">pretrained_name_or_path</span><span class="p">,</span> <span class="n">adapter_name</span><span class="o">=</span><span class="n">adapter_name</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">obj</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">or</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">args</span><span class="p">)[</span><span class="mi">0</span><span class="p">],</span> <span class="nb">str</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;Required adapter name argument in string format&quot;</span><span class="p">)</span>
+            <span class="n">obj</span><span class="o">.</span><span class="n">load_adapter</span><span class="p">(</span><span class="n">pretrained_name_or_path</span><span class="p">,</span> <span class="nb">list</span><span class="p">(</span><span class="n">args</span><span class="p">)[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">obj</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_from_pretrained</span><span class="p">(</span><span class="n">pretrained_name_or_path</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">obj</span></div>
 
 <div class="viewcode-block" id="QEffAutoPeftModelForCausalLM.export"><a class="viewcode-back" href="../../../source/hl_api.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.export">[docs]</a>    <span class="k">def</span> <span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">export_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>

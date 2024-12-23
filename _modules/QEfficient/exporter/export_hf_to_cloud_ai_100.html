@@ -76,6 +76,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../source/hl_api.html">High Level API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/ll_api.html">Low Level API</a></li>
 </ul>
+<p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html">Finetune Infra</a></li>
+</ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
@@ -136,7 +140,6 @@
 <span class="kn">from</span> <span class="nn">QEfficient.base.common</span> <span class="kn">import</span> <span class="n">AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP</span><span class="p">,</span> <span class="n">QEFF_MODEL_TYPE</span><span class="p">,</span> <span class="n">QEFFCommonLoader</span>
 <span class="kn">from</span> <span class="nn">QEfficient.base.modeling_qeff</span> <span class="kn">import</span> <span class="n">QEFFBaseModel</span>
 <span class="kn">from</span> <span class="nn">QEfficient.exporter.export_utils</span> <span class="kn">import</span> <span class="n">export_onnx</span><span class="p">,</span> <span class="n">fix_onnx_fp16</span><span class="p">,</span> <span class="n">generate_input_files</span><span class="p">,</span> <span class="n">run_model_on_ort</span>
-<span class="kn">from</span> <span class="nn">QEfficient.transformers.modeling_utils</span> <span class="kn">import</span> <span class="n">get_lists_of_cb_qeff_models</span>
 <span class="kn">from</span> <span class="nn">QEfficient.transformers.models.modeling_auto</span> <span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">load_hf_tokenizer</span>
 <span class="kn">from</span> <span class="nn">QEfficient.utils.constants</span> <span class="kn">import</span> <span class="n">QEFF_MODELS_DIR</span><span class="p">,</span> <span class="n">Constants</span>
@@ -436,14 +439,6 @@
     <span class="n">seq_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Constants</span><span class="o">.</span><span class="n">SEQ_LEN</span><span class="p">,</span>
     <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="c1"># Check if model architecture is supported for continuous batching.</span>
-    <span class="k">if</span> <span class="n">full_batch_size</span> <span class="ow">and</span> <span class="n">qeff_model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">architectures</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">{</span>
-        <span class="n">x</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">get_lists_of_cb_qeff_models</span><span class="o">.</span><span class="n">architectures</span>
-    <span class="p">}:</span>
-        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;Continuous batching is not supported for </span><span class="si">{</span><span class="n">qeff_model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">architectures</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
-        <span class="p">)</span>
-
     <span class="c1"># FIXME: move all this to class instead of here, and just call qeff_model.export here.</span>
     <span class="k">if</span> <span class="n">AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">qeff_model</span><span class="o">.</span><span class="vm">__class__</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="o">==</span> <span class="n">QEFF_MODEL_TYPE</span><span class="o">.</span><span class="n">CAUSALLM</span><span class="p">:</span>  <span class="c1"># type: ignore</span>
         <span class="k">return</span> <span class="n">export_lm_model_for_cloud</span><span class="p">(</span>

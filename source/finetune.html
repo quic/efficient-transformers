@@ -4,7 +4,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Using GitHub Repository &mdash; efficient-transformers main documentation</title>
+  <title>Finetune Infra &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
       <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=547657ed" />
@@ -22,8 +22,8 @@
     <script src="../_static/js/theme.js"></script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Transformed models and QPC storage" href="quick_start.html" />
-    <link rel="prev" title="Pre-requisites" href="installation.html" /> 
+    <link rel="next" title="Train anywhere, Infer on Qualcomm Cloud AI 100" href="blogs.html" />
+    <link rel="prev" title="Low Level API" href="ll_api.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -58,8 +58,8 @@
 <li class="toctree-l1"><a class="reference internal" href="installation.html#sanity-check">Sanity Check</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Upgrade Efficient-Transformers</span></p>
-<ul class="current">
-<li class="toctree-l1 current"><a class="current reference internal" href="#">Using GitHub Repository</a></li>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="upgrade.html">Using GitHub Repository</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
 <ul>
@@ -80,8 +80,18 @@
 <li class="toctree-l1"><a class="reference internal" href="ll_api.html">Low Level API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="finetune.html">Finetune Infra</a></li>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Finetune Infra</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#installation">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#finetuning">Finetuning</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#dataset-details">Dataset Details</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#usage">Usage</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#single-soc-finetuning-on-qaic">Single SOC finetuning on QAIC</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#distributed-training-ddp-on-qaic">Distributed training(DDP) on QAIC</a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -114,9 +124,9 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Using GitHub Repository</li>
+      <li class="breadcrumb-item active">Finetune Infra</li>
       <li class="wy-breadcrumbs-aside">
-            <a href="../_sources/source/upgrade.md.txt" rel="nofollow"> View page source</a>
+            <a href="../_sources/source/finetune.md.txt" rel="nofollow"> View page source</a>
       </li>
   </ul>
   <hr/>
@@ -124,27 +134,68 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="using-github-repository">
-<h1>Using GitHub Repository<a class="headerlink" href="#using-github-repository" title="Permalink to this heading"></a></h1>
-<p><code class="docutils literal notranslate"><span class="pre">Warning:</span> <span class="pre">Efficient</span> <span class="pre">Transformers</span> <span class="pre">have</span> <span class="pre">been</span> <span class="pre">validated</span> <span class="pre">to</span> <span class="pre">work</span> <span class="pre">with</span> <span class="pre">the</span> <span class="pre">same</span> <span class="pre">compatible</span> <span class="pre">SDK.</span> <span class="pre">Upgrading</span> <span class="pre">this</span> <span class="pre">may</span> <span class="pre">result</span> <span class="pre">in</span> <span class="pre">certain</span> <span class="pre">models</span> <span class="pre">becoming</span> <span class="pre">incompatible.</span></code></p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Create Python virtual env and activate it. (Required Python 3.10)</span>
-
-python3.10<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>qeff_env
-<span class="nb">source</span><span class="w"> </span>qeff_env/bin/activate
-pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>pip
-
-<span class="c1"># Clone and Install the QEfficient Repo.</span>
-pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/quic/efficient-transformers
+  <section id="finetune-infra">
+<h1>Finetune Infra<a class="headerlink" href="#finetune-infra" title="Permalink to this heading"></a></h1>
+<p>This repository provides the infrastructure for finetuning models using different hardware accelerators such as QAIC.
+Same CLI can be used to run Finetuning on GPU by setting the device flag.</p>
+<section id="installation">
+<h2>Installation<a class="headerlink" href="#installation" title="Permalink to this heading"></a></h2>
+<p>Same as QEfficient along with QAIC Eager mode</p>
+</section>
+<section id="finetuning">
+<h2>Finetuning<a class="headerlink" href="#finetuning" title="Permalink to this heading"></a></h2>
+<p>Export the ENV variables to download and enable private datasets</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">HF_DATASETS_TRUST_REMOTE_CODE</span><span class="o">=</span>True
 </pre></div>
 </div>
+<p>Export the ENV variables to get the device and HW traces and debugging logs</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">QAIC_DELAY_SEM_WAIT_AT_COPY</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="c1"># For HW profile traces</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">QAIC_DEVICE_LOG_LEVEL</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="c1"># For Device level logs</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">QAIC_DEBUG</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="c1"># To understand the CPU fallback ops</span>
+</pre></div>
+</div>
+</section>
+<section id="dataset-details">
+<h2>Dataset Details<a class="headerlink" href="#dataset-details" title="Permalink to this heading"></a></h2>
+<p>To download the Alpaca dataset, visit this <a class="reference external" href="https://raw.githubusercontent.com/tatsu-lab/stanford_alpaca/refs/heads/main/alpaca_data.json">link</a>. Download the dataset and place it under the <strong>dataset</strong> directory. Make sure to update the training configuration accordingly.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>wget<span class="w"> </span>-c<span class="w"> </span>https://raw.githubusercontent.com/tatsu-lab/stanford_alpaca/refs/heads/main/alpaca_data.json<span class="w"> </span>-P<span class="w"> </span>dataset/
+</pre></div>
+</div>
+<p>To download the grammar dataset, visit this <a class="reference external" href="https://github.com/meta-llama/llama-recipes/blob/main/src/llama_recipes/datasets/grammar_dataset/grammar_dataset_process.ipynb">link</a>. Download the dataset and place it under the <strong>datasets_grammar</strong> directory. Make sure to update the training configuration accordingly.</p>
+</section>
+<section id="usage">
+<h2>Usage<a class="headerlink" href="#usage" title="Permalink to this heading"></a></h2>
+<p>Inside eager release docker,</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="s2">&quot;LD_LIBRARY_PATH=/opt/qti-aic/dev/lib/x86_64/&quot;</span><span class="w">   </span>
+pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="w"> </span>--extra-index-url<span class="w"> </span>https://download.pytorch.org/whl/cpu
+</pre></div>
+</div>
+<section id="single-soc-finetuning-on-qaic">
+<h3>Single SOC finetuning on QAIC<a class="headerlink" href="#single-soc-finetuning-on-qaic" title="Permalink to this heading"></a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">cloud</span><span class="o">.</span><span class="n">finetune</span> <span class="o">--</span><span class="n">device</span> <span class="n">qaic</span><span class="p">:</span><span class="mi">0</span> <span class="o">--</span><span class="n">model_name</span> <span class="s2">&quot;meta-llama/Llama-3.2-1B&quot;</span>
+</pre></div>
+</div>
+<p>Also, you can configure various training parameters, for more details, checkout: QEfficient/finetune/configs/training.py, Below is example command line</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">cloud</span><span class="o">.</span><span class="n">finetune</span> <span class="o">--</span><span class="n">device</span> <span class="n">qaic</span><span class="p">:</span><span class="mi">0</span> <span class="o">--</span><span class="n">use</span><span class="o">-</span><span class="n">peft</span> <span class="o">--</span><span class="n">output_dir</span> <span class="o">./</span><span class="n">meta</span><span class="o">-</span><span class="n">sam</span> <span class="o">--</span><span class="n">num_epochs</span> <span class="mi">2</span> <span class="o">--</span><span class="n">context_length</span> <span class="mi">256</span> 
+</pre></div>
+</div>
+</section>
+<section id="distributed-training-ddp-on-qaic">
+<h3>Distributed training(DDP) on QAIC<a class="headerlink" href="#distributed-training-ddp-on-qaic" title="Permalink to this heading"></a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">QAIC_VISIBLE_DEVICES</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span> <span class="n">torchrun</span> <span class="o">--</span><span class="n">nproc</span><span class="o">-</span><span class="n">per</span><span class="o">-</span><span class="n">node</span> <span class="mi">4</span> <span class="o">-</span><span class="n">m</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">cloud</span><span class="o">.</span><span class="n">finetune</span> <span class="o">--</span><span class="n">device</span> <span class="n">qaic</span> <span class="o">--</span><span class="n">enable_ddp</span> <span class="o">--</span><span class="n">dist_backend</span> <span class="n">qccl</span> <span class="o">--</span><span class="n">num_epochs</span> <span class="mi">2</span>  <span class="o">--</span><span class="n">model_name</span> <span class="s2">&quot;meta-llama/Llama-3.2-1B&quot;</span>
+</pre></div>
+</div>
+<p>**nproc-per-node is number of workers(gpus) running locally.</p>
+</section>
+</section>
 </section>
 
 
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="installation.html" class="btn btn-neutral float-left" title="Pre-requisites" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="quick_start.html" class="btn btn-neutral float-right" title="Transformed models and QPC storage" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="ll_api.html" class="btn btn-neutral float-left" title="Low Level API" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="blogs.html" class="btn btn-neutral float-right" title="Train anywhere, Infer on Qualcomm Cloud AI 100" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>
