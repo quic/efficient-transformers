@@ -9,9 +9,10 @@ import os
 import warnings
 
 import torch
-from configs.training import train_config as TRAIN_CONFIG
 from peft import AutoPeftModelForCausalLM
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from QEfficient.finetune.configs.training import train_config as TRAIN_CONFIG
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
@@ -19,7 +20,7 @@ warnings.filterwarnings("ignore")
 try:
     import torch_qaic  # noqa: F401
 
-    device = "qaic:1"
+    device = "qaic:0"
 except ImportError as e:
     print(f"Warning: {e}. Moving ahead without these qaic modules.")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -29,7 +30,7 @@ model = AutoModelForCausalLM.from_pretrained(
     train_config.model_name,
     use_cache=False,
     attn_implementation="sdpa",
-    torch_dtype=torch.float16 if torch.cuda.is_available() or device == "qaic:1" else None,
+    torch_dtype=torch.float16 if torch.cuda.is_available() or device == "qaic:0" else None,
 )
 
 # Load the tokenizer and add special tokens

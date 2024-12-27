@@ -6,11 +6,17 @@
 # -----------------------------------------------------------------------------
 
 try:
+    import platform
+    import sys
+
+    sys.path.append(f"/opt/qti-aic/dev/lib/{platform.machine()}")
     import qaicrt  # noqa: F401
 
     qaic_sdk_installed = True
 except ModuleNotFoundError:
     qaic_sdk_installed = False
+
+__version__ = "0.0.1.dev0"
 
 if qaic_sdk_installed:
     from QEfficient.base import QEffAutoModel, QEFFAutoModelForCausalLM, QEFFCommonLoader
@@ -22,7 +28,6 @@ if qaic_sdk_installed:
 
     # Users can use QEfficient.export for exporting models to ONNX
     export = qualcomm_efficient_converter
-    __version__ = "0.0.1.dev0"
 
     __all__ = [
         "transform",
