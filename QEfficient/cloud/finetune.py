@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
 import random
 import warnings
 
@@ -49,8 +48,6 @@ def main(**kwargs):
     train_config = TRAIN_CONFIG()
     update_config(train_config, **kwargs)
     device = train_config.device
-
-    os.environ["HF_DATASETS_TRUST_REMOTE_CODE"] = "True"
 
     # dist init
     if train_config.enable_ddp:
