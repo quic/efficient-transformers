@@ -6,6 +6,10 @@
 # -----------------------------------------------------------------------------
 
 try:
+    import platform
+    import sys
+
+    sys.path.append(f"/opt/qti-aic/dev/lib/{platform.machine()}")
     import qaicrt  # noqa: F401
 
     qaic_sdk_installed = True
