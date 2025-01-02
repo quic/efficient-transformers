@@ -1,11 +1,15 @@
 # Finetune Infra
 
 This repository provides the infrastructure for finetuning models using different hardware accelerators such as QAIC.
-Same CLI can be used to run Finetuning on GPU by setting the device flag.
+Same CLI can be used to run Finetuning on gpu by setting the device flag.(for finetuning on gpu, install torch specific to cuda)
 
 ## Installation
 
-Same as QEfficient along with QAIC Eager mode
+Same as QEfficient along with QAIC PyTorch Eager mode.
+For torch_qaic, assuming QEfficient is already installed,
+```bash
+pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
+```
 
 ## Finetuning
 
@@ -16,7 +20,6 @@ export HF_DATASETS_TRUST_REMOTE_CODE=True
 
 Export the ENV variables to get the device and HW traces and debugging logs
 ```bash
-export QAIC_DELAY_SEM_WAIT_AT_COPY=1 # For HW profile traces
 export QAIC_DEVICE_LOG_LEVEL=0 # For Device level logs
 export QAIC_DEBUG=1 # To understand the CPU fallback ops
 ```
@@ -32,12 +35,6 @@ To download the grammar dataset, visit this [link](https://github.com/meta-llama
 
 
 ## Usage
-
-Inside eager release docker,
-```bash
-export "LD_LIBRARY_PATH=/opt/qti-aic/dev/lib/x86_64/"   
-pip install -e . --extra-index-url https://download.pytorch.org/whl/cpu
-```
 
 ### Single SOC finetuning on QAIC
 
