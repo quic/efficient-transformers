@@ -7,6 +7,7 @@
 
 import hashlib
 import logging
+import os
 import warnings
 from pathlib import Path
 from typing import List, Optional, Union
@@ -23,7 +24,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
-from QEfficient.utils import constants, get_padding_shape_from_config
+from QEfficient.utils import constants, create_and_dump_configs, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 
 logger = logging.getLogger(__file__)
@@ -319,7 +320,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 for kv in ["key", "value"]:
                     custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
 
-        return self._compile(
+        self._compile(
             onnx_path,
             compile_dir,
             compile_only=True,
@@ -333,6 +334,36 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             aic_num_cores=num_cores,
             **compiler_options,
         )
+        # Construct the qconfig json file path
+        qconfig_file_path = os.path.join(os.path.dirname(self.qpc_path), "qconfig.json")
+        huggingface_config = self.model.config.__dict__
+
+        pytorch_transforms = [cls.__name__ for cls in self._pytorch_transforms]
+        onnx_transforms = [cls.__name__ for cls in self._onnx_transforms]
+
+        onnx_path = str(self.onnx_path)
+        specializations_file_path = str(os.path.join(os.path.dirname(self.qpc_path), "specializations.json"))
+        compile_dir = str(os.path.dirname(self.qpc_path))
+
+        create_and_dump_configs(
+            qconfig_file_path,
+            specializations_file_path,
+            huggingface_config,
+            pytorch_transforms,
+            onnx_transforms,
+            onnx_path,
+            compile_dir,
+            prefill_seq_len,
+            ctx_len,
+            batch_size,
+            full_batch_size,
+            num_devices,
+            num_cores,
+            mxfp6_matmul,
+            mxint8_kv_cache,
+            num_speculative_tokens,
+        )
+        return self.qpc_path
 
     # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate
     def generate(
