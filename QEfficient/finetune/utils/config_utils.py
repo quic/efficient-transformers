@@ -9,7 +9,6 @@ import inspect
 from dataclasses import asdict
 
 import torch.distributed as dist
-import torch.utils.data as data_utils
 from peft import (
     AdaptionPromptConfig,
     LoraConfig,
@@ -20,6 +19,7 @@ from transformers import default_data_collator
 import QEfficient.finetune.configs.dataset_config as datasets
 from QEfficient.finetune.configs.peft_config import lora_config, prefix_config
 from QEfficient.finetune.configs.training import train_config
+from QEfficient.finetune.data.sampler import DistributedLengthBasedBatchSampler
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
 
 
@@ -97,7 +97,14 @@ def get_dataloader_kwargs(train_config: train_config, dataset, dataset_processer
     kwargs["collate_fn"] = default_data_collator
     # use a distributed sampler to split data between devices
     if train_config.enable_ddp:
-        kwargs["sampler"] = data_utils.DistributedSampler(
-            dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True
+        kwargs["batch_sampler"] = DistributedLengthBasedBatchSampler(
+            dataset,
+            batch_size=batch_size,
+            rank=dist.get_rank(),
+            num_replicas=dist.get_world_size(),
+            shuffle=mode == "train",
         )
+        # kwargs["sampler"] = data_utils.DistributedSampler(
+        #    dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True
+        # )
     return kwargs
