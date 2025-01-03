@@ -266,6 +266,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+            :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
 
         Returns:
             :str: Path of the compiled ``qpc`` package.
