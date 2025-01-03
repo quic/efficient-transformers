@@ -32,7 +32,7 @@ pipeline {
            parallel {
                stage('Run Non-CLI Non-QAIC Tests') {
                    steps {
-                       timeout(time: 10, unit: 'MINUTES') {
+                       timeout(time: 25, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
@@ -56,7 +56,7 @@ pipeline {
                            mkdir -p $PWD/Non_qaic &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic &&
-                           pytest tests -m '(not cli) and (on_qaic)' -n 4 --junitxml=tests/tests_log2.xml &&
+                           pytest tests -m '(not cli) and (on_qaic) and (not qnn)' -n 4 --junitxml=tests/tests_log2.xml &&
                            deactivate"
                            '''
                        }
@@ -84,7 +84,7 @@ pipeline {
             steps {
                 timeout(time: 30, unit: 'MINUTES') {
                     sh '''
-                    docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec ${BUILD_TAG} bash -c "
                     source /qnn_sdk/bin/envsetup.sh &&
                     source /qnn_sdk/bin/envcheck -c &&
                     cd /efficient-transformers &&
@@ -93,7 +93,25 @@ pipeline {
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Qnn_cli &&
                     pytest tests -m '(cli and qnn)' --junitxml=tests/tests_log4.xml &&
-                    junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log3.xml tests/tests_log4.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
+        stage('QNN Non-CLI Tests') {
+            steps {
+                timeout(time: 60, unit: 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    source /qnn_sdk/bin/envsetup.sh &&
+                    source /qnn_sdk/bin/envcheck -c &&
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p $PWD/Qnn_non_cli &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/Qnn_non_cli &&
+                    pytest tests -m '(not cli) and (qnn) and (on_qaic)' --junitxml=tests/tests_log5.xml &&
+                    junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log3.xml tests/tests_log4.xml tests/tests_log5.xml tests/tests_log.xml &&
                     deactivate"
                     '''
                 }
