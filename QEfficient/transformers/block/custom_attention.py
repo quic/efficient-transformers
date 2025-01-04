@@ -32,9 +32,6 @@ class QEffBlockBertSelfAttention(BertSelfAttention):
         bsz, tgt_len, _ = hidden_states.size()
 
         query_layer = self.transpose_for_scores(self.query(hidden_states))
-
-        # If this is instantiated as a cross-attention module, the keys and values come from an encoder; the attention
-        # mask needs to be such that the encoder's padding tokens are not attended to.
         is_cross_attention = encoder_hidden_states is not None
 
         current_states = encoder_hidden_states if is_cross_attention else hidden_states
@@ -51,19 +48,8 @@ class QEffBlockBertSelfAttention(BertSelfAttention):
                 value_layer = torch.cat([past_key_value[1], value_layer], dim=2)
 
         if self.is_decoder:
-            # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
-            # Further calls to cross_attention layer can then reuse all cross-attention
-            # key/value_states (first "if" case)
-            # if uni-directional self-attention (decoder) save Tuple(torch.Tensor, torch.Tensor) of
-            # all previous decoder key/value_states. Further calls to uni-directional self-attention
-            # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
-            # if encoder bi-directional self-attention `past_key_value` is always `None`
             past_key_value = (key_layer, value_layer)
 
-        # We dispatch to SDPA's Flash Attention or Efficient kernels via this `is_causal` if statement instead of an inline conditional assignment
-        # in SDPA to support both torch.compile's dynamic shapes and full graph options. An inline conditional prevents dynamic shapes from compiling.
-        # The tgt_len > 1 is necessary to match with AttentionMaskConverter.to_causal_4d that does not create
-        # a causal mask in case tgt_len == 1.
         is_causal = (
             True if self.is_decoder and not is_cross_attention and attention_mask is None and tgt_len > 1 else False
         )
@@ -97,6 +83,7 @@ class QEffBlockBertSelfAttention(BertSelfAttention):
         if self.is_decoder:
             outputs = outputs + (past_key_value,)
         return outputs
+
 
 BERT_SELF_ATTENTION_CLASSES.update(
     {
