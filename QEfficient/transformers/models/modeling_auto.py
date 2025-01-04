@@ -20,7 +20,12 @@ import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
+from QEfficient.transformers.models.pytorch_transforms import (
+    BlockAttentionTransorm,
+    CustomOpsTransform,
+    KVCacheTransform,
+    SpDTransform,
+)
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import constants, get_padding_shape_from_config
@@ -466,7 +471,13 @@ class QEFFAutoModel(QEFFTransformersBase):
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
 
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False, "add_pooling_layer": False})
+        if kwargs.get("block_size", None):
+            constants.BLOCK_SIZE = kwargs.get("block_size")
+            cls._pytorch_transforms.append(BlockAttentionTransorm)
+            kwargs.update({"attn_implementation": "custom"})
+            kwargs.pop("block_size")
+
+        kwargs.update({"low_cpu_mem_usage": False, "add_pooling_layer": False})
         try:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
             warnings.warn("Removing pooling layer from the model if exist")

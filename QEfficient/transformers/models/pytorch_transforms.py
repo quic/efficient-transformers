@@ -10,6 +10,7 @@ from typing import Tuple
 
 import transformers
 from torch import nn
+from transformers.models.bert.modeling_bert import BertSelfAttention
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,
@@ -100,6 +101,7 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
+from QEfficient.transformers.block.custom_attention import QEffBlockBertSelfAttention
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
@@ -343,4 +345,16 @@ class SpDTransform:
                 f"model class {model_class} does not yet support returning multiple logits to keep."
             )
 
+        return model, transformed
+
+
+class BlockAttentionTransorm(ModuleMappingTransform):
+    # supported architectures
+    _module_mapping = {
+        BertSelfAttention: QEffBlockBertSelfAttention,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        model, transformed = super().apply(model)
         return model, transformed
