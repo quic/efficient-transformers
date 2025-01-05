@@ -16,10 +16,12 @@ from peft import (
     PrefixTuningConfig,
 )
 from transformers import default_data_collator
+from transformers.data import DataCollatorForSeq2Seq
 
 import QEfficient.finetune.configs.dataset_config as datasets
 from QEfficient.finetune.configs.peft_config import lora_config, prefix_config
 from QEfficient.finetune.configs.training import train_config
+from QEfficient.finetune.data.sampler import DistributedLengthBasedBatchSampler, LengthBasedBatchSampler
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
 
 
@@ -63,41 +65,38 @@ def generate_peft_config(train_config, kwargs):
 
 def generate_dataset_config(train_config, kwargs):
     names = tuple(DATASET_PREPROC.keys())
-
     assert train_config.dataset in names, f"Unknown dataset: {train_config.dataset}"
-
     dataset_config = {k: v for k, v in inspect.getmembers(datasets)}[train_config.dataset]()
-
     update_config(dataset_config, **kwargs)
-
     return dataset_config
 
 
-# def get_dataloader_kwargs(train_config, dataset, dataset_processer, mode):
-#     kwargs = {}
-#     batch_size = (
-#         train_config.batch_size_training
-#         if mode == "train"
-#         else train_config.val_batch_size
-#     )
-#     if train_config.batching_strategy == "padding":
-#         kwargs["batch_sampler"] = LengthBasedBatchSampler(
-#             dataset, batch_size, drop_last=True, shuffle=mode == "train"
-#         )
-#         kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
-#         # kwargs["collate_fn"] = default_data_collator
-#     return kwargs
-
-
-def get_dataloader_kwargs(train_config: train_config, dataset, dataset_processer, mode):
+def get_dataloader_kwargs(train_config, dataset, dataset_processer, mode):
     kwargs = {}
     batch_size = train_config.batch_size_training if mode == "train" else train_config.val_batch_size
-    kwargs["batch_size"] = batch_size
-    kwargs["drop_last"] = True
-    kwargs["collate_fn"] = default_data_collator
-    # use a distributed sampler to split data between devices
-    if train_config.enable_ddp:
-        kwargs["sampler"] = data_utils.DistributedSampler(
-            dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True
-        )
+    if train_config.batching_strategy == "padding":
+        if train_config.enable_ddp:
+            kwargs["batch_sampler"] = DistributedLengthBasedBatchSampler(
+                dataset,
+                batch_size=batch_size,
+                rank=dist.get_rank(),
+                num_replicas=dist.get_world_size(),
+            )
+        else:
+            kwargs["batch_sampler"] = LengthBasedBatchSampler(dataset, batch_size, drop_last=True)
+        kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
+    elif train_config.batching_strategy == "packing":
+        if train_config.enable_ddp:
+            kwargs["sampler"] = data_utils.DistributedSampler(
+                dataset,
+                rank=dist.get_rank(),
+                num_replicas=dist.get_world_size(),
+                shuffle=mode == "train",
+                drop_last=True,
+            )
+        kwargs["batch_size"] = batch_size
+        kwargs["drop_last"] = True
+        kwargs["collate_fn"] = default_data_collator
+    else:
+        raise ValueError(f"Unknown batching strategy: {train_config.batching_strategy}")
     return kwargs
