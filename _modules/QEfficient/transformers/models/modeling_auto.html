@@ -369,6 +369,8 @@
         <span class="n">mxfp6_matmul</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="n">mxint8_kv_cache</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="n">num_speculative_tokens</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">enable_qnn</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">qnn_config</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="o">**</span><span class="n">compiler_options</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -390,6 +392,8 @@
 <span class="sd">            :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.</span>
 <span class="sd">            :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.</span>
 <span class="sd">            :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.</span>
+<span class="sd">            :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``</span>
+<span class="sd">            :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``</span>
 
 <span class="sd">        Returns:</span>
 <span class="sd">            :str: Path of the compiled ``qpc`` package.</span>
@@ -435,28 +439,48 @@
             <span class="n">decode_specialization</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;num_logits_to_keep&quot;</span><span class="p">:</span> <span class="n">num_speculative_tokens</span> <span class="o">+</span> <span class="mi">1</span><span class="p">})</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_tlm</span> <span class="k">else</span> <span class="kc">None</span>
             <span class="n">specializations</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">decode_specialization</span><span class="p">)</span>
 
-        <span class="c1"># Custom IO</span>
-        <span class="n">custom_io</span> <span class="o">=</span> <span class="p">{}</span>
-        <span class="n">kv_cache_dtype</span> <span class="o">=</span> <span class="s2">&quot;mxint8&quot;</span> <span class="k">if</span> <span class="n">mxint8_kv_cache</span> <span class="k">else</span> <span class="s2">&quot;float16&quot;</span>
-        <span class="k">for</span> <span class="n">suffix</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;_RetainedState&quot;</span><span class="p">]:</span>
-            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">num_layers</span><span class="p">):</span>
-                <span class="k">for</span> <span class="n">kv</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;key&quot;</span><span class="p">,</span> <span class="s2">&quot;value&quot;</span><span class="p">]:</span>
-                    <span class="n">custom_io</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;past_</span><span class="si">{</span><span class="n">kv</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">i</span><span class="si">}{</span><span class="n">suffix</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">kv_cache_dtype</span>
+        <span class="k">if</span> <span class="n">enable_qnn</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">compiler_options</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Extra arguments to QNN compilation are supported via qnn_config.json only&quot;</span><span class="p">)</span>
 
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_compile</span><span class="p">(</span>
-            <span class="n">onnx_path</span><span class="p">,</span>
-            <span class="n">compile_dir</span><span class="p">,</span>
-            <span class="n">compile_only</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-            <span class="n">retained_state</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-            <span class="n">specializations</span><span class="o">=</span><span class="n">specializations</span><span class="p">,</span>
-            <span class="n">convert_to_fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-            <span class="n">mxfp6_matmul</span><span class="o">=</span><span class="n">mxfp6_matmul</span><span class="p">,</span>
-            <span class="n">custom_io</span><span class="o">=</span><span class="n">custom_io</span><span class="p">,</span>
-            <span class="n">mdp_ts_num_devices</span><span class="o">=</span><span class="n">num_devices</span><span class="p">,</span>
-            <span class="n">num_speculative_tokens</span><span class="o">=</span><span class="n">num_speculative_tokens</span><span class="p">,</span>
-            <span class="n">aic_num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
-            <span class="o">**</span><span class="n">compiler_options</span><span class="p">,</span>
-        <span class="p">)</span></div>
+            <span class="n">qpc_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_qnn_compile</span><span class="p">(</span>
+                <span class="n">onnx_path</span><span class="p">,</span>
+                <span class="n">compile_dir</span><span class="p">,</span>
+                <span class="n">specializations</span><span class="o">=</span><span class="n">specializations</span><span class="p">,</span>
+                <span class="n">prefill_seq_len</span><span class="o">=</span><span class="n">prefill_seq_len</span><span class="p">,</span>
+                <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
+                <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+                <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
+                <span class="n">mdp_ts_num_devices</span><span class="o">=</span><span class="n">num_devices</span><span class="p">,</span>
+                <span class="n">num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
+                <span class="n">mxfp6_matmul</span><span class="o">=</span><span class="n">mxfp6_matmul</span><span class="p">,</span>
+                <span class="n">mxint8_kv_cache</span><span class="o">=</span><span class="n">mxint8_kv_cache</span><span class="p">,</span>
+                <span class="n">qnn_config</span><span class="o">=</span><span class="n">qnn_config</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Custom IO</span>
+            <span class="n">custom_io</span> <span class="o">=</span> <span class="p">{}</span>
+            <span class="n">kv_cache_dtype</span> <span class="o">=</span> <span class="s2">&quot;mxint8&quot;</span> <span class="k">if</span> <span class="n">mxint8_kv_cache</span> <span class="k">else</span> <span class="s2">&quot;float16&quot;</span>
+            <span class="k">for</span> <span class="n">suffix</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;_RetainedState&quot;</span><span class="p">]:</span>
+                <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">num_layers</span><span class="p">):</span>
+                    <span class="k">for</span> <span class="n">kv</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;key&quot;</span><span class="p">,</span> <span class="s2">&quot;value&quot;</span><span class="p">]:</span>
+                        <span class="n">custom_io</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;past_</span><span class="si">{</span><span class="n">kv</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">i</span><span class="si">}{</span><span class="n">suffix</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">kv_cache_dtype</span>
+
+            <span class="n">qpc_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_compile</span><span class="p">(</span>
+                <span class="n">onnx_path</span><span class="p">,</span>
+                <span class="n">compile_dir</span><span class="p">,</span>
+                <span class="n">compile_only</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">retained_state</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">specializations</span><span class="o">=</span><span class="n">specializations</span><span class="p">,</span>
+                <span class="n">convert_to_fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">mxfp6_matmul</span><span class="o">=</span><span class="n">mxfp6_matmul</span><span class="p">,</span>
+                <span class="n">custom_io</span><span class="o">=</span><span class="n">custom_io</span><span class="p">,</span>
+                <span class="n">mdp_ts_num_devices</span><span class="o">=</span><span class="n">num_devices</span><span class="p">,</span>
+                <span class="n">num_speculative_tokens</span><span class="o">=</span><span class="n">num_speculative_tokens</span><span class="p">,</span>
+                <span class="n">aic_num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">compiler_options</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">return</span> <span class="n">qpc_path</span></div>
 
     <span class="c1"># FIXME: Update this method to match with transformers AutoModelForCausalLM.generate</span>
 <div class="viewcode-block" id="QEFFAutoModelForCausalLM.generate"><a class="viewcode-back" href="../../../../source/hl_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.generate">[docs]</a>    <span class="k">def</span> <span class="nf">generate</span><span class="p">(</span>

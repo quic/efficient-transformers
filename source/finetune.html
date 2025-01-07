@@ -137,10 +137,14 @@
   <section id="finetune-infra">
 <h1>Finetune Infra<a class="headerlink" href="#finetune-infra" title="Permalink to this heading"></a></h1>
 <p>This repository provides the infrastructure for finetuning models using different hardware accelerators such as QAIC.
-Same CLI can be used to run Finetuning on GPU by setting the device flag.</p>
+Same CLI can be used to run Finetuning on gpu by setting the device flag.(for finetuning on gpu, install torch specific to cuda)</p>
 <section id="installation">
 <h2>Installation<a class="headerlink" href="#installation" title="Permalink to this heading"></a></h2>
-<p>Same as QEfficient along with QAIC Eager mode</p>
+<p>Same as QEfficient along with QAIC PyTorch Eager mode.
+For torch_qaic, assuming QEfficient is already installed,</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>/opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
+</pre></div>
+</div>
 </section>
 <section id="finetuning">
 <h2>Finetuning<a class="headerlink" href="#finetuning" title="Permalink to this heading"></a></h2>
@@ -149,8 +153,7 @@ Same CLI can be used to run Finetuning on GPU by setting the device flag.</p>
 </pre></div>
 </div>
 <p>Export the ENV variables to get the device and HW traces and debugging logs</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">QAIC_DELAY_SEM_WAIT_AT_COPY</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="c1"># For HW profile traces</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">QAIC_DEVICE_LOG_LEVEL</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="c1"># For Device level logs</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">QAIC_DEVICE_LOG_LEVEL</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="c1"># For Device level logs</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">QAIC_DEBUG</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="c1"># To understand the CPU fallback ops</span>
 </pre></div>
 </div>
@@ -165,11 +168,6 @@ Same CLI can be used to run Finetuning on GPU by setting the device flag.</p>
 </section>
 <section id="usage">
 <h2>Usage<a class="headerlink" href="#usage" title="Permalink to this heading"></a></h2>
-<p>Inside eager release docker,</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="s2">&quot;LD_LIBRARY_PATH=/opt/qti-aic/dev/lib/x86_64/&quot;</span><span class="w">   </span>
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="w"> </span>--extra-index-url<span class="w"> </span>https://download.pytorch.org/whl/cpu
-</pre></div>
-</div>
 <section id="single-soc-finetuning-on-qaic">
 <h3>Single SOC finetuning on QAIC<a class="headerlink" href="#single-soc-finetuning-on-qaic" title="Permalink to this heading"></a></h3>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">cloud</span><span class="o">.</span><span class="n">finetune</span> <span class="o">--</span><span class="n">device</span> <span class="n">qaic</span><span class="p">:</span><span class="mi">0</span> <span class="o">--</span><span class="n">model_name</span> <span class="s2">&quot;meta-llama/Llama-3.2-1B&quot;</span>
