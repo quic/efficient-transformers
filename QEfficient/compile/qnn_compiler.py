@@ -25,7 +25,7 @@ class QNN:
     def __init__(
         self,
         onnx_path: str,
-        qpc_path: str,
+        qpc_base_path: str,
         num_cores: int,
         custom_io_path: str,
         device_group: Optional[List[int]] = None,
@@ -37,10 +37,11 @@ class QNN:
         compiler_mxfp6_matmul_weights: bool = True,
         qnn_target: str = QnnConstants.TARGET,
         qnn_config_path: Optional[str] = None,
+        qnn_binary_dir: Optional[str] = None,
         **kwargs,
     ) -> None:
         self.onnx_path = onnx_path
-        self.qpc_path = qpc_path
+        self.qpc_base_path = qpc_base_path
         self.num_cores = num_cores
         self.device_group = device_group
         self.compiler_enable_depth_first = compiler_enable_depth_first
@@ -50,8 +51,9 @@ class QNN:
         self.ctx_len = ctx_len
         self.compiler_mxfp6_matmul_weights = compiler_mxfp6_matmul_weights
         self.qnn_config_path = qnn_config_path
+        self.qnn_binary_dir = qnn_binary_dir
         self.custom_io_path = custom_io_path
-        self.dlc_model_path = os.path.join(qpc_path, f"{QnnConstants.MODEL_NAME}.dlc")
+        self.dlc_model_path = os.path.join(qpc_base_path, f"{QnnConstants.MODEL_NAME}.dlc")
         self.qnn_target = qnn_target
         self.qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
         if not self.qnn_sdk_path:
@@ -118,7 +120,7 @@ class QNN:
                 }
             ],
         }
-        tensor_slicing_json_path = os.path.join(self.qpc_path, "tensor_slicing.json")
+        tensor_slicing_json_path = os.path.join(self.qpc_base_path, "tensor_slicing.json")
         create_json(tensor_slicing_json_path, tensor_slicing)
         return tensor_slicing_json_path
 
@@ -157,7 +159,7 @@ class QNN:
             for key, value in self.qnn_config[QnnConstants.QNN_COMPILATION_BACKEND_STR].items():
                 qnn_compile_backend[key] = value
 
-        qnn_compile_backend_json_path = os.path.join(self.qpc_path, "qnn_compile_backend.json")
+        qnn_compile_backend_json_path = os.path.join(self.qpc_base_path, "qnn_compile_backend.json")
         create_json(qnn_compile_backend_json_path, qnn_compile_backend)
         return qnn_compile_backend_json_path
 
@@ -177,13 +179,13 @@ class QNN:
                 ),
             }
         }
-        qnn_compiler_config_json_path = os.path.join(self.qpc_path, "qnn_compiler_config.json")
+        qnn_compiler_config_json_path = os.path.join(self.qpc_base_path, "qnn_compiler_config.json")
         create_json(qnn_compiler_config_json_path, qnn_compiler_config)
         return qnn_compiler_config_json_path
 
     def compile(self) -> str:
         """
-        Compiles the given ``ONNX`` model during object creation using QNN compiler and saves the compiled ``qpc`` package at ``qpc_path``.
+        Compiles the given ``ONNX`` model during object creation using QNN compiler and saves the compiled ``qpc`` package at ``qnn_binary_dir``.
             - Creates convertor command and convert onnx model to model.dlc using qairt-convertor
             - command line arguments and qnn_config.json (if provided) are used to create qnn_compiler_config.json for context-binary-generator
             - model.dlc from convertor stage is passed into context-binary-generator command to create programqpc.bin.
@@ -197,20 +199,21 @@ class QNN:
             and self.qnn_config[QnnConstants.SKIP_QNN_CONVERTOR_STEP_STR]
         ):
             converter_cmd = self.converter()
-            execute_command("convertor", converter_cmd, self.qpc_path)
+            execute_command("convertor", converter_cmd, self.qpc_base_path)
 
         if not os.path.isfile(self.dlc_model_path):
             raise FileNotFoundError(
-                f"file {self.dlc_model_path} needs to exist in the qpc_path{self.qpc_path}. Please rerun infer/compile Api"
+                f"file {self.dlc_model_path} needs to exist in the qpc_base_path{self.qpc_base_path}. Please rerun infer/compile Api"
             )
 
-        self.qnn_binary_dir = os.path.join(self.qpc_path, "qpcs")
+        if self.qnn_binary_dir is None:
+            self.qnn_binary_dir = os.path.join(self.qpc_base_path, "qpcs")
         if os.path.isdir(self.qnn_binary_dir):
             shutil.rmtree(self.qnn_binary_dir)
         os.makedirs(self.qnn_binary_dir)
 
         ctx_bin_cmd = self.generate_context_binary()
-        execute_command("context_binary", ctx_bin_cmd, self.qpc_path)
+        execute_command("context_binary", ctx_bin_cmd, self.qpc_base_path)
 
         print("\n===================== Compilation Done! =====================\n")
         return self.qnn_binary_dir
@@ -221,7 +224,7 @@ class QNN:
 
         IMMUTABLE parameters which can not be overridden by the user using qnn_config.json:
             :input_network (str): Generated ``ONNX`` Model Path.
-            :output_path (str): Path to generated DLC file, which is provided qpc_path/model.dlc
+            :output_path (str): Path to generated DLC file, which is provided qpc_base_path/model.dlc
             :io_config (str): Path to custom_io_config.yaml file created using GenerateQNNnetworkSpecializationconfig.py
             :float_bias_bitwidth (int): Bitwidth to use for float bias tensor
             :float_bitwidth (int): Converts the graph to the specified float bitwidth, either 32 or 16(Default).
@@ -255,8 +258,8 @@ class QNN:
 
         IMMUTABLE parameters which can not be modified by the user using qnn_config.json:
             :binary_file (str): QNN Binary Graph name to be generated (qnngraph.serialized).
-            :backend_binary (str): Path to generated QPC binary file, which is provided qpc_path/qpcs/programqpc.bin
-            :output_dir (str): Path to store generated Binaries (qpc_path/qpcs/).
+            :backend_binary (str): Generated QPC binary file name, which is provided programqpc.bin
+            :output_dir (str): Path to store generated Binaries (qnn_binary_dir).
             :model (str): Path to the <qnn_model_name.so> file containing a QNN network.
             :dlc_path (str): Path to DLC file generated by QNN-Convertor.
             :config_file(str): Path to created qnn_compiler_config.json containing qnn_compile_backend.json & shared_library_path.
@@ -305,7 +308,7 @@ class QNN:
 
 def compile(
     onnx_path: str,
-    qpc_path: str,
+    qpc_base_path: str,
     num_cores: int,
     device_group: Optional[List[int]] = None,
     aic_enable_depth_first: bool = False,
@@ -318,16 +321,17 @@ def compile(
     allow_mxint8_mdp_io: Optional[bool] = False,
     full_batch_size=None,
     qnn_config: Optional[str] = None,
+    qnn_binary_dir: Optional[str] = None,
     **kwargs,
 ) -> str:
     """
-    Compiles the given ``ONNX`` model using QNN compiler and saves the compiled ``qpc`` package at ``qpc_path``.
+    Compiles the given ``ONNX`` model using QNN compiler and saves the compiled ``qpc`` package at ``qnn_binary_dir``.
     Generates model.dlc during convertor stage, qnn_compile_backend.json for backend parameters of context-binary-generator.
     Generates tensor-slicing configuration if multiple devices are passed in ``device_group``.
 
     ``Mandatory`` Args:
         :onnx_path (str): Generated ``ONNX`` Model Path.
-        :qpc_path (str): Path for saving compiled qpc binaries.
+        :qpc_base_path (str): base directory for QNN compilation config & binary file.
         :num_cores (int): Number of cores to compile the model on.
     ``Optional`` Args:
         :device_group (List[int]): Used for finding the number of devices to compile for.
@@ -341,6 +345,7 @@ def compile(
         :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic ``Defaults to False.``
         :mxint8 (bool): Compress Present/Past KV to ``MXINT8`` using ``CustomIO`` config. ``Defaults to False.``
         :qnn_config (str): Path to ``qnn_config.json`` file (formatted as a string). ``Defaults to None.``
+        :qnn_binary_dir (str): Path for saving qnn binaries.
 
     Returns:
         :str: Path to compiled ``qpc`` package.
@@ -357,11 +362,11 @@ def compile(
     if mxint8:
         logger.warning("QNN doesn't support mxint8. Bypassing the value passed for mxint8")
 
-    os.makedirs(qpc_path, exist_ok=True)
+    os.makedirs(qpc_base_path, exist_ok=True)
 
     # Created custom_io_config.yaml file for QNN-Convertor stage.
     # TODO To make custom_io_config.yaml configurable as not all models need it.
-    custom_io_file_path = os.path.join(qpc_path, "custom_io_config.yaml")
+    custom_io_file_path = os.path.join(qpc_base_path, "custom_io_config.yaml")
     fetch_nodes_info(
         onnx_graph_path=onnx_path,
         batch_size=batch_size,
@@ -373,12 +378,12 @@ def compile(
 
     if not os.path.isfile(custom_io_file_path):
         raise FileNotFoundError(
-            f"file {custom_io_file_path} needs to exist in the qpc_path for Compilation. Please rerun infer/compile Api"
+            f"file {custom_io_file_path} needs to exist in the qpc_base_path for Compilation. Please rerun infer/compile Api"
         )
 
     qnn_obj = QNN(
         onnx_path=onnx_path,
-        qpc_path=qpc_path,
+        qpc_base_path=qpc_base_path,
         num_cores=num_cores,
         device_group=device_group,
         qnn_config_path=qnn_config,
@@ -389,6 +394,7 @@ def compile(
         prompt_len=prompt_len,
         ctx_len=ctx_len,
         compiler_mxfp6_matmul_weights=mxfp6,
+        qnn_binary_dir=qnn_binary_dir,
     )
 
     compiled_binary_path = qnn_obj.compile()
