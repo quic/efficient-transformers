@@ -6,6 +6,9 @@ Same CLI can be used to run Finetuning on gpu by setting the device flag.(for fi
 ## Installation
 
 Same as QEfficient along with QAIC PyTorch Eager mode.
+
+For QEfficient Library : https://github.com/quic/efficient-transformers
+
 For torch_qaic, assuming QEfficient is already installed,
 ```bash
 pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
@@ -52,3 +55,12 @@ python -m QEfficient.cloud.finetune --device qaic:0 --use-peft --output_dir ./me
 QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node 4 -m QEfficient.cloud.finetune --device qaic --enable_ddp --dist_backend qccl --num_epochs 2  --model_name "meta-llama/Llama-3.2-1B"
 ```
 **nproc-per-node is number of workers(gpus) running locally.
+
+## Visualization
+
+Tensorboard logs are generated inside runs/ directory with date and time stamp.
+to visualise the data,
+
+```python
+tensorboard --logdir runs/<file> --bind_all
+```
