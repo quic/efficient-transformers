@@ -101,8 +101,8 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
-from QEfficient.transformers.block.custom_attention import QEffBertSelfAttention
 from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.custom_attention import QEffBertSelfAttention
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QeffCodeGenBlock,
