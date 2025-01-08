@@ -45,6 +45,14 @@ warnings.filterwarnings("ignore")
 
 
 def main(**kwargs):
+    """
+    Helper function to finetune the model on QAic.
+
+    .. code-block:: bash
+
+        python -m QEfficient.cloud.export OPTIONS
+
+    """
     # update the configuration for the training process
     train_config = TRAIN_CONFIG()
     update_config(train_config, **kwargs)
