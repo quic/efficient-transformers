@@ -81,6 +81,7 @@ class QnnConstants:
 
     # QNN Compilation target names
     MODEL_NAME = "model"
+    QNN_DATA_FORMAT_CONFIG_NAME = "qnn_data_format_config.json"
     CONTEXT_BIN_NAME = "qnngraph.serialized"
     CONTEXT_BIN_QPC_NAME = "programqpc.bin"
 
@@ -90,7 +91,7 @@ class QnnConstants:
     # Convertor Arguments
     FLOAT_BITWIDTH = 16
     FLOAT_BIAS_BITWIDTH = 32
-    CONVERTOR_DEFAULT_ARGS = "--keep_int64_inputs --onnx_no_simplification "
+    CONVERTOR_DEFAULT_ARGS = "--preserve_io_datatype --onnx_skip_simplification "
 
     # Context-Binary-Generator Arguments
     LOG_LEVEL = "error"
@@ -118,11 +119,11 @@ class QnnConstants:
     IMMUTABLE_CONVERTOR_ARGS = [
         "--input_network ",
         "--output_path ",
-        "--io_config ",
+        "--config ",
         "--float_bias_bitwidth ",
         "--float_bitwidth ",
-        "--keep_int64_inputs",
-        "--onnx_no_simplification",
+        "--preserve_io_datatype",
+        "--onnx_skip_simplification",
         "--onnx_defer_loading",
     ]
 

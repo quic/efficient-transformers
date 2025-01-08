@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import json
 from typing import Optional
 
 import onnx
@@ -24,6 +25,7 @@ def fetch_nodes_info(
     file_path: str = "custom_io_config.yaml",
     full_batch_size: Optional[int] = None,
     decode_only: Optional[bool] = False,
+    kv_precision: Optional[str] = "float16",
 ) -> None:
     # Load the ONNX model
     onnx_model = onnx.load(onnx_graph_path)
@@ -38,7 +40,7 @@ def fetch_nodes_info(
         input_info = {}
         input_info["DataType"] = str(helper.tensor_dtype_to_np_dtype(node.type.tensor_type.elem_type))
         if "past_key" in node.name or "past_value" in node.name:
-            input_info["DataType"] = "float16"
+            input_info["DataType"] = kv_precision
 
         if "batch_index" in node.name:
             if full_batch_size:
@@ -128,7 +130,7 @@ def fetch_nodes_info(
         output_info = {}
         output_info["DataType"] = str(helper.tensor_dtype_to_np_dtype(output.type.tensor_type.elem_type))
         if "past_key" in output.name or "past_value" in output.name:
-            output_info["DataType"] = "float16"
+            output_info["DataType"] = kv_precision
         elif "logits" in output.name:
             output_info["DataType"] = "float32"
         output_nodes_info.append({"Name": output.name, "Desired Model Parameters": output_info})
@@ -142,3 +144,41 @@ def fetch_nodes_info(
             yaml.dump(final_dict, yaml_file, default_flow_style=False, sort_keys=False)
     except Exception as e:
         print(f"Failed to create YAML File for QNN Network Specialization Configuration{file_path}: {e}")
+
+
+def generate_data_format_config(
+    onnx_graph_path: str,
+    *,
+    data_format: Optional[str] = "QNN_TENSOR_DATA_FORMAT_MX",
+    model_dlc_name: Optional[str] = "model",
+    file_path: str = "qnn_data_format_config.json",
+) -> None:
+    # Load the ONNX model
+    onnx_model = onnx.load(onnx_graph_path)
+
+    kv_nodes: list = []
+
+    for input in onnx_model.graph.input:
+        if "past_key" in input.name or "past_value" in input.name:
+            kv_nodes.append((input.name).replace(".", "_"))
+    for output in onnx_model.graph.output:
+        if "past_key" in output.name or "past_value" in output.name:
+            kv_nodes.append((output.name).replace(".", "_"))
+            kv_overrides = {}
+
+    kv_overrides["graphs"] = [
+        {
+            "graph_name": model_dlc_name + "_configuration_1",
+            "tensors": [{"tensor_name": node, "dataFormat": data_format} for node in kv_nodes],
+        },
+        {
+            "graph_name": model_dlc_name + "_configuration_2",
+            "tensors": [{"tensor_name": node, "dataFormat": data_format} for node in kv_nodes],
+        },
+    ]
+
+    try:
+        with open(file_path, "w") as json_file:
+            json.dump(kv_overrides, json_file, indent=4)
+    except Exception as e:
+        print(f"Failed to create JSON File for QNN Data Format Configuration{file_path}: {e}")
