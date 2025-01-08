@@ -50,7 +50,7 @@ def main(**kwargs):
 
     .. code-block:: bash
 
-        python -m QEfficient.cloud.export OPTIONS
+        python -m QEfficient.cloud.finetune OPTIONS
 
     """
     # update the configuration for the training process
