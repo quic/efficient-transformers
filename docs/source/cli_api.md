@@ -24,3 +24,8 @@ Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group``shoul
    .. automodule:: QEfficient.cloud.export.main
    
 ```
+# `QEfficient.cloud.finetune`
+```{eval-rst}
+   .. automodule:: QEfficient.cloud.finetune.main
+   
+```
