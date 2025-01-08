@@ -57,11 +57,10 @@ class QEFFTransformersBase(QEFFBaseModel):
     def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
-
+            kwargs.update({"attn_implementation": "eager"})
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+            kwargs.update({"low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         return cls(model, is_tlm=is_tlm)
@@ -432,6 +431,12 @@ class QEFFAutoModel(QEFFTransformersBase):
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
+        if kwargs.get("block_size", None):
+            constants.BLOCK_SIZE = kwargs.get("block_size")
+            self._pytorch_transforms.append(BlockAttentionTransorm)
+            kwargs.update({"attn_implementation": "custom"})
+            kwargs.pop("block_size")
+
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
@@ -465,20 +470,22 @@ class QEFFAutoModel(QEFFTransformersBase):
             # You can now execute the model
             model.generate(inputs)
         """
-        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
-            logger.warning('Updating attn_implementation="eager"')
-
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
         if kwargs.get("block_size", None):
             constants.BLOCK_SIZE = kwargs.get("block_size")
             cls._pytorch_transforms.append(BlockAttentionTransorm)
             kwargs.update({"attn_implementation": "custom"})
             kwargs.pop("block_size")
 
-        kwargs.update({"low_cpu_mem_usage": False, "add_pooling_layer": False})
+        if kwargs.get("attn_implementation", None) not in {None, "eager", "custom"}:
+            logger.warning('Updating attn_implementation="eager"')
+            kwargs.update({"attn_implementation": "eager"})
+
+        if kwargs.get("low_cpu_mem_usage", None):
+            logger.warning("Updating low_cpu_mem_usage=False")
+            kwargs.update({"low_cpu_mem_usage": False})
+
         try:
+            kwargs.update({"add_pooling_layer": False})
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
             warnings.warn("Removing pooling layer from the model if exist")
         except TypeError:
