@@ -45,6 +45,14 @@ warnings.filterwarnings("ignore")
 
 
 def main(**kwargs):
+    """
+    Helper function to finetune the model on QAic.
+
+    .. code-block:: bash
+
+        python -m QEfficient.cloud.finetune OPTIONS
+
+    """
     # update the configuration for the training process
     train_config = TRAIN_CONFIG()
     update_config(train_config, **kwargs)
@@ -165,9 +173,12 @@ def main(**kwargs):
         else:
             print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
 
-    longest_seq_length, longest_seq_ix = get_longest_seq_length(
-        torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset])
-    )
+        longest_seq_length, _ = get_longest_seq_length(
+            torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset])
+        )
+    else:
+        longest_seq_length, _ = get_longest_seq_length(train_dataloader.dataset)
+
     print(
         f"The longest sequence length in the train data is {longest_seq_length}, "
         f"passed context length is {train_config.context_length} and overall model's context length is "
