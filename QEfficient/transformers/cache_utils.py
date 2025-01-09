@@ -47,8 +47,9 @@ class QEffDynamicCache(DynamicCache):
             self.value_cache[layer_idx] = CtxScatterFunc.apply(self.value_cache[layer_idx], position_ids, value_states)
 
     def read_only(self, layer_idx, cache_kwargs):
+        k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
         position_ids = cache_kwargs.get("position_ids")
-        ctx_len = position_ids.shape[-1]
+        ctx_len = k_out.shape[2]
         ctx_indices = torch.arange(ctx_len)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
@@ -59,7 +60,7 @@ class QEffDynamicCache(DynamicCache):
             invalid_idx_value = 0
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
-        k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+
         k_out = CtxGatherFunc.apply(k_out, ctx_indices)
         v_out = CtxGatherFunc.apply(v_out, ctx_indices)
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
