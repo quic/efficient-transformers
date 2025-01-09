@@ -96,7 +96,7 @@ def train(
 
     # Start the training loop
     for epoch in range(train_config.num_epochs):
-        print(f"Starting epoch {epoch+1}/{train_config.num_epochs}")
+        print(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
         print(f"train_config.max_train_step: {train_config.max_train_step}")
         # stop when the maximum number of training steps is reached
         if max_steps_reached:
@@ -108,7 +108,7 @@ def train(
         total_length = len(train_dataloader) // train_config.gradient_accumulation_steps
         pbar = tqdm(
             colour="blue",
-            desc=f"Training Epoch: {epoch+1}",
+            desc=f"Training Epoch: {epoch + 1}",
             total=total_length,
             dynamic_ncols=True,
         )
@@ -123,9 +123,9 @@ def train(
                 break
             batch = {k: v.to(device) for k, v in batch.items()}  # move the batch elements to qaic device
 
-            with torch.autocast(
-                device_type=device, dtype=torch.float16
-            ) if train_config.use_autocast else nullcontext():
+            with (
+                torch.autocast(device_type=device, dtype=torch.float16) if train_config.use_autocast else nullcontext()
+            ):
                 # an additional condition can be put here to avoid opByOpVerifier getting triggered for each step
                 if train_config.opByOpVerifier:
                     with qaic_debug.OpByOpVerifierMode(
@@ -183,7 +183,7 @@ def train(
                     model.save_pretrained(train_config.output_dir + f"/trained_weights/step_{step}")
 
             pbar.set_description(
-                f"Training Epoch: {epoch+1}/{train_config.num_epochs}, step {step+1}/{len(train_dataloader)} completed (loss: {loss.detach().float()})"
+                f"Training Epoch: {epoch + 1}/{train_config.num_epochs}, step {step + 1}/{len(train_dataloader)} completed (loss: {loss.detach().float()})"
             )
             if train_config.save_metrics:
                 save_to_json(
@@ -244,11 +244,11 @@ def train(
         if train_config.run_validation:
             if eval_epoch_loss < best_val_loss:
                 best_val_loss = eval_epoch_loss
-                print(f"best eval loss on epoch {epoch+1} is {best_val_loss}")
+                print(f"best eval loss on epoch {epoch + 1} is {best_val_loss}")
             val_loss.append(float(eval_epoch_loss))
             val_prep.append(float(eval_ppl))
         print(
-            f"Epoch {epoch+1}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
+            f"Epoch {epoch + 1}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
         )
 
         # Saving the results every epoch to plot later
@@ -322,9 +322,9 @@ def evaluation(model, train_config, eval_dataloader, local_rank, tokenizer, devi
         # Ensure no gradients are computed for this scope to save memory
         with torch.no_grad():
             # Forward pass and compute loss
-            with torch.autocast(
-                device_type=device, dtype=torch.float16
-            ) if train_config.use_autocast else nullcontext():
+            with (
+                torch.autocast(device_type=device, dtype=torch.float16) if train_config.use_autocast else nullcontext()
+            ):
                 outputs = model(**batch)
             loss = outputs.loss
 
