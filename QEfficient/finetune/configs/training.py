@@ -38,6 +38,7 @@ class train_config:
     save_metrics: bool = True  # saves training metrics to a json file for later plotting
     intermediate_step_save: int = 1000
     batching_strategy: str = "packing"
+    enable_sorting_for_ddp: bool = "True"
 
     # TODO: vbaddi: Uncomment post adding qaic to Pytorch Profiler
     # flop_counter: bool = False # Enable flop counter to measure model throughput, can not be used with pytorch profiler at the same time.

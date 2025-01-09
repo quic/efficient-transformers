@@ -54,7 +54,7 @@ python -m QEfficient.cloud.finetune --device qaic:0 --use-peft --output_dir ./me
 ```python
 QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node 4 -m QEfficient.cloud.finetune --device qaic --enable_ddp --dist_backend qccl --num_epochs 2  --model_name "meta-llama/Llama-3.2-1B"
 ```
-**nproc-per-node is number of workers(gpus) running locally.
+**nproc-per-node is number of workers(QAIC devices) running locally.
 
 ## Visualization
 

@@ -75,22 +75,27 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, mode):
     kwargs = {}
     batch_size = train_config.batch_size_training if mode == "train" else train_config.val_batch_size
     if train_config.enable_ddp:
-        if train_config.context_length:
+        if train_config.enable_sorting_for_ddp:
+            if train_config.context_length:
+                raise ValueError(
+                    "Sorting cannot be done with padding, Please disable sorting or pass context_length as None to disable padding"
+                )
+            else:
+                kwargs["batch_sampler"] = DistributedLengthBasedBatchSampler(
+                    dataset,
+                    batch_size=batch_size,
+                    rank=dist.get_rank(),
+                    num_replicas=dist.get_world_size(),
+                    shuffle=False,
+                )
+                kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
+        else:
             kwargs["sampler"] = data_utils.DistributedSampler(
                 dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True
             )
             kwargs["batch_size"] = batch_size
             kwargs["drop_last"] = True
             kwargs["collate_fn"] = default_data_collator
-        else:
-            kwargs["batch_sampler"] = DistributedLengthBasedBatchSampler(
-                dataset,
-                batch_size=batch_size,
-                rank=dist.get_rank(),
-                num_replicas=dist.get_world_size(),
-                shuffle=False,
-            )
-            kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
     else:
         kwargs["batch_size"] = batch_size
         kwargs["drop_last"] = True
