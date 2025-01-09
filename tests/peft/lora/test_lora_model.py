@@ -195,10 +195,12 @@ def test_auto_lora_model_for_causal_lm_load_unload_adapter(base_model_name, adap
     assert qeff_model.unload_adapter("adapter_0")  # valid unload
 
 
-# test the export, export caching, compile, generate workflow
+# test the export, export caching, compile and generate workflow in noncb mode
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[:1])
-def test_auto_lora_model_for_causal_lm_export_compile_generate(base_model_name, adapter_id_0, adapter_id_1, tmp_path):
+def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
+    base_model_name, adapter_id_0, adapter_id_1, tmp_path
+):
     qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
 
     qeff_model.load_adapter(adapter_id_0, "adapter_0")
@@ -222,6 +224,30 @@ def test_auto_lora_model_for_causal_lm_export_compile_generate(base_model_name, 
 
     # test compile
     qeff_model.compile(prefill_seq_len=32, ctx_len=64)
+    assert Path(qeff_model.qpc_path).is_dir()
+
+    # test generate
+    prompts = ["hello!", "hi", "hello, my name is", "hey"]
+    qeff_model.generate(
+        tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=base_model_name),
+        prompts=prompts,
+        prompt_to_adapter_mapping=["adapter_0", "adapter_1", "adapter_0", "base"],
+    )
+
+
+# test the compile and generate workflow in cb mode
+@pytest.mark.on_qaic
+@pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[:1])
+def test_auto_lora_model_for_causal_lm_cb_compile_generate(base_model_name, adapter_id_0, adapter_id_1, tmp_path):
+    qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(
+        base_model_name, continuous_batching=True, num_hidden_layers=1
+    )
+
+    qeff_model.load_adapter(adapter_id_0, "adapter_0")
+    qeff_model.load_adapter(adapter_id_1, "adapter_1")
+
+    # test compile
+    qeff_model.compile(prefill_seq_len=32, ctx_len=64, full_batch_size=2)
     assert Path(qeff_model.qpc_path).is_dir()
 
     # test generate
