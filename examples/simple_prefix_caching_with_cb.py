@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# ----------------------------------------------------------------------------
+
 from QEfficient import QEFFAutoModelForCausalLM
 
 model_name = "meta-llama/Llama-3.1-8B-Instruct"
