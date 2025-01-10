@@ -374,7 +374,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self,
         tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
         prompts: List[str],
-        device_id: List[int] = [0],
+        device_id: List[int] = None,
         runtime_ai100: bool = True,
         **kwargs,
     ):
@@ -580,7 +580,7 @@ class QEFFAutoModel(QEFFTransformersBase):
     def generate(
         self,
         inputs: torch.Tensor,
-        device_ids: List[int] = [0],
+        device_ids: List[int] = None,
         runtime_ai100: bool = True,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
