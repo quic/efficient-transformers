@@ -12,8 +12,6 @@ import torch
 from torch import nn
 from transformers.models.bert.modeling_bert import BertSelfAttention
 
-from QEfficient.utils.constants import BLOCK_SIZE
-
 
 class QEffBertSelfAttention(BertSelfAttention):
     def forward(
@@ -25,7 +23,7 @@ class QEffBertSelfAttention(BertSelfAttention):
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
         past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_attentions: Optional[bool] = False,
-        block_size: int = BLOCK_SIZE,
+        block_size: int = None,
     ) -> Tuple[torch.Tensor]:
         mixed_query_layer = self.query(hidden_states)
 

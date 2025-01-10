@@ -8,6 +8,7 @@
 import json
 import os
 import subprocess
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
@@ -394,3 +395,13 @@ def create_json(file_path: str, json_data: object):
             json.dump(json_data, file, indent=4)
     except Exception as e:
         print(f"Failed to create JSON File {file_path}: {e}")
+
+
+@contextmanager
+def temporarily_remove_key(d, key):
+    value = d.pop(key, None)
+    try:
+        yield
+    finally:
+        if value is not None:
+            d[key] = value

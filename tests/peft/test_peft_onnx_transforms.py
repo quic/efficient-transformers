@@ -24,7 +24,7 @@ def test_adapter_weights_to_inputs_transform():
     <
         float[32, 32] layer1_{adapter_name}_weight = [ "location" : "{external_tensors_file}" ],
         float[32, 32] layer2_{adapter_name}_weight = [ "location" : "{external_tensors_file}" ]
-    >
+    >f
     {{
         layer1output = MatMul (input, layer1_{adapter_name}_weight)
         output = MatMul (layer1output, layer2_{adapter_name}_weight)

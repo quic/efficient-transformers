@@ -57,10 +57,11 @@ class QEFFTransformersBase(QEFFBaseModel):
     def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
-            kwargs.update({"attn_implementation": "eager"})
+
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
-            kwargs.update({"low_cpu_mem_usage": False})
+
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         return cls(model, is_tlm=is_tlm)
@@ -430,20 +431,16 @@ class QEFFAutoModel(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, **kwargs):
-        if kwargs.get("block_size", None):
-            constants.BLOCK_SIZE = kwargs.get("block_size")
-            self._pytorch_transforms.append(BlockAttentionTransorm)
-            kwargs.update({"attn_implementation": "custom"})
-            kwargs.pop("block_size")
-
+    def __init__(self, model: nn.Module, block_size: Optional[int] = None, **kwargs):
+        if block_size:
+            BlockAttentionTransorm.apply(model, block_size=block_size)
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path, block_size: Optional[int] = None, *args, **kwargs):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModel.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
@@ -470,28 +467,20 @@ class QEFFAutoModel(QEFFTransformersBase):
             # You can now execute the model
             model.generate(inputs)
         """
-        if kwargs.get("block_size", None):
-            constants.BLOCK_SIZE = kwargs.get("block_size")
-            cls._pytorch_transforms.append(BlockAttentionTransorm)
-            kwargs.update({"attn_implementation": "custom"})
-            kwargs.pop("block_size")
-
-        if kwargs.get("attn_implementation", None) not in {None, "eager", "custom"}:
+        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
-            kwargs.update({"attn_implementation": "eager"})
 
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
-            kwargs.update({"low_cpu_mem_usage": False})
 
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False, "add_pooling_layer": False})
         try:
-            kwargs.update({"add_pooling_layer": False})
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
             warnings.warn("Removing pooling layer from the model if exist")
         except TypeError:
             kwargs.pop("add_pooling_layer", None)
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model)
+        return cls(model, block_size)
 
     @property
     def model_hash(self) -> str:
