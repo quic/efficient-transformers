@@ -86,9 +86,9 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
-    assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
-        "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
-    )
+    assert (
+        pytorch_hf_tokens == pytorch_kv_tokens
+    ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path)
@@ -109,9 +109,9 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
     gen_len = ort_tokens.shape[-1]
-    assert (ort_tokens == cloud_ai_100_tokens[:, :gen_len]).all(), (
-        "Tokens don't match for ONNXRT output and Cloud AI 100 output."
-    )
+    assert (
+        ort_tokens == cloud_ai_100_tokens[:, :gen_len]
+    ).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."
 
     # testing for CB models
     model_hf, _ = load_causal_lm_model(model_config)
