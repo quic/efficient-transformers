@@ -200,16 +200,16 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         }
         if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
             pkv_dynamic_axes = {
-                0: "full_batch_size" if self.continuous_batching else "batch_size",
+                0: "kv_cache_batch_size",
                 1: "ctx_len",
             }
         else:  # pkv is 4d
             pkv_dynamic_axes = {
-                0: "full_batch_size" if self.continuous_batching else "batch_size",
+                0: "kv_cache_batch_size",
                 2: "ctx_len",
             }
         output_names = ["logits"]
-        kv_cache_shape[0] = fbs * 4
+        kv_cache_shape[0] = fbs
         for i in range(self.num_layers):
             for kv in ["key", "value"]:
                 example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
@@ -241,7 +241,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         ctx_len: int = 128,
         batch_size: int = 1,
         full_batch_size: Optional[int] = None,
-        cache_size_multiplier: Optional[int] = None,
+        kv_cache_batch_size: Optional[int] = None,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
@@ -293,22 +293,22 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         if self.continuous_batching and full_batch_size is None:
             raise TypeError("missing required argument: 'full_batch_size'")
 
-        if cache_size_multiplier and not full_batch_size:
+        if kv_cache_batch_size and not full_batch_size:
             raise ValueError(
                 "Prefix caching is enabled only for continuous batching as of now. Please pass `full_batch_size` argument and make sure you pass `continuous_batching=True` in the `from_pretrained` call"
             )
 
+        kv_cache_batch_size = (
+            kv_cache_batch_size if kv_cache_batch_size else (full_batch_size if full_batch_size else batch_size)
+        )
         # Define prefill specialization
         prefill_specialization = {
             # Prefill is always run with single BS for continuous batching.
             "batch_size": 1 if self.continuous_batching else batch_size,
             "seq_len": prefill_seq_len,
             "ctx_len": ctx_len,
+            "kv_cache_batch_size": kv_cache_batch_size,
         }
-
-        prefill_specialization.update(
-            {"full_batch_size": full_batch_size * cache_size_multiplier if cache_size_multiplier else full_batch_size}
-        ) if self.continuous_batching else None
         prefill_specialization.update({"num_logits_to_keep": 1}) if self.is_tlm else None
         specializations = [
             prefill_specialization,
@@ -320,14 +320,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 "batch_size": full_batch_size if self.continuous_batching else batch_size,
                 "seq_len": num_speculative_tokens + 1 if self.is_tlm else 1,
                 "ctx_len": ctx_len,
+                "kv_cache_batch_size": kv_cache_batch_size,
             }
-            decode_specialization.update(
-                {
-                    "full_batch_size": full_batch_size * cache_size_multiplier
-                    if cache_size_multiplier
-                    else full_batch_size
-                }
-            ) if self.continuous_batching else ...
             decode_specialization.update({"num_logits_to_keep": num_speculative_tokens + 1}) if self.is_tlm else ...
             specializations.append(decode_specialization)
 
