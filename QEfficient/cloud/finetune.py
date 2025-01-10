@@ -65,9 +65,9 @@ def main(**kwargs):
         # TODO: may have to init qccl backend, next try run with torchrun command
         torch_device = torch.device(device)
         assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
-        assert (
-            torch_device.index is None
-        ), f"DDP requires specification of device type only, however provided device index as well: {torch_device}"
+        assert torch_device.index is None, (
+            f"DDP requires specification of device type only, however provided device index as well: {torch_device}"
+        )
         dist.init_process_group(backend=train_config.dist_backend)
         # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
         getattr(torch, torch_device.type).set_device(dist.get_rank())
@@ -173,9 +173,12 @@ def main(**kwargs):
         else:
             print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
 
-    longest_seq_length, longest_seq_ix = get_longest_seq_length(
-        torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset])
-    )
+        longest_seq_length, _ = get_longest_seq_length(
+            torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset])
+        )
+    else:
+        longest_seq_length, _ = get_longest_seq_length(train_dataloader.dataset)
+
     print(
         f"The longest sequence length in the train data is {longest_seq_length}, "
         f"passed context length is {train_config.context_length} and overall model's context length is "

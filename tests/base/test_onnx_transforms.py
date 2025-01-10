@@ -77,9 +77,9 @@ def test_split_tensors_transform(tmp_path):
     >
     test_split () => ()
     <
-        float[1, 32] tensor0 = [ "location": "{external_tensors_file}", "offset": "0", "length": "{32*4}" ],
-        float[1, 32] tensor1 = [ "location": "{external_tensors_file}", "offset": "{32*4}", "length": "{32*4}" ],
-        float[1, 16] tensor2 = [ "location": "{external_tensors_file}", "offset": "{64*4}", "length": "{16*4}" ]
+        float[1, 32] tensor0 = [ "location": "{external_tensors_file}", "offset": "0", "length": "{32 * 4}" ],
+        float[1, 32] tensor1 = [ "location": "{external_tensors_file}", "offset": "{32 * 4}", "length": "{32 * 4}" ],
+        float[1, 16] tensor2 = [ "location": "{external_tensors_file}", "offset": "{64 * 4}", "length": "{16 * 4}" ]
     >
     {{
     }}

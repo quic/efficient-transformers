@@ -200,7 +200,7 @@ def torch_perplexity(
 
         loop_time = time.time() - loop_s
         logger.info(
-            f"E2E Sample Time: {(loop_time)/batch_size:.4f}s\t E2E TOKENS/S : {((ctx_len-prompt_len)*batch_size)/loop_time:.2f}"
+            f"E2E Sample Time: {(loop_time) / batch_size:.4f}s\t E2E TOKENS/S : {((ctx_len - prompt_len) * batch_size) / loop_time:.2f}"
         )
 
         del outputs
@@ -332,7 +332,7 @@ def calculate_perplexity(
 
             loop_time = time.time() - loop_s
             logger.info(
-                f"e2e sample time: {(loop_time)/batch_size:.4f}s\t e2e tokens/s : {((ctx_len-prompt_len)*batch_size)/loop_time:.2f}"
+                f"e2e sample time: {(loop_time) / batch_size:.4f}s\t e2e tokens/s : {((ctx_len - prompt_len) * batch_size) / loop_time:.2f}"
             )
 
     avg_loss = total_loss / total_tokens
@@ -415,7 +415,7 @@ def main():
         print(f"Dataset Stride: {args.stride}", file=fp)
         print(f"Overall Loss: {loss}", file=fp)
         print(f"Perplexity: {perplexity}", file=fp)
-        print(f"Total time for evaluation: {(time.time()-start_time)/3600.0} hrs", file=fp)
+        print(f"Total time for evaluation: {(time.time() - start_time) / 3600.0} hrs", file=fp)
         if isinstance(args.model_type, str) and args.model_type == "torch":
             print("\n*******************************************************", file=fp)
             print(f"Torch Original Perplexity: {perplexity}", file=fp)
