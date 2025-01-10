@@ -209,7 +209,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 2: "ctx_len",
             }
         output_names = ["logits"]
-        kv_cache_shape[0] = fbs
+
         for i in range(self.num_layers):
             for kv in ["key", "value"]:
                 example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
@@ -309,7 +309,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             "ctx_len": ctx_len,
             "kv_cache_batch_size": kv_cache_batch_size,
         }
-        prefill_specialization.update({"num_logits_to_keep": 1}) if self.is_tlm else None
+        prefill_specialization.update({"num_logits_to_keep": 1}) if self.is_tlm else ...
+        prefill_specialization.update({"full_batch_size": full_batch_size}) if full_batch_size else ...
         specializations = [
             prefill_specialization,
         ]

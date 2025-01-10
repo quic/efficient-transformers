@@ -177,6 +177,7 @@ def get_compilation_dims(qpc_path: str) -> Tuple[int, int, Optional[int]]:
     compilation_ctx_len = int(data["specializations"][0]["ctx_len"])
     if compilation_fbs := data["specializations"][0].get("full_batch_size", None):
         compilation_fbs = int(compilation_fbs)
+
     return compilation_batch_size, compilation_ctx_len, compilation_fbs
 
 
