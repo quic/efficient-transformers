@@ -229,6 +229,5 @@ def test_auto_lora_model_for_causal_lm_export_compile_generate(base_model_name, 
     qeff_model.generate(
         tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=base_model_name),
         prompts=prompts,
-        device_id=[0],
         prompt_to_adapter_mapping=["adapter_0", "adapter_1", "adapter_0", "base"],
     )
