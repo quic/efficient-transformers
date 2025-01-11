@@ -92,6 +92,7 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     return bonus_token_inputs, dlm_decode_inputs
 
 
+@pytest.mark.on_qaic
 @pytest.mark.parametrize(
     "prompt, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, draft_model_name, target_model_name, full_batch_size",
     configs,
