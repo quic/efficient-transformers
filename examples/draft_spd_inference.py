@@ -370,6 +370,7 @@ def draft_spec_decode_inference(
             num_valid_batch_indices, 1
         )
     end = perf_counter()
+    # calculate performance metrics
     decode_end = end - decode_start
     e2e_end = end - e2e_start
     mean_ttft = sum(ttfts) / len(ttfts)
