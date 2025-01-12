@@ -19,7 +19,7 @@ from QEfficient.utils.device_utils import get_available_device_id
 
 configs = [
     pytest.param(
-        Constants.INPUT_STR,  # prompt
+        Constants.INPUT_STR,  # prompts
         4,  # num_speculative_tokens
         32,  # prefill_seq_len
         128,  # ctx_len
@@ -74,9 +74,9 @@ def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
     """
     num_chunks = -(input_len // -prefill_seq_len)  # ceil divide without float
     input_len_padded = num_chunks * prefill_seq_len  # Convert input_len to a multiple of prefill_seq_len
-    assert input_len_padded <= ctx_len, (
-        "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
-    )
+    assert (
+        input_len_padded <= ctx_len
+    ), "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
     return input_len_padded
 
 
@@ -92,13 +92,12 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     return bonus_token_inputs, dlm_decode_inputs
 
 
-@pytest.mark.on_qaic
 @pytest.mark.parametrize(
-    "prompt, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, draft_model_name, target_model_name, full_batch_size",
+    "prompts, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, draft_model_name, target_model_name, full_batch_size",
     configs,
 )
 def test_spec_decode_inference(
-    prompt: List[str],
+    prompts: List[str],
     num_speculative_tokens: int,
     prefill_seq_len: int,
     ctx_len: int,
@@ -155,12 +154,10 @@ def test_spec_decode_inference(
     draft_model_session.skip_buffers(set([x for x in draft_model_session.output_names if x.endswith("_RetainedState")]))
 
     is_cb = full_batch_size is not None
-    if not is_cb:
-        prompts = prompt * prefill_bsz
-        decode_batch_size = prefill_bsz
-    else:
-        prompts = prompt
-        decode_batch_size = full_batch_size
+    decode_batch_size = full_batch_size if is_cb else prefill_bsz
+    if len(prompts) < decode_batch_size:
+        prompts_exp = prompts * decode_batch_size
+        prompts = prompts_exp[:decode_batch_size]
     # tokenize the prompts
     prompts_tokenized: List[dict] = []
     for p in prompts:
@@ -326,12 +323,12 @@ def test_spec_decode_inference(
     for prompt, generation in zip(prompts, batch_decode):
         print(f"{prompt=} {generation=}")
     # validation check
-    assert mean_num_accepted_tokens == float(num_speculative_tokens + 1), (
-        f"mean number of accepted tokens is {mean_num_accepted_tokens} but should be {num_speculative_tokens + 1}"
-    )
+    assert mean_num_accepted_tokens == float(
+        num_speculative_tokens + 1
+    ), f"mean number of accepted tokens is {mean_num_accepted_tokens} but should be {num_speculative_tokens + 1}"
     del target_model_session
     del draft_model_session
-    generated_ids = np.asarray(generated_ids).flatten()
+    generated_ids = np.asarray(generated_ids[0]).flatten()
     gen_len = generated_ids.shape[0]
     exec_info = draft_model.generate(tokenizer, Constants.INPUT_STR, device_group)
     cloud_ai_100_tokens = exec_info.generated_ids[0][
