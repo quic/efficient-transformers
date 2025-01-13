@@ -83,11 +83,14 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     .. code-block:: python
 
         from QEfficient import QEFFAutoModelForCausalLM
+        from transformers import AutoTokenizer
 
+        model_name = "gpt2"
         model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=2)
-        model.compile(prefill_seq_len=32, ctx_len=1024)
+        model.compile(prefill_seq_len=128, ctx_len=256, num_cores=16, num_devices=1)
 
-        model.generate(prompts=["Hi there!!"])
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
     """
 
     _hf_auto_class = AutoModelForCausalLM
@@ -141,15 +144,18 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         .. code-block:: python
 
             from QEfficient import QEFFAutoModelForCausalLM
+            from transformers import AutoTokenizer
 
             # Initialize the model using from_pretrained similar to transformers.AutoModelForCausalLM
-            model = QEFFAutoModelForCausalLM.from_pretrained("gpt2")
+            model_name = "gpt2"
+            model = QEFFAutoModelForCausalLM.from_pretrained(model_name)
 
             # Now you can directly compile the model for Cloud AI 100
-            model.compile(num_cores=6, device_group=[0])  # Considering you have a Cloud AI 100 Standard SKU
+            model.compile(num_cores=16) # Considering you have a Cloud AI 100 Standard SKU
 
             # You can now execute the model
-            model.generate(prompts=["Hi there!!"])
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+            model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
         """
 
         if kwargs.pop("full_batch_size", None):
@@ -391,9 +397,11 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.
 
         ``Mandatory`` Args:
+            :tokenizer (Union[PreTrainedTokenizerFast, PreTrainedTokenizer]): Pass tokenizer of the model.
             :prompts (List[str]): List of prompts to run the execution.
-            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
+
         ``optional`` Args:
+            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
             :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
 
         """
@@ -430,7 +438,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         model = QEFFAutoModel.from_pretrained("model_name")
 
         # Now you can directly compile the model for Cloud AI 100
-        model.compile(num_cores=16, device_group=[0])  # Considering you have a Cloud AI 100 SKU
+        model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
 
         #prepare input
         tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -469,7 +477,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             model = QEFFAutoModel.from_pretrained("model_name")
 
             # Now you can directly compile the model for Cloud AI 100
-            model.compile(num_cores=16, device_group=[0])  # Considering you have a Cloud AI 100 SKU
+            model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
 
             #prepare input
             tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -594,10 +602,9 @@ class QEFFAutoModel(QEFFTransformersBase):
         This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
         ``Mandatory`` Args:
             :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
-            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
         ``optional`` Args:
+            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
             :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
-            :eq_len (int, optional): Sequence length for the inputs. Defaults to constants.Constants.CTX_LEN.
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
@@ -660,7 +667,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         Generates features from a list of text prompts using a PyTorch model.
 
         ``Mandatory`` Args:
-            model: The transformed PyTorch model used for generating features.
+            :model: The transformed PyTorch model used for generating features.
             :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
 
         Returns:
