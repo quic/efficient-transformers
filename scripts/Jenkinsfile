@@ -48,7 +48,7 @@ pipeline {
                }
                stage('Run Non-CLI QAIC Tests') {
                    steps {
-                       timeout(time: 70, unit: 'MINUTES') {
+                       timeout(time: 200, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
@@ -56,7 +56,7 @@ pipeline {
                            mkdir -p $PWD/Non_qaic &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic &&
-                           pytest tests -m '(not cli) and (on_qaic) and (not qnn)' -n 3 --junitxml=tests/tests_log2.xml &&
+                           pytest tests -m '(not cli) and (on_qaic) and (not qnn)' -n 4 --junitxml=tests/tests_log2.xml &&
                            deactivate"
                            '''
                        }

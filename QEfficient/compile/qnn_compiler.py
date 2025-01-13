@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from QEfficient.utils._utils import create_json, execute_command, load_json
 from QEfficient.utils.constants import QnnConstants
-from QEfficient.utils.generate_qnn_network_specialization_config import fetch_nodes_info
+from QEfficient.utils.generate_qnn_network_specialization_config import fetch_nodes_info, generate_data_format_config
 from QEfficient.utils.logging_utils import logger
 
 
@@ -38,6 +38,8 @@ class QNN:
         qnn_target: str = QnnConstants.TARGET,
         qnn_config_path: Optional[str] = None,
         qnn_binary_dir: Optional[str] = None,
+        mxint8: Optional[bool] = False,
+        compiler_mxint8_mdp_io: Optional[bool] = False,
         **kwargs,
     ) -> None:
         self.onnx_path = onnx_path
@@ -52,6 +54,8 @@ class QNN:
         self.compiler_mxfp6_matmul_weights = compiler_mxfp6_matmul_weights
         self.qnn_config_path = qnn_config_path
         self.qnn_binary_dir = qnn_binary_dir
+        self.mxint8 = mxint8
+        self.compiler_mxint8_mdp_io = compiler_mxint8_mdp_io
         self.custom_io_path = custom_io_path
         self.dlc_model_path = os.path.join(qpc_base_path, f"{QnnConstants.MODEL_NAME}.dlc")
         self.qnn_target = qnn_target
@@ -148,6 +152,7 @@ class QNN:
             "compiler_stat_level": QnnConstants.COMPILER_STAT_LEVEL,
             "compiler_stats_batch_size": QnnConstants.COMPILER_STATS_BATCH_SIZE,
             "compiler_time_passes": QnnConstants.COMPILER_TIME_PASSES,
+            "compiler_mxint8_mdp_io": self.compiler_mxint8_mdp_io,
         }
         if self.compiler_max_out_channel_split > 0:
             qnn_compile_backend["compiler_max_out_channel_split"] = str(self.compiler_max_out_channel_split)
@@ -225,10 +230,10 @@ class QNN:
         IMMUTABLE parameters which can not be overridden by the user using qnn_config.json:
             :input_network (str): Generated ``ONNX`` Model Path.
             :output_path (str): Path to generated DLC file, which is provided qpc_base_path/model.dlc
-            :io_config (str): Path to custom_io_config.yaml file created using GenerateQNNnetworkSpecializationconfig.py
+            :config (str): Path to custom_io_config.yaml file created using GenerateQNNnetworkSpecializationconfig.py
             :float_bias_bitwidth (int): Bitwidth to use for float bias tensor
             :float_bitwidth (int): Converts the graph to the specified float bitwidth, either 32 or 16(Default).
-            :keep_int64_inputs(flag): Passed by default.
+            :preserve_io_datatype(flag): Passed by default.
 
         CONVERTOR_ARGS_EXTENSION passed in qnn_config.json is appended to the command created.
 
@@ -240,7 +245,7 @@ class QNN:
         cmd = (
             f"{converter_tool} --input_network {self.onnx_path} "
             f"--output_path {self.dlc_model_path} "
-            f"--io_config {self.custom_io_path} "
+            f"--config {self.custom_io_path} "
             f"--float_bias_bitwidth {QnnConstants.FLOAT_BIAS_BITWIDTH} "
             f"--float_bitwidth {QnnConstants.FLOAT_BITWIDTH} "
         )
@@ -286,6 +291,17 @@ class QNN:
             f"--dlc_path {self.dlc_model_path} "
             f"--config_file {config_file_path} "
         )
+
+        if self.mxint8:
+            data_format_file_path = os.path.join(self.qpc_base_path, QnnConstants.QNN_DATA_FORMAT_CONFIG_NAME)
+            generate_data_format_config(
+                self.onnx_path, model_dlc_name=QnnConstants.MODEL_NAME, file_path=data_format_file_path
+            )
+            if not os.path.isfile(data_format_file_path):
+                raise FileNotFoundError(
+                    f"file {data_format_file_path} needs to exist in the qpc_base_path for mxint8 compilation. Please rerun infer/compile Api"
+                )
+            cmd += f"--data_format_config {data_format_file_path} "
 
         if self.qnn_config and QnnConstants.CONTEXT_BIN_ARGS_EXTENSION_STR in self.qnn_config:
             if "--log_level " not in self.qnn_config[QnnConstants.CONTEXT_BIN_ARGS_EXTENSION_STR]:
@@ -353,20 +369,15 @@ def compile(
 
     if kwargs:
         logger.warning("Extra arguments to QNN compilation are not supported as of now!")
-
         raise NotImplementedError("Can't handle extra compilation args now!")
-
-    if allow_mxint8_mdp_io:
-        logger.warning("QNN doesn't support allow_mxint8_mdp_io. Bypassing the value passed for allow_mxint8_mdp_io")
-
-    if mxint8:
-        logger.warning("QNN doesn't support mxint8. Bypassing the value passed for mxint8")
 
     os.makedirs(qpc_base_path, exist_ok=True)
 
     # Created custom_io_config.yaml file for QNN-Convertor stage.
     # TODO To make custom_io_config.yaml configurable as not all models need it.
     custom_io_file_path = os.path.join(qpc_base_path, "custom_io_config.yaml")
+
+    kv_precision = "uint8" if mxint8 else "float16"
     fetch_nodes_info(
         onnx_graph_path=onnx_path,
         batch_size=batch_size,
@@ -374,6 +385,7 @@ def compile(
         context_length=ctx_len,
         file_path=custom_io_file_path,
         full_batch_size=full_batch_size,
+        kv_precision=kv_precision,
     )
 
     if not os.path.isfile(custom_io_file_path):
@@ -395,6 +407,8 @@ def compile(
         ctx_len=ctx_len,
         compiler_mxfp6_matmul_weights=mxfp6,
         qnn_binary_dir=qnn_binary_dir,
+        mxint8=mxint8,
+        compiler_mxint8_mdp_io=allow_mxint8_mdp_io,
     )
 
     compiled_binary_path = qnn_obj.compile()

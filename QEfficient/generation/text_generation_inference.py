@@ -341,7 +341,9 @@ def cloud_ai_100_exec_kv(
             perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
         )
     else:
-        exec_info = generate_text.generate(prompt=prompt, generation_len=generation_len)
+        exec_info = generate_text.generate(
+            prompt=prompt, generation_len=generation_len, prompt_to_lora_id_mapping=prompt_to_lora_id_mapping
+        )
 
     print_latency_stats_kv(prompt, exec_info=exec_info, automation=automation)
     return exec_info

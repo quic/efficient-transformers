@@ -342,9 +342,9 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         self,
         tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
         prompts: List[str],
-        device_id: List[int] = None,
         prompt_to_adapter_mapping: List[str] = None,
-        runtime: str = "AI_100",
+        device_id: Optional[List[int]] = None,
+        runtime: Optional[str] = "AI_100",
         **kwargs,
     ):
         """
@@ -355,9 +355,9 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         ``Mandatory`` Args:
             :tokenizer (PreTrainedTokenizerFast or PreTrainedTokenizer): The tokenizer used in the inference
             :prompts (List[str]): List of prompts to run the execution.
-            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
             :prompt_to_adapter_mapping (List[str]): The sequence of the adapter names will be matched with sequence of prompts and corresponding adapters will be used for the prompts."base" for base model (no adapter).
         ``optional`` Args:
+            :device_id (List[int]): Device IDs to be used for execution. If ``len(device_id) > 1``, it enables multiple card setup. If ``None``, auto-device-picker will be used. ``Defaults to None``.
             :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to "AI_100".
 
         """
