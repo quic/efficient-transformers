@@ -20,7 +20,7 @@ class lora_config:
     bias = "none"
     task_type: str = "CAUSAL_LM"
     lora_dropout: float = 0.05
-    inference_mode: bool = False
+    inference_mode: bool = False  # should be False for finetuning
 
 
 # CAUTION prefix tuning is currently not supported
