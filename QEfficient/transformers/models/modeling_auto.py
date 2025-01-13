@@ -381,6 +381,39 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 aic_num_cores=num_cores,
                 **compiler_options,
             )
+
+        # Construct the qconfig json file path
+        qconfig_file_path = os.path.join(os.path.dirname(self.qpc_path), "qconfig.json")
+        huggingface_config = self.model.config.__dict__
+
+        pytorch_transforms = [cls.__name__ for cls in self._pytorch_transforms]
+        onnx_transforms = [cls.__name__ for cls in self._onnx_transforms]
+
+        onnx_path = str(self.onnx_path)
+        specializations_file_path = str(os.path.join(os.path.dirname(self.qpc_path), "specializations.json"))
+        compile_dir = str(os.path.dirname(self.qpc_path))
+
+        create_and_dump_configs(
+            qconfig_file_path,
+            specializations_file_path,
+            huggingface_config,
+            pytorch_transforms,
+            onnx_transforms,
+            onnx_path,
+            compile_dir,
+            prefill_seq_len,
+            ctx_len,
+            batch_size,
+            full_batch_size,
+            num_devices,
+            num_cores,
+            mxfp6_matmul,
+            mxint8_kv_cache,
+            num_speculative_tokens,
+            enable_qnn,
+            qnn_config,
+        )
+
         return qpc_path
 
     # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate

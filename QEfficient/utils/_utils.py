@@ -12,11 +12,12 @@ import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
+import yaml
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants, QnnConstants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -414,15 +415,15 @@ def create_and_dump_configs(
     mxfp6_matmul,
     mxint8_kv_cache,
     num_speculative_tokens,
+    enable_qnn,
+    qnn_config,
 ):
     try:
-        # Parse the XML file
         tree = ET.parse(Constants.SDK_APPS_XML)
         root = tree.getroot()
-        # Try to find the base_version element and get its text
-        version = root.find(".//base_version").text
+        qaic_version = root.find(".//base_version").text
     except (FileNotFoundError, ET.ParseError, AttributeError):
-        version = None
+        qaic_version = None
 
     # Ensure all objects in the configs dictionary are JSON serializable
     def make_serializable(obj):
@@ -433,7 +434,18 @@ def create_and_dump_configs(
         elif isinstance(obj, dict):
             return {key: make_serializable(value) for key, value in obj.items()}
         else:
-            return str(obj)  # Convert non-serializable objects to strings
+            return str(obj)
+
+    qnn_config_path = (
+        (qnn_config if qnn_config is not None else "QEfficient/compile/qnn_config.json") if enable_qnn else None
+    )
+    yaml_file_path = os.path.join(os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME), "sdk.yaml")
+    yaml_data = {}
+    try:
+        with open(yaml_file_path, "r") as file:
+            yaml_data = yaml.safe_load(file)
+    except Exception:
+        yaml_data = None
 
     configs = {
         "huggingface_config": make_serializable(huggingface_config),
@@ -444,7 +456,7 @@ def create_and_dump_configs(
                 "onnx_path": onnx_path,
             },
             "compilation_config": {
-                "apps_sdk_version": version,
+                "apps_sdk_version": qaic_version,
                 "compile_dir": compile_dir,
                 "specializtions_file_path": specializations_file_path,
                 "prefill_seq_len": prefill_seq_len,
@@ -457,8 +469,15 @@ def create_and_dump_configs(
                 "mxint8_kv_cache": mxint8_kv_cache,
                 "num_speculative_tokens": num_speculative_tokens,
             },
+            "qnn_config": {
+                "enable_qnn": enable_qnn,
+                "qnn_config_path": qnn_config_path,
+            },
         },
     }
-    # Dump the configs dictionary to a JSON file
+
+    if yaml_data:
+        configs["qpc_config"]["qnn_config"].update(yaml_data)
+
     with open(config_file_path, "w") as file:
         json.dump(configs, file, indent=4)
