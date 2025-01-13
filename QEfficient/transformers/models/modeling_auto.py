@@ -85,6 +85,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         from QEfficient import QEFFAutoModelForCausalLM
         from transformers import AutoTokenizer
 
+        model_name = "gpt2"
         model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=2)
         model.compile(prefill_seq_len=128, ctx_len=256, num_cores=16, num_devices=1)
 
@@ -146,6 +147,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             from transformers import AutoTokenizer
 
             # Initialize the model using from_pretrained similar to transformers.AutoModelForCausalLM
+            model_name = "gpt2"
             model = QEFFAutoModelForCausalLM.from_pretrained(model_name)
 
             # Now you can directly compile the model for Cloud AI 100
