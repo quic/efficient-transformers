@@ -86,7 +86,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         from transformers import AutoTokenizer
 
         model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=2)
-        model.compile(num_cores=16, num_devices=1)
+        model.compile(prefill_seq_len=128, ctx_len=256, num_cores=16, num_devices=1)
 
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
