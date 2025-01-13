@@ -86,7 +86,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
         model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=2)
         model.compile(num_cores=14, num_devices=1)
-        
+
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
     """
@@ -395,7 +395,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         ``Mandatory`` Args:
             :tokenizer (Union[PreTrainedTokenizerFast, PreTrainedTokenizer]): Pass tokenizer of the model.
             :prompts (List[str]): List of prompts to run the execution.
-            
+
         ``optional`` Args:
             :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
             :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
