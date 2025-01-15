@@ -50,16 +50,6 @@ You can also pass path of txt file with input prompts when you want to run infer
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompts_txt_file_path examples/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first
 ```
 
-For QNN Compilation, export $QNN_SDK_ROOT=/path/to/qnn_sdk_folder & add --enable_qnn in the command and an optional config file if user wish to override the default parameters.
-Without QNN Config
-```bash
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn
-```
-
-With QNN Config
-```bash
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn QEfficient/compile/qnn_config.json
-````
 ### QEfficient.cloud.execute
 You can first run `infer` API and then use `execute` to run the pre-compiled model on Cloud AI 100 cards.
 Once we have compiled the QPC, we can now use the precompiled QPC in execute API to run for different prompts. Make sure to pass same `--device_group` as used during infer. Refer [Execute API doc](execute_api) for more details.
@@ -83,10 +73,6 @@ You can also enable MQ, just based on the number of devices. Based on the `--dev
 python -m QEfficient.cloud.infer --model_name Salesforce/codegen-2B-mono --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0,1] --prompt "def fibonacci(n):" --mos 2 --aic_enable_depth_first
 ```
 
-For QNN Compilation, export $QNN_SDK_ROOT=/path/to/qnn_sdk_folder & add --enable_qnn in the command and an optional config file if user wish to override the default parameters.
-```bash
-python -m QEfficient.cloud.infer --model_name Salesforce/codegen-2B-mono --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0,1] --prompt "def fibonacci(n):" --mos 2 --aic_enable_depth_first --enable_qnn QEfficient/compile/qnn_config.json
-```
 Above step will save the `qpc` files under `efficient-transformers/qeff_models/{model_card_name}`, you can use the execute API to run for different prompts. This will automatically pick the pre-compiled `qpc` files.
 
 ```bash
@@ -98,12 +84,6 @@ To disable MQ, just pass single soc like below, below step will compile the mode
 ```bash
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first
 ```
-
-For QNN Compilation, export $QNN_SDK_ROOT=/path/to/qnn_sdk_folder & add --enable_qnn in the command and an optional config file if user wish to override the default parameters.
-```bash
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn QEfficient/compile/qnn_config.json
-```
-
 
 ### Continuous Batching
 
@@ -118,11 +98,77 @@ python -m QEfficient.cloud.infer --model_name TinyLlama/TinyLlama_v1.1 --prompt_
 theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first --full_batch_size 3
 ```
 
-For QNN Compilation, export $QNN_SDK_ROOT=/path/to/qnn_sdk_folder & add --enable_qnn in the command and an optional config file if user wish to override the default parameters.
+### QNN Compilation
+
+Users can compile a model with QNN SDK by following the steps below:
+
+* Set QNN SDK Path: export $QNN_SDK_ROOT=/path/to/qnn_sdk_folder
+* Enabled QNN by passing enable_qnn flag, add --enable_qnn in the cli command.
+* An optional config file can be passed to override the default parameters.
+
+**CLI Inference Command**
+
+Without QNN Config
 ```bash
-python -m QEfficient.cloud.infer --model_name TinyLlama/TinyLlama_v1.1 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth
-theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first --full_batch_size 3 --enable_qnn QEfficient/compile/qnn_config.json
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn
 ```
+
+With QNN Config
+```bash
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn QEfficient/compile/qnn_config.json
+````
+
+**CLI Compile Command**
+
+Users can also use `compile` API to compile pre exported onnx models using QNN SDK.
+
+Without QNN Config
+```bash
+python -m QEfficient.cloud.compile --onnx_path <path to gpt2 onnx file> --qpc-path <path to save qpc files> --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn
+```
+
+With QNN Config
+```bash
+python -m QEfficient.cloud.compile --onnx_path <path to gpt2 onnx file> --qpc-path <path to save qpc files> --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn QEfficient/compile/qnn_config.json
+````
+
+**CLI Execute Command**
+
+Once we have compiled the QPC using `infer` or `compile` API, we can now use the precompiled QPC in `execute` API to run for different prompts.
+
+Make sure to pass same `--device_group` as used during infer. Refer [Execute API doc](execute_api) for more details.
+
+```bash
+python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path qeff_models/gpt2/qpc_qnn_16cores_1BS_32PL_128CL_1devices_mxfp6/qpcs --prompt "Once upon a time in" --device_group [0]
+```
+
+**QNN Compilation via Python API**
+
+Users can also use python API to export, compile and execute onnx models using QNN SDK.
+
+```Python
+# We can now export the modified models to ONNX framework
+# This will generate single ONNX Model for both Prefill and Decode Variations which are optimized for
+# Cloud AI 100 Platform.
+from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
+
+# Model-Card name (This is HF Model Card name) : https://huggingface.co/gpt2-xl
+model_name = "gpt2"  # Similar, we can change model name and generate corresponding models, if we have added the support in the lib.
+
+qeff_model = AutoModelForCausalLM.from_pretrained(model_name)
+
+generated_qpc_path = qeff_model.compile(
+    num_cores=14,
+    mxfp6=True,
+    enable_qnn=True,
+    qnn_config = qnn_config_file_path # QNN compilation configuration is passed.
+)
+
+qeff_model.generate(prompts=["My name is"])
+```
+
+**Users can also take advantage of features like multi-Qranium inference and continuous batching with QNN SDK Compilation.**
+
 ## Python API
 
 ### 1.  Model download and Optimize for Cloud AI 100
@@ -169,9 +215,6 @@ Use the qualcomm_efficient_converter API to export the KV transformed Model to O
 generated_qpc_path = qeff_model.compile(
     num_cores=14,
     mxfp6=True,
-    device_group=[0],
-    enable_qnn=True # if QNN Compilation path {default = False}
-    qnn_config = qnn_config_file_path # if QNN compilation configuration is passed {default = None}.
 )
 ```
 

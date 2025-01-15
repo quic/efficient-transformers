@@ -47,13 +47,6 @@
    import QEfficient
    base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
    qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0])
-
-   # Similarly for QPC Compiled via QNN SDK
-   # 1. export $QNN_SDK_ROOT=/path/to/qnn_sdk_folder
-   # 2. add --enable_qnn in the command
-   # 3. An optional config file can be provided via qnn_config if user wish to override the default parameters.
-   qpc_path_qnn = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0],
-                                     enable_qnn=True, qnn_config = "QEfficient/compile/qnn_config.json")
 .. deprecated::
    This function will be deprecated in version 1.19, please use QEFFAutoModelForCausalLM.compile instead
 ```

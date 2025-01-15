@@ -5,31 +5,86 @@
 #
 # -----------------------------------------------------------------------------
 
+from argparse import ArgumentParser
+from dataclasses import dataclass
 from time import perf_counter
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import numpy as np
-import pytest
 from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.constants import Constants
-from QEfficient.utils.device_utils import get_available_device_id
 
-configs = [
-    pytest.param(
-        Constants.INPUT_STR,  # prompts
-        4,  # num_speculative_tokens
-        32,  # prefill_seq_len
-        128,  # ctx_len
-        1,  # prefill_bsz
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # draft_model_name
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # target_model_name
-        1,  # full_batch_size
-        id="CB llama",
-    ),
-]
+
+@dataclass
+class PerfMetrics:
+    """
+    Holds all performance metrics
+
+    Args:
+        :mean_ttft (float): Average TLM+DLM TTFT.
+        :batch_ttft (float): Total TLM+DLM Batch TTFT.
+        :decode_throughput (float): Decode throughput.
+        :e2e_throughput (float): E2E throughput.
+        :mean_num_accepted_tokens (float): Average number of accepted tokens.
+        :max_gen_len (int): Max generation length.
+        :generated_tokens_per_prompt (List[int]): Total generated tokens per prompt.
+    """
+
+    mean_ttft: float
+    batch_ttft: float
+    decode_throughput: float
+    e2e_throughput: float
+    mean_num_accepted_tokens: float
+    max_gen_len: int
+    generated_tokens_per_prompt: List[int]
+
+
+@dataclass
+class CloudAI100ExecInfo:
+    """
+    Holds all the information about Cloud AI 100 execution
+
+    Args:
+        :prompts (List[str]): Prompts to perfrom inferencing on.
+        :batch_size (int): Batch size of the QPC compilation.
+        :generated_texts (Union[List[List[str]], List[str]]): Generated text(s).
+        :generated_ids (Union[List[np.ndarray], np.ndarray]): Generated IDs.
+        :perf_metrics (PerfMetrics): Performance metrics.
+        :num_speculative_tokens (int): Number of speculative tokens.
+        :prefill_seq_len (int): Prefill sequence length.
+        :ctx_len (int): Context length.
+        :prefill_bsz (int): Prefill batch size.
+        :draft_model_name (str): Draft model name.
+        :target_model_name (str): Target model name.
+        :full_batch_size (Optional[int]): Full batch size.
+    """
+
+    prompts: List[str]
+    batch_size: int
+    generated_texts: Union[List[str], List[List[str]]]
+    generated_ids: Union[List[np.ndarray], np.ndarray]
+    perf_metrics: PerfMetrics
+    num_speculative_tokens: int
+    prefill_seq_len: int
+    ctx_len: int
+    prefill_bsz: int
+    draft_model_name: str
+    target_model_name: str
+    full_batch_size: Optional[int]
+
+    def __repr__(self):
+        return (
+            f"Avg TLM+DLM TTFT = {round(self.perf_metrics.mean_ttft, 2)}\n"
+            f"Total TLM+DLM Batch TTFT = {round(self.perf_metrics.batch_ttft, 2)}\n"
+            f"Decode Throughput = {round(self.perf_metrics.decode_throughput, 2)}\n"
+            f"E2E Throughput = {round(self.perf_metrics.e2e_throughput, 2)}\n"
+            f"Avg number of accepted tokens = {round(self.perf_metrics.mean_num_accepted_tokens, 2)}\n"
+            f"Max generation len = {self.perf_metrics.max_gen_len}\n"
+            f"Total Generated Tokens per Prompt: = {self.perf_metrics.generated_tokens_per_prompt}"
+        )
 
 
 def run_prefill_on_draft_and_target(
@@ -92,11 +147,7 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     return bonus_token_inputs, dlm_decode_inputs
 
 
-@pytest.mark.parametrize(
-    "prompts, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, draft_model_name, target_model_name, full_batch_size",
-    configs,
-)
-def test_spec_decode_inference(
+def draft_spec_decode_inference(
     prompts: List[str],
     num_speculative_tokens: int,
     prefill_seq_len: int,
@@ -105,11 +156,25 @@ def test_spec_decode_inference(
     draft_model_name: str,
     target_model_name: str,
     full_batch_size: Optional[int],
-):
-    # get device group
-    device_group: List[int] = get_available_device_id()
-    if not device_group:
-        pytest.skip("No available devices to run model on Cloud AI 100")
+    device_group: List[int],
+) -> CloudAI100ExecInfo:
+    """
+    Perform draft speculative decode inference on the given prompts.
+
+    Args:
+        prompts (List[str]): List of prompts to perform inference on.
+        num_speculative_tokens (int): Number of speculative tokens.
+        prefill_seq_len (int): Prefill sequence length.
+        ctx_len (int): Context length.
+        prefill_bsz (int): Prefill batch size.
+        draft_model_name (str): Name of the draft model.
+        target_model_name (str): Name of the target model.
+        full_batch_size (Optional[int]): Full batch size.
+        device_group (List[int]): List of device IDs.
+
+    Returns:
+        CloudAI100ExecInfo: Execution information, including performance metrics and generated text.
+    """
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(target_model_name, padding_side="right")
@@ -305,6 +370,7 @@ def test_spec_decode_inference(
             num_valid_batch_indices, 1
         )
     end = perf_counter()
+    # calculate performance metrics
     decode_end = end - decode_start
     e2e_end = end - e2e_start
     mean_ttft = sum(ttfts) / len(ttfts)
@@ -313,26 +379,66 @@ def test_spec_decode_inference(
     e2e_throughput = (sum(generated_tokens_per_prompt) + decode_batch_size) / e2e_end
     batch_decode = tokenizer.batch_decode(generated_ids)
     mean_num_accepted_tokens /= it
-    print(f"Avg TLM+DLM TTFT = {mean_ttft}")
-    print(f"Total TLM+DLM Batch TTFT = {batch_ttft}")
-    print(f"Decode Throughput = {decode_throughput}")
-    print(f"E2E Throughput = {e2e_throughput}")
-    print("Avg number of accepted tokens = ", mean_num_accepted_tokens)
-    print("Max generation len = ", max_gen_len)
-    print("Total Generated Tokens per Prompt: = ", generated_tokens_per_prompt)
-    for prompt, generation in zip(prompts, batch_decode):
-        print(f"{prompt=} {generation=}")
-    # validation check
-    assert mean_num_accepted_tokens == float(num_speculative_tokens + 1), (
-        f"mean number of accepted tokens is {mean_num_accepted_tokens} but should be {num_speculative_tokens + 1}"
+    perf_metrics = PerfMetrics(
+        mean_ttft,
+        batch_ttft,
+        decode_throughput,
+        e2e_throughput,
+        mean_num_accepted_tokens,
+        max_gen_len,
+        generated_tokens_per_prompt,
     )
-    del target_model_session
-    del draft_model_session
-    generated_ids = np.asarray(generated_ids[0]).flatten()
-    gen_len = generated_ids.shape[0]
-    exec_info = draft_model.generate(tokenizer, Constants.INPUT_STR, device_group)
-    cloud_ai_100_tokens = exec_info.generated_ids[0][
-        :gen_len
-    ]  # Because we always run for single input and single batch size
-    all_matching = np.array_equal(cloud_ai_100_tokens, generated_ids)
-    assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
+    exec_info = CloudAI100ExecInfo(
+        prompts,
+        decode_batch_size,
+        batch_decode,
+        generated_ids,
+        perf_metrics,
+        num_speculative_tokens,
+        prefill_seq_len,
+        ctx_len,
+        prefill_bsz,
+        draft_model_name,
+        target_model_name,
+        full_batch_size,
+    )
+    return exec_info
+
+
+def optional_int(x):
+    if x is None:
+        return None
+    return int(x)
+
+
+def arg_parse():
+    parser = ArgumentParser(description="Draft-based SpD Inference")
+    parser.add_argument("--prompts", type=str, nargs="+", default=Constants.INPUT_STR, help="Input prompt(s)")
+    parser.add_argument("--num-speculative-tokens", type=int, default=4, help="Number of speculative tokens")
+    parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
+    parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
+    parser.add_argument("--prefill-bsz", type=int, default=1, help="Prefill batch size")
+    parser.add_argument(
+        "--draft-model-name", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0", help="Draft model name"
+    )
+    parser.add_argument(
+        "--target-model-name", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0", help="Target model name"
+    )
+    parser.add_argument("--full-batch-size", type=optional_int, default=None, help="Full batch size")
+    parser.add_argument("--device-group", type=int, nargs="+", default=[0], help="device QIDs")
+    args = parser.parse_args()
+    return args
+
+
+def main():
+    args = arg_parse()
+    exec_info = draft_spec_decode_inference(**vars(args))
+    print(exec_info)
+    prompts = exec_info.prompts
+    generated_texts = exec_info.generated_texts
+    for prompt, generation in zip(prompts, generated_texts):
+        print(f"{prompt=} {generation=}")
+
+
+if __name__ == "__main__":
+    main()
