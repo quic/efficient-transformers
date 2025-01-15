@@ -70,6 +70,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
@@ -465,7 +466,9 @@
             <span class="n">perf_metrics</span><span class="o">=</span><span class="n">PerfMetrics</span><span class="p">(</span><span class="n">prefill_time</span><span class="p">,</span> <span class="n">decode_perf</span><span class="p">,</span> <span class="n">total_perf</span><span class="p">,</span> <span class="n">total_time</span><span class="p">),</span>
         <span class="p">)</span>
     <span class="k">else</span><span class="p">:</span>
-        <span class="n">exec_info</span> <span class="o">=</span> <span class="n">generate_text</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">generation_len</span><span class="o">=</span><span class="n">generation_len</span><span class="p">)</span>
+        <span class="n">exec_info</span> <span class="o">=</span> <span class="n">generate_text</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
+            <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">generation_len</span><span class="o">=</span><span class="n">generation_len</span><span class="p">,</span> <span class="n">prompt_to_lora_id_mapping</span><span class="o">=</span><span class="n">prompt_to_lora_id_mapping</span>
+        <span class="p">)</span>
 
     <span class="n">print_latency_stats_kv</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">exec_info</span><span class="o">=</span><span class="n">exec_info</span><span class="p">,</span> <span class="n">automation</span><span class="o">=</span><span class="n">automation</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">exec_info</span></div>

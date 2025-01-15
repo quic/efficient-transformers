@@ -70,6 +70,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
@@ -207,11 +208,14 @@
 <span class="sd">    .. code-block:: python</span>
 
 <span class="sd">        from QEfficient import QEFFAutoModelForCausalLM</span>
+<span class="sd">        from transformers import AutoTokenizer</span>
 
+<span class="sd">        model_name = &quot;gpt2&quot;</span>
 <span class="sd">        model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=2)</span>
-<span class="sd">        model.compile(prefill_seq_len=32, ctx_len=1024)</span>
+<span class="sd">        model.compile(prefill_seq_len=128, ctx_len=256, num_cores=16, num_devices=1)</span>
 
-<span class="sd">        model.generate(prompts=[&quot;Hi there!!&quot;])</span>
+<span class="sd">        tokenizer = AutoTokenizer.from_pretrained(model_name)</span>
+<span class="sd">        model.generate(prompts=[&quot;Hi there!!&quot;], tokenizer=tokenizer)</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">_hf_auto_class</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span>
@@ -265,15 +269,18 @@
 <span class="sd">        .. code-block:: python</span>
 
 <span class="sd">            from QEfficient import QEFFAutoModelForCausalLM</span>
+<span class="sd">            from transformers import AutoTokenizer</span>
 
 <span class="sd">            # Initialize the model using from_pretrained similar to transformers.AutoModelForCausalLM</span>
-<span class="sd">            model = QEFFAutoModelForCausalLM.from_pretrained(&quot;gpt2&quot;)</span>
+<span class="sd">            model_name = &quot;gpt2&quot;</span>
+<span class="sd">            model = QEFFAutoModelForCausalLM.from_pretrained(model_name)</span>
 
 <span class="sd">            # Now you can directly compile the model for Cloud AI 100</span>
-<span class="sd">            model.compile(num_cores=6, device_group=[0])  # Considering you have a Cloud AI 100 Standard SKU</span>
+<span class="sd">            model.compile(num_cores=16) # Considering you have a Cloud AI 100 Standard SKU</span>
 
 <span class="sd">            # You can now execute the model</span>
-<span class="sd">            model.generate(prompts=[&quot;Hi there!!&quot;])</span>
+<span class="sd">            tokenizer = AutoTokenizer.from_pretrained(model_name)</span>
+<span class="sd">            model.generate(prompts=[&quot;Hi there!!&quot;], tokenizer=tokenizer)</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="k">if</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">):</span>
@@ -333,6 +340,7 @@
                 <span class="mi">2</span><span class="p">:</span> <span class="s2">&quot;ctx_len&quot;</span><span class="p">,</span>
             <span class="p">}</span>
         <span class="n">output_names</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;logits&quot;</span><span class="p">]</span>
+
         <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">num_layers</span><span class="p">):</span>
             <span class="k">for</span> <span class="n">kv</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;key&quot;</span><span class="p">,</span> <span class="s2">&quot;value&quot;</span><span class="p">]:</span>
                 <span class="n">example_inputs</span><span class="p">[</span><span class="s2">&quot;past_key_values&quot;</span><span class="p">][</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">kv_cache_shape</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">))</span>
@@ -364,6 +372,7 @@
         <span class="n">ctx_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>
         <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
         <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">kv_cache_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">num_devices</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
         <span class="n">num_cores</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span>  <span class="c1"># FIXME: Make this mandatory arg</span>
         <span class="n">mxfp6_matmul</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
@@ -415,15 +424,28 @@
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span> <span class="ow">and</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;missing required argument: &#39;full_batch_size&#39;&quot;</span><span class="p">)</span>
 
+        <span class="k">if</span> <span class="n">kv_cache_batch_size</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">full_batch_size</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;Prefix caching is enabled only for continuous batching as of now. Please pass `full_batch_size` argument and make sure you pass `continuous_batching=True` in the `from_pretrained` call&quot;</span>
+            <span class="p">)</span>
+
+        <span class="n">kv_cache_batch_size</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">kv_cache_batch_size</span> <span class="k">if</span> <span class="n">kv_cache_batch_size</span> <span class="k">else</span> <span class="p">(</span><span class="n">full_batch_size</span> <span class="k">if</span> <span class="n">full_batch_size</span> <span class="k">else</span> <span class="n">batch_size</span><span class="p">)</span>
+        <span class="p">)</span>
         <span class="c1"># Define prefill specialization</span>
         <span class="n">prefill_specialization</span> <span class="o">=</span> <span class="p">{</span>
             <span class="c1"># Prefill is always run with single BS for continuous batching.</span>
             <span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="mi">1</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span> <span class="k">else</span> <span class="n">batch_size</span><span class="p">,</span>
             <span class="s2">&quot;seq_len&quot;</span><span class="p">:</span> <span class="n">prefill_seq_len</span><span class="p">,</span>
             <span class="s2">&quot;ctx_len&quot;</span><span class="p">:</span> <span class="n">ctx_len</span><span class="p">,</span>
+            <span class="c1"># TODO: should be renamed to kv_cache_batch_size in specialzation too</span>
         <span class="p">}</span>
-        <span class="n">prefill_specialization</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">:</span> <span class="n">full_batch_size</span><span class="p">})</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span> <span class="k">else</span> <span class="kc">None</span>
-        <span class="n">prefill_specialization</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;num_logits_to_keep&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_tlm</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="n">prefill_specialization</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;num_logits_to_keep&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_tlm</span> <span class="k">else</span> <span class="o">...</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span><span class="p">:</span>
+            <span class="n">prefill_specialization</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">:</span> <span class="n">kv_cache_batch_size</span><span class="p">})</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">prefill_specialization</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="n">kv_cache_batch_size</span><span class="p">})</span>
+        <span class="n">prefill_specialization</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;full_batch_exec_size&quot;</span><span class="p">:</span> <span class="n">full_batch_size</span><span class="p">})</span> <span class="k">if</span> <span class="n">full_batch_size</span> <span class="k">else</span> <span class="o">...</span>
         <span class="n">specializations</span> <span class="o">=</span> <span class="p">[</span>
             <span class="n">prefill_specialization</span><span class="p">,</span>
         <span class="p">]</span>
@@ -435,8 +457,11 @@
                 <span class="s2">&quot;seq_len&quot;</span><span class="p">:</span> <span class="n">num_speculative_tokens</span> <span class="o">+</span> <span class="mi">1</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_tlm</span> <span class="k">else</span> <span class="mi">1</span><span class="p">,</span>
                 <span class="s2">&quot;ctx_len&quot;</span><span class="p">:</span> <span class="n">ctx_len</span><span class="p">,</span>
             <span class="p">}</span>
-            <span class="n">decode_specialization</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">:</span> <span class="n">full_batch_size</span><span class="p">})</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span> <span class="k">else</span> <span class="kc">None</span>
-            <span class="n">decode_specialization</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;num_logits_to_keep&quot;</span><span class="p">:</span> <span class="n">num_speculative_tokens</span> <span class="o">+</span> <span class="mi">1</span><span class="p">})</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_tlm</span> <span class="k">else</span> <span class="kc">None</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">continuous_batching</span><span class="p">:</span>
+                <span class="n">decode_specialization</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">:</span> <span class="n">kv_cache_batch_size</span><span class="p">})</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">decode_specialization</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="n">kv_cache_batch_size</span><span class="p">})</span>
+            <span class="n">decode_specialization</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;num_logits_to_keep&quot;</span><span class="p">:</span> <span class="n">num_speculative_tokens</span> <span class="o">+</span> <span class="mi">1</span><span class="p">})</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_tlm</span> <span class="k">else</span> <span class="o">...</span>
             <span class="n">specializations</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">decode_specialization</span><span class="p">)</span>
 
         <span class="k">if</span> <span class="n">enable_qnn</span><span class="p">:</span>
@@ -487,7 +512,7 @@
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizerFast</span><span class="p">,</span> <span class="n">PreTrainedTokenizer</span><span class="p">],</span>
         <span class="n">prompts</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
-        <span class="n">device_id</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="n">device_id</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">runtime_ai100</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
     <span class="p">):</span>
@@ -497,9 +522,11 @@
 <span class="sd">        If the number of prompts cannot be divided by the ``batch_size``, the last unfulfilled batch will be dropped.</span>
 
 <span class="sd">        ``Mandatory`` Args:</span>
+<span class="sd">            :tokenizer (Union[PreTrainedTokenizerFast, PreTrainedTokenizer]): Pass tokenizer of the model.</span>
 <span class="sd">            :prompts (List[str]): List of prompts to run the execution.</span>
-<span class="sd">            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model</span>
+
 <span class="sd">        ``optional`` Args:</span>
+<span class="sd">            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model</span>
 <span class="sd">            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.</span>
 
 <span class="sd">        &quot;&quot;&quot;</span>
@@ -536,7 +563,7 @@
 <span class="sd">        model = QEFFAutoModel.from_pretrained(&quot;model_name&quot;)</span>
 
 <span class="sd">        # Now you can directly compile the model for Cloud AI 100</span>
-<span class="sd">        model.compile(num_cores=16, device_group=[0])  # Considering you have a Cloud AI 100 SKU</span>
+<span class="sd">        model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU</span>
 
 <span class="sd">        #prepare input</span>
 <span class="sd">        tokenizer = AutoTokenizer.from_pretrained(model_name)</span>
@@ -575,7 +602,7 @@
 <span class="sd">            model = QEFFAutoModel.from_pretrained(&quot;model_name&quot;)</span>
 
 <span class="sd">            # Now you can directly compile the model for Cloud AI 100</span>
-<span class="sd">            model.compile(num_cores=16, device_group=[0])  # Considering you have a Cloud AI 100 SKU</span>
+<span class="sd">            model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU</span>
 
 <span class="sd">            #prepare input</span>
 <span class="sd">            tokenizer = AutoTokenizer.from_pretrained(model_name)</span>
@@ -693,17 +720,16 @@
 <div class="viewcode-block" id="QEFFAutoModel.generate"><a class="viewcode-back" href="../../../../source/hl_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModel.generate">[docs]</a>    <span class="k">def</span> <span class="nf">generate</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">inputs</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
-        <span class="n">device_ids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="n">device_ids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">runtime_ai100</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.</span>
 <span class="sd">        ``Mandatory`` Args:</span>
 <span class="sd">            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.</span>
-<span class="sd">            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model</span>
 <span class="sd">        ``optional`` Args:</span>
+<span class="sd">            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model</span>
 <span class="sd">            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.</span>
-<span class="sd">            :eq_len (int, optional): Sequence length for the inputs. Defaults to constants.Constants.CTX_LEN.</span>
 <span class="sd">        Returns:</span>
 <span class="sd">            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
@@ -766,7 +792,7 @@
 <span class="sd">        Generates features from a list of text prompts using a PyTorch model.</span>
 
 <span class="sd">        ``Mandatory`` Args:</span>
-<span class="sd">            model: The transformed PyTorch model used for generating features.</span>
+<span class="sd">            :model: The transformed PyTorch model used for generating features.</span>
 <span class="sd">            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.</span>
 
 <span class="sd">        Returns:</span>

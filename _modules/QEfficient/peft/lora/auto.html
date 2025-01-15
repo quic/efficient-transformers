@@ -70,6 +70,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
@@ -466,9 +467,9 @@
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizerFast</span><span class="p">,</span> <span class="n">PreTrainedTokenizer</span><span class="p">],</span>
         <span class="n">prompts</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
-        <span class="n">device_id</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">prompt_to_adapter_mapping</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">runtime</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;AI_100&quot;</span><span class="p">,</span>
+        <span class="n">device_id</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">runtime</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;AI_100&quot;</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
     <span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -479,9 +480,9 @@
 <span class="sd">        ``Mandatory`` Args:</span>
 <span class="sd">            :tokenizer (PreTrainedTokenizerFast or PreTrainedTokenizer): The tokenizer used in the inference</span>
 <span class="sd">            :prompts (List[str]): List of prompts to run the execution.</span>
-<span class="sd">            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model</span>
 <span class="sd">            :prompt_to_adapter_mapping (List[str]): The sequence of the adapter names will be matched with sequence of prompts and corresponding adapters will be used for the prompts.&quot;base&quot; for base model (no adapter).</span>
 <span class="sd">        ``optional`` Args:</span>
+<span class="sd">            :device_id (List[int]): Device IDs to be used for execution. If ``len(device_id) &gt; 1``, it enables multiple card setup. If ``None``, auto-device-picker will be used. ``Defaults to None``.</span>
 <span class="sd">            :runtime (str, optional): Only ``AI_100`` runtime is supported as of now; ``ONNXRT`` and ``PyTorch`` coming soon. Defaults to &quot;AI_100&quot;.</span>
 
 <span class="sd">        &quot;&quot;&quot;</span>
