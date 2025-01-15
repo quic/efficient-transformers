@@ -398,14 +398,12 @@ def create_json(file_path: str, json_data: object):
         print(f"Failed to create JSON File {file_path}: {e}")
 
 
-def create_and_dump_configs(
-    config_file_path,
-    specializations_file_path,
+def create_and_dump_qconfigs(
+    qpc_path,
+    onnx_path,
     huggingface_config,
     pytorch_transforms,
     onnx_transforms,
-    onnx_path,
-    compile_dir,
     prefill_seq_len,
     ctx_len,
     batch_size,
@@ -418,12 +416,35 @@ def create_and_dump_configs(
     enable_qnn,
     qnn_config,
 ):
+    """
+    This Method creates a JSON file which contains all the configs for a model.
+    Such as huggingface configs, QEff transforms, QAIC sdk version, QNN sdk, compilation dir, qpc dir and
+    many other compilation options.
+    """
+    qconfig_file_path = os.path.join(os.path.dirname(qpc_path), "qconfig.json")
+    onnx_path = str(onnx_path)
+    specializations_file_path = str(os.path.join(os.path.dirname(qpc_path), "specializations.json"))
+    compile_dir = str(os.path.dirname(qpc_path))
+    qnn_config_path = (
+        (qnn_config if qnn_config is not None else "QEfficient/compile/qnn_config.json") if enable_qnn else None
+    )
+
+    # Extract QAIC SDK Apps Version from SDK XML file
     try:
         tree = ET.parse(Constants.SDK_APPS_XML)
         root = tree.getroot()
         qaic_version = root.find(".//base_version").text
-    except (FileNotFoundError, ET.ParseError, AttributeError):
+    except Exception as e:
+        print(f"Failed to open XML File {Constants.SDK_APPS_XML}: {e}")
         qaic_version = None
+
+    # Extract QNN SDK details from YAML file
+    try:
+        yaml_file_path = os.path.join(os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME), "sdk.yaml")
+        with open(yaml_file_path, "r") as file:
+            yaml_data = yaml.safe_load(file)
+    except Exception:
+        yaml_data = None
 
     # Ensure all objects in the configs dictionary are JSON serializable
     def make_serializable(obj):
@@ -436,18 +457,7 @@ def create_and_dump_configs(
         else:
             return str(obj)
 
-    qnn_config_path = (
-        (qnn_config if qnn_config is not None else "QEfficient/compile/qnn_config.json") if enable_qnn else None
-    )
-    yaml_file_path = os.path.join(os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME), "sdk.yaml")
-    yaml_data = {}
-    try:
-        with open(yaml_file_path, "r") as file:
-            yaml_data = yaml.safe_load(file)
-    except Exception:
-        yaml_data = None
-
-    configs = {
+    qconfigs = {
         "huggingface_config": make_serializable(huggingface_config),
         "qpc_config": {
             "QEff_config": {
@@ -477,7 +487,6 @@ def create_and_dump_configs(
     }
 
     if yaml_data:
-        configs["qpc_config"]["qnn_config"].update(yaml_data)
+        qconfigs["qpc_config"]["qnn_config"].update(yaml_data)
 
-    with open(config_file_path, "w") as file:
-        json.dump(configs, file, indent=4)
+    create_json(qconfig_file_path, qconfigs)
