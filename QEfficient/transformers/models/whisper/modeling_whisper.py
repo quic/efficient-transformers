@@ -1,0 +1,744 @@
+import math
+from typing import List, Optional, Tuple
+import random
+
+import torch
+import torch.nn.functional as F
+from torch import nn
+from transformers.cache_utils import Cache, DynamicCache, StaticCache, EncoderDecoderCache
+
+from transformers.modeling_outputs import (
+    BaseModelOutput,
+    BaseModelOutputWithPastAndCrossAttentions,
+)
+
+from transformers.models.whisper.modeling_whisper import (
+    WhisperAttention,
+    WhisperConfig,
+    WhisperEncoderLayer,
+    WhisperDecoderLayer,
+    WhisperEncoder,
+    WhisperDecoder,
+    WhisperPositionalEmbedding,
+    logger
+)
+
+from transformers.modeling_attn_mask_utils import AttentionMaskConverter
+
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+
+
+class QEffWhisperAttention(WhisperAttention):
+    """
+    Multi-headed attention from 'Attention Is All You Need' paper
+    Copied from WhisperAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/whisper/modeling_whisper.py
+    The only differences are:
+    - attention weights computation updated to handle overflow in fp16 computation
+    - add new args cache idx for the kv retention
+    - manually takes is_cross_attention instead of using key_value_states to determine
+    - cross_attention computation always uses cached kvs, now computed in encoder pass instead
+    """
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_ids_layer: torch.Tensor = None,
+        key_value_states: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Cache] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        layer_head_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        is_cross_attention: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        """Input shape: Batch x Time x Channel"""
+        bsz, tgt_len, _ = hidden_states.size()
+        
+        # get query proj
+        query_states = self._shape(self.q_proj(hidden_states) * self.scaling, tgt_len, bsz)
+        
+
+        if self.is_decoder:
+            if is_cross_attention:
+                # cross_attentions
+                key_states = past_key_value[self.layer_idx][0]
+                value_states = past_key_value[self.layer_idx][1]
+            else:
+                # self attention decoder
+                key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
+                value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+                if past_key_value is not None:
+                    cache_kwargs = {"position_ids": position_ids_layer}
+                    key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+        else:
+            # self_attention Encoder
+            key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
+            value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+
+        src_len = key_states.size(2)
+
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3))
+
+        if tuple(attn_weights.size()) != (bsz, self.num_heads, tgt_len, src_len):
+            raise ValueError(
+                f"Attention weights should be of size {(bsz, self.num_heads, tgt_len, src_len)}, but is"
+                f" {attn_weights.size()}"
+            )
+
+        if attention_mask is not None:
+            if attention_mask.size() != (bsz, 1, tgt_len, src_len):
+                raise ValueError(
+                    f"Attention mask should be of size {(bsz, 1, tgt_len, src_len)}, but is {attention_mask.size()}"
+                )
+            # updated to use torch.where, to prevent overflow in fp16 computation
+            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+
+        if layer_head_mask is not None:
+            if layer_head_mask.size() != (self.num_heads,):
+                raise ValueError(
+                    f"Head mask for a single layer should be of size {(self.num_heads,)}, but is"
+                    f" {layer_head_mask.size()}"
+                )
+            attn_weights = layer_head_mask.view(1, -1, 1, 1) * attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
+            attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
+        attn_weights = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
+        attn_output = torch.matmul(attn_weights, value_states)
+
+        if tuple(attn_output.size()) != (bsz, self.num_heads, tgt_len, self.head_dim):
+            raise ValueError(
+                f"`attn_output` should be of size {(bsz, self.num_heads, tgt_len, self.head_dim)}, but is"
+                f" {attn_output.size()}"
+            )
+
+        attn_output = attn_output.view(bsz, self.num_heads, tgt_len, self.head_dim)
+        attn_output = attn_output.transpose(1, 2).contiguous()
+
+        # Use the `embed_dim` from the config (stored in the class) rather than `hidden_state` because `attn_output` can be
+        # partitioned aross GPUs when using tensor-parallelism.
+        attn_output = attn_output.reshape(bsz, tgt_len, self.embed_dim)
+
+        attn_output = self.out_proj(attn_output)
+
+        return [attn_output, attn_weights, past_key_value]
+    
+class QEffWhisperDecoderLayer(WhisperDecoderLayer):
+    '''
+    Copied from WhisperAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/whisper/modeling_whisper.py
+    The only differences are:
+    - self attention and cross attention caches are explicitly picked before entering attention blocks
+    '''
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_ids_layer: torch.Tensor = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.Tensor] = None,
+        layer_head_mask: Optional[torch.Tensor] = None,
+        cross_attn_layer_head_mask: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Cache] = None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = True,
+        cache_position: Optional[torch.LongTensor] = None,
+    ):
+        """
+        Args:
+            hidden_states (`torch.FloatTensor`): input to the layer of shape `(seq_len, batch, embed_dim)`
+            attention_mask (`torch.FloatTensor`): attention mask of size
+                `(batch, 1, tgt_len, src_len)` where padding elements are indicated by very large negative values.
+            encoder_hidden_states (`torch.FloatTensor`):
+                cross attention input to the layer of shape `(seq_len, batch, embed_dim)`
+            encoder_attention_mask (`torch.FloatTensor`): encoder attention mask of size
+                `(batch, 1, tgt_len, src_len)` where padding elements are indicated by very large negative values.
+            layer_head_mask (`torch.FloatTensor`): mask for attention heads in a given layer of size
+                `(encoder_attention_heads,)`.
+            cross_attn_layer_head_mask (`torch.FloatTensor`): mask for cross-attention heads in a given layer of
+                size *(decoder_attention_heads,)*.
+            past_key_value (`Tuple(torch.FloatTensor)`): cached past key and value projection states
+            cache_position (`torch.LongTensor` of shape `(sequence_length)`, *optional*):
+                Indices depicting the position of the input sequence tokens in the sequence
+            output_attentions (`bool`, *optional*):
+                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
+                returned tensors for more detail.
+        """
+        residual = hidden_states
+        hidden_states = self.self_attn_layer_norm(hidden_states)
+
+        # Self Attention
+        self_attn_past_key_value = past_key_value.self_attention_cache if past_key_value is not None else None
+        hidden_states, self_attn_weights, self_attn_present_key_value = self.self_attn(
+            hidden_states=hidden_states,
+            past_key_value=self_attn_past_key_value,
+            attention_mask=attention_mask,
+            layer_head_mask=layer_head_mask,
+            output_attentions=output_attentions,
+            position_ids_layer=position_ids_layer,
+            cache_position=cache_position,
+        )
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = residual + hidden_states
+
+        # Cross-Attention Block
+        cross_attn_present_key_value = None
+        cross_attn_weights = None
+        if encoder_hidden_states is not None:
+            residual = hidden_states
+            hidden_states = self.encoder_attn_layer_norm(hidden_states)
+            cross_attn_past_key_value = past_key_value.cross_attention_cache if past_key_value is not None else None
+            hidden_states, cross_attn_weights, cross_attn_present_key_value = self.encoder_attn(
+                hidden_states=hidden_states,
+                key_value_states=encoder_hidden_states,
+                attention_mask=encoder_attention_mask,
+                layer_head_mask=cross_attn_layer_head_mask,
+                past_key_value=cross_attn_past_key_value,
+                output_attentions=output_attentions,
+                position_ids_layer=position_ids_layer,
+                is_cross_attention=True, # explicitly pass this argument, instead of figuring it out form key_value_states
+            )
+            hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+            hidden_states = residual + hidden_states
+
+            # update the cached past_key_values accordingly
+            past_key_value.self_attention_cache = self_attn_present_key_value
+            past_key_value.cross_attention_cache = cross_attn_present_key_value
+        else:
+            # if no cross_attention, still need to update self_attn cache
+            past_key_value = self_attn_present_key_value
+
+        # Fully Connected
+        residual = hidden_states
+        hidden_states = self.final_layer_norm(hidden_states)
+        hidden_states = self.activation_fn(self.fc1(hidden_states))
+        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
+        hidden_states = self.fc2(hidden_states)
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = residual + hidden_states
+
+        outputs = (hidden_states,)
+
+        if output_attentions:
+            outputs += (self_attn_weights, cross_attn_weights)
+
+        if use_cache:
+            outputs += (past_key_value,)
+
+        return outputs
+    
+class QEffWhisperCrossAttentionModule(torch.nn.Module):
+    '''
+    Cross attention computation normally handled in decoder attention, but moved to a module that is added to Encoder,
+    to make sure Decoder pass graph is the same each decode step. 
+    '''
+    def __init__(self, projection_key, projection_value, num_heads, head_dim):
+        super().__init__()
+        self.k_proj = torch.nn.ModuleList([torch.nn.Linear(x.weight.shape[0],x.weight.shape[1], bias=False) for x in projection_key])
+        self.v_proj = torch.nn.ModuleList([torch.nn.Linear(x.weight.shape[0],x.weight.shape[1], bias=True) for x in projection_value])
+        for i in range(len(projection_key)):
+            self.k_proj[i].weight=projection_key[i].weight
+            self.v_proj[i].weight=projection_value[i].weight
+            self.v_proj[i].bias=projection_value[i].bias
+        self.n_layers = len(self.k_proj)
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+
+    def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
+        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
+
+    @torch.no_grad()
+    def forward(self, encoder_hidden_states, cross_key_values):
+        for i in range(self.n_layers):
+            cross_key_values[i * 2] = self._shape(self.k_proj[i](encoder_hidden_states), -1, encoder_hidden_states.size()[0]) 
+            cross_key_values[i * 2 + 1] = self._shape(self.v_proj[i](encoder_hidden_states), -1, encoder_hidden_states.size()[0]) 
+        return cross_key_values
+    
+class QEffWhisperEncoder(WhisperEncoder):
+    """
+    Transformer encoder consisting of *config.encoder_layers* self attention layers. Each layer is a
+    [`WhisperEncoderLayer`].
+    Copied from WhisperEncoder: https://github.com/huggingface/transformers/blob/main/src/transformers/models/whisper/modeling_whisper.py
+    The only differences are:
+    - added WhisperCrossAttentionModule, so we calculate cross attentions and output as part of Encoder directly
+
+    Args:
+        config: WhisperConfig
+        embed_tokens (nn.Embedding): output embedding
+        k_proj_weights: Torch.tensor, weights from decoder.layers[i].encoder_attn.k_proj
+        v_proj_weights: Torch.tensor, weights from decoder.layers[i].encoder_attn.v_proj
+    """
+
+    def __init__(self, config: WhisperConfig, k_proj_weights, v_proj_weights):
+        super().__init__(config)
+        self.dropout = config.dropout
+        self.layerdrop = config.encoder_layerdrop
+
+        embed_dim = config.d_model
+        self.num_mel_bins = config.num_mel_bins
+        self.padding_idx = config.pad_token_id
+        self.max_source_positions = config.max_source_positions
+        self.embed_scale = math.sqrt(embed_dim) if config.scale_embedding else 1.0
+
+        self.conv1 = nn.Conv1d(self.num_mel_bins, embed_dim, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv1d(embed_dim, embed_dim, kernel_size=3, stride=2, padding=1)
+
+        self.embed_positions = nn.Embedding(self.max_source_positions, embed_dim)
+
+        self.layers = nn.ModuleList([WhisperEncoderLayer(config) for _ in range(config.encoder_layers)])
+        self.layer_norm = nn.LayerNorm(config.d_model)
+
+        self.gradient_checkpointing = False
+
+        # k_proj_weights and v_proj_weights come from decoder, so must load decoder first then encoder
+        self.cross_attn_module = QEffWhisperCrossAttentionModule(k_proj_weights, v_proj_weights, config.decoder_attention_heads, config.d_model // config.decoder_attention_heads)
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def forward(
+        self,
+        input_features,
+        head_mask=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+        cross_key_values=None,
+    ):
+        r"""
+        Args:
+            input_features (`torch.LongTensor` of shape `(batch_size, feature_size, sequence_length)`):
+                Float values of mel features extracted from the raw speech waveform. Raw speech waveform can be
+                obtained by loading a `.flac` or `.wav` audio file into an array of type `List[float]` or a
+                `numpy.ndarray`, *e.g.* via the soundfile library (`pip install soundfile`). To prepare the array into
+                `input_features`, the [`WhisperFeatureExtractor`] should be used for extracting the mel features,
+                padding and conversion into a tensor of type `torch.FloatTensor`. See
+                [`~WhisperFeatureExtractor.__call__`]
+            head_mask (`torch.Tensor` of shape `(encoder_layers, encoder_attention_heads)`, *optional*):
+                Mask to nullify selected heads of the attention modules. Mask values selected in `[0, 1]`:
+
+                - 1 indicates the head is **not masked**,
+                - 0 indicates the head is **masked**.
+
+            output_attentions (`bool`, *optional*):
+                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
+                returned tensors for more detail.
+            output_hidden_states (`bool`, *optional*):
+                Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors
+                for more detail.
+            return_dict (`bool`, *optional*):
+                Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
+            cross_key_values: 
+                Torch.tensor to give shape of cross_attention_values
+        """
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        inputs_embeds = nn.functional.gelu(self.conv1(input_features))
+        inputs_embeds = nn.functional.gelu(self.conv2(inputs_embeds))
+
+        inputs_embeds = inputs_embeds.permute(0, 2, 1)
+        embed_pos = self.embed_positions.weight
+
+        hidden_states = inputs_embeds + embed_pos
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+
+        encoder_states = () if output_hidden_states else None
+        all_attentions = () if output_attentions else None
+
+        # check if head_mask has a correct number of layers specified if desired
+        if head_mask is not None:
+            assert head_mask.size()[0] == (
+                len(self.layers)
+            ), f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
+
+        for idx, encoder_layer in enumerate(self.layers):
+            if output_hidden_states:
+                encoder_states = encoder_states + (hidden_states,)
+            # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
+            dropout_probability = random.uniform(0, 1)
+            if self.training and (dropout_probability < self.layerdrop):  # skip the layer
+                layer_outputs = (None, None)
+            else:
+                if self.gradient_checkpointing and self.training:
+
+                    def create_custom_forward(module):
+                        def custom_forward(*inputs):
+                            return module(*inputs, output_attentions)
+
+                        return custom_forward
+
+                    layer_outputs = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(encoder_layer),
+                        hidden_states,
+                        None,
+                        (head_mask[idx] if head_mask is not None else None),
+                    )
+                else:
+                    layer_outputs = encoder_layer(
+                        hidden_states,
+                        None,
+                        layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                        output_attentions=output_attentions,
+                    )
+
+                hidden_states = layer_outputs[0]
+
+            if output_attentions:
+                all_attentions = all_attentions + (layer_outputs[1],)
+
+        hidden_states = self.layer_norm(hidden_states)
+
+        if output_hidden_states:
+            encoder_states = encoder_states + (hidden_states,)
+
+        computed_cross_kv_cache = self.cross_attn_module(encoder_states, cross_key_values)
+
+        if not return_dict:
+            return tuple(v for v in [hidden_states] + computed_cross_kv_cache + [encoder_states, all_attentions] if v is not None)
+            
+        return BaseModelOutput(
+            last_hidden_state=hidden_states, 
+            cross_kv_cache=computed_cross_kv_cache,
+            hidden_states=encoder_states, 
+            attentions=all_attentions
+        )
+    
+class QEffWhisperDecoder(WhisperDecoder):
+    """
+    Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a [`WhisperDecoderLayer`]
+    Copied form WhisperDecoder: https://github.com/huggingface/transformers/blob/main/src/transformers/models/whisper/modeling_whisper.py
+    The only differences are:
+    - Added WhisperLMHead, to ensure only 2 qpcs needed
+    - added position_ids as argument to attention, and removed attention_mask 
+
+    Args:
+        config: WhisperConfig
+        proj_out: WhisperLMHead, moved to Decoder for 2 qpc approach, 
+    """
+
+    def __init__(self, config: WhisperConfig, proj_out):
+        super().__init__(config)
+        self.dropout = config.dropout
+        self.layerdrop = config.decoder_layerdrop
+        self.padding_idx = config.pad_token_id
+        self.max_target_positions = config.max_target_positions
+        self.max_source_positions = config.max_source_positions
+        self.embed_scale = math.sqrt(config.d_model) if config.scale_embedding else 1.0
+
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.d_model, self.padding_idx)
+        self.embed_positions = WhisperPositionalEmbedding(self.max_target_positions, config.d_model)
+
+        self.layers = nn.ModuleList([WhisperDecoderLayer(config, layer_idx=i) for i in range(config.decoder_layers)])
+
+        self.layer_norm = nn.LayerNorm(config.d_model)
+
+        self.gradient_checkpointing = False
+
+        self.lm_head = proj_out
+        # Initialize weights and apply final processing
+        self.post_init()
+
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        encoder_hidden_states=None,
+        head_mask=None,
+        cross_attn_head_mask=None,
+        past_key_values=None,
+        inputs_embeds=None,
+        use_cache=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+        position_ids=None,
+        cache_position: Optional[torch.LongTensor] = None,
+    ):
+        r"""
+        Args:
+            input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
+                Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you
+                provide it.
+
+                Indices can be obtained using [`WhisperTokenizer`]. See [`PreTrainedTokenizer.encode`] and
+                [`PreTrainedTokenizer.__call__`] for details.
+
+                [What are input IDs?](../glossary#input-ids)
+            attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+                Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
+
+                - 1 for tokens that are **not masked**,
+                - 0 for tokens that are **masked**.
+
+                [What are attention masks?](../glossary#attention-mask)
+            encoder_hidden_states (`torch.FloatTensor` of shape `(batch_size, encoder_sequence_length, hidden_size)`, *optional*):
+                Sequence of hidden-states at the output of the last layer of the encoder. Used in the cross-attention
+                of the decoder.
+            head_mask (`torch.Tensor` of shape `(decoder_layers, decoder_attention_heads)`, *optional*):
+                Mask to nullify selected heads of the attention modules. Mask values selected in `[0, 1]`:
+
+                - 1 indicates the head is **not masked**,
+                - 0 indicates the head is **masked**.
+
+            cross_attn_head_mask (`torch.Tensor` of shape `(decoder_layers, decoder_attention_heads)`, *optional*):
+                Mask to nullify selected heads of the attention modules in encoder to avoid performing cross-attention
+                on hidden heads. Mask values selected in `[0, 1]`:
+
+                - 1 indicates the head is **not masked**,
+                - 0 indicates the head is **masked**.
+
+            past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
+                Tuple of `tuple(torch.FloatTensor)` of length `config.n_layers`, with each tuple having 2 tensors of
+                shape `(batch_size, num_heads, sequence_length, embed_size_per_head)`) and 2 additional tensors of
+                shape `(batch_size, num_heads, encoder_sequence_length, embed_size_per_head)`.
+
+                Contains pre-computed hidden-states (key and values in the self-attention blocks and in the
+                cross-attention blocks) that can be used (see `past_key_values` input) to speed up sequential decoding.
+
+                If `past_key_values` are used, the user can optionally input only the last `decoder_input_ids` (those
+                that don't have their past key value states given to this model) of shape `(batch_size, 1)` instead of
+                all `decoder_input_ids` of shape `(batch_size, sequence_length)`. inputs_embeds (`torch.FloatTensor` of
+                shape `(batch_size, sequence_length, hidden_size)`, *optional*): Optionally, instead of passing
+                `input_ids` you can choose to directly pass an embedded representation. This is useful if you want more
+                control over how to convert `input_ids` indices into associated vectors than the model's internal
+                embedding lookup matrix.
+            output_attentions (`bool`, *optional*):
+                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
+                returned tensors for more detail.
+            output_hidden_states (`bool`, *optional*):
+                Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors
+                for more detail.
+            return_dict (`bool`, *optional*):
+                Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
+        """
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        use_cache = use_cache if use_cache is not None else self.config.use_cache
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        # retrieve input_ids and inputs_embeds
+        if input_ids is not None and inputs_embeds is not None:
+            raise ValueError("You cannot specify both decoder_input_ids and decoder_inputs_embeds at the same time")
+        elif input_ids is not None:
+            input_shape = input_ids.size()
+            input_ids = input_ids.view(-1, input_shape[-1])
+        elif inputs_embeds is not None:
+            input_shape = inputs_embeds.size()[:-1]
+        else:
+            raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
+
+        # past_key_values_length
+        past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
+        position = position_ids
+        input_shape = input_ids.size()
+        if inputs_embeds is None:
+            inputs_embeds = self.embed_tokens(input_ids)
+
+        # kept for BC (non `Cache` `past_key_values` inputs)
+        if use_cache or past_key_values is not None:
+            if not isinstance(past_key_values, Cache):
+                return_legacy_cache = True
+                if len(past_key_values[0]) == 2: # only cross-attention cache given, initialize self-attention cache to empty Dynamic Cache
+                    cross_attention_cache = DynamicCache.from_legacy_cache(past_key_values)
+                    past_key_values = EncoderDecoderCache(DynamicCache(), cross_attention_cache)
+
+                else:
+                    past_key_values = EncoderDecoderCache.from_legacy_cache(past_key_values)
+                logger.warning_once(
+                    "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
+                    "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
+                    "(https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)"
+                )
+
+        if cache_position is None:
+            cache_position = position_ids
+        if position_ids is None:
+            position_ids = cache_position.unsqueeze(0)
+
+        causal_mask = self._update_causal_mask(
+            attention_mask, inputs_embeds, cache_position, position_ids, past_key_values.self_attention_cache, output_attentions
+        )
+
+        # embed positions
+        positions = self.embed_positions(input_ids, past_key_values_length=position)
+        hidden_states = inputs_embeds + positions
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        
+        # decoder layers
+        all_hidden_states = () if output_hidden_states else None
+        all_self_attns = () if output_attentions else None
+        all_cross_attentions = () if (output_attentions and encoder_hidden_states is not None) else None
+        next_decoder_cache = () if use_cache else None
+
+        # check if head_mask/cross_attn_head_mask has a correct number of layers specified if desired
+        for attn_mask, mask_name in zip([head_mask, cross_attn_head_mask], ["head_mask", "cross_attn_head_mask"]):
+            if attn_mask is not None:
+                assert attn_mask.size()[0] == (len(self.layers)), (
+                    f"The `{mask_name}` should be specified for {len(self.layers)} layers, but it is for"
+                    f" {head_mask.size()[0]}."
+                )
+
+        for idx, decoder_layer in enumerate(self.layers):
+            # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
+            if output_hidden_states:
+                all_hidden_states += (hidden_states,)
+            dropout_probability = random.uniform(0, 1)
+            if self.training and (dropout_probability < self.layerdrop):
+                continue
+        
+            if self.gradient_checkpointing and self.training:
+
+                if use_cache:
+                    logger.warning(
+                        "`use_cache = True` is incompatible with gradient checkpointing. Setting `use_cache ="
+                        " False`..."
+                    )
+                    use_cache = False
+
+                def create_custom_forward(module):
+                    def custom_forward(*inputs):
+                        # None for past_key_value
+                        return module(*inputs, output_attentions, use_cache)
+
+                    return custom_forward
+
+                layer_outputs = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(decoder_layer),
+                    hidden_states,
+                    attention_mask,
+                    encoder_hidden_states,
+                    None,  # encoder attention mask
+                    head_mask[idx] if head_mask is not None else None,
+                    cross_attn_head_mask[idx] if cross_attn_head_mask is not None else None,
+                    None,  # past_key_value
+                    cache_position,
+                )
+            else:
+                layer_outputs = decoder_layer(
+                    hidden_states,
+                    attention_mask=causal_mask,
+                    encoder_hidden_states=encoder_hidden_states,
+                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                    cross_attn_layer_head_mask=(
+                        cross_attn_head_mask[idx] if cross_attn_head_mask is not None else None
+                    ),
+                    past_key_value=past_key_values,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                    position_ids_layer=position_ids,
+                    cache_position=cache_position,
+                )
+            hidden_states = layer_outputs[0]
+
+            if use_cache:
+                next_decoder_cache = layer_outputs[2 if output_attentions else 1]
+
+            if output_attentions:
+                all_self_attns += (layer_outputs[1],)
+
+                if encoder_hidden_states is not None:
+                    all_cross_attentions += (layer_outputs[2],)
+
+        hidden_states = self.layer_norm(hidden_states)
+
+        logits = self.lm_head(hidden_states)
+
+        # add hidden states from the last decoder layer
+        if output_hidden_states:
+            all_hidden_states += (hidden_states,)
+
+        next_cache = next_decoder_cache if use_cache else None
+        if return_legacy_cache:
+            next_cache = next_cache.to_legacy_cache()
+        if not return_dict:
+            return tuple(
+                v
+                for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
+                if v is not None
+            )
+        return BaseModelOutputWithPastAndCrossAttentions(
+            logits=logits,
+            last_hidden_state=hidden_states,
+            past_key_values=next_cache,
+            hidden_states=all_hidden_states,
+            attentions=all_self_attns,
+            cross_attentions=all_cross_attentions,
+        )
+    
+    def _update_causal_mask(
+        self,
+        attention_mask: torch.Tensor,
+        input_tensor: torch.Tensor,
+        cache_position: torch.Tensor,
+        position_ids: torch.Tensor,
+        past_key_values: Cache,
+        output_attentions: bool,
+    ):
+        if self.config._attn_implementation == "flash_attention_2":
+            if attention_mask is not None and 0.0 in attention_mask:
+                return attention_mask
+            return None
+
+        # For SDPA, when possible, we will rely on its `is_causal` argument instead of its `attn_mask` argument, in
+        # order to dispatch on Flash Attention 2. This feature is not compatible with static cache, as SDPA will fail
+        # to infer the attention mask.
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        using_static_cache = isinstance(past_key_values, StaticCache)
+
+        # When output attentions is True, sdpa implementation's forward method calls the eager implementation's forward
+        if self.config._attn_implementation == "sdpa" and not using_static_cache and not output_attentions:
+            if AttentionMaskConverter._ignore_causal_mask_sdpa(
+                attention_mask,
+                inputs_embeds=input_tensor,
+                past_key_values_length=past_seen_tokens,
+                is_training=self.training,
+            ):
+                return None
+
+        dtype, device = input_tensor.dtype, input_tensor.device
+        min_dtype = torch.finfo(dtype).min
+        sequence_length = input_tensor.shape[1]
+        if using_static_cache:
+            target_length = past_key_values.get_max_length()
+        else:
+            target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
+
+        if attention_mask is not None and attention_mask.dim() == 4:
+            # in this case we assume that the mask comes already in inverted form and requires no inversion or slicing
+            if attention_mask.max() != 0:
+                raise ValueError("Custom 4D attention mask should be passed in inverted form with max==0`")
+            causal_mask = attention_mask
+        else:
+            causal_mask = torch.full((sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device)
+            if sequence_length != 1:
+                causal_mask = torch.triu(causal_mask, diagonal=1)
+            causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
+            causal_mask = causal_mask[None, None, :, :].expand(input_tensor.shape[0], 1, -1, -1)
+            if attention_mask is not None:
+                causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
+                mask_length = attention_mask.shape[-1]
+                padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
+                padding_mask = padding_mask == 0
+                causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
+                    padding_mask, min_dtype
+                )
+            else:
+                causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
+
+        if (
+            self.config._attn_implementation == "sdpa"
+            and attention_mask is not None
+            and attention_mask.device.type == "cuda"
+            and not output_attentions
+        ):
+            # Attend to all tokens in fully masked rows in the causal_mask, for example the relevant first rows when
+            # using left padding. This is required by F.scaled_dot_product_attention memory-efficient attention path.
+            # Details: https://github.com/pytorch/pytorch/issues/110213
+            causal_mask = AttentionMaskConverter._unmask_unattended(causal_mask, min_dtype)
+
+        return causal_mask

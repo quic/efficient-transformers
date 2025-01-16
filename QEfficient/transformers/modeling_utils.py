@@ -76,6 +76,13 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2ForCausalLM,
     Starcoder2Model,
 )
+from transformers.models.whisper.modeling_whisper import (
+    WhisperAttention,
+    WhisperDecoderLayer,
+    WhisperEncoder,
+    WhisperDecoder,
+    WhisperForConditionalGeneration,
+)
 
 from QEfficient.customop import CustomRMSNormAIC
 
@@ -134,6 +141,12 @@ from .models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
 )
+from .models.whisper.modeling_whisper import (
+    QEffWhisperAttention,
+    QEffWhisperDecoderLayer,
+    QEffWhisperEncoder,
+    QEffWhisperDecoder,
+)
 
 # Define a named tuple for ModelArchitectures
 # Required for the Automation tool
@@ -158,6 +171,7 @@ qeff_supported_architectures = ModelArchitectures(
         Starcoder2ForCausalLM.__name__,
         GPTBigCodeForCausalLM.__name__,
         MllamaForCausalLM.__name__,
+        WhisperForConditionalGeneration.__name__,
     ]
 )
 
@@ -242,6 +256,11 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     GPTBigCodeAttention: QEffGPTBigCodeAttention,
     GPTBigCodeBlock: QEffGPTBigCodeBlock,
     GPTBigCodeModel: QEffGPTBigCodeModel,
+    # Whisper encoder and decoder layers
+    WhisperAttention: QEffWhisperAttention,
+    WhisperDecoderLayer: QEffWhisperDecoderLayer,
+    WhisperEncoder: QEffWhisperEncoder,
+    WhisperDecoder: QEffWhisperDecoder,
 }
 
 
