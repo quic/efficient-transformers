@@ -278,6 +278,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
             :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
+            :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
 
         Returns:
             :str: Path of the compiled ``qpc`` package.
