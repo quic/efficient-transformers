@@ -8,14 +8,16 @@
 import json
 import os
 import subprocess
+import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
+import yaml
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants, QnnConstants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -394,3 +396,97 @@ def create_json(file_path: str, json_data: object):
             json.dump(json_data, file, indent=4)
     except Exception as e:
         print(f"Failed to create JSON File {file_path}: {e}")
+
+
+def create_and_dump_qconfigs(
+    qpc_path,
+    onnx_path,
+    huggingface_config,
+    pytorch_transforms,
+    onnx_transforms,
+    prefill_seq_len,
+    ctx_len,
+    batch_size,
+    full_batch_size,
+    num_devices,
+    num_cores,
+    mxfp6_matmul,
+    mxint8_kv_cache,
+    num_speculative_tokens,
+    enable_qnn,
+    qnn_config,
+):
+    """
+    This Method creates a JSON file which contains all the configs for a model.
+    Such as huggingface configs, QEff transforms, QAIC sdk version, QNN sdk, compilation dir, qpc dir and
+    many other compilation options.
+    """
+    qconfig_file_path = os.path.join(os.path.dirname(qpc_path), "qconfig.json")
+    onnx_path = str(onnx_path)
+    specializations_file_path = str(os.path.join(os.path.dirname(qpc_path), "specializations.json"))
+    compile_dir = str(os.path.dirname(qpc_path))
+    qnn_config_path = (
+        (qnn_config if qnn_config is not None else "QEfficient/compile/qnn_config.json") if enable_qnn else None
+    )
+
+    # Extract QAIC SDK Apps Version from SDK XML file
+    try:
+        tree = ET.parse(Constants.SDK_APPS_XML)
+        root = tree.getroot()
+        qaic_version = root.find(".//base_version").text
+    except Exception as e:
+        print(f"Failed to open XML File {Constants.SDK_APPS_XML}: {e}")
+        qaic_version = None
+
+    # Extract QNN SDK details from YAML file
+    try:
+        yaml_file_path = os.path.join(os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME), "sdk.yaml")
+        with open(yaml_file_path, "r") as file:
+            yaml_data = yaml.safe_load(file)
+    except Exception:
+        yaml_data = None
+
+    # Ensure all objects in the configs dictionary are JSON serializable
+    def make_serializable(obj):
+        if isinstance(obj, (int, float, str, bool, type(None))):
+            return obj
+        elif isinstance(obj, (list, tuple)):
+            return [make_serializable(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {key: make_serializable(value) for key, value in obj.items()}
+        else:
+            return str(obj)
+
+    qconfigs = {
+        "huggingface_config": make_serializable(huggingface_config),
+        "qpc_config": {
+            "QEff_config": {
+                "pytorch_transforms": make_serializable(pytorch_transforms),
+                "onnx_transforms": make_serializable(onnx_transforms),
+                "onnx_path": onnx_path,
+            },
+            "compilation_config": {
+                "apps_sdk_version": qaic_version,
+                "compile_dir": compile_dir,
+                "specializtions_file_path": specializations_file_path,
+                "prefill_seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "batch_size": batch_size,
+                "full_batch_size": full_batch_size,
+                "num_devices": num_devices,
+                "num_cores": num_cores,
+                "mxfp6_matmul": mxfp6_matmul,
+                "mxint8_kv_cache": mxint8_kv_cache,
+                "num_speculative_tokens": num_speculative_tokens,
+            },
+            "qnn_config": {
+                "enable_qnn": enable_qnn,
+                "qnn_config_path": qnn_config_path,
+            },
+        },
+    }
+
+    if yaml_data:
+        qconfigs["qpc_config"]["qnn_config"].update(yaml_data)
+
+    create_json(qconfig_file_path, qconfigs)
