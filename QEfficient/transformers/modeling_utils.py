@@ -78,12 +78,19 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
 )
 from transformers.models.whisper.modeling_whisper import (
     WhisperAttention,
+<<<<<<< HEAD
     WhisperDecoder,
     WhisperDecoderLayer,
     WhisperEncoder,
     WhisperForConditionalGeneration,
     WhisperModel,
     WhisperPositionalEmbedding,
+=======
+    WhisperDecoderLayer,
+    WhisperEncoder,
+    WhisperDecoder,
+    WhisperForConditionalGeneration,
+>>>>>>> 74689ca (Initial changes for onboarding Whisper)
 )
 
 from QEfficient.customop import CustomRMSNormAIC
@@ -145,11 +152,17 @@ from .models.starcoder2.modeling_starcoder2 import (
 )
 from .models.whisper.modeling_whisper import (
     QEffWhisperAttention,
+<<<<<<< HEAD
     QEffWhisperDecoder,
     QEffWhisperDecoderLayer,
     QEffWhisperEncoder,
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
+=======
+    QEffWhisperDecoderLayer,
+    QEffWhisperEncoder,
+    QEffWhisperDecoder,
+>>>>>>> 74689ca (Initial changes for onboarding Whisper)
 )
 
 # Define a named tuple for ModelArchitectures
@@ -265,6 +278,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     WhisperDecoderLayer: QEffWhisperDecoderLayer,
     WhisperEncoder: QEffWhisperEncoder,
     WhisperDecoder: QEffWhisperDecoder,
+<<<<<<< HEAD
     WhisperPositionalEmbedding: QEffWhisperPositionalEmbedding,
     WhisperModel: QEffWhisperModel,
 }
@@ -360,3 +374,7 @@ def _create_causal_mask(
         attention_mask = attention_mask.unsqueeze(1)
 
     return attention_mask
+=======
+}
+
+>>>>>>> 74689ca (Initial changes for onboarding Whisper)

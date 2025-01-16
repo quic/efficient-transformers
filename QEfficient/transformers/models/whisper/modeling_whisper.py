@@ -304,7 +304,11 @@ class QEffWhisperEncoder(WhisperEncoder):
                 for more detail.
             return_dict (`bool`, *optional*):
                 Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
+<<<<<<< HEAD
             cross_key_values:
+=======
+            cross_key_values: 
+>>>>>>> 74689ca (Initial changes for onboarding Whisper)
                 Torch.tensor to give shape of cross_attention_values
         """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -521,7 +525,6 @@ class QEffWhisperDecoder(WhisperDecoder):
         positions = self.embed_positions(input_ids, past_key_values_length=position)
         hidden_states = inputs_embeds + positions
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -619,7 +622,6 @@ class QEffWhisperDecoder(WhisperDecoder):
             attentions=all_self_attns,
             cross_attentions=all_cross_attentions,
         )
-
     def _update_causal_mask(
         self,
         attention_mask: torch.Tensor,
