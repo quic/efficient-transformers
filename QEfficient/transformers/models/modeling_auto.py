@@ -7,6 +7,7 @@
 
 import hashlib
 import logging
+import time
 import warnings
 from pathlib import Path
 from typing import List, Optional, Union
@@ -640,7 +641,11 @@ class QEFFAutoModel(QEFFTransformersBase):
             ),
         }
         self.qpc_session.set_buffers(outputs)
+
+        start_time = time.perf_counter()
         outputs = self.qpc_session.run(inputs)
+        end_time = time.perf_counter() - start_time
+        print("Time taken to generate output: ", end_time)
         outputs = outputs["output"][:, :input_ids_len, :]
         return outputs
 
