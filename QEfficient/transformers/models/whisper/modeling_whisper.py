@@ -30,6 +30,9 @@ from transformers.models.whisper.modeling_whisper import (
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
+class QEffWhisperPositionalEmbedding(WhisperPositionalEmbedding):
+    def forward(self, input_ids, past_key_values_length=0):
+        return self.weight[past_key_values_length,:]     
 
 class QEffWhisperPositionalEmbedding(WhisperPositionalEmbedding):
     def forward(self, input_ids, past_key_values_length=0):
@@ -386,6 +389,7 @@ class QEffWhisperEncoder(WhisperEncoder):
 
 
 class QEffWhisperDecoder(WhisperDecoder):
+    
     """
     Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a [`WhisperDecoderLayer`]
     Copied form WhisperDecoder: https://github.com/huggingface/transformers/blob/main/src/transformers/models/whisper/modeling_whisper.py
@@ -522,6 +526,8 @@ class QEffWhisperDecoder(WhisperDecoder):
         )
 
         # embed positions
+        print(input_ids.shape)
+        print(position.shape)
         positions = self.embed_positions(input_ids, past_key_values_length=position)
         hidden_states = inputs_embeds + positions
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
@@ -612,7 +618,7 @@ class QEffWhisperDecoder(WhisperDecoder):
         if not return_dict:
             return tuple(
                 v
-                for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
+                for v in [logits, hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
                 if v is not None
             )
         return BaseModelOutputWithPastAndCrossAttentions(

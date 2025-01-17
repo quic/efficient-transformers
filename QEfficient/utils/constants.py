@@ -60,6 +60,8 @@ ONNX_EXPORT_EXAMPLE_BATCH_SIZE = 1
 ONNX_EXPORT_EXAMPLE_SEQ_LEN = 32
 ONNX_EXPORT_EXAMPLE_FBS = 4
 ONNX_EXPORT_EXAMPLE_NLK = 2  # Number of Logits to Keep
+ONNX_EXPORT_EXAMPLE_AUDIO_FEATURE = 3000 # defined in WhisperProcessor.feature_extractor.nb_max_frames
+ONNX_EXPORT_EXAMPLE_ENCODER_SEQ_LEN = 1500 # for encoder-decoder models
 ONNX_EXPORT_OPSET = 13
 
 COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-aic-hw-version=2.0"]
