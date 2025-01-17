@@ -120,6 +120,7 @@ class QEFFBaseModel(ABC):
         export_kwargs: Optional[Dict[str, any]] = None,
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
+        encoder_decoder: Optional[bool] = None,
     ) -> str:
         """
         Export the Pytorch model to ONNX.
@@ -149,8 +150,13 @@ class QEFFBaseModel(ABC):
             if param in example_inputs:
                 if param == "past_key_values":
                     for i in range(len(example_inputs["past_key_values"])):
-                        input_names.append(f"past_key.{i}")
-                        input_names.append(f"past_value.{i}")
+                        if encoder_decoder:
+                            for self_cross in ["self", "cross"]:
+                                input_names.append(f"past_key_{self_cross}.{i}")
+                                input_names.append(f"past_value_{self_cross}.{i}")
+                        else:
+                            input_names.append(f"past_key.{i}")
+                            input_names.append(f"past_value.{i}")
                 else:
                     input_names.append(param)
 

@@ -97,6 +97,13 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2ForCausalLM,
     Starcoder2Model,
 )
+from transformers.models.whisper.modeling_whisper import (
+    WhisperPositionalEmbedding,
+    WhisperAttention,
+    WhisperDecoderLayer,
+    WhisperEncoder,
+    WhisperDecoder,
+)
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
@@ -200,7 +207,15 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
 )
+from QEfficient.transformers.models.whisper.modeling_whisper import (
+    QEffWhisperPositionalEmbedding,
+    QEffWhisperAttention,
+    QEffWhisperDecoderLayer,
+    QEffWhisperEncoder,
+    QEffWhisperDecoder,
+)
 from QEfficient.transformers.spd.causal_lm_forward import tlm_forward
+
 
 
 class CustomOpsTransform(ModuleMappingTransform):
@@ -301,6 +316,12 @@ class KVCacheTransform(ModuleMappingTransform):
         GPTBigCodeBlock: QEffGPTBigCodeBlock,
         GPTBigCodeModel: QEffGPTBigCodeModel,
         GPTBigCodeForCausalLM: QEffGPTBigCodeForCausalLM,
+        # Whisper encoder and decoder layers
+        WhisperPositionalEmbedding: QEffWhisperPositionalEmbedding,
+        WhisperAttention: QEffWhisperAttention,
+        WhisperDecoderLayer: QEffWhisperDecoderLayer,
+        WhisperEncoder: QEffWhisperEncoder,
+        WhisperDecoder: QEffWhisperDecoder,
     }
 
     @classmethod
