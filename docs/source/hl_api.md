@@ -8,19 +8,21 @@
    :member-order: bysource
    :members:
 ``` 
+(QEFFAutoModel)=
 ## `QEFFAutoModel`
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel
    :member-order: bysource
    :members:
 ``` 
+(QEffAutoPeftModelForCausalLM)=
 ## `QEffAutoPeftModelForCausalLM`
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
    :member-order: bysource
    :members:
 ```
-
+(QEffAutoLoraModelForCausalLM)=
 ## `QEffAutoLoraModelForCausalLM`
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM
