@@ -8,8 +8,8 @@ from torch import nn
 from transformers.cache_utils import Cache, DynamicCache, StaticCache, EncoderDecoderCache
 
 from transformers.modeling_outputs import (
-    BaseModelOutput,
-    BaseModelOutputWithPastAndCrossAttentions,
+    BaseModelOutputWithCrossAttentions,
+    Seq2SeqLMOutput,
 )
 
 from transformers.models.whisper.modeling_whisper import (
@@ -20,6 +20,7 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperEncoder,
     WhisperDecoder,
     WhisperPositionalEmbedding,
+    WhisperForConditionalGeneration,
     logger
 )
 
@@ -27,6 +28,9 @@ from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
+class QEffWhisperPositionalEmbedding(WhisperPositionalEmbedding):
+    def forward(self, input_ids, past_key_values_length=0):
+        return self.weight[past_key_values_length,:]     
 
 class QEffWhisperAttention(WhisperAttention):
     """
@@ -264,36 +268,11 @@ class QEffWhisperEncoder(WhisperEncoder):
     Args:
         config: WhisperConfig
         embed_tokens (nn.Embedding): output embedding
-        k_proj_weights: Torch.tensor, weights from decoder.layers[i].encoder_attn.k_proj
-        v_proj_weights: Torch.tensor, weights from decoder.layers[i].encoder_attn.v_proj
     """
 
-    def __init__(self, config: WhisperConfig, k_proj_weights, v_proj_weights):
-        super().__init__(config)
-        self.dropout = config.dropout
-        self.layerdrop = config.encoder_layerdrop
-
-        embed_dim = config.d_model
-        self.num_mel_bins = config.num_mel_bins
-        self.padding_idx = config.pad_token_id
-        self.max_source_positions = config.max_source_positions
-        self.embed_scale = math.sqrt(embed_dim) if config.scale_embedding else 1.0
-
-        self.conv1 = nn.Conv1d(self.num_mel_bins, embed_dim, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv1d(embed_dim, embed_dim, kernel_size=3, stride=2, padding=1)
-
-        self.embed_positions = nn.Embedding(self.max_source_positions, embed_dim)
-
-        self.layers = nn.ModuleList([WhisperEncoderLayer(config) for _ in range(config.encoder_layers)])
-        self.layer_norm = nn.LayerNorm(config.d_model)
-
-        self.gradient_checkpointing = False
-
+    def add_cross_attention_module(self, k_proj_weights, v_proj_weights):
         # k_proj_weights and v_proj_weights come from decoder, so must load decoder first then encoder
-        self.cross_attn_module = QEffWhisperCrossAttentionModule(k_proj_weights, v_proj_weights, config.decoder_attention_heads, config.d_model // config.decoder_attention_heads)
-
-        # Initialize weights and apply final processing
-        self.post_init()
+        self.cross_attn_module = QEffWhisperCrossAttentionModule(k_proj_weights, v_proj_weights, self.config.decoder_attention_heads, self.config.d_model // self.config.decoder_attention_heads)
 
     def forward(
         self,
@@ -393,19 +372,20 @@ class QEffWhisperEncoder(WhisperEncoder):
         if output_hidden_states:
             encoder_states = encoder_states + (hidden_states,)
 
-        computed_cross_kv_cache = self.cross_attn_module(encoder_states, cross_key_values)
+        computed_cross_kv_cache = self.cross_attn_module(hidden_states, cross_key_values)
 
         if not return_dict:
             return tuple(v for v in [hidden_states] + computed_cross_kv_cache + [encoder_states, all_attentions] if v is not None)
-            
-        return BaseModelOutput(
+
+        return BaseModelOutputWithCrossAttentions(
             last_hidden_state=hidden_states, 
-            cross_kv_cache=computed_cross_kv_cache,
+            cross_attentions=computed_cross_kv_cache,
             hidden_states=encoder_states, 
             attentions=all_attentions
         )
     
 class QEffWhisperDecoder(WhisperDecoder):
+    
     """
     Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a [`WhisperDecoderLayer`]
     Copied form WhisperDecoder: https://github.com/huggingface/transformers/blob/main/src/transformers/models/whisper/modeling_whisper.py
@@ -415,31 +395,9 @@ class QEffWhisperDecoder(WhisperDecoder):
 
     Args:
         config: WhisperConfig
-        proj_out: WhisperLMHead, moved to Decoder for 2 qpc approach, 
     """
-
-    def __init__(self, config: WhisperConfig, proj_out):
-        super().__init__(config)
-        self.dropout = config.dropout
-        self.layerdrop = config.decoder_layerdrop
-        self.padding_idx = config.pad_token_id
-        self.max_target_positions = config.max_target_positions
-        self.max_source_positions = config.max_source_positions
-        self.embed_scale = math.sqrt(config.d_model) if config.scale_embedding else 1.0
-
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.d_model, self.padding_idx)
-        self.embed_positions = WhisperPositionalEmbedding(self.max_target_positions, config.d_model)
-
-        self.layers = nn.ModuleList([WhisperDecoderLayer(config, layer_idx=i) for i in range(config.decoder_layers)])
-
-        self.layer_norm = nn.LayerNorm(config.d_model)
-
-        self.gradient_checkpointing = False
-
+    def add_lm_head(self, proj_out):
         self.lm_head = proj_out
-        # Initialize weights and apply final processing
-        self.post_init()
-
 
     def forward(
         self,
@@ -565,6 +523,8 @@ class QEffWhisperDecoder(WhisperDecoder):
         )
 
         # embed positions
+        print(input_ids.shape)
+        print(position.shape)
         positions = self.embed_positions(input_ids, past_key_values_length=position)
         hidden_states = inputs_embeds + positions
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
@@ -658,16 +618,16 @@ class QEffWhisperDecoder(WhisperDecoder):
         if not return_dict:
             return tuple(
                 v
-                for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
+                for v in [logits, hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
                 if v is not None
             )
-        return BaseModelOutputWithPastAndCrossAttentions(
+        return Seq2SeqLMOutput(
+            loss=None,
             logits=logits,
-            last_hidden_state=hidden_states,
-            past_key_values=next_cache,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attns,
-            cross_attentions=all_cross_attentions,
+            decoder_hidden_states=None,
+            past_key_values=next_cache,\
+            decoder_attentions=all_self_attns,
+            encoder_attentions=all_cross_attentions,
         )
     
     def _update_causal_mask(
