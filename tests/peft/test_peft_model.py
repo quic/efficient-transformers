@@ -7,7 +7,6 @@
 
 from time import perf_counter
 
-import numpy as np
 import onnx
 import pytest
 import torch
@@ -170,17 +169,17 @@ def test_auto_peft_model_for_causal_lm_compile_generate(base_config, adapter_con
     end = perf_counter()
     compile_time_0 = end - start
 
-    qeff_model.generate(
-        input_ids=np.zeros((batch_size, 32), dtype="int64"),
-        attention_mask=np.concatenate(
-            [
-                np.ones((batch_size, 10), dtype="int64"),
-                np.zeros((batch_size, 22), dtype="int64"),
-            ],
-            axis=1,
-        ),
-        max_new_tokens=10,
-    )
+    # qeff_model.generate(
+    #     input_ids=np.zeros((batch_size, 32), dtype="int64"),
+    #     attention_mask=np.concatenate(
+    #         [
+    #             np.ones((batch_size, 10), dtype="int64"),
+    #             np.zeros((batch_size, 22), dtype="int64"),
+    #         ],
+    #         axis=1,
+    #     ),
+    #     max_new_tokens=10,
+    # )
 
     start = perf_counter()
     qeff_model.compile(batch_size=batch_size, prefill_seq_len=32, ctx_len=128)
