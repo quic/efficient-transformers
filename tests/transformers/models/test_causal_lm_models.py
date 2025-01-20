@@ -110,9 +110,9 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
-    assert (
-        pytorch_hf_tokens == pytorch_kv_tokens
-    ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
+    assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
+        "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
+    )
 
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
@@ -204,9 +204,9 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     new_api_ort_tokens = api_runner.run_kv_model_on_ort(new_api_onnx_model_path)
     old_api_ort_tokens = api_runner.run_kv_model_on_ort(old_api_onnx_model_path)
 
-    assert (
-        new_api_ort_tokens == old_api_ort_tokens
-    ).all(), "New API output does not match old API output for ONNX export function"
+    assert (new_api_ort_tokens == old_api_ort_tokens).all(), (
+        "New API output does not match old API output for ONNX export function"
+    )
 
 
 @pytest.mark.on_qaic
