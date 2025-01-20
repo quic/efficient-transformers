@@ -405,7 +405,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 qnn_config,
             )
         except Exception as e:
-            print(f"Failed to create the qconfig file: {e}")
+            logger.warning(f"Failed to create the qconfig file: {e}")
 
         return qpc_path
 

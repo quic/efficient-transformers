@@ -435,16 +435,20 @@ def create_and_dump_qconfigs(
         root = tree.getroot()
         qaic_version = root.find(".//base_version").text
     except Exception as e:
-        print(f"Failed to open XML File {Constants.SDK_APPS_XML}: {e}")
+        logger.warning(f"Failed to open XML File {Constants.SDK_APPS_XML}: {e}")
         qaic_version = None
 
-    # Extract QNN SDK details from YAML file
-    try:
-        yaml_file_path = os.path.join(os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME), "sdk.yaml")
-        with open(yaml_file_path, "r") as file:
-            yaml_data = yaml.safe_load(file)
-    except Exception:
-        yaml_data = None
+    # Extract QNN SDK details from YAML file if the environment variable is set
+    qnn_sdk_details = None
+    qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
+    if qnn_sdk_path:
+        qnn_sdk_yaml_path = os.path.join(qnn_sdk_path, QnnConstants.QNN_SDK_YAML)
+        try:
+            with open(qnn_sdk_yaml_path, "r") as file:
+                qnn_sdk_details = yaml.safe_load(file)
+        except Exception as e:
+            logger.warning(f"Failed to open YAML File {qnn_sdk_yaml_path}: {e}")
+            qnn_sdk_details = None
 
     # Ensure all objects in the configs dictionary are JSON serializable
     def make_serializable(obj):
@@ -486,7 +490,7 @@ def create_and_dump_qconfigs(
         },
     }
 
-    if yaml_data:
-        qconfigs["qpc_config"]["qnn_config"].update(yaml_data)
+    if qnn_sdk_details:
+        qconfigs["qpc_config"]["qnn_config"].update(qnn_sdk_details)
 
     create_json(qconfig_file_path, qconfigs)
