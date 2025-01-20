@@ -45,18 +45,18 @@ def get_models_dir():
 QEFF_MODELS_DIR = get_models_dir()
 
 ONNX_EXPORT_EXAMPLE_BATCH_SIZE = 1
-ONNX_EXPORT_EXAMPLE_SEQ_LEN = 32
+ONNX_EXPORT_EXAMPLE_SEQ_LEN = 1024
 ONNX_EXPORT_EXAMPLE_FBS = 4
 ONNX_EXPORT_EXAMPLE_NLK = 2  # Number of Logits to Keep
-ONNX_EXPORT_OPSET = 13
+ONNX_EXPORT_OPSET = 17
 
 COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-aic-hw-version=2.0"]
 
 
 class Constants:
     # Export Constants.
-    SEQ_LEN = 32
-    CTX_LEN = 32
+    SEQ_LEN = 1024
+    CTX_LEN = 1280
     PROMPT_LEN = 8
     INPUT_STR = ["My name is"]
     GB = 2**30

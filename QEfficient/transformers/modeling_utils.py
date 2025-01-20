@@ -77,6 +77,15 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
 )
 
 from QEfficient.customop import CustomRMSNormAIC
+from QEfficient.transformers.models.phi3_vision.modeling_phi3_v import Phi3VForCausalLM
+from QEfficient.transformers.models.phi3_vision.modeling_phi3_vision import (
+    QEffPhi3ImageEmbedding,
+    QEffPhi3RotaryEmbedding,
+    QEffPhi3VAttention,
+    QEffPhi3VDecoderLayer,
+    QEffPhi3VForCausalLM,
+    QEffPhi3VModel,
+)
 
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
@@ -157,6 +166,7 @@ qeff_supported_architectures = ModelArchitectures(
         Starcoder2ForCausalLM.__name__,
         GPTBigCodeForCausalLM.__name__,
         MllamaForCausalLM.__name__,
+        Phi3VForCausalLM.__name__,
     ]
 )
 
@@ -241,4 +251,11 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     GPTBigCodeAttention: QEffGPTBigCodeAttention,
     GPTBigCodeBlock: QEffGPTBigCodeBlock,
     GPTBigCodeModel: QEffGPTBigCodeModel,
+    # Phi3-vision
+    "Phi3VModel": QEffPhi3VModel,
+    "Phi3Attention": QEffPhi3VAttention,
+    "Phi3RotaryEmbedding": QEffPhi3RotaryEmbedding,
+    "Phi3VForCausalLM": QEffPhi3VForCausalLM,
+    "Phi3ImageEmbedding": QEffPhi3ImageEmbedding,
+    "Phi3DecoderLayer": QEffPhi3VDecoderLayer,
 }

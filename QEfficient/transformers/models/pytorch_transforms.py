@@ -188,6 +188,14 @@ from QEfficient.transformers.models.phi3.modeling_phi3 import (
     QEffPhi3ForCausalLM,
     QEffPhi3Model,
 )
+from QEfficient.transformers.models.phi3_vision.modeling_phi3_vision import (
+    QEffPhi3ImageEmbedding,
+    QEffPhi3RotaryEmbedding,
+    QEffPhi3VAttention,
+    QEffPhi3VDecoderLayer,
+    QEffPhi3VForCausalLM,
+    QEffPhi3VModel,
+)
 from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2Attention,
     QEffQwen2DecoderLayer,
@@ -301,6 +309,13 @@ class KVCacheTransform(ModuleMappingTransform):
         GPTBigCodeBlock: QEffGPTBigCodeBlock,
         GPTBigCodeModel: QEffGPTBigCodeModel,
         GPTBigCodeForCausalLM: QEffGPTBigCodeForCausalLM,
+        # Phi3-vision
+        "Phi3VModel": QEffPhi3VModel,
+        "Phi3Attention": QEffPhi3VAttention,
+        "Phi3RotaryEmbedding": QEffPhi3RotaryEmbedding,
+        "Phi3VForCausalLM": QEffPhi3VForCausalLM,
+        "Phi3ImageEmbedding": QEffPhi3ImageEmbedding,
+        "Phi3DecoderLayer": QEffPhi3VDecoderLayer,
     }
 
     @classmethod
