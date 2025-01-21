@@ -116,6 +116,10 @@ def train(
         # enable profile for qaic
         qaic_profile.start_profiling(device, 1) if train_config.use_profiler else None
         for step, batch in enumerate(train_dataloader):
+            if train_config.use_peft and train_config.from_peft_checkpoint:
+                intermediate_step = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1])
+                if step < intermediate_step:
+                    continue
             total_train_steps += 1
             #  stop when the maximum number of training steps is reached
             if train_config.max_train_step > 0 and total_train_steps > train_config.max_train_step:
