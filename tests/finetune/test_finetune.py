@@ -25,6 +25,7 @@ def clean_up(path):
 configs = [pytest.param("meta-llama/Llama-3.2-1B", 1, 1, 1, None, True, True, "qaic", id="llama_config")]
 
 
+@pytest.mark.finetune
 @pytest.mark.on_qaic
 @pytest.mark.cli
 @pytest.mark.parametrize(
