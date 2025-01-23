@@ -10,7 +10,7 @@ from dataclasses import dataclass
 @dataclass
 class train_config:
     model_name: str = "meta-llama/Llama-3.2-1B"
-    tokenizer_name: str = None  # if not passed as an argument, it uses the value of model_name
+    tokenizer_name: str = None # if not passed as an argument, it uses the value of model_name
     run_validation: bool = True
     batch_size_training: int = 1
     context_length: int = None
