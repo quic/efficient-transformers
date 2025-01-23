@@ -15,6 +15,7 @@ pipeline {
                    . ~/.bashrc
                    sudo docker run --privileged -dit --name ${BUILD_TAG} -v ${TMPDIR}:/tmp -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
                    sudo docker exec ${BUILD_TAG} bash -c "
+                   chmod 1777 /tmp &&
                    cd /efficient-transformers &&
                    apt update &&
                    apt install -y python3.10-venv &&
