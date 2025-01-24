@@ -103,6 +103,8 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperDecoderLayer,
     WhisperEncoder,
     WhisperDecoder,
+    WhisperModel,
+    WhisperForConditionalGeneration,
 )
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
@@ -213,6 +215,8 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperDecoderLayer,
     QEffWhisperEncoder,
     QEffWhisperDecoder,
+    QEffWhisperModel,
+    QEffWhisperForConditionalGeneration,
 )
 from QEfficient.transformers.spd.causal_lm_forward import tlm_forward
 
@@ -322,6 +326,8 @@ class KVCacheTransform(ModuleMappingTransform):
         WhisperDecoderLayer: QEffWhisperDecoderLayer,
         WhisperEncoder: QEffWhisperEncoder,
         WhisperDecoder: QEffWhisperDecoder,
+        WhisperModel: QEffWhisperModel,
+        WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
     }
 
     @classmethod

@@ -82,6 +82,7 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperEncoder,
     WhisperDecoder,
     WhisperForConditionalGeneration,
+    WhisperModel,
 )
 
 from QEfficient.customop import CustomRMSNormAIC
@@ -147,6 +148,8 @@ from .models.whisper.modeling_whisper import (
     QEffWhisperDecoderLayer,
     QEffWhisperEncoder,
     QEffWhisperDecoder,
+    QEffWhisperModel,
+    QEffWhisperForConditionalGeneration,
 )
 
 # Define a named tuple for ModelArchitectures
@@ -263,5 +266,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     WhisperEncoder: QEffWhisperEncoder,
     WhisperDecoder: QEffWhisperDecoder,
     WhisperPositionalEmbedding: QEffWhisperPositionalEmbedding,
+    WhisperModel: QEffWhisperModel,
+    WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
 }
 
