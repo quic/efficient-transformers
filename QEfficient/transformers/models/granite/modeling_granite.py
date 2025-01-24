@@ -194,10 +194,7 @@ class QEffGraniteAttention(GraniteAttention):
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
-        # if attention_mask is not None:
-        #     causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-        #     attn_weights = attn_weights + causal_mask
-        if attention_mask is not None:  # no matter the length, we just slice it
+        if attention_mask is not None:
             attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
 
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
@@ -275,7 +272,6 @@ class QEffGraniteModel(GraniteModel):
         hidden_states = inputs_embeds
 
         # create position embeddings to be shared across the decoder layers
-        # position_embeddings = self.rotary_emb(hidden_states, position_ids)
         position_embeddings = None
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
