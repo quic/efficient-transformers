@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Optional, Tuple, Union
 import random
 from typing import Optional, Tuple
 
@@ -14,6 +13,7 @@ from torch import nn
 from transformers.cache_utils import Cache, EncoderDecoderCache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import (
+    BaseModelOutput,
     BaseModelOutputWithCrossAttentions,
     BaseModelOutputWithPastAndCrossAttentions,
     Seq2SeqModelOutput,
@@ -89,7 +89,7 @@ class QEffWhisperAttention(WhisperAttention):
                 past_key_value.key_cache[self.layer_idx] = key_states
                 past_key_value.value_cache[self.layer_idx] = value_states
             else:
-                # self attention decoder
+                # self attention decoder and first cross attention pass
                 key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
                 value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
                 if past_key_value is not None:
@@ -307,11 +307,7 @@ class QEffWhisperEncoder(WhisperEncoder):
                 for more detail.
             return_dict (`bool`, *optional*):
                 Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-<<<<<<< HEAD
             cross_key_values:
-=======
-            cross_key_values: 
->>>>>>> 74689ca (Initial changes for onboarding Whisper)
                 Torch.tensor to give shape of cross_attention_values
         """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -401,7 +397,6 @@ class QEffWhisperDecoder(WhisperDecoder):
     Args:
         config: WhisperConfig
     """
-
     def forward(
         self,
         input_ids=None,
@@ -526,8 +521,6 @@ class QEffWhisperDecoder(WhisperDecoder):
         )
 
         # embed positions
-        print(input_ids.shape)
-        print(position.shape)
         positions = self.embed_positions(input_ids, past_key_values_length=position)
         hidden_states = inputs_embeds + positions
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
@@ -618,7 +611,7 @@ class QEffWhisperDecoder(WhisperDecoder):
         if not return_dict:
             return tuple(
                 v
-                for v in [logits, hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
+                for v in [hidden_states, next_cache, all_hidden_states, all_self_attns, all_cross_attentions]
                 if v is not None
             )
         return BaseModelOutputWithPastAndCrossAttentions(

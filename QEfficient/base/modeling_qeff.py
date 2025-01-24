@@ -158,8 +158,15 @@ class QEFFBaseModel(ABC):
                         else:
                             input_names.append(f"past_key.{i}")
                             input_names.append(f"past_value.{i}")
+                elif param == "cross_key_values":
+                    for i in range(len(example_inputs["past_key_values"])):
+                        input_names.append(f"cross_key.{i}")
+                        input_names.append(f"cross_value.{i}")
                 else:
                     input_names.append(param)
+
+        print(self.model_name, input_names)
+        print(self.model_name, output_names)
 
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
