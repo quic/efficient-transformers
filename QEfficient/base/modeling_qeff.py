@@ -145,6 +145,7 @@ class QEFFBaseModel(ABC):
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
 
         # Create input_names from example_inputs
+
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
@@ -157,8 +158,15 @@ class QEFFBaseModel(ABC):
                         else:
                             input_names.append(f"past_key.{i}")
                             input_names.append(f"past_value.{i}")
+                elif param == "cross_key_values":
+                    for i in range(len(example_inputs["past_key_values"])):
+                        input_names.append(f"cross_key.{i}")
+                        input_names.append(f"cross_value.{i}")
                 else:
                     input_names.append(param)
+
+        print(self.model_name, input_names)
+        print(self.model_name, output_names)
 
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs

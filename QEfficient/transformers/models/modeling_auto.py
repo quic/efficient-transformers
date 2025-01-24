@@ -1586,31 +1586,32 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
     def __init__(self, model: nn.Module, **kwargs):
         super().__init__(model)
         self.model.config.use_cache = True
+        self.num_layers = model.config.num_hidden_layers
 
         # encoder and decoder have extra components each to enable 2 qpc approach, need to add them here
-        self.encoder_model = model.model.encoder
-        self.decoder_model = model.model.decoder
-        self.full_model = model
+        # self.encoder_model = model.model.encoder
+        # self.decoder_model = model.model.decoder
+        # self.full_model = model
 
         k_proj_weights, v_proj_weights = [], []
         for i in range(self.model.config.decoder_layers):
-            k_proj_weights.append(model.model.decoder.layers[i].encoder_attn.k_proj)
-            v_proj_weights.append(model.model.decoder.layers[i].encoder_attn.v_proj)
-        self.encoder_model.add_cross_attention_module(k_proj_weights, v_proj_weights)
+            k_proj_weights.append(self.model.model.decoder.layers[i].encoder_attn.k_proj)
+            v_proj_weights.append(self.model.model.decoder.layers[i].encoder_attn.v_proj)
+        self.model.model.encoder.add_cross_attention_module(k_proj_weights, v_proj_weights)
 
-        self.decoder_model.add_lm_head(self.model.proj_out)
+        # self.decoder_model.add_lm_head(self.model.proj_out)
 
-        # need to keep two copies of all QEFFBase properties, one for encoder and one for decoder
-        self.decoder_model.config.use_cache = True
-        self.num_layers = self.decoder_model.config.num_hidden_layers
+        # # need to keep two copies of all QEFFBase properties, one for encoder and one for decoder
+        # self.decoder_model.config.use_cache = True
+        # self.num_layers = self.decoder_model.config.num_hidden_layers
 
-        self.encoder_onnx_path: Optional[str] = None
-        self.encoder_qpc_path: Optional[str] = None
-        self.encoder_qpc_session: Optional[QAICInferenceSession] = None
+        # self.encoder_onnx_path: Optional[str] = None
+        # self.encoder_qpc_path: Optional[str] = None
+        # self.encoder_qpc_session: Optional[QAICInferenceSession] = None
         
-        self.decoder_onnx_path: Optional[str] = None
-        self.decoder_qpc_path: Optional[str] = None
-        self.decoder_qpc_session: Optional[QAICInferenceSession] = None
+        # self.decoder_onnx_path: Optional[str] = None
+        # self.decoder_qpc_path: Optional[str] = None
+        # self.decoder_qpc_session: Optional[QAICInferenceSession] = None
 
     @property
     def model_hash(self) -> str:
@@ -1641,48 +1642,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         encoder_seq_len = constants.ONNX_EXPORT_EXAMPLE_ENCODER_SEQ_LEN
         audio_feature_len = constants.ONNX_EXPORT_EXAMPLE_AUDIO_FEATURE
-        encoder_feature_count = self.encoder_model.config.num_mel_bins
-        encoder_hidden_size = self.encoder_model.config.d_model
+        encoder_feature_count = self.model.config.num_mel_bins
+        encoder_hidden_size = self.model.config.d_model
 
-        kv_cache_shape = get_padding_shape_from_config(
-            self.model.config, bs, encoder_seq_len
-        )
-
-        ### ENCODER EXPORT
-        example_inputs = {
-            "input_features": torch.zeros((bs, encoder_feature_count, audio_feature_len), dtype=torch.float32),
-            "cross_key_values": [],
-        }
-
-        dynamic_axes = {
-            "input_ids": {0: "batch_size"},
-            "cross_key_values": {0: "batch_size", 2: "enc_ctx_len"},
-        }
-
-        output_names = ["encoder_hidden_states"]
-
-        # similar to past_key_values but we don't retain cross_key_values
-        # cross_key_values are removed as input in onnx export so we don't need dynamic axes for them. 
-        for i in range(self.num_layers):
-            for kv in ["key", "value"]:
-                example_inputs["cross_key_values"].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                output_names.append(f"cross_{kv}.{i}_out")
-
-        # temporarily change self.model so _export only exports one component
-        self.model = self.encoder_model
-        try:
-            print(example_inputs.keys())
-            self.encoder_onnx_path = self._export(
-                example_inputs,
-                output_names,
-                dynamic_axes,
-                export_dir=export_dir,
-            )
-        finally:
-            self.model = self.full_model
-
-        ### DECODER EXPORT
-        # very similar to AutoModelForCausalLM export, but with added encoder_hidden_states and two kinds of cached attentions
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, bs, seq_len
         )
@@ -1690,15 +1652,17 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             self.model.config, bs, encoder_seq_len
         )
         example_inputs = {
-            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
-            "encoder_hidden_states": torch.zeros((bs, encoder_seq_len, encoder_hidden_size)),
+            "input_features": torch.zeros((bs, 80, 1), dtype=torch.float32),
+            "decoder_input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+            "decoder_position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(self.num_layers)],
+            "cross_key_values": [],
         }
         dynamic_axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "encoder_hidden_size": {0: "batch_size", 1: "encoder_ctx_len"},
-            "position_ids": {0: "batch_size", 1: "seq_len"},
+            "input_features": {0: "batch_size", 1: "feature_shape", 2: "feature_len"},
+            "decoder_input_ids": {0: "batch_size", 1: "seq_len"},
+            "decoder_position_ids": {0: "batch_size", 1: "seq_len"},
+            "cross_key_values": {0: "batch_size", 2: "enc_ctx_len"},
         }
         pkv_self_dynamic_axes = {
             0: "batch_size",
@@ -1717,29 +1681,32 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
                     dynamic_axes[f"past_{kv}_{self_cross}.{i}"] = pkv_self_dynamic_axes if self_cross == "self" else pkv_cross_dynamic_axes
                     output_names.append(f"past_{kv}_{self_cross}.{i}_RetainedState")
 
-        # temporarily change self.model so _export only exports one component
-        self.model = self.decoder_model
-        try:
-            self.decoder_onnx_path = self._export(
-                example_inputs,
-                output_names,
-                dynamic_axes,
-                export_dir=export_dir,
-                encoder_decoder=True,
-            )
-        finally:
-            self.model = self.full_model
+        # need a separate loop to ensure order of output_names
+        for i in range(self.num_layers):
+            for kv in ["key", "value"]:
+                example_inputs["cross_key_values"].append(torch.zeros(kv_cross_cache_shape, dtype=torch.float32))
+                dynamic_axes[f"cross_{kv}_.{i}"] = pkv_cross_dynamic_axes
+                output_names.append(f"cross_{kv}.{i}_RetainedState")
+
+        self.onnx_path = self._export(
+            example_inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+            encoder_decoder=True,
+        )
         
-        return self.encoder_onnx_path, self.decoder_onnx_path
+        return self.onnx_path
 
     def compile(
         self,
-        encoder_onnx_path: Optional[str] = None,
-        decoder_onnx_path: Optional[str] = None,
+        onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
         *,
         encoder_ctx_len: int = 1500,
         decoder_ctx_len: int = 150,
+        feature_shape: int  = 80,
+        feature_len: int = 3000,
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
@@ -1764,62 +1731,57 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-        if (encoder_onnx_path is None and self.encoder_onnx_path is None) or \
-           (decoder_onnx_path is None and self.encoder_onnx_path is None):
-            self.export()
+        encoder_specializations = {
+            "batch_size": batch_size,
+            "seq_len": 1,
+            "encoder_ctx_len": encoder_ctx_len,
+            "decoder_ctx_len": decoder_ctx_len,
+            "feature_shape": feature_shape,
+            "feature_len": feature_len,
+        }
 
-        if encoder_onnx_path is None:
-            encoder_onnx_path = self.encoder_onnx_path
-        if decoder_onnx_path is None:
-            decoder_onnx_path = self.decoder_onnx_path
+        decoder_specializations = {
+            "batch_size": batch_size,
+            "seq_len": 1,
+            "encoder_ctx_len": encoder_ctx_len,
+            "decoder_ctx_len": decoder_ctx_len,
+            "feature_shape": 80,
+            "feature_len": 1,  # important dummy feature so that torch.where knows whether to run encoder or not
+        }
 
-        encoder_specializations = [
-            {"batch_size": batch_size},
-        ]
+        specializations = [encoder_specializations, decoder_specializations]
 
-        self.encoder_qpc_path = self._compile(
-                                    encoder_onnx_path,
+        self.qpc_path = self._compile(
+                                    onnx_path,
                                     compile_dir,
                                     compile_only=True,
-                                    specializations=encoder_specializations,
+                                    specializations=specializations,
                                     convert_to_fp16=True,
                                     mxfp6_matmul=mxfp6_matmul,
                                     mdp_ts_num_devices=num_devices,
                                     aic_num_cores=num_cores,
                                     **compiler_options,
                                 )
-        
-        decoder_specializations = [
-            {"batch_size": batch_size, 
-             "seq_len": 1,
-             "encoder_ctx_len": encoder_ctx_len,
-             "decoder_ctx_len": decoder_ctx_len,
-             }
-        ]
-        self.decoder_qpc_path = self._compile(
-                                    decoder_onnx_path,
-                                    compile_dir,
-                                    compile_only=True,
-                                    specializations=decoder_specializations,
-                                    convert_to_fp16=True,
-                                )
     
-        return (self.encoder_qpc_path, self.decoder_qpc_path)
+        return (self.qpc_path)
 
     def generate(
         self,
+        processor: AutoProcessor,
         inputs: torch.Tensor,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
-        This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+        This method generates output until ``endoftranscript`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+        This is a sequential execution based on the ``batch_size`` of the compiled model and the number of audio tensor passed.
+         
         ``Mandatory`` Args:
+            :processor (AutoProcessor): AutoProcessor, usually loaded by AutoProcessor.from_pretrained to extract feature data from input array
             :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
             :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
         ``optional`` Args:
             :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
-            :eq_len (int, optional): Sequence length for the inputs. Defaults to constants.Constants.CTX_LEN.
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
@@ -1835,6 +1797,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
 
     def cloud_ai_100_feature_generate(
         self,
+        processor: AutoProcessor,
         inputs: torch.Tensor,
         device_ids: List[int] = [0],
     ) -> np.ndarray:
@@ -1851,9 +1814,15 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         """
 
         if self.encoder_qpc_session is None:
-            self.qpc_session = QAICInferenceSession(str(self.encoder_qpc_path), device_ids)
+            self.encoder_qpc_session = QAICInferenceSession(str(self.encoder_qpc_path), device_ids)
             self.batch_size = self.encoder_qpc_session.bindings[0].dims[0]
-            self.seq_len = self.encoder_qpc_session.bindings[0].dims[1]
+        if self.decoder_qpc_session is None:
+            self.decoder_qpc_session = QAICInferenceSession(str(self.decoder_qpc_path), device_ids)
+            self.seq_len = self.decoder_qpc_session.bindings[0].dims[1]
+        
+        # prepare encoder inputs
+
+
         # Prepare input
         input_ids_len = inputs["input_ids"].shape[1]
         input_ids = np.array(
