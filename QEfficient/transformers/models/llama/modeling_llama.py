@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import math
+from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
 import torch
@@ -32,6 +33,16 @@ from transformers.models.llama.modeling_llama import (
 )
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+
+
+@dataclass
+class QEffBaseModelOutputWithPast(BaseModelOutputWithPast):
+    comp_ctx_len_dummy: Optional[Tuple[torch.FloatTensor, ...]] = None
+
+
+@dataclass
+class QEffCausalLMOutputWithPast(CausalLMOutputWithPast):
+    comp_ctx_len_dummy: Optional[Tuple[torch.FloatTensor, ...]] = None
 
 
 class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding):
@@ -164,6 +175,7 @@ class QEffLlamaAttention(LlamaAttention):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_len: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
@@ -208,13 +220,23 @@ class QEffLlamaAttention(LlamaAttention):
                     "with a layer index."
                 )
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+            ctx_len = kv_seq_len
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
+            # attention_mask = attention_mask[:, :, :, :CCL]
+            attention_mask = attention_mask[:, :, :, : comp_ctx_len.shape[-1]]
+
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+                "CCL": attention_mask.shape[-1],
+            }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -250,6 +272,24 @@ class QEffLlamaAttention(LlamaAttention):
         if not output_attentions:
             attn_weights = None
 
+        if comp_ctx_len is None:
+            if attn_weights is not None:
+                attn_weights = torch.cat(
+                    [
+                        attn_weights,
+                        torch.zeros(
+                            attn_weights.size(0),
+                            attn_weights.size(1),
+                            attn_weights.size(2),
+                            ctx_len - attn_weights.size(3),
+                            device=attn_weights.device,
+                        ),
+                    ],
+                    dim=3,
+                )
+        else:
+            attn_weights = None
+
         return attn_output, attn_weights, past_key_value
 
 
@@ -266,6 +306,7 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+        comp_ctx_len: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -276,7 +317,7 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
         cache_position: Optional[torch.LongTensor] = None,
         num_logits_to_keep: int = 0,
         **kwargs,
-    ) -> Union[Tuple, CausalLMOutputWithPast]:
+    ) -> Union[Tuple, QEffCausalLMOutputWithPast]:
         r"""
         Args:
             labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -319,6 +360,7 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            comp_ctx_len=comp_ctx_len,
             batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
@@ -358,12 +400,13 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
 
-        return CausalLMOutputWithPast(
+        return QEffCausalLMOutputWithPast(
             loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+            comp_ctx_len_dummy=comp_ctx_len,
         )
 
 
@@ -380,6 +423,7 @@ class QEffLlamaDecoderLayer(LlamaDecoderLayer):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_len: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
@@ -419,6 +463,7 @@ class QEffLlamaDecoderLayer(LlamaDecoderLayer):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
+            comp_ctx_len=comp_ctx_len,
             batch_index=batch_index,
             output_attentions=output_attentions,
             use_cache=use_cache,
@@ -458,6 +503,7 @@ class QEffLlamaModel(LlamaModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+        comp_ctx_len: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -466,7 +512,7 @@ class QEffLlamaModel(LlamaModel):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
-    ) -> Union[Tuple, BaseModelOutputWithPast]:
+    ) -> Union[Tuple, QEffBaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -547,6 +593,7 @@ class QEffLlamaModel(LlamaModel):
                     attention_mask=causal_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_values,
+                    comp_ctx_len=comp_ctx_len,
                     batch_index=batch_index,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
@@ -559,6 +606,7 @@ class QEffLlamaModel(LlamaModel):
                     attention_mask=causal_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_values,
+                    comp_ctx_len=comp_ctx_len,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
@@ -586,11 +634,12 @@ class QEffLlamaModel(LlamaModel):
 
         if not return_dict:
             return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
-        return BaseModelOutputWithPast(
+        return QEffBaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=next_cache,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
+            comp_ctx_len_dummy=comp_ctx_len,
         )
 
     def _update_causal_mask(
