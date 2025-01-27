@@ -165,9 +165,6 @@ class QEFFBaseModel(ABC):
                 else:
                     input_names.append(param)
 
-        print(self.model_name, input_names)
-        print(self.model_name, output_names)
-
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
             torch.onnx.export(
