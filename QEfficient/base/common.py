@@ -80,6 +80,7 @@ class QEFFCommonLoader:
         """
         if not os.path.isdir(pretrained_model_name_or_path):
             pretrained_model_name_or_path = login_and_download_hf_lm(pretrained_model_name_or_path, *args, **kwargs)
+        kwargs.pop("hf_token", None)
         model_type = get_hf_model_type(hf_model_path=pretrained_model_name_or_path)
         qeff_auto_model_class = MODEL_TYPE_TO_QEFF_AUTO_MODEL_MAP[model_type]
         if not issubclass(qeff_auto_model_class, QEFFBaseModel):
