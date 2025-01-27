@@ -42,6 +42,7 @@ test_models = [
     "neuralmagic/Llama-3.2-3B-Instruct-FP8",  # float quantized compressed-tensor per tensor both weight and activations
     "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
     "ibm-granite/granite-3.1-8b-instruct",
+    "ibm-granite/granite-guardian-3.1-8b",
 ]
 
 spd_test_models = [

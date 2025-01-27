@@ -48,7 +48,6 @@ from transformers.models.granite.modeling_granite import (
     GraniteAttention,
     GraniteForCausalLM,
     GraniteModel,
-    GraniteRotaryEmbedding,
 )
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
@@ -160,7 +159,6 @@ from QEfficient.transformers.models.granite.modeling_granite import (
     QEffGraniteAttention,
     QEffGraniteForCausalLM,
     QEffGraniteModel,
-    QEffGraniteRotaryEmbedding,
 )
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
@@ -285,7 +283,6 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
         GraniteAttention: QEffGraniteAttention,
-        GraniteRotaryEmbedding: QEffGraniteRotaryEmbedding,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
