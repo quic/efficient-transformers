@@ -200,12 +200,12 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(self.num_layers)],
-            "comp_ctx_len": torch.randint(0, 100, (40,), dtype=torch.long),
+            "comp_ctx_lengths": torch.randint(0, 100, (40,), dtype=torch.long),
         }
         dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
-            "comp_ctx_len": {0: "CCL"},
+            "comp_ctx_lengths": {0: "comp_ctx_lengths"},
         }
         if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
             pkv_dynamic_axes = {
@@ -224,6 +224,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
                 dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                 output_names.append(f"past_{kv}.{i}_RetainedState")
+
+        output_names.append("comp_ctx_len_out")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -248,7 +250,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         *,
         prefill_seq_len: int = 32,
         ctx_len: int = 128,
-        CCL: Optional[List[int]] = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
         batch_size: int = 1,
         full_batch_size: Optional[int] = None,
         kv_cache_batch_size: Optional[int] = None,
@@ -317,7 +319,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             "batch_size": 1 if self.continuous_batching else batch_size,
             "seq_len": prefill_seq_len,
             "ctx_len": ctx_len,
-            "CCL": CCL[0],
+            "comp_ctx_lengths": comp_ctx_lengths[0],
             # TODO: should be renamed to kv_cache_batch_size in specialzation too
         }
         prefill_specialization.update({"num_logits_to_keep": 1}) if self.is_tlm else ...
@@ -344,9 +346,9 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             decode_specialization.update({"num_logits_to_keep": num_speculative_tokens + 1}) if self.is_tlm else ...
             # specializations.append(decode_specialization)
 
-            # Adding elements from CCL to decode_specialization
-            for i in range(1, len(CCL)):
-                decode_specialization.update({"CCL": CCL[i]})
+            # Adding elements from comp_ctx_lengths to decode_specialization
+            for i in range(1, len(comp_ctx_lengths)):
+                decode_specialization.update({"comp_ctx_lengths": comp_ctx_lengths[i]})
                 specializations.append(decode_specialization.copy())
 
         if enable_qnn:
@@ -397,7 +399,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         self,
         tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
         prompts: List[str],
-        CCL: Optional[List[int]] = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
         device_id: List[int] = None,
         runtime_ai100: bool = True,
         **kwargs,
@@ -424,7 +426,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 tokenizer,
                 self.qpc_path,
                 prompt=prompts,
-                CCL=CCL,
+                comp_ctx_lengths=comp_ctx_lengths,
                 device_id=device_id,
                 generation_len=generation_len,
                 is_tlm=self.is_tlm,

@@ -97,11 +97,11 @@ class CtxScatterFuncCB3D(torch.autograd.Function):
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxGatherCB(
-    data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32, comp_ctx_len: onnxscript.INT64
+    data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32, comp_ctx_len: onnxscript.INT32
 ) -> onnxscript.FLOAT:
     batch_size = ops.Gather(ops.Shape(batch_index), [0])
     num_heads = ops.Gather(ops.Shape(data), [1])
-    # ctx_len = ops.Gather(ops.Shape(data), [2])
+    # using compute-context-length (CCL) instead of context-length to do gather process based on CCL and later do attention computations based on CCL as well.
     ctx_len = ops.Reshape(comp_ctx_len, [1])
 
     # Expanded shape to create indices
