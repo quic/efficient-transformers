@@ -12,6 +12,7 @@ from QEfficient.base.pytorch_transforms import ModuleMutatorTransform
 from QEfficient.customop.matmulnbits import QuantLinearORT
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
+from QEfficient.transformers.quantizers.quantizer_compressed_tensors import CompressedFP8Linear
 from QEfficient.transformers.quantizers.quantizer_utils import dequantize_gptq, unpack_weights
 
 
@@ -98,3 +99,17 @@ class GPTQToMatmulNbitsTransform(ModuleMutatorTransform):
         new_module.bias = original_module.bias if original_module.bias is not None else None
         new_module.pack(original_module, scales.T, zeros.T, original_module.g_idx)
         return new_module
+
+
+class FP8CompressedToLinearTransform(ModuleMutatorTransform):
+    _match_class = CompressedFP8Linear
+
+    @classmethod
+    def mutate(cls, original_module, parent_module):
+        #  -- de-quantizing the weights --
+        dequant_weights = original_module.weight.to(torch.float32) * original_module.weight_scale
+        dequant_linear_layer = nn.Linear(
+            original_module.in_features, original_module.out_features, bias=original_module.bias
+        )
+        dequant_linear_layer.weight = torch.nn.Parameter(dequant_weights)
+        return dequant_linear_layer

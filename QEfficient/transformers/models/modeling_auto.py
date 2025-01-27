@@ -37,7 +37,11 @@ from QEfficient.transformers.models.pytorch_transforms import (
     VlmNoKVOffloadTransform,
 )
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
-from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
+from QEfficient.transformers.quantizers.quant_transforms import (
+    AwqToMatmulNbitsTransform,
+    FP8CompressedToLinearTransform,
+    GPTQToMatmulNbitsTransform,
+)
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
