@@ -411,7 +411,7 @@ def qualcomm_efficient_converter(
         if model_kv
         else QEFFCommonLoader.from_pretrained(
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-            token=hf_token,
+            hf_token=hf_token,
             cache_dir=cache_dir,
             full_batch_size=full_batch_size,
         )
