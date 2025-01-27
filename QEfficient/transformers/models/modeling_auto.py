@@ -42,6 +42,8 @@ from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbits
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
+from QEfficient.generation.text_generation_inference import calculate_latency, PerfMetrics, CloudAI100ExecInfo
+from time import perf_counter
 
 MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6 = ["MllamaForConditionalGeneration"]
 
@@ -1641,9 +1643,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         encoder_seq_len = constants.ONNX_EXPORT_EXAMPLE_ENCODER_SEQ_LEN
-        audio_feature_len = constants.ONNX_EXPORT_EXAMPLE_AUDIO_FEATURE
         encoder_feature_count = self.model.config.num_mel_bins
-        encoder_hidden_size = self.model.config.d_model
 
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, bs, seq_len
@@ -1652,14 +1652,14 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             self.model.config, bs, encoder_seq_len
         )
         example_inputs = {
-            "input_features": torch.zeros((bs, 80, 1), dtype=torch.float32),
+            "input_features": torch.zeros((bs, encoder_feature_count, 1), dtype=torch.float32),
             "decoder_input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "decoder_position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(self.num_layers)],
             "cross_key_values": [],
         }
         dynamic_axes = {
-            "input_features": {0: "batch_size", 1: "feature_shape", 2: "feature_len"},
+            "input_features": {0: "batch_size", 2: "feature_len"},
             "decoder_input_ids": {0: "batch_size", 1: "seq_len"},
             "decoder_position_ids": {0: "batch_size", 1: "seq_len"},
             "cross_key_values": {0: "batch_size", 2: "enc_ctx_len"},
@@ -1705,7 +1705,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         *,
         encoder_ctx_len: int = 1500,
         decoder_ctx_len: int = 150,
-        feature_shape: int  = 80,
         feature_len: int = 3000,
         batch_size: int = 1,
         num_devices: int = 1,
@@ -1736,7 +1735,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             "seq_len": 1,
             "encoder_ctx_len": encoder_ctx_len,
             "decoder_ctx_len": decoder_ctx_len,
-            "feature_shape": feature_shape,
             "feature_len": feature_len,
         }
 
@@ -1745,7 +1743,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             "seq_len": 1,
             "encoder_ctx_len": encoder_ctx_len,
             "decoder_ctx_len": decoder_ctx_len,
-            "feature_shape": 80,
             "feature_len": 1,  # important dummy feature so that torch.where knows whether to run encoder or not
         }
 
@@ -1769,6 +1766,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         self,
         processor: AutoProcessor,
         inputs: torch.Tensor,
+        generation_len: int,
+        sample_rate: int = 16000,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
     ) -> Union[torch.Tensor, np.ndarray]:
@@ -1790,7 +1789,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
 
-            return self.cloud_ai_100_feature_generate(inputs=inputs, device_ids=device_ids)
+            return self.cloud_ai_100_feature_generate(processor=processor, inputs=inputs, device_ids=device_ids, generation_len=generation_len, sample_rate=sample_rate)
         # PyTorch runtime
         else:
             return self.pytorch_feature_generate(model=self.model, inputs=inputs)
@@ -1799,6 +1798,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         self,
         processor: AutoProcessor,
         inputs: torch.Tensor,
+        sample_rate: int,
+        generation_len: int,
         device_ids: List[int] = [0],
     ) -> np.ndarray:
         """
@@ -1810,41 +1811,67 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
 
         Returns:
-           np.ndarray: A list of dictionaries containing the generated output features.
+           CloudAI100ExecInfo: AI100 inference information
         """
 
-        if self.encoder_qpc_session is None:
-            self.encoder_qpc_session = QAICInferenceSession(str(self.encoder_qpc_path), device_ids)
-            self.batch_size = self.encoder_qpc_session.bindings[0].dims[0]
-        if self.decoder_qpc_session is None:
-            self.decoder_qpc_session = QAICInferenceSession(str(self.decoder_qpc_path), device_ids)
-            self.seq_len = self.decoder_qpc_session.bindings[0].dims[1]
+        if self.qpc_session is None:
+            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
+            self.batch_size = self.qpc_session.bindings[0].dims[0]
         
-        # prepare encoder inputs
+        seq_len = 1
 
+        # prepare inputs
+        input_features = processor(inputs, sampling_rate=sample_rate, return_tensors="pt").input_features.numpy().astype(np.float32)
+        decoder_input_ids =  (torch.ones((self.batch_size, seq_len), dtype=torch.int64) * self.model.config.decoder_start_token_id).numpy()
+        decoder_position_ids = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1)
 
-        # Prepare input
-        input_ids_len = inputs["input_ids"].shape[1]
-        input_ids = np.array(
-            torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - inputs["input_ids"].size(1)), "constant", 0)
+        model_inputs = dict(input_features=input_features, decoder_input_ids=decoder_input_ids, decoder_position_ids=decoder_position_ids)
+
+        self.qpc_session.skip_buffers(
+            [x for x in self.qpc_session.input_names + self.qpc_session.output_names if x.startswith("past_") or x.startswith("cross_")]
         )
-        attention_mask = np.array(
-            torch.nn.functional.pad(
-                inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
-            )
-        )
-
-        inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
 
         outputs = {
-            "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[2]).astype(
-                np.float32
-            ),
+            "logits": np.random.randn(self.batch_size, 1, self.model.config.vocab_size).astype(np.float32),
         }
         self.qpc_session.set_buffers(outputs)
-        outputs = self.qpc_session.run(inputs)
-        outputs = outputs["output"][:, :input_ids_len, :]
-        return outputs
+        
+        # encoder run
+        start = perf_counter()
+        outputs = self.qpc_session.run(model_inputs)
+
+        # array to hold generated tokens
+        generated_ids = np.full((self.batch_size, generation_len + 1), processor.tokenizer.pad_token_id)
+        generated_ids[:, 0] = [self.model.config.decoder_start_token_id]
+        
+        model_inputs["input_features"] = np.random.randn(self.batch_size, self.model.config.num_mel_bins, 1).astype(np.float32)
+
+        loop_start = perf_counter()
+        for num_tokens in range(generation_len):
+            outputs = self.qpc_session.run(model_inputs)
+            logits = outputs["logits"]
+            next_token = logits.argmax(-1)
+            generated_ids[:, num_tokens + 1] = next_token.squeeze(1)
+
+            if next_token[0][0] == processor.tokenizer.eos_token_id:
+                break
+            
+            model_inputs['input_ids'] = next_token
+            model_inputs["position_ids"] += 1
+        end = perf_counter()
+
+        prefill_time, decode_perf, total_perf, total_time = calculate_latency(
+            num_tokens, loop_start, start, end
+        )
+
+        exec_info = CloudAI100ExecInfo(
+            batch_size=self.batch_size,
+            generated_texts=processor.batch_decode(generated_ids),
+            generated_ids=generated_ids,
+            perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
+        )
+
+        return exec_info
 
     def pytorch_feature_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
         """
