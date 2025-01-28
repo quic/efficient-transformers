@@ -25,6 +25,7 @@ from transformers import (
     PreTrainedTokenizerFast,
     TextStreamer,
 )
+from transformers import AutoProcessor
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
@@ -718,8 +719,9 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
 
         if kwargs.pop("full_batch_size", None):
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
-
+        
         self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, *args, **kwargs)
+        self.processor= AutoProcessor.from_pretrained(pretrained_model_name_or_path)
         self.continuous_batching = continuous_batching
         self.two_qpcmethod = two_qpc_method
 
@@ -794,6 +796,124 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         return inputs, dynamic_axes, output_names
 
     def export(
+        self,
+        export_dir: Optional[str] = None,
+        **kwargs,
+    ) -> str:
+        
+        url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
+        image = Image.open(requests.get(url, stream=True).raw)
+
+        messages = [
+            {"role": "user", "content": [
+                {"type": "image"},
+                {"type": "text", "text": "If I had to write a haiku for this one, it would be: "}
+            ]}
+        ]
+        input_text = self.processor.apply_chat_template(messages, add_generation_prompt=True)
+        
+        split_inputs = self.processor(
+        text=input_text,
+        images=image,
+        return_tensors="pt",
+        add_special_tokens=False,
+        padding="max_length",
+        max_length=32,
+        )
+
+        lang_inputs = {}
+        vision_input = {}
+
+        for k, v in split_inputs.items():
+            if k in ["input_ids", "attention_mask", "cross_attention_mask"]:
+                lang_inputs[k] = v
+            else:
+                vision_input[k] = v
+
+        self.vision_export_path= self.export_vision(vision_input)
+        self.lang_export_path = self.export_lang(lang_inputs)
+
+    def export_vision(self, vision_input):
+        model=self.model
+        self.vision_encoder=self.model=VisionEncoder(self.model)
+        
+        vision_output_names = []
+        for i in self.model.cross_attention_layers:
+            vision_output_names.append(f"past_key.{i}")
+            vision_output_names.append(f"past_value.{i}")
+        vision_dynamic_axes = {
+            "pixel_values": {0: "batch_size", 1: "max_num_images", 2: "max_image_tiles"},
+            "aspect_ratio_ids": {0: "batch_size", 1: "max_num_images"},
+            "aspect_ratio_mask": {0: "batch_size", 1: "max_num_images", 2: "max_image_tiles",},
+        }
+
+        self.vision_onnx_path=self._export(
+            vision_input,
+            vision_output_names,
+            vision_dynamic_axes,
+        )
+        
+        self.model=model
+        return self.vision_export_path
+
+    def export_lang(self, lang_inputs):
+        num_hidden_layers = self.model.config.get_text_config().num_hidden_layers
+        
+        lang_inputs["position_ids"] = torch.where(
+            lang_inputs.pop("attention_mask") == 1,
+            torch.arange(lang_inputs["input_ids"].shape[1]).view(1, -1),
+            -1,
+        )
+
+        lang_inputs["past_key_values"] = QEffDynamicCache(num_hidden_layers)
+        lang_inputs["past_key_values"].key_cache = [0] * num_hidden_layers
+        lang_inputs["past_key_values"].value_cache = [0] * num_hidden_layers
+
+        for i in range(num_hidden_layers):
+            if i in self.vision_encoder.cross_attention_layers:
+                idx = self.vision_encoder.cross_attention_layers.index(i)
+                assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
+                lang_inputs["past_key_values"].key_cache[i] = torch.zeros((1, 8, 6404, 128))
+                lang_inputs["past_key_values"].value_cache[i] = torch.zeros((1, 8, 6404, 128))
+            else:
+                lang_inputs["past_key_values"].key_cache[i] = torch.zeros((1, 8, 1024, 128))
+                lang_inputs["past_key_values"].value_cache[i] = torch.zeros((1, 8, 1024, 128)
+                )
+        lang_inputs["position_ids"] = torch.full(
+            (1, 1), lang_inputs["past_key_values"].key_cache[0].shape[2] - 1
+        )
+        lang_output_names = ['logits', 'past_key_values']
+        pkv_idx = lang_output_names.index("past_key_values")
+        lang_output_names[pkv_idx : pkv_idx + 1] = [
+            f"past_{kv}.{i}_RetainedState"
+            for i in range(num_hidden_layers)
+            for kv in ["key", "value"]
+        ]
+        lang_dynamic_axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+            "cross_attention_mask": { 0: "batch_size", 1: "seq_len", 2: "max_num_images", 3: "max_image_tiles",
+            },
+        }
+
+        for i in range(num_hidden_layers):
+            if i in self.vision_encoder.cross_attention_layers:
+                lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size"}
+                lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size"}
+                continue
+            lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
+            lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
+        lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
+        lang_inputs["input_ids"] = torch.tensor([[374]])
+        self.model = ModelWrapper(self.model)
+        self.lang_onnx_path=self._export(
+            lang_inputs,
+            lang_output_names,
+            lang_dynamic_axes
+        )
+        return self.lang_onnx_path        
+
+    def working_old_export(
         self,
         export_dir: Optional[str] = None,
         **kwargs,
