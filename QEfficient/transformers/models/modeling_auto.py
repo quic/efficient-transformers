@@ -38,8 +38,7 @@ from QEfficient.utils.cache import to_hashable
 
 
 from  QEfficient.transformers.models.mllama.modeling_mllama import VisionEncoder, ModelWrapper
-from single_qpc.qeff_classes import QEffDynamicCache
-
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 logger = logging.getLogger(__file__)
 
 
@@ -811,6 +810,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             "aspect_ratio_ids": torch.ones((bs, max_num_images), dtype=torch.int64),
             "aspect_ratio_mask": torch.ones((bs, max_num_images, max_image_tiles,1 ), dtype=torch.int64)
         }
+        model=self.model
         vision_encoder=self.model=VisionEncoder(self.model)
         vision_output_names = []
         for i in self.model.cross_attention_layers:
@@ -826,12 +826,12 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             },
         }
 
-        self._export(
+        self.vision_onnx_path=self._export(
             example_inputs,
             vision_output_names,
             vision_dynamic_axes,
         )
-        
+        self.model=model
         num_hidden_layers = self.model.config.get_text_config().num_hidden_layers
 
         seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
@@ -853,19 +853,18 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             if i in vision_encoder.cross_attention_layers:
                 idx = vision_encoder.cross_attention_layers.index(i)
                 assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
-                lang_inputs["past_key_values"].key_cache[i] = vision_outputs[idx][0]
-                lang_inputs["past_key_values"].value_cache[i] = vision_outputs[idx][1]
+                lang_inputs["past_key_values"].key_cache[i] = torch.zeros((1, 8, 6404, 128))
+                lang_inputs["past_key_values"].value_cache[i] = torch.zeros((1, 8, 6404, 128))
             else:
                 lang_inputs["past_key_values"].key_cache[i] = torch.zeros((1, 8, 1024, 128))
-                lang_inputs["past_key_values"].value_cache[i] = torch.zeros(
-                    (1, 8, 1024, 128)
+                lang_inputs["past_key_values"].value_cache[i] = torch.zeros((1, 8, 1024, 128)
                 )
 
         lang_inputs["position_ids"] = torch.full(
             (1, 1), lang_inputs["past_key_values"].key_cache[0].shape[2] - 1
         )
 
-        lang_output_names = list(lang_outputs.keys())
+        lang_output_names = ['logits', 'past_key_values']
         pkv_idx = lang_output_names.index("past_key_values")
         lang_output_names[pkv_idx : pkv_idx + 1] = [
             f"past_{kv}.{i}_RetainedState"
@@ -890,12 +889,78 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
             lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
         lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
+        lang_inputs["input_ids"] = torch.tensor([[374]])
         self.model=ModelWrapper(self.model)
-        self.export(
+        self.lang_onnx_path=self._export(
             lang_inputs,
             lang_output_names,
             lang_dynamic_axes
         )
+
+    def compile(
+        self,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        seq_len: int = 32,
+        batch_size: int = 1,
+        num_devices: int = 1,
+        num_cores: int = 16,  # FIXME: Make this mandatory arg
+        mxfp6_matmul: bool = False,
+        **compiler_options,
+    ) -> str:
+
+        vision_specializations=[
+            {
+                "batch_size": "1",
+                "max_num_images": "1",
+                "max_image_tiles": "4"
+            }
+	    ]
+        vision_qpc_path= self._compile(
+            self.vision_onnx_path,
+            compile_dir,
+            compile_only=True,
+            specializations=vision_specializations,
+            convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            mdp_ts_num_devices=num_devices,
+            aic_num_cores=num_cores,
+            **compiler_options,
+        )
+
+        lang_specializations=[
+            {
+                "batch_size": "1",
+                "seq_len": "32",
+                "ctx_len": "1024",
+                "max_num_images": "1",
+                "max_image_tiles": "4"
+            },
+            {
+                "batch_size": "1",
+                "seq_len": "1",
+                "ctx_len": "1024",
+                "max_num_images": "1",
+                "max_image_tiles": "4"
+            }
+	    ]
+
+        lang_qpc_path= self._compile(
+            self.lang_onnx_path,
+            compile_dir,
+            compile_only=True,
+            specializations=lang_specializations,
+            convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            mdp_ts_num_devices=num_devices,
+            aic_num_cores=num_cores,
+            **compiler_options,
+        )
+
+        return vision_qpc_path, lang_qpc_path
+
+
 
     def _old_export(
         self,
@@ -923,7 +988,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             export_dir=export_dir,
         )
 
-    def compile(
+    def old_compile(
         self,
         onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
