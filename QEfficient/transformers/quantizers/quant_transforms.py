@@ -101,7 +101,7 @@ class GPTQToMatmulNbitsTransform(ModuleMutatorTransform):
         return new_module
 
 
-class FP8CompressedToLinearTransform(ModuleMutatorTransform):
+class FP8DeQuantLinearToLinearTransform(ModuleMutatorTransform):
     _match_class = FP8DeQuantLinear
 
     @classmethod

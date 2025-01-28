@@ -24,7 +24,7 @@ from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
     AwqToMatmulNbitsTransform,
-    FP8CompressedToLinearTransform,
+    FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
 )
 from QEfficient.utils import constants, get_padding_shape_from_config
@@ -101,7 +101,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
-        FP8CompressedToLinearTransform,
+        FP8DeQuantLinearToLinearTransform,
         CustomOpsTransform,
         KVCacheTransform,
     ]
