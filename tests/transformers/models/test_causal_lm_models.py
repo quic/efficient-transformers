@@ -38,7 +38,9 @@ test_models = [
     "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
     "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
     "ibm-granite/granite-20b-code-base",
-    "neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8-dynamic",  # FP8 model
+    # "neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8-dynamic",  # naive-quantized compressed-tensor FP8 model per-channel weight, per-token activations
+    "neuralmagic/Llama-3.2-3B-Instruct-FP8",  # float quantized compressed-tensor per tensor both weight and activations
+    "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
 ]
 
 spd_test_models = [
