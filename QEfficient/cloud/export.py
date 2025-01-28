@@ -7,9 +7,7 @@
 
 import argparse
 import os
-from typing import Optional, Union
-
-from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
+from typing import Optional
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import check_and_assign_cache_dir
@@ -22,9 +20,7 @@ ROOT_DIR = os.path.dirname(os.path.abspath(""))
 def get_onnx_model_path(
     model_name: str,
     cache_dir: Optional[str] = None,
-    tokenizer: Optional[Union[PreTrainedTokenizerFast, PreTrainedTokenizer]] = None,
     hf_token: Optional[str] = None,
-    local_model_dir: Optional[str] = None,
     full_batch_size: Optional[int] = None,
 ):
     """
@@ -40,7 +36,12 @@ def get_onnx_model_path(
         :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Defaults to None.``
     """
     logger.info(f"Exporting Pytorch {model_name} model to ONNX...")
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, cache_dir)
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_name,
+        cache_dir,
+        hf_token=hf_token,
+        full_batch_size=full_batch_size,
+    )
     onnx_model_path = qeff_model.export()
     logger.info(f"Generated onnx_path: {onnx_model_path}")
     return onnx_model_path
@@ -75,7 +76,6 @@ def main(
         model_name=model_name,
         cache_dir=cache_dir,
         hf_token=hf_token,
-        local_model_dir=local_model_dir,
         full_batch_size=full_batch_size,
     )
 
