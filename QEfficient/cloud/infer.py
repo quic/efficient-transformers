@@ -10,9 +10,25 @@ import logging
 import sys
 from typing import List, Optional
 
+from transformers import AutoConfig
+
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
+
+# Map model's architecture to class
+architecture_mapping = {
+    "LlamaForCausalLM": QEFFAutoModelForCausalLM,
+    "GPT2LMHeadModel": QEFFAutoModelForCausalLM,
+    "MistralForCausalLM": QEFFAutoModelForCausalLM,
+    "FalconForCausalLM": QEFFAutoModelForCausalLM,
+    "GPTJForCausalLM": QEFFAutoModelForCausalLM,
+    "GemmaForCausalLM": QEFFAutoModelForCausalLM,
+    "Gemma2ForCausalLM": QEFFAutoModelForCausalLM,
+    "Phi3ForCausalLM": QEFFAutoModelForCausalLM,
+    "Qwen2ForCausalLM": QEFFAutoModelForCausalLM,
+    "GPTBigCodeForCausalLM": QEFFAutoModelForCausalLM,
+}
 
 
 def main(
@@ -88,7 +104,15 @@ def main(
         if args.mxint8:
             logger.warning("mxint8 is going to be deprecated in a future release, use -mxint8_kv_cache instead.")
 
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name)
+    config = AutoConfig.from_pretrained(model_name)
+    architecture = config.architectures[0] if config.architectures else None
+
+    model_class = architecture_mapping.get(architecture)
+    if not model_class:
+        logger.error(f"Model class for model name {model_name} not found in mapping")
+        return
+
+    qeff_model = model_class.from_pretrained(model_name)
 
     #########
     # Compile
