@@ -97,9 +97,9 @@ def train(
     # Start the training loop
     for epoch in range(train_config.num_epochs):
         if train_config.use_peft and train_config.from_peft_checkpoint:
-            intermediate_epoch = int(train_config.from_peft_checkpoint.split('/')[-2].split('_')[-1]) -1
+            intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
             if epoch < intermediate_epoch:
-                print(f'Skipping epoch {epoch + 1} since fine tuning has already completed for it.')
+                print(f"Skipping epoch {epoch + 1} since fine tuning has already completed for it.")
                 # to bring the count of train_step in sync with where it left off
                 total_train_steps += len(train_dataloader)
                 continue
@@ -125,19 +125,21 @@ def train(
         qaic_profile.start_profiling(device, 1) if train_config.use_profiler else None
 
         for step, batch in enumerate(train_dataloader):
-            #resume training from a particular checkpoint, assuming the dataset is not shuffled
+            # resume training from a particular checkpoint, assuming the dataset is not shuffled
             if train_config.use_peft and train_config.from_peft_checkpoint:
-                intermediate_step = int(train_config.from_peft_checkpoint.split('/')[-1].split('_')[-1])
-                intermediate_epoch = int(train_config.from_peft_checkpoint.split('/')[-2].split('_')[-1]) -1
+                intermediate_step = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1])
+                intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
                 # to bring the count of train_step in sync with where it left off
                 if epoch == intermediate_epoch and step == 0:
                     total_train_steps += intermediate_step
-                    print(f'skipping first {intermediate_step} steps for epoch {epoch +1}, since fine tuning has already completed for them.') 
+                    print(
+                        f"skipping first {intermediate_step} steps for epoch {epoch + 1}, since fine tuning has already completed for them."
+                    )
                 if epoch == intermediate_epoch and step < intermediate_step:
                     total_train_steps += 1
                     continue
             total_train_steps += 1
-            
+
             #  stop when the maximum number of training steps is reached
             if train_config.max_train_step > 0 and total_train_steps > train_config.max_train_step:
                 max_steps_reached = True
@@ -199,7 +201,9 @@ def train(
                 qaic_profile.stop_profiling(device) if train_config.use_profiler else None
                 if train_config.enable_ddp:
                     if dist.get_rank() == 0:
-                        model.module.save_pretrained(train_config.output_dir + f"/trained_weights/epoch_{epoch + 1}/step_{step}")
+                        model.module.save_pretrained(
+                            train_config.output_dir + f"/trained_weights/epoch_{epoch + 1}/step_{step}"
+                        )
                 else:
                     model.save_pretrained(train_config.output_dir + f"/trained_weights/epoch_{epoch + 1}/step_{step}")
 
@@ -222,7 +226,7 @@ def train(
         pbar.close()
         epoch_end_time = time.perf_counter() - epoch_start_time
         epoch_times.append(epoch_end_time)
-        if train_config.use_peft and train_config.from_peft_checkpoint:
+        if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
             train_epoch_loss = total_loss / (len(train_dataloader) - intermediate_step)
         else:
             train_epoch_loss = total_loss / len(train_dataloader)
@@ -233,7 +237,6 @@ def train(
 
         # Update the learning rate as needed
         lr_scheduler.step()
-        should_save_model = train_config.save_model
 
         if train_config.run_validation:
             if train_config.enable_ddp:
@@ -256,7 +259,7 @@ def train(
                 val_step_loss.extend(temp_val_loss)
                 val_step_perplexity.extend(temp_step_perplexity)
 
-        #saving the adapters after completion of each epoch
+        # saving the adapters after completion of each epoch
         if train_config.save_model:
             if train_config.enable_ddp:
                 if dist.get_rank() == 0:
