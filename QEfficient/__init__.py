@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+from QEfficient.utils.logging_utils import logger
+
 
 def check_qaic_sdk():
     """Check if QAIC SDK is installed"""
@@ -20,11 +22,9 @@ def check_qaic_sdk():
         return False
 
 
-QAIC_INSTALLED = check_qaic_sdk()
-
 # Conditionally import QAIC-related modules if the SDK is installed
 __version__ = "0.0.1.dev0"
-if QAIC_INSTALLED:
+if check_qaic_sdk():
     from QEfficient.base import QEFFAutoModel, QEFFAutoModelForCausalLM, QEFFCommonLoader
     from QEfficient.compile.compile_helper import compile
     from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
@@ -46,6 +46,6 @@ if QAIC_INSTALLED:
         "QEFFCommonLoader",
     ]
 
-    print("QAIC SDK is installed.")
+    logger.warning("QAIC SDK is installed; eager mode features are enabled!")
 else:
-    print("QAIC SDK is not installed. Proceeding without it.")
+    logger.warning("QAIC SDK is not installed, eager mode features won't be available!")
