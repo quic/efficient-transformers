@@ -63,12 +63,14 @@ class Constants:
     MAX_QPC_LIMIT = 30
     MAX_RETRIES = 5  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
     NUM_SPECULATIVE_TOKENS = 2
+    SDK_APPS_XML = "/opt/qti-aic/versions/apps.xml"  # This xml file is parsed to find out the SDK version.
 
 
 @dataclass
 class QnnConstants:
     # QNN PATH to be read from environment variable.
     QNN_SDK_PATH_ENV_VAR_NAME = "QNN_SDK_ROOT"
+    QNN_SDK_YAML = "sdk.yaml"
 
     # QNN Compilation tools
     QAIRT_CONVERTER = "{}/bin/{}/qairt-converter"
