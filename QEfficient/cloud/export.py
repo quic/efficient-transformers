@@ -9,6 +9,9 @@ import argparse
 import os
 from typing import Optional
 
+from transformers import AutoConfig
+from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
+
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import check_and_assign_cache_dir
 from QEfficient.utils.logging_utils import logger
@@ -22,6 +25,7 @@ def get_onnx_model_path(
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
     full_batch_size: Optional[int] = None,
+    local_model_dir: Optional[str] = None,
 ):
     """
     exports the model to onnx if pre-exported file is not found and returns onnx_model_path
@@ -36,9 +40,19 @@ def get_onnx_model_path(
         :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Defaults to None.``
     """
     logger.info(f"Exporting Pytorch {model_name} model to ONNX...")
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_name,
-        cache_dir,
+
+    config = AutoConfig.from_pretrained(model_name)
+    architecture = config.architectures[0] if config.architectures else None
+
+    if architecture in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
+        model_class = QEFFAutoModelForCausalLM
+    else:
+        logger.error(f"Model class for model name {model_name} not found in mapping")
+        return
+
+    qeff_model = model_class.from_pretrained(
+        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+        cache_dir=cache_dir,
         hf_token=hf_token,
         full_batch_size=full_batch_size,
     )
@@ -77,6 +91,7 @@ def main(
         cache_dir=cache_dir,
         hf_token=hf_token,
         full_batch_size=full_batch_size,
+        local_model_dir=local_model_dir,
     )
 
 
