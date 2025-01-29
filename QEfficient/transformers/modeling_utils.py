@@ -77,7 +77,6 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Model,
 )
 from transformers.models.whisper.modeling_whisper import (
-    WhisperPositionalEmbedding,
     WhisperAttention,
     WhisperDecoder,
     WhisperDecoderLayer,
@@ -145,7 +144,6 @@ from .models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Model,
 )
 from .models.whisper.modeling_whisper import (
-    QEffWhisperPositionalEmbedding,
     QEffWhisperAttention,
     QEffWhisperDecoder,
     QEffWhisperDecoderLayer,

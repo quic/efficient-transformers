@@ -13,7 +13,6 @@ from torch import nn
 from transformers.cache_utils import Cache, EncoderDecoderCache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import (
-    BaseModelOutput,
     BaseModelOutputWithCrossAttentions,
     BaseModelOutputWithPastAndCrossAttentions,
     Seq2SeqModelOutput,
@@ -30,9 +29,11 @@ from transformers.models.whisper.modeling_whisper import (
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
+
 class QEffWhisperPositionalEmbedding(WhisperPositionalEmbedding):
     def forward(self, input_ids, past_key_values_length=0):
-        return self.weight[past_key_values_length,:]     
+        return self.weight[past_key_values_length, :]
+
 
 class QEffWhisperPositionalEmbedding(WhisperPositionalEmbedding):
     def forward(self, input_ids, past_key_values_length=0):
@@ -385,7 +386,6 @@ class QEffWhisperEncoder(WhisperEncoder):
 
 
 class QEffWhisperDecoder(WhisperDecoder):
-    
     """
     Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a [`WhisperDecoderLayer`]
     Copied form WhisperDecoder: https://github.com/huggingface/transformers/blob/main/src/transformers/models/whisper/modeling_whisper.py
@@ -397,6 +397,7 @@ class QEffWhisperDecoder(WhisperDecoder):
     Args:
         config: WhisperConfig
     """
+
     def forward(
         self,
         input_ids=None,
