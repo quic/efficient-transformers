@@ -1,29 +1,9 @@
-# -----------------------------------------------------------------------------
-#
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
-# SPDX-License-Identifier: BSD-3-Clause
-#
-# -----------------------------------------------------------------------------
-
-
-import pytest
 import requests
 from PIL import Image
 from transformers import AutoModelForCausalLM, AutoProcessor, TextStreamer
 
-# from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
-
-# from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils import hf_download
-
-# from QEfficient.utils._utils import load_hf_processor
-from QEfficient.utils.constants import VlmConstants
-from QEfficient.utils.device_utils import get_available_device_id
-
-test_models = [
-    "microsoft/Phi-3.5-vision-instruct",
-]
 
 
 def load_vlm_model(model_config):
@@ -70,18 +50,28 @@ def _generate_inputs(model, processor):
         messages,
         tokenize=False,
         add_generation_prompt=True,
+        # padding="max_length",
+        # max_length=seq_len
     )
     model.config.hidden_size // model.config.num_attention_heads
     # ctx_len = 1280  # FIXME: Pass it a ssome arguement later on
     inputs = dict(processor(images=images, text=prompt, return_tensors="pt"))
+    inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
+    # inputs["past_key_values"] = []
+    # for i in range(model.config.num_hidden_layers):
+    #     inputs["past_key_values"].append((
+    #         torch.zeros(1, model.config.num_key_value_heads, ctx_len, head_dim),
+    #         torch.zeros(1, model.config.num_key_value_heads, ctx_len, head_dim),
+    #     ))
     return inputs
 
 
 def check_vlm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
-    prompt_len: int = VlmConstants.SEQ_LEN,
-    ctx_len: int = VlmConstants.CTX_LEN,
-    n_layer: int = 1,
+    prompt_len: int = 1024,
+    ctx_len: int = 1280,
+    n_layer: int = 32,
+    # num_speculative_tokens: Optional[int] = None,
 ):
     """
     Validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
@@ -98,8 +88,10 @@ def check_vlm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_hf, _ = load_vlm_model(model_config)
     # Load processor instead
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+    # config = model_hf.config
+    # batch_size = len(Constants.INPUT_STR)
     streamer = TextStreamer(processor)
-    streamer.on_finalized_text("<  ")
+    # Testing for Phi-3.5 only atm
     inputs = _generate_inputs(model_hf, processor)
     # Original PyTorch model
     pt_model = AutoModelForCausalLM.from_pretrained(
@@ -107,36 +99,44 @@ def check_vlm_pytorch_vs_kv_vs_ort_vs_ai100(
         num_hidden_layers=n_layer,
         _attn_implementation="eager",
         trust_remote_code=True,
+        # Check if this works
         rope_scaling=None,
     )
+    # TODO: Don't use API RUNNER CLASS BUT directly define those functions here
+    # pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
+    # is_tlm = False if num_speculative_tokens is None else True
     qeff_model = QEFFAutoModelForImageTextToText(pt_model, processor, is_tlm=False)
-    qeff_model.export()
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
+    breakpoint()
+    # pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
+    # assert (
+    #     pytorch_hf_tokens == pytorch_kv_tokens
+    # ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
+
+    qeff_model.export()
+
+    # ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
+
+    # assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
+
+    # if not get_available_device_id():
+    #     pytest.skip("No available devices to run model on Cloud AI 100")
+    breakpoint()
     _ = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
         num_cores=14,
         mxfp6=False,
         aic_enable_depth_first=False,
+        # num_speculative_tokens=num_speculative_tokens,
     )
     exec_info = qeff_model.generate(inputs, streamer, device_ids=None, runtime_ai100=True)
     exec_info[0]  # Because we always run for single input and single batch size
+    # gen_len = ort_tokens.shape[-1]
+    # assert (
+    #     ort_tokens == cloud_ai_100_tokens[:, :gen_len]
+    # ).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."
 
 
-@pytest.mark.on_qaic
-@pytest.mark.parametrize("model_name", test_models)
-def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
-    """
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    if model_name == "microsoft/Phi-3-mini-4k-instruct":
-        n_layer = 2  # test only 2 layer models
-    else:
-        n_layer = 32
-
-    check_vlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
+check_vlm_pytorch_vs_kv_vs_ort_vs_ai100("microsoft/Phi-3.5-vision-instruct", 1024)

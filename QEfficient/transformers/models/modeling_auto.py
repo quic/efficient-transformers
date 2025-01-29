@@ -30,12 +30,11 @@ import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.generation.text_generation_inference import write_io_files
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import constants, get_padding_shape_from_config
-
-# from QEfficient.transformers.models.phi3_vision.modeling_phi3_vision import Phi3VModelWrapper
 from QEfficient.utils.cache import to_hashable
 
 logger = logging.getLogger(__file__)
@@ -435,7 +434,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
 class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
     """
-    The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
+    The QEFF class is designed for manipulating any multimodal language model from the HuggingFace hub.
     Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
 
     ``Mandatory`` Args:
@@ -466,6 +465,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         model: nn.Module,
         processor: AutoProcessor,
         continuous_batching: bool = False,
+        qpc_session=None,
         is_tlm: bool = False,
         **kwargs,
     ):
@@ -480,11 +480,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
 
         if kwargs.pop("full_batch_size", None):
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
-            # warnings.warn(
-            #     "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
-            # )
-        # breakpoint()
-        # phi3vwrapper_model=Phi3VModelWrapper(model)
+
         super().__init__(model)
 
         # Set use_cache=True to get KV values as output during ONNX export
@@ -495,8 +491,9 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         self.head_dim = model.config.hidden_size // model.config.num_attention_heads
         self.continuous_batching = continuous_batching
         self.is_tlm = is_tlm
+        self.qpc_session = qpc_session
         self.pad_token_id = model.config.pad_token_id
-        self.ctx_len = 1280
+        self.ctx_len = constants.VlmConstants.CTX_LEN
 
     @classmethod
     def from_pretrained(
@@ -550,11 +547,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
 
     def _generate_inputs(self, **kwargs):
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        # seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        # fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
-
         self.ctx_len = kwargs["ctx_len"] if "ctx_len" in kwargs else self.ctx_len
-
         ## PREPROCESSING THE MULTI-MODAL INPUTS for Phi-3.5 for now
         # TODO: Create a map for the other models to have their own inputs accordingly
         images = []
@@ -594,7 +587,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
-            # "pixel_values": {0: "img_batch_size"},
         }
         for i in range(self.num_layers):
             dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
@@ -602,7 +594,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
 
         # Avoid issues due to index out of range
         inputs["position_ids"] = torch.full(inputs["position_ids"].shape, self.ctx_len - 1)
-
         return inputs, dynamic_axes, output_names
 
     def export(
@@ -620,9 +611,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         Returns:
             :str: Path of the generated ``ONNX`` graph.
         """
-
         example_inputs, dynamic_axes, output_names = self._generate_inputs(**kwargs)
-        # breakpoint()
         return self._export(
             example_inputs,
             output_names,
@@ -674,28 +663,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-        # if self.is_tlm:
-        #     # assert num_speculative_tokens cfg is acceptable if defined
-        #     if num_speculative_tokens is None:
-        #         raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` is True.")
-        #     if not isinstance(num_speculative_tokens, int) and num_speculative_tokens < 2:
-        #         ValueError(
-        #             f"`num_speculative_tokens` arg should be an integer greater than 1, got {num_speculative_tokens}"
-        #         )
-        #     num_logits_to_keep = num_speculative_tokens + 1
-        #     if prefill_seq_len < num_logits_to_keep:
-        #         raise ValueError(
-        #             f"sequence length ({prefill_seq_len}) must be at least `num_speculative_tokens+1` ({num_logits_to_keep})"
-        #         )
-
-        # if self.continuous_batching and full_batch_size is None:
-        #     raise TypeError("missing required argument: 'full_batch_size'")
-
-        # if kv_cache_batch_size and not full_batch_size:
-        #     raise ValueError(
-        #         "Prefix caching is enabled only for continuous batching. Please pass `full_batch_size` argument and make sure you pass `continuous_batching=True` in the `from_pretrained` call"
-        #     )
-
+        self.seq_len_constant = prefill_seq_len
         kv_cache_batch_size = (
             kv_cache_batch_size if kv_cache_batch_size else (full_batch_size if full_batch_size else batch_size)
         )
@@ -759,8 +727,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
                 for i in range(self.num_layers):
                     for kv in ["key", "value"]:
                         custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
-
-            breakpoint()
             qpc_path = self._compile(
                 onnx_path,
                 compile_dir,
@@ -799,16 +765,17 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
 
-            return self.cloud_ai_100_vlm_generate(inputs=inputs, device_ids=device_ids)
+            return self.cloud_ai_100_vlm_generate(inputs=inputs, device_ids=device_ids, streamer=streamer)
         # PyTorch runtime
         else:
             return self.pytorch_vlm_generate(model=self.model, inputs=inputs, streamer=streamer)
 
-    # TODO: Add the code based on how we did in single inference script
     def cloud_ai_100_vlm_generate(
         self,
         inputs: torch.Tensor,
         device_ids: List[int] = [0],
+        streamer: TextStreamer = None,
+        write_io_dir: Optional[str] = None,
     ) -> np.ndarray:
         """
         Generates features with list of prompts using AI 100 runtime.
@@ -821,7 +788,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         Returns:
            np.ndarray: A list of dictionaries containing the generated output features.
         """
-
         if self.qpc_session is None:
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
@@ -833,37 +799,83 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         )
 
         # Read prompt and ctx len from session
-        # batch_size = max(
-        #     [x[self.qpc_session.binding_index_map["input_ids"]][1][0] for x in self.qpc_session.allowed_shapes]
-        #     + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[0]]
-        # )
-
-        # prefill_seq_len = max(
-        #     [x[self.qpc_session.binding_index_map["input_ids"]][1][1] for x in self.qpc_session.allowed_shapes]
-        #     + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[1]]
-        # )
-        # Prepare input
-        input_ids_len = inputs["input_ids"].shape[1]
-        input_ids = np.array(
-            torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - inputs["input_ids"].size(1)), "constant", 0)
+        batch_size = max(
+            [x[self.qpc_session.binding_index_map["input_ids"]][1][0] for x in self.qpc_session.allowed_shapes]
+            + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[0]]
         )
-        attention_mask = np.array(
-            torch.nn.functional.pad(
-                inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
-            )
+        prefill_seq_len = max(
+            [x[self.qpc_session.binding_index_map["input_ids"]][1][1] for x in self.qpc_session.allowed_shapes]
+            + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[1]]
         )
+        input_len = inputs["attention_mask"].sum(1, keepdims=True)
+        padded_len = inputs["input_ids"].shape[1]
+        # input_len=padded_len
+        num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+        generation_len = self.ctx_len - input_len.max()  # in standalone this is tensor
+        assert generation_len > 0, "generation length should be greater than zero"
+        generated_ids = np.full((batch_size, generation_len + 1), self.processor.tokenizer.pad_token_id)
+        # inputs["input_ids"]=torch.nn.functional.pad(inputs["input_ids"],(0,self.seq_len_constant-inputs["input_ids"].size(1)),"constant",self.pad_token_id)
+        # inputs["position_ids"]=torch.nn.functional.pad(inputs["position_ids"],(0,self.seq_len_constant-inputs["position_ids"].size(1)),"constant",-1)
+        input_ids = inputs["input_ids"]
+        input_ids_size = input_ids.shape[1]
+        # attention_mask = inputs["attention_mask"]
+        inputs["input_ids"] = torch.nn.functional.pad(
+            inputs["input_ids"], (0, 1024 - input_ids_size), "constant", self.processor.tokenizer.pad_token_id
+        )
+        inputs["attention_mask"] = torch.nn.functional.pad(
+            inputs["attention_mask"], (0, 1024 - input_ids_size), "constant", 0
+        )
+        # for k,v in inputs.items():
+        #     inputs[k]=np.array(v)
+        # input_len=np.array(input_len).reshape(1,1)
+        # inputs["pixel_values"]=inputs["pixel_values"].astype("float16")
+        inputs["input_ids"] = inputs["input_ids"].numpy()
+        inputs["attention_mask"] = inputs["attention_mask"].numpy()
+        inputs["pixel_values"] = inputs["pixel_values"].numpy().astype("float16")
+        inputs["image_sizes"] = inputs["image_sizes"].numpy()
+        inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+        for i in range(num_chunks):
+            chunk_inputs = inputs.copy()
+            chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            outputs = self.qpc_session.run(chunk_inputs)
+            if write_io_dir:
+                write_io_files(inputs, outputs, write_io_dir, "prefill", "aic_batch_io", True, False)
+        # Get first token
+        inputs["input_ids"] = outputs["logits"].argmax(2)
+        inputs["position_ids"] = input_len.numpy()
+        generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
+        finished_sequences = inputs["input_ids"] == self.processor.tokenizer.eos_token_id
+        if streamer is not None:
+            streamer.put(inputs["input_ids"][0])
+        self.qpc_session.skip_buffers(["pixel_values"])
+        self.qpc_session.skip_buffers(["image_sizes"])
+        inputs.pop("pixel_values")
+        inputs.pop("image_sizes")
 
-        inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
+        # Decode loop
+        generation_len = torch.tensor(generation_len)
+        for num_token in range(1, generation_len):
+            outputs = self.qpc_session.run(inputs)
+            if write_io_dir:
+                write_io_files(inputs, outputs, write_io_dir, "decode", "aic_batch_io", True, False)
+                write_io_dir = None
 
-        outputs = {
-            "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[2]).astype(
-                np.float32
-            ),
-        }
-        self.qpc_session.set_buffers(outputs)
-        outputs = self.qpc_session.run(inputs)
-        outputs = outputs["output"][:, :input_ids_len, :]
-        return outputs
+            # Prepare inputs for next iteration
+            inputs["input_ids"] = outputs["logits"].argmax(2)
+
+            inputs["position_ids"] += 1
+            generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
+
+            finished_sequences |= inputs["input_ids"] == self.processor.tokenizer.eos_token_id
+            if streamer is not None:
+                streamer.put(inputs["input_ids"][0])
+            if finished_sequences.all():
+                break
+        generated_texts = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        breakpoint()
+        return generated_texts
 
     def pytorch_vlm_generate(
         self,
@@ -882,13 +894,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         Returns:
             torch.Tensor: A list of output features generated by the model for each prompt.
         """
-        # inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
-        # inputs["past_key_values"] = []
-        # for _ in range(model.config.num_hidden_layers):
-        #     inputs["past_key_values"].append((
-        #         torch.zeros(1, model.config.num_key_value_heads, self.ctx_len,self.head_dim),
-        #         torch.zeros(1, model.config.num_key_value_heads, self.ctx_len, self.head_dim),
-        #     ))
         self.batch_size = inputs["input_ids"].shape[0]
         generation_len = self.ctx_len - inputs["input_ids"].shape[1]
         generated_ids = torch.full((self.batch_size, generation_len + 1), self.processor.tokenizer.pad_token_id)
@@ -897,7 +902,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
 
         inputs["input_ids"] = outputs[0].argmax(2)
         inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-        streamer.put(inputs["input_ids"])
+        streamer.put(inputs["input_ids"][0])
 
         for _ in range(generation_len):
             outputs = model(**inputs)

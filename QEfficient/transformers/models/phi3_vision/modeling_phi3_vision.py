@@ -15,22 +15,15 @@
 
 """PyTorch Phi-3-V model."""
 
+import inspect
 import math
 from typing import List, Optional, Tuple, Union
 
-# from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-# try:
-#     from flash_attn import flash_attn_func, flash_attn_varlen_func
-#     from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input  # noqa
-#     _flash_supports_window_size = "window_size" in list(inspect.signature(flash_attn_func).parameters)
-# except ImportError:
-#     pass
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
-from transformers import CLIPVisionConfig, CLIPVisionModel, PretrainedConfig
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
@@ -39,7 +32,6 @@ from transformers.modeling_outputs import (
     CausalLMOutputWithPast,
 )
 from transformers.modeling_utils import PreTrainedModel
-from transformers.models.clip.modeling_clip import CLIPAttention
 from transformers.utils import (
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
@@ -48,6 +40,19 @@ from transformers.utils import (
 )
 
 from .configuration_phi3_v import Phi3VConfig
+
+# from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+
+try:
+    from flash_attn import flash_attn_func
+    from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input  # noqa
+
+    _flash_supports_window_size = "window_size" in list(inspect.signature(flash_attn_func).parameters)
+except ImportError:
+    pass
+
+import torch
+from transformers import CLIPVisionConfig, CLIPVisionModel, PretrainedConfig
 
 logger = logging.get_logger(__name__)
 
@@ -226,7 +231,8 @@ class QEffPhi3ImageEmbedding(nn.Module):
     """Phi3 Image embedding."""
 
     def __init__(self, config: PretrainedConfig, wte=None, **kwargs) -> None:
-        super().__init__()
+        super().__init__(config)
+
         # n_embed or hidden_size
         hidden_size = config.n_embd if hasattr(config, "n_embd") else config.hidden_size
         if hasattr(config, "embd_pdrop") or hasattr(config, "embed_pdrop"):
@@ -236,6 +242,8 @@ class QEffPhi3ImageEmbedding(nn.Module):
             self.drop = None
 
         self.wte = wte
+        breakpoint()
+        self.config = config
 
         if isinstance(config.img_processor, dict) and config.img_processor.get("name", None) == "clip_vision_model":
             assert "model_name" in config.img_processor, "model_name must be provided for CLIPVisionModel"
@@ -248,7 +256,7 @@ class QEffPhi3ImageEmbedding(nn.Module):
             self.num_img_tokens = config.img_processor["num_img_tokens"]
 
             # FA2 in CLIP
-            # if config._attn_implementation == "flash_attention_2":
+            # if config._attn_implementation == 'flash_attention_2':
             #     for layer in self.img_processor.vision_model.encoder.layers:
             #         clip_fa2 = CLIPAttentionFA2(clip_config)
             #         del layer.self_attn
@@ -305,15 +313,6 @@ class QEffPhi3ImageEmbedding(nn.Module):
         else:
             self.layer_idx = -2
             self.type_feature = "patch"
-        self.__qeff_init__()
-
-    def __qeff_init__(self):
-        # breakpoint()
-        clip_config = CLIP_VIT_LARGE_PATCH14_336_CONFIG
-        for layer in self.img_processor.vision_model.encoder.layers:
-            clip_eager = CLIPAttention(clip_config)
-            del layer.self_attn
-            layer.self_attn = clip_eager
 
     def set_img_features(self, img_features: torch.FloatTensor) -> None:
         self.img_features = img_features
@@ -1222,15 +1221,13 @@ class Phi3VModel(Phi3VPreTrainedModel):
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
-        past_key_values_length = 0
-
         if self.gradient_checkpointing and self.training:
             if use_cache:
                 logger.warning_once(
                     "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
                 )
                 use_cache = False
-
+        past_key_values_length = 0
         if use_cache:
             use_legacy_cache = not isinstance(past_key_values, Cache)
             if use_legacy_cache:
@@ -1245,7 +1242,6 @@ class Phi3VModel(Phi3VPreTrainedModel):
             position_ids = position_ids.unsqueeze(0).view(-1, seq_length)
         else:
             position_ids = position_ids.view(-1, seq_length).long()
-
         if inputs_embeds is None:
             if pixel_values is not None and image_sizes is not None:
                 assert self.vision_embed_tokens is not None, "Vision embedding layer is not defined"
@@ -1265,18 +1261,18 @@ class Phi3VModel(Phi3VPreTrainedModel):
                     " call `tokenizer.padding_side  = 'left'` before tokenizing the input. "
                 )
 
-        if self._attn_implementation == "flash_attention_2":
-            # 2d mask is passed through the layers
-            attention_mask = attention_mask if (attention_mask is not None and 0 in attention_mask) else None
-        else:
-            # 4d mask is passed through the layers
-            attention_mask = _prepare_4d_causal_attention_mask(
-                attention_mask,
-                (batch_size, seq_length),
-                inputs_embeds,
-                past_key_values_length,
-                sliding_window=self.config.sliding_window,
-            )
+        # if self._attn_implementation == "flash_attention_2":
+        #     # 2d mask is passed through the layers
+        #     attention_mask = attention_mask if (attention_mask is not None and 0 in attention_mask) else None
+        # else:
+        #     # 4d mask is passed through the layers
+        attention_mask = _prepare_4d_causal_attention_mask(
+            attention_mask,
+            (batch_size, seq_length),
+            inputs_embeds,
+            past_key_values_length,
+            sliding_window=self.config.sliding_window,
+        )
 
         hidden_states = inputs_embeds
 
@@ -1382,8 +1378,6 @@ class QEffPhi3VModel(Phi3VModel):
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
-        # past_key_values_length = 0
-
         if self.gradient_checkpointing and self.training:
             if use_cache:
                 logger.warning_once(
@@ -1395,7 +1389,6 @@ class QEffPhi3VModel(Phi3VModel):
             use_legacy_cache = not isinstance(past_key_values, Cache)
             if use_legacy_cache:
                 past_key_values = DynamicCache.from_legacy_cache(past_key_values)
-            # past_key_values_length = past_key_values.get_usable_length(seq_length)
             past_key_values.get_usable_length(seq_length)
 
         if inputs_embeds is None:
