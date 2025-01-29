@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import importlib
 import json
 import os
 import subprocess
@@ -13,7 +14,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import requests
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
-from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers import AutoConfig, AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
@@ -394,3 +396,43 @@ def create_json(file_path: str, json_data: object):
             json.dump(json_data, file, indent=4)
     except Exception as e:
         print(f"Failed to create JSON File {file_path}: {e}")
+
+
+def load_qeff_model(
+    model_name: str,
+    cache_dir: Optional[str] = None,
+    hf_token: Optional[str] = None,
+    local_model_dir: Optional[str] = None,
+    full_batch_size: Optional[int] = None,
+):
+    """
+    Loads the model using the QEfficient Modelling Class.
+
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``.
+    ``Optional`` Args:
+        :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to None.``
+        :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Pass model tokenizer. ``Defaults to None.``
+        :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
+        :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
+        :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Defaults to None.``
+
+    """
+    config = AutoConfig.from_pretrained(model_name)
+    architecture = config.architectures[0] if config.architectures else None
+
+    module = importlib.import_module("QEfficient")
+    if architecture in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
+        model_class = getattr(module, "QEFFAutoModelForCausalLM")
+    else:
+        raise NotImplementedError(
+            f"Unknown architecture={architecture}, either use specific auto model class for loading the model or raise an issue for support!"
+        )
+
+    qeff_model = model_class.from_pretrained(
+        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+        cache_dir=cache_dir,
+        hf_token=hf_token,
+        full_batch_size=full_batch_size,
+    )
+    return qeff_model
