@@ -104,13 +104,13 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Model,
 )
 from transformers.models.whisper.modeling_whisper import (
-    WhisperPositionalEmbedding,
     WhisperAttention,
+    WhisperDecoder,
     WhisperDecoderLayer,
     WhisperEncoder,
-    WhisperDecoder,
-    WhisperModel,
     WhisperForConditionalGeneration,
+    WhisperModel,
+    WhisperPositionalEmbedding,
 )
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
@@ -224,16 +224,15 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Model,
 )
 from QEfficient.transformers.models.whisper.modeling_whisper import (
-    QEffWhisperPositionalEmbedding,
     QEffWhisperAttention,
+    QEffWhisperDecoder,
     QEffWhisperDecoderLayer,
     QEffWhisperEncoder,
-    QEffWhisperDecoder,
-    QEffWhisperModel,
     QEffWhisperForConditionalGeneration,
+    QEffWhisperModel,
+    QEffWhisperPositionalEmbedding,
 )
 from QEfficient.transformers.spd.causal_lm_forward import tlm_forward
-
 
 
 class CustomOpsTransform(ModuleMappingTransform):

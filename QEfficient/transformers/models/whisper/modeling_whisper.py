@@ -1,42 +1,43 @@
-import math
-from typing import List, Optional, Tuple, Union
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# ----------------------------------------------------------------------------
+
 import random
+from typing import Optional, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 from torch.nn import CrossEntropyLoss
-from transformers.cache_utils import Cache, DynamicCache, StaticCache, EncoderDecoderCache
-
+from transformers.cache_utils import Cache, DynamicCache, EncoderDecoderCache, StaticCache
+from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import (
-    BaseModelOutput,
     BaseModelOutputWithCrossAttentions,
     BaseModelOutputWithPastAndCrossAttentions,
-    Seq2SeqModelOutput,
     Seq2SeqLMOutput,
+    Seq2SeqModelOutput,
 )
-
 from transformers.models.whisper.modeling_whisper import (
     WhisperAttention,
-    WhisperConfig,
-    WhisperEncoderLayer,
+    WhisperDecoder,
     WhisperDecoderLayer,
     WhisperEncoder,
-    WhisperDecoder,
-    WhisperModel,
     WhisperForConditionalGeneration,
+    WhisperModel,
     WhisperPositionalEmbedding,
     logger,
     shift_tokens_right,
 )
 
-from transformers.modeling_attn_mask_utils import AttentionMaskConverter
-
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+
 
 class QEffWhisperPositionalEmbedding(WhisperPositionalEmbedding):
     def forward(self, input_ids, past_key_values_length=0):
-        return self.weight[past_key_values_length,:]     
+        return self.weight[past_key_values_length, :]
+
 
 class QEffWhisperAttention(WhisperAttention):
     """
@@ -48,6 +49,7 @@ class QEffWhisperAttention(WhisperAttention):
     - manually takes is_cross_attention instead of using key_value_states to determine
     - cross_attention computation always uses cached kvs, now computed in encoder pass instead
     """
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -62,10 +64,9 @@ class QEffWhisperAttention(WhisperAttention):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
         bsz, tgt_len, _ = hidden_states.size()
-        
+
         # get query proj
         query_states = self._shape(self.q_proj(hidden_states) * self.scaling, tgt_len, bsz)
-        
 
         if self.is_decoder:
             if is_cross_attention and past_key_value:
@@ -78,7 +79,9 @@ class QEffWhisperAttention(WhisperAttention):
                 value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
                 if past_key_value is not None:
                     cache_kwargs = {"position_ids": position_ids_layer}
-                    key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+                    key_states, value_states = past_key_value.update(
+                        key_states, value_states, self.layer_idx, cache_kwargs
+                    )
         else:
             # self_attention Encoder
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
@@ -132,14 +135,16 @@ class QEffWhisperAttention(WhisperAttention):
         attn_output = self.out_proj(attn_output)
 
         return [attn_output, attn_weights, past_key_value]
-    
+
+
 class QEffWhisperDecoderLayer(WhisperDecoderLayer):
-    '''
+    """
     Copied from WhisperAttention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/whisper/modeling_whisper.py
     The only differences are:
     - self attention and cross attention caches are explicitly picked before entering attention blocks
     - use passed argument is_encoder_decoder instead of encoder_hidden_states
-    '''
+    """
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -207,7 +212,7 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
                 past_key_value=cross_attn_past_key_value,
                 output_attentions=output_attentions,
                 position_ids_layer=position_ids_layer,
-                is_cross_attention=True, # explicitly pass this argument, instead of figuring it out form key_value_states
+                is_cross_attention=True,  # explicitly pass this argument, instead of figuring it out form key_value_states
             )
             hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
             hidden_states = residual + hidden_states
@@ -237,20 +242,26 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
             outputs += (past_key_value,)
 
         return outputs
-    
+
+
 class QEffWhisperCrossAttentionModule(torch.nn.Module):
-    '''
+    """
     Cross attention computation normally handled in decoder attention, but moved to a module that is added to Encoder,
-    to make sure Decoder pass graph is the same each decode step. 
-    '''
+    to make sure Decoder pass graph is the same each decode step.
+    """
+
     def __init__(self, projection_key, projection_value, num_heads, head_dim):
         super().__init__()
-        self.k_proj = torch.nn.ModuleList([torch.nn.Linear(x.weight.shape[0],x.weight.shape[1], bias=False) for x in projection_key])
-        self.v_proj = torch.nn.ModuleList([torch.nn.Linear(x.weight.shape[0],x.weight.shape[1], bias=True) for x in projection_value])
+        self.k_proj = torch.nn.ModuleList(
+            [torch.nn.Linear(x.weight.shape[0], x.weight.shape[1], bias=False) for x in projection_key]
+        )
+        self.v_proj = torch.nn.ModuleList(
+            [torch.nn.Linear(x.weight.shape[0], x.weight.shape[1], bias=True) for x in projection_value]
+        )
         for i in range(len(projection_key)):
-            self.k_proj[i].weight=projection_key[i].weight
-            self.v_proj[i].weight=projection_value[i].weight
-            self.v_proj[i].bias=projection_value[i].bias
+            self.k_proj[i].weight = projection_key[i].weight
+            self.v_proj[i].weight = projection_value[i].weight
+            self.v_proj[i].bias = projection_value[i].bias
         self.n_layers = len(self.k_proj)
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -261,10 +272,15 @@ class QEffWhisperCrossAttentionModule(torch.nn.Module):
     @torch.no_grad()
     def forward(self, encoder_hidden_states, cross_key_values):
         for i in range(self.n_layers):
-            cross_key_values[i * 2] = self._shape(self.k_proj[i](encoder_hidden_states), -1, encoder_hidden_states.size()[0]) 
-            cross_key_values[i * 2 + 1] = self._shape(self.v_proj[i](encoder_hidden_states), -1, encoder_hidden_states.size()[0]) 
+            cross_key_values[i * 2] = self._shape(
+                self.k_proj[i](encoder_hidden_states), -1, encoder_hidden_states.size()[0]
+            )
+            cross_key_values[i * 2 + 1] = self._shape(
+                self.v_proj[i](encoder_hidden_states), -1, encoder_hidden_states.size()[0]
+            )
         return cross_key_values
-    
+
+
 class QEffWhisperEncoder(WhisperEncoder):
     """
     Transformer encoder consisting of *config.encoder_layers* self attention layers. Each layer is a
@@ -280,7 +296,12 @@ class QEffWhisperEncoder(WhisperEncoder):
 
     def add_cross_attention_module(self, k_proj_weights, v_proj_weights):
         # k_proj_weights and v_proj_weights come from decoder, so must load decoder first then encoder
-        self.cross_attn_module = QEffWhisperCrossAttentionModule(k_proj_weights, v_proj_weights, self.config.decoder_attention_heads, self.config.d_model // self.config.decoder_attention_heads)
+        self.cross_attn_module = QEffWhisperCrossAttentionModule(
+            k_proj_weights,
+            v_proj_weights,
+            self.config.decoder_attention_heads,
+            self.config.d_model // self.config.decoder_attention_heads,
+        )
 
     def forward(
         self,
@@ -314,7 +335,7 @@ class QEffWhisperEncoder(WhisperEncoder):
                 for more detail.
             return_dict (`bool`, *optional*):
                 Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-            cross_key_values: 
+            cross_key_values:
                 Torch.tensor to give shape of cross_attention_values
         """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -336,9 +357,9 @@ class QEffWhisperEncoder(WhisperEncoder):
 
         # check if head_mask has a correct number of layers specified if desired
         if head_mask is not None:
-            assert head_mask.size()[0] == (
-                len(self.layers)
-            ), f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
+            assert head_mask.size()[0] == (len(self.layers)), (
+                f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
+            )
 
         for idx, encoder_layer in enumerate(self.layers):
             if output_hidden_states:
@@ -383,27 +404,32 @@ class QEffWhisperEncoder(WhisperEncoder):
         computed_cross_attentions = self.cross_attn_module(hidden_states, cross_key_values)
 
         if not return_dict:
-            return tuple(v for v in [hidden_states] + computed_cross_attentions +  [encoder_states, all_attentions] if v is not None)
+            return tuple(
+                v
+                for v in [hidden_states] + computed_cross_attentions + [encoder_states, all_attentions]
+                if v is not None
+            )
 
         return BaseModelOutputWithCrossAttentions(
-            last_hidden_state=hidden_states, 
+            last_hidden_state=hidden_states,
             cross_attentions=computed_cross_attentions,
-            hidden_states=encoder_states, 
-            attentions=all_attentions
+            hidden_states=encoder_states,
+            attentions=all_attentions,
         )
-    
+
+
 class QEffWhisperDecoder(WhisperDecoder):
-    
     """
     Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a [`WhisperDecoderLayer`]
     Copied form WhisperDecoder: https://github.com/huggingface/transformers/blob/main/src/transformers/models/whisper/modeling_whisper.py
     The only differences are:
-    - Added position_ids as argument to attention, and removed attention_mask 
+    - Added position_ids as argument to attention, and removed attention_mask
     - Added is_encoder_decoder input to determine whether Decoder is part of Encoder-Decoder or standalone
 
     Args:
         config: WhisperConfig
     """
+
     def forward(
         self,
         input_ids=None,
@@ -496,8 +522,6 @@ class QEffWhisperDecoder(WhisperDecoder):
         else:
             raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
 
-        # past_key_values_length
-        past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
         position = position_ids
         input_shape = input_ids.size()
         if inputs_embeds is None:
@@ -507,7 +531,9 @@ class QEffWhisperDecoder(WhisperDecoder):
         if use_cache or past_key_values is not None:
             if not isinstance(past_key_values, Cache):
                 return_legacy_cache = True
-                if len(past_key_values[0]) == 2: # only cross-attention cache given, initialize self-attention cache to empty Dynamic Cache
+                if (
+                    len(past_key_values[0]) == 2
+                ):  # only cross-attention cache given, initialize self-attention cache to empty Dynamic Cache
                     cross_attention_cache = DynamicCache.from_legacy_cache(past_key_values)
                     past_key_values = EncoderDecoderCache(DynamicCache(), cross_attention_cache)
 
@@ -525,14 +551,19 @@ class QEffWhisperDecoder(WhisperDecoder):
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, position_ids, past_key_values.self_attention_cache, output_attentions
+            attention_mask,
+            inputs_embeds,
+            cache_position,
+            position_ids,
+            past_key_values.self_attention_cache,
+            output_attentions,
         )
 
         # embed positions
         positions = self.embed_positions(input_ids, past_key_values_length=position)
         hidden_states = inputs_embeds + positions
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-        
+
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -554,13 +585,11 @@ class QEffWhisperDecoder(WhisperDecoder):
             dropout_probability = random.uniform(0, 1)
             if self.training and (dropout_probability < self.layerdrop):
                 continue
-        
-            if self.gradient_checkpointing and self.training:
 
+            if self.gradient_checkpointing and self.training:
                 if use_cache:
                     logger.warning(
-                        "`use_cache = True` is incompatible with gradient checkpointing. Setting `use_cache ="
-                        " False`..."
+                        "`use_cache = True` is incompatible with gradient checkpointing. Setting `use_cache = False`..."
                     )
                     use_cache = False
 
@@ -631,7 +660,7 @@ class QEffWhisperDecoder(WhisperDecoder):
             attentions=all_self_attns,
             cross_attentions=all_cross_attentions,
         )
-    
+
     def _update_causal_mask(
         self,
         attention_mask: torch.Tensor,
@@ -704,15 +733,16 @@ class QEffWhisperDecoder(WhisperDecoder):
             causal_mask = AttentionMaskConverter._unmask_unattended(causal_mask, min_dtype)
 
         return causal_mask
-    
+
+
 class QEffWhisperModel(WhisperModel):
-    '''
+    """
     Transformer encoder-decoder model
     Copied from WhisperModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/whisper/modeling_whisper.py
     The only differences are:
     - Added torch.where for encoder_output computation, to ensure single qpc compilation is possible
-    - added cross_key_values for encoder input 
-    '''
+    - added cross_key_values for encoder input
+    """
 
     def forward(
         self,
@@ -744,22 +774,26 @@ class QEffWhisperModel(WhisperModel):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         computed_encoder_output = self.encoder(
-                input_features,
-                head_mask=head_mask,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                return_dict=True,
-                cross_key_values=cross_key_values,
-            )
-        
-        cross_key_values = torch.where(input_features.shape[2] == torch.tensor(1), 
-                                        torch.stack(original_cross_key_values), 
-                                        torch.stack(computed_encoder_output["cross_attentions"]))
-        
-        cross_key_values = [t.squeeze(0) for t in torch.split(cross_key_values, 1, dim=0)] # convert back to list so type is consistent
+            input_features,
+            head_mask=head_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=True,
+            cross_key_values=cross_key_values,
+        )
+
+        cross_key_values = torch.where(
+            input_features.shape[2] == torch.tensor(1),
+            torch.stack(original_cross_key_values),
+            torch.stack(computed_encoder_output["cross_attentions"]),
+        )
+
+        cross_key_values = [
+            t.squeeze(0) for t in torch.split(cross_key_values, 1, dim=0)
+        ]  # convert back to list so type is consistent
 
         for i in range(self.config.decoder_layers):
-            past_key_values[i][2] = cross_key_values[i * 2] 
+            past_key_values[i][2] = cross_key_values[i * 2]
             past_key_values[i][3] = cross_key_values[i * 2 + 1]
 
         # If the user passed a tuple for encoder_outputs, we wrap it in a BaseModelOutput when return_dict=True
@@ -767,7 +801,7 @@ class QEffWhisperModel(WhisperModel):
         decoder_outputs = self.decoder(
             input_ids=decoder_input_ids,
             attention_mask=decoder_attention_mask,
-            encoder_hidden_states=None, # we have precomputed past kvs so don't need to pass encoder_hidden_states
+            encoder_hidden_states=None,  # we have precomputed past kvs so don't need to pass encoder_hidden_states
             head_mask=decoder_head_mask,
             cross_attn_head_mask=cross_attn_head_mask,
             past_key_values=past_key_values,
@@ -793,13 +827,15 @@ class QEffWhisperModel(WhisperModel):
             encoder_hidden_states=None,
             encoder_attentions=None,
         )
-    
+
+
 class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
-    '''
+    """
     Copied from WhisperForConditionalGeneration: https://github.com/huggingface/transformers/blob/main/src/transformers/models/whisper/modeling_whisper.py
     The only differences are:
     - Added cross_key_values as input for encoder cross attention module
-    '''
+    """
+
     def forward(
         self,
         input_features: Optional[torch.FloatTensor] = None,
