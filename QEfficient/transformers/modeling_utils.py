@@ -76,13 +76,13 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Model,
 )
 from transformers.models.whisper.modeling_whisper import (
-    WhisperPositionalEmbedding,
     WhisperAttention,
+    WhisperDecoder,
     WhisperDecoderLayer,
     WhisperEncoder,
-    WhisperDecoder,
     WhisperForConditionalGeneration,
     WhisperModel,
+    WhisperPositionalEmbedding,
 )
 
 from QEfficient.customop import CustomRMSNormAIC
@@ -143,13 +143,13 @@ from .models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Model,
 )
 from .models.whisper.modeling_whisper import (
-    QEffWhisperPositionalEmbedding,
     QEffWhisperAttention,
+    QEffWhisperDecoder,
     QEffWhisperDecoderLayer,
     QEffWhisperEncoder,
-    QEffWhisperDecoder,
-    QEffWhisperModel,
     QEffWhisperForConditionalGeneration,
+    QEffWhisperModel,
+    QEffWhisperPositionalEmbedding,
 )
 
 # Define a named tuple for ModelArchitectures
@@ -269,4 +269,3 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     WhisperModel: QEffWhisperModel,
     WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
 }
-
