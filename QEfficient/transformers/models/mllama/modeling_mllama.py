@@ -27,18 +27,18 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaConfig,
     MllamaCrossAttentionDecoderLayer,
     MllamaForCausalLM,
+    MllamaForConditionalGeneration,
     MllamaRotaryEmbedding,
     MllamaSelfAttentionDecoderLayer,
-    MllamaForConditionalGeneration,
     MllamaTextCrossAttention,
     MllamaTextModel,
     MllamaTextSelfAttention,
     MllamaVisionModel,
-    
     logger,
     repeat_kv,
     rotate_half,
 )
+
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 
 
@@ -1023,6 +1023,7 @@ class VisionEncoder(nn.Module):
         self.cross_attention_layers = (
             self.mllama.config.get_text_config().cross_attention_layers
         )
+        self.config = self.mllama.config.get_text_config()
 
     def forward(
         self,
@@ -1061,6 +1062,7 @@ class ModelWrapper(nn.Module):
         super().__init__()
         self.mllama = mllama
         self.num_hidden_layers = mllama.config.get_text_config().num_hidden_layers
+        self.config = self.mllama.config.get_text_config()
 
     def forward(
         self,
