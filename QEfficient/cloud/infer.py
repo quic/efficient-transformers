@@ -11,24 +11,11 @@ import sys
 from typing import List, Optional
 
 from transformers import AutoConfig
+from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
-
-# Map model's architecture to class
-architecture_mapping = {
-    "LlamaForCausalLM": QEFFAutoModelForCausalLM,
-    "GPT2LMHeadModel": QEFFAutoModelForCausalLM,
-    "MistralForCausalLM": QEFFAutoModelForCausalLM,
-    "FalconForCausalLM": QEFFAutoModelForCausalLM,
-    "GPTJForCausalLM": QEFFAutoModelForCausalLM,
-    "GemmaForCausalLM": QEFFAutoModelForCausalLM,
-    "Gemma2ForCausalLM": QEFFAutoModelForCausalLM,
-    "Phi3ForCausalLM": QEFFAutoModelForCausalLM,
-    "Qwen2ForCausalLM": QEFFAutoModelForCausalLM,
-    "GPTBigCodeForCausalLM": QEFFAutoModelForCausalLM,
-}
 
 
 def main(
@@ -107,12 +94,18 @@ def main(
     config = AutoConfig.from_pretrained(model_name)
     architecture = config.architectures[0] if config.architectures else None
 
-    model_class = architecture_mapping.get(architecture)
-    if not model_class:
+    if architecture in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
+        model_class = QEFFAutoModelForCausalLM
+    else:
         logger.error(f"Model class for model name {model_name} not found in mapping")
         return
 
-    qeff_model = model_class.from_pretrained(model_name)
+    qeff_model = model_class.from_pretrained(
+        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+        cache_dir=cache_dir,
+        hf_token=hf_token,
+        full_batch_size=full_batch_size,
+    )
 
     #########
     # Compile
