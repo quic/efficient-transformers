@@ -450,23 +450,12 @@ def create_and_dump_qconfigs(
             logger.warning(f"Failed to open YAML File {qnn_sdk_yaml_path}: {e}")
             qnn_sdk_details = None
 
-    # Ensure all objects in the configs dictionary are JSON serializable
-    def make_serializable(obj):
-        if isinstance(obj, (int, float, str, bool, type(None))):
-            return obj
-        elif isinstance(obj, (list, tuple)):
-            return [make_serializable(item) for item in obj]
-        elif isinstance(obj, dict):
-            return {key: make_serializable(value) for key, value in obj.items()}
-        else:
-            return str(obj)
-
     qconfigs = {
-        "huggingface_config": make_serializable(huggingface_config),
+        "huggingface_config": huggingface_config,
         "qpc_config": {
             "QEff_config": {
-                "pytorch_transforms": make_serializable(pytorch_transforms),
-                "onnx_transforms": make_serializable(onnx_transforms),
+                "pytorch_transforms": pytorch_transforms,
+                "onnx_transforms": onnx_transforms,
                 "onnx_path": onnx_path,
             },
             "compilation_config": {

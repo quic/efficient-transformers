@@ -381,17 +381,13 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 **compiler_options,
             )
 
-        # Construct the qconfig json file
-        huggingface_config = self.model.config.__dict__
-        pytorch_transforms = [cls.__name__ for cls in self._pytorch_transforms]
-        onnx_transforms = [cls.__name__ for cls in self._onnx_transforms]
         try:
             create_and_dump_qconfigs(
-                qpc_path,
-                onnx_path,
-                huggingface_config,
-                pytorch_transforms,
-                onnx_transforms,
+                self.qpc_path,
+                self.onnx_path,
+                self.model.config.__dict__,
+                [cls.__name__ for cls in self._pytorch_transforms],
+                [cls.__name__ for cls in self._onnx_transforms],
                 prefill_seq_len,
                 ctx_len,
                 batch_size,
