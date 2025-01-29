@@ -458,28 +458,33 @@ def create_and_dump_qconfigs(
                 "onnx_transforms": onnx_transforms,
                 "onnx_path": onnx_path,
             },
-            "compilation_config": {
-                "apps_sdk_version": qaic_version,
-                "compile_dir": compile_dir,
-                "specializtions_file_path": specializations_file_path,
-                "prefill_seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
-                "batch_size": batch_size,
-                "full_batch_size": full_batch_size,
-                "num_devices": num_devices,
-                "num_cores": num_cores,
-                "mxfp6_matmul": mxfp6_matmul,
-                "mxint8_kv_cache": mxint8_kv_cache,
-                "num_speculative_tokens": num_speculative_tokens,
-            },
-            "qnn_config": {
-                "enable_qnn": enable_qnn,
-                "qnn_config_path": qnn_config_path,
-            },
         },
     }
 
-    if qnn_sdk_details:
-        qconfigs["qpc_config"]["qnn_config"].update(qnn_sdk_details)
+    aic_compiler_config = {
+        "apps_sdk_version": qaic_version,
+        "compile_dir": compile_dir,
+        "specializtions_file_path": specializations_file_path,
+        "prefill_seq_len": prefill_seq_len,
+        "ctx_len": ctx_len,
+        "batch_size": batch_size,
+        "full_batch_size": full_batch_size,
+        "num_devices": num_devices,
+        "num_cores": num_cores,
+        "mxfp6_matmul": mxfp6_matmul,
+        "mxint8_kv_cache": mxint8_kv_cache,
+        "num_speculative_tokens": num_speculative_tokens,
+    }
+    qnn_config = {
+        "enable_qnn": enable_qnn,
+        "qnn_config_path": qnn_config_path,
+    }
+    # Put AIC or qnn details.
+    if enable_qnn:
+        qconfigs["qpc_config"]["qnn_config"] = qnn_config
+        if qnn_sdk_details:
+            qconfigs["qpc_config"]["qnn_config"].update(qnn_sdk_details)
+    else:
+        qconfigs["qpc_config"]["aic_compiler_config"] = aic_compiler_config
 
     create_json(qconfig_file_path, qconfigs)
