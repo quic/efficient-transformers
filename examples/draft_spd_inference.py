@@ -129,9 +129,9 @@ def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
     """
     num_chunks = -(input_len // -prefill_seq_len)  # ceil divide without float
     input_len_padded = num_chunks * prefill_seq_len  # Convert input_len to a multiple of prefill_seq_len
-    assert input_len_padded <= ctx_len, (
-        "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
-    )
+    assert (
+        input_len_padded <= ctx_len
+    ), "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
     return input_len_padded
 
 
@@ -405,10 +405,14 @@ def draft_spec_decode_inference(
     return exec_info
 
 
-def optional_int(x):
+def optional_int(x: Optional[str]):
     if x is None:
         return None
     return int(x)
+
+
+def comma_separated_ints(x: str):
+    return [int(qid) for qid in x.split(",")]
 
 
 def arg_parse():
@@ -425,7 +429,9 @@ def arg_parse():
         "--target-model-name", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0", help="Target model name"
     )
     parser.add_argument("--full-batch-size", type=optional_int, default=None, help="Full batch size")
-    parser.add_argument("--device-group", type=int, nargs="+", default=[0], help="device QIDs")
+    parser.add_argument(
+        "--device-group", type=comma_separated_ints, default="0", help="comma separated device QIDs (e.g., '1,2,3')"
+    )
     args = parser.parse_args()
     return args
 
