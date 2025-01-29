@@ -269,4 +269,3 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     WhisperModel: QEffWhisperModel,
     WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
 }
-
