@@ -9,11 +9,7 @@ import argparse
 import os
 from typing import Optional
 
-from transformers import AutoConfig
-from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
-
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.utils import check_and_assign_cache_dir
+from QEfficient.utils import check_and_assign_cache_dir, load_qeff_model
 from QEfficient.utils.logging_utils import logger
 
 # Specifically for Docker images.
@@ -41,20 +37,12 @@ def get_onnx_model_path(
     """
     logger.info(f"Exporting Pytorch {model_name} model to ONNX...")
 
-    config = AutoConfig.from_pretrained(model_name)
-    architecture = config.architectures[0] if config.architectures else None
-
-    if architecture in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
-        model_class = QEFFAutoModelForCausalLM
-    else:
-        logger.error(f"Model class for model name {model_name} not found in mapping")
-        return
-
-    qeff_model = model_class.from_pretrained(
-        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-        cache_dir=cache_dir,
-        hf_token=hf_token,
-        full_batch_size=full_batch_size,
+    qeff_model = load_qeff_model(
+        model_name,
+        cache_dir,
+        hf_token,
+        full_batch_size,
+        local_model_dir,
     )
     onnx_model_path = qeff_model.export()
     logger.info(f"Generated onnx_path: {onnx_model_path}")
