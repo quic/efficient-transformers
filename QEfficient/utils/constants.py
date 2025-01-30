@@ -63,6 +63,11 @@ class Constants:
     MAX_QPC_LIMIT = 30
     MAX_RETRIES = 5  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
     NUM_SPECULATIVE_TOKENS = 2
+    CTX_LEN_VLM = 1280
+    BASE_URL_LLAVA = (
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg"
+    )
+    PROMPT_LLAVA = "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud"
 
 
 @dataclass

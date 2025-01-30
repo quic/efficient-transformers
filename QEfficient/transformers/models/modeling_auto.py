@@ -11,11 +11,22 @@ import warnings
 from pathlib import Path
 from typing import List, Optional, Union
 
+from PIL import Image
+import QEfficient.generation
+import QEfficient.generation.text_generation_inference
+import requests
 import numpy as np
 import torch
 import torch.nn as nn
-from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast
-
+from transformers import (
+    AutoModel,
+    AutoModelForCausalLM,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+    AutoModelForImageTextToText,
+    AutoProcessor,
+)
+from transformers import TextStreamer
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
@@ -23,8 +34,10 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
-from QEfficient.utils import constants, get_padding_shape_from_config
+from QEfficient.utils import constants, get_padding_shape_from_config, get_num_layers_vlm
 from QEfficient.utils.cache import to_hashable
+from QEfficient.utils.constants import Constants
+from QEfficient.generation.text_generation_inference import write_io_files
 
 logger = logging.getLogger(__file__)
 
@@ -419,6 +432,524 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             )
         else:
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
+
+
+class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
+    """
+    The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
+    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+
+    ``Mandatory`` Args:
+        :model (nn.Module):  PyTorch model
+        :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
+        :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
+
+
+    .. code-block:: python
+
+        from QEfficient import QEFFAutoModelForImageTextToText
+        from transformers import AutoTokenizer
+
+        model_name = "llava"
+        model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=2)
+        model.compile(prefill_seq_len=1024, ctx_len=1280, num_cores=16, num_devices=1)
+
+        processor = AutoProcessor.from_pretrained(model_name)
+        model.generate(inputs, streamer, device_ids, is)
+    """
+
+    _hf_auto_class = AutoModelForImageTextToText
+    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
+    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    def __init__(
+        self,
+        model: nn.Module,
+        processor: AutoProcessor,
+        continuous_batching: bool = False,
+        qpc_session=None,
+        is_tlm: bool = False,
+        **kwargs,
+    ):
+        model_class_name = model.__class__.__name__
+        if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("ForConditionalGeneration")):
+            raise TypeError(f"Required pytorch module for CausalLM or ConditionalGeneration, got {model_class_name}")
+
+        if continuous_batching:
+            raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
+        if is_tlm:
+            raise NotImplementedError("Speculative Decoding is not supported for image-text-to-text models yet.")
+
+        if kwargs.pop("full_batch_size", None):
+            raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
+            # warnings.warn(
+            #     "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
+            # )
+        # breakpoint()
+        # phi3vwrapper_model=Phi3VModelWrapper(model)
+        super().__init__(model)
+
+        # Set use_cache=True to get KV values as output during ONNX export
+        self.model.config.use_cache = True
+        self.processor = processor
+        self.num_layers_lang = get_num_layers_vlm(self.model.config)
+        # self.num_layers = model.config.num_hidden_layers
+        # self.num_key_value_heads = model.config.num_key_value_heads
+        # self.head_dim = model.config.hidden_size // model.config.num_attention_heads
+        self.continuous_batching = continuous_batching
+        self.is_tlm = is_tlm
+        self.qpc_session = qpc_session
+        self.pad_token_id = model.config.pad_token_id
+        self.ctx_len = 1280
+        self.generate_func = {
+            # 'MllamaForConditionalGeneration': self._generate_inputs_mllama,
+            "LlavaForConditionalGeneration": self.generate_inputs_llava,
+        }
+
+    @classmethod
+    def from_pretrained(
+        cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, *args, **kwargs
+    ):
+        """
+        This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
+        Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
+
+        Args:
+            :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
+            :continuous_batching (bool): Whether this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
+            :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
+            :args, kwargs: Additional arguments to pass to transformers.AutoModelForCausalLM.
+
+        .. code-block:: python
+
+            from QEfficient import QEFFAutoModelForCausalLM
+            from transformers import AutoTokenizer
+
+            # Initialize the model using from_pretrained similar to transformers.AutoModelForCausalLM
+            model_name = "gpt2"
+            model = QEFFAutoModelForCausalLM.from_pretrained(model_name)
+
+            # Now you can directly compile the model for Cloud AI 100
+            model.compile(num_cores=16) # Considering you have a Cloud AI 100 Standard SKU
+
+            # You can now execute the model
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+            model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
+        """
+
+        if kwargs.pop("full_batch_size", None):
+            raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
+
+        self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, *args, **kwargs)
+        self.continuous_batching = continuous_batching
+        breakpoint()
+        return self
+
+    @property
+    def model_hash(self) -> str:
+        # Compute the hash with: model_config, continuous_batching, transforms
+        mhash = hashlib.sha256()
+        mhash.update(to_hashable(self.model.config.to_diff_dict()))
+        mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
+        mhash.update(to_hashable({"is_tlm": self.is_tlm}))
+        mhash.update(to_hashable(self._transform_names()))
+        mhash = mhash.hexdigest()[:16]
+        return mhash
+
+    def generate_inputs(self, **kwargs):
+        generate_func = self.generate_func.get(self.model_name)
+        if not generate_func:
+            raise ValueError(f"Input generation function for model {self.model_name} not found.")
+
+        return generate_func(**kwargs)
+
+    def generate_inputs_llava(self, **kwargs):
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        ctx_len: int = 1024
+        model_name: str = "llava-hf/llava-1.5-7b-hf"
+        processor = AutoProcessor.from_pretrained(model_name, use_fast=False)
+        streamer = TextStreamer(processor.tokenizer)
+        txt_cfg = self.model.config.text_config
+        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
+        img = Image.open(requests.get(Constants.BASE_URL_LLAVA, stream=True).raw)
+        prompt = processor.apply_chat_template(
+            [{"role": "user", "content": [{"type": "text", "text": Constants.PROMPT_LLAVA}, {"type": "image"}]}],
+            add_generation_prompt=True,
+        )
+        breakpoint()
+        inputs = dict(processor(images=img, text=prompt, return_tensors="pt"))
+        inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
+        inputs["past_key_values"] = []
+        for i in range(txt_cfg.num_hidden_layers):
+            inputs["past_key_values"].append(
+                (
+                    torch.zeros(1, txt_cfg.num_key_value_heads, ctx_len, head_dim),
+                    torch.zeros(1, txt_cfg.num_key_value_heads, ctx_len, head_dim),
+                )
+            )
+        inputs["position_ids"] = torch.full(inputs["position_ids"].shape, ctx_len - 1)
+        dynamic_axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+            "pixel_values": {0: "img_batch_size", 2: "img_size", 3: "img_size"},
+        }
+        for i in range(txt_cfg.num_hidden_layers):
+            dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
+            dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
+
+        output_names = [
+            "logits",
+            "pixel_values_RetainedState",
+            *[f"past_{kv}.{i}_RetainedState" for i in range(txt_cfg.num_hidden_layers) for kv in ["key", "value"]],
+        ]
+        breakpoint()
+        return inputs, dynamic_axes, output_names
+
+    def export(
+        self,
+        export_dir: Optional[str] = None,
+        **kwargs,
+    ) -> str:
+        """
+        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+
+        ``Optional`` Args:
+            :export_dir (str, optional): The directory path to store ONNX-graph.
+            :**kwargs: Keyword arguments for ``generate_inputs``. If "ctx_len" is passed, it will be used as the context length. Otherwise, it will be set to 1280.
+
+        Returns:
+            :str: Path of the generated ``ONNX`` graph.
+        """
+        example_inputs, dynamic_axes, output_names = self.generate_inputs(**kwargs)
+        return self._export(
+            example_inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+        )
+
+    def compile(
+        self,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        prefill_seq_len: int = 1024,
+        ctx_len: int = 1280,
+        batch_size: int = 1,
+        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: Optional[int] = None,
+        num_devices: int = 1,
+        num_cores: int = 16,  # FIXME: Make this mandatory arg
+        mxfp6_matmul: bool = False,
+        mxint8_kv_cache: bool = False,
+        num_speculative_tokens: Optional[int] = None,
+        enable_qnn: bool = False,
+        qnn_config: Optional[str] = None,
+        **compiler_options,
+    ) -> str:
+        """
+        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
+        If the model has not been exported yet, this method will handle the export process.
+        You can pass any other arguments that the `qaic-exec` takes as extra kwargs.
+
+        ``Optional`` Args:
+            :onnx_path (str, optional): Path to pre-exported onnx model.
+            :compile_dir (str, optional): Path for saving the qpc generated.
+            :num_cores (int): Number of cores used to compile the model.
+            :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :prefill_seq_len (int, optional): The length of the Prefill prompt should be less that ``prefill_seq_len``. ``Defaults to 32``.
+            :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
+            :full_batch_size (int, optional): Continuous batching batch size.
+            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
+            :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
+            :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
+            :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
+            :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+            :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
+            :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
+
+        Returns:
+            :str: Path of the compiled ``qpc`` package.
+        """
+        # if self.is_tlm:
+        #     # assert num_speculative_tokens cfg is acceptable if defined
+        #     if num_speculative_tokens is None:
+        #         raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` is True.")
+        #     if not isinstance(num_speculative_tokens, int) and num_speculative_tokens < 2:
+        #         ValueError(
+        #             f"`num_speculative_tokens` arg should be an integer greater than 1, got {num_speculative_tokens}"
+        #         )
+        #     num_logits_to_keep = num_speculative_tokens + 1
+        #     if prefill_seq_len < num_logits_to_keep:
+        #         raise ValueError(
+        #             f"sequence length ({prefill_seq_len}) must be at least `num_speculative_tokens+1` ({num_logits_to_keep})"
+        #         )
+
+        # if self.continuous_batching and full_batch_size is None:
+        #     raise TypeError("missing required argument: 'full_batch_size'")
+
+        # if kv_cache_batch_size and not full_batch_size:
+        #     raise ValueError(
+        #         "Prefix caching is enabled only for continuous batching. Please pass `full_batch_size` argument and make sure you pass `continuous_batching=True` in the `from_pretrained` call"
+        #     )
+        breakpoint()
+        self.seq_len_constant = prefill_seq_len
+        kv_cache_batch_size = (
+            kv_cache_batch_size if kv_cache_batch_size else (full_batch_size if full_batch_size else batch_size)
+        )
+        # Define prefill specialization
+        prefill_specialization = {
+            # Prefill is always run with single BS for continuous batching.
+            "batch_size": 1 if self.continuous_batching else batch_size,
+            "seq_len": prefill_seq_len,
+            "ctx_len": ctx_len,
+            "img_batch_size": 1,
+            "img_size": 336,
+            # TODO: should be renamed to kv_cache_batch_size in specialzation too
+        }
+        prefill_specialization.update({"num_logits_to_keep": 1}) if self.is_tlm else ...
+        if self.continuous_batching:
+            prefill_specialization.update({"full_batch_size": kv_cache_batch_size})
+        else:
+            prefill_specialization.update({"batch_size": kv_cache_batch_size})
+        prefill_specialization.update({"full_batch_exec_size": full_batch_size}) if full_batch_size else ...
+        specializations = [
+            prefill_specialization,
+        ]
+
+        # Skip decode specialization if we are not in continuous batching and prefill_seq_len=1 as this repeats prefill specialization
+        if prefill_seq_len != 1 or self.continuous_batching:
+            decode_specialization = {
+                "batch_size": full_batch_size if self.continuous_batching else batch_size,
+                "seq_len": num_speculative_tokens + 1 if self.is_tlm else 1,
+                "ctx_len": ctx_len,
+                "img_batch_size": 1,
+                "img_size": 336,
+            }
+            if self.continuous_batching:
+                decode_specialization.update({"full_batch_size": kv_cache_batch_size})
+            else:
+                decode_specialization.update({"batch_size": kv_cache_batch_size})
+            decode_specialization.update({"num_logits_to_keep": num_speculative_tokens + 1}) if self.is_tlm else ...
+            specializations.append(decode_specialization)
+
+        if enable_qnn:
+            if compiler_options:
+                logger.warning("Extra arguments to QNN compilation are supported via qnn_config.json only")
+
+            qpc_path = self._qnn_compile(
+                onnx_path,
+                compile_dir,
+                specializations=specializations,
+                prefill_seq_len=prefill_seq_len,
+                ctx_len=ctx_len,
+                batch_size=batch_size,
+                full_batch_size=full_batch_size,
+                mdp_ts_num_devices=num_devices,
+                num_cores=num_cores,
+                mxfp6_matmul=mxfp6_matmul,
+                mxint8_kv_cache=mxint8_kv_cache,
+                qnn_config=qnn_config,
+            )
+        else:
+            # Custom IO
+            custom_io = {}
+            kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+            custom_io["pixel_values"] = kv_cache_dtype
+            for suffix in ["", "_RetainedState"]:
+                for i in range(self.num_layers_lang):
+                    for kv in ["key", "value"]:
+                        custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+                custom_io["pixel_values_RetainedState"] = kv_cache_dtype
+            qpc_path = self._compile(
+                onnx_path,
+                compile_dir,
+                compile_only=True,
+                retained_state=True,
+                specializations=specializations,
+                convert_to_fp16=True,
+                mxfp6_matmul=mxfp6_matmul,
+                custom_io=custom_io,
+                mdp_ts_num_devices=num_devices,
+                num_speculative_tokens=num_speculative_tokens,
+                aic_num_cores=num_cores,
+                **compiler_options,
+            )
+        return qpc_path
+
+    def generate(
+        self,
+        inputs: torch.Tensor,
+        streamer: Optional[TextStreamer],
+        device_ids: List[int] = None,
+        runtime_ai100: bool = True,
+    ) -> Union[torch.Tensor, np.ndarray]:
+        """
+        This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+        ``Mandatory`` Args:
+            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+        ``optional`` Args:
+            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
+            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
+        Returns:
+            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
+        """
+        # AI_100 runtime
+        if runtime_ai100:
+            if not isinstance(self.qpc_path, Path):
+                raise TypeError("Please run compile API first!")
+
+            return self.cloud_ai_100_image_text_to_text_generate(
+                inputs=inputs, device_ids=device_ids, streamer=streamer
+            )
+        # PyTorch runtime
+        else:
+            return self.pytorch_image_text_to_text_generate(model=self.model, inputs=inputs, streamer=streamer)
+
+    # TODO: Add the code based on how we did in single inference script
+
+    def cloud_ai_100_image_text_to_text_generate(
+        self,
+        inputs: torch.Tensor,
+        device_ids: List[int] = [0],
+        streamer: TextStreamer = None,
+        write_io_dir: Optional[str] = None,
+    ) -> np.ndarray:
+        """
+        Generates features with list of prompts using AI 100 runtime.
+
+        ``Mandatory`` Args:
+            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+        ``Optional`` Args:
+            device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
+
+        Returns:
+           np.ndarray: A list of dictionaries containing the generated output features.
+        """
+
+        if self.qpc_session is None:
+            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
+            self.batch_size = self.qpc_session.bindings[0].dims[0]
+            self.seq_len = self.qpc_session.bindings[0].dims[1]
+        # Skip inputs/outputs
+        self.qpc_session.skip_buffers(
+            [x for x in self.qpc_session.input_names + self.qpc_session.output_names if x.startswith("past_")]
+            + ["pixel_values_RetainedState"]
+            + (["image_sizes_RetainedState"] if "image_sizes_RetainedState" in self.qpc_session.output_names else [])
+        )
+
+        # Read prompt and ctx len from session
+        batch_size = max(
+            [x[self.qpc_session.binding_index_map["input_ids"]][1][0] for x in self.qpc_session.allowed_shapes]
+            + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[0]]
+        )
+        prefill_seq_len = max(
+            [x[self.qpc_session.binding_index_map["input_ids"]][1][1] for x in self.qpc_session.allowed_shapes]
+            + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[1]]
+        )
+        processor = inputs.pop("processor") if "processor" in inputs else None
+        input_len = inputs["attention_mask"].sum(1, keepdims=True)
+        padded_len = inputs["input_ids"].shape[1]
+        num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+        generation_len = self.ctx_len - input_len.max()
+        assert generation_len > 0, "generation length should be greater than zero"
+        generated_ids = np.full((batch_size, generation_len + 1), processor.tokenizer.pad_token_id)
+        img = Image.open(requests.get(Constants.BASE_URL_LLAVA, stream=True).raw)
+        inputs = processor(
+            images=img, text=inputs.pop("prompt"), return_tensors="np", padding="max_length", max_length=padded_len
+        )
+        inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
+        inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+        for i in range(num_chunks):
+            chunk_inputs = inputs.copy()
+            chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            outputs = self.qpc_session.run(chunk_inputs)
+            if write_io_dir:
+                write_io_files(inputs, outputs, write_io_dir, "prefill", "aic_batch_io", True, False)
+        # Get first token
+        inputs["input_ids"] = outputs["logits"].argmax(2)
+        inputs["position_ids"] = input_len
+        generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
+        finished_sequences = inputs["input_ids"] == processor.tokenizer.eos_token_id
+        breakpoint()
+        if streamer is not None:
+            streamer.put(inputs["input_ids"][0])
+        self.qpc_session.skip_buffers(["pixel_values"])
+        if "image_sizes" in self.qpc_session.input_names:
+            self.qpc_session.skip_buffers(["image_sizes"])
+        inputs.pop("pixel_values")
+        if "image_sizes" in inputs:
+            inputs.pop("image_sizes")
+        breakpoint()
+        # Decode loop
+        for num_token in range(1, generation_len):
+            outputs = self.qpc_session.run(inputs)
+            if write_io_dir:
+                write_io_files(inputs, outputs, write_io_dir, "decode", "aic_batch_io", True, False)
+                write_io_dir = None
+
+            # Prepare inputs for next iteration
+            inputs["input_ids"] = outputs["logits"].argmax(2)
+            inputs["position_ids"] += 1
+            generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
+
+            finished_sequences |= inputs["input_ids"] == self.processor.tokenizer.eos_token_id
+            if streamer is not None:
+                streamer.put(inputs["input_ids"][0])
+            if finished_sequences.all():
+                break
+        generated_texts = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        breakpoint()
+        return generated_texts
+
+    def pytorch_image_text_to_text_generate_generate(
+        self,
+        model,
+        inputs: Union[torch.Tensor, np.ndarray],
+        streamer: TextStreamer,
+    ) -> List[torch.Tensor]:
+        """
+        Generates features from a list of text prompts using a PyTorch model.
+
+        ``Mandatory`` Args:
+            :model: The transformed PyTorch model used for generating features.
+            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+            :streamer (TextStreamer): A TextStreamer object used for streaming the generated text.
+
+        Returns:
+            torch.Tensor: A list of output features generated by the model for each prompt.
+        """
+        # inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
+        # inputs["past_key_values"] = []
+        # for _ in range(model.config.num_hidden_layers):
+        #     inputs["past_key_values"].append((
+        #         torch.zeros(1, model.config.num_key_value_heads, self.ctx_len,self.head_dim),
+        #         torch.zeros(1, model.config.num_key_value_heads, self.ctx_len, self.head_dim),
+        #     ))
+        self.batch_size = inputs["input_ids"].shape[0]
+        generation_len = self.ctx_len - inputs["input_ids"].shape[1]
+        generated_ids = torch.full((self.batch_size, generation_len + 1), self.processor.tokenizer.pad_token_id)
+
+        outputs = model(**inputs)
+
+        inputs["input_ids"] = outputs[0].argmax(2)
+        inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
+        streamer.put(inputs["input_ids"])
+
+        for _ in range(generation_len):
+            outputs = model(**inputs)
+            inputs["input_ids"] = outputs[0].argmax(2)
+            inputs["position_ids"] += 1
+            streamer.put(inputs["input_ids"])
+            generated_ids[:, _] = inputs["input_ids"].squeeze(1)
+            generated_texts = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+            for i in range(self.batch_size):
+                print(i, generated_texts[i])
+
+        return generated_ids
 
 
 class QEFFAutoModel(QEFFTransformersBase):
