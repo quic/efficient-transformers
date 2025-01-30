@@ -36,7 +36,7 @@ from QEfficient.generation.text_generation_inference import write_io_files
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
-from QEfficient.utils import constants, get_num_layers_vlm, get_padding_shape_from_config
+from QEfficient.utils import constants, get_num_layers_vlm, get_padding_shape_from_config, get_padding_shape_vlm
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.constants import Constants
 
@@ -452,7 +452,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         from transformers import AutoTokenizer
 
         model_name = "llava"
-        model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=2)
+        model = QEFFAutoModelForImageTexttoText.from_pretrained(model_name)
         model.compile(prefill_seq_len=1024, ctx_len=1280, num_cores=16, num_devices=1)
 
         processor = AutoProcessor.from_pretrained(model_name)
@@ -483,18 +483,15 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
 
         if kwargs.pop("full_batch_size", None):
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
-            # warnings.warn(
-            #     "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
-            # )
+            warnings.warn(
+                "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
+            )
         super().__init__(model)
 
         # Set use_cache=True to get KV values as output during ONNX export
         self.model.config.use_cache = True
         self.processor = processor
-        self.num_layers_lang = get_num_layers_vlm(self.model.config)
-        # self.num_layers = model.config.num_hidden_layers
-        # self.num_key_value_heads = model.config.num_key_value_heads
-        # self.head_dim = model.config.hidden_size // model.config.num_attention_heads
+        self.num_layers = get_num_layers_vlm(self.model.config)
         self.continuous_batching = continuous_batching
         self.is_tlm = is_tlm
         self.qpc_session = qpc_session
@@ -566,22 +563,21 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         ctx_len: int = 1024
         model_name: str = "llava-hf/llava-1.5-7b-hf"
         processor = AutoProcessor.from_pretrained(model_name, use_fast=False)
-        txt_cfg = self.model.config.text_config
-        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
         img = Image.open(requests.get(Constants.BASE_URL_LLAVA, stream=True).raw)
         prompt = processor.apply_chat_template(
             [{"role": "user", "content": [{"type": "text", "text": Constants.PROMPT_LLAVA}, {"type": "image"}]}],
             add_generation_prompt=True,
         )
         breakpoint()
+        padding_shape = get_padding_shape_vlm(self.model.config, bs)
         inputs = dict(processor(images=img, text=prompt, return_tensors="pt"))
         inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
         inputs["past_key_values"] = []
-        for i in range(txt_cfg.num_hidden_layers):
+        for i in range(self.num_layers):
             inputs["past_key_values"].append(
                 (
-                    torch.zeros(bs, txt_cfg.num_key_value_heads, ctx_len, head_dim),
-                    torch.zeros(bs, txt_cfg.num_key_value_heads, ctx_len, head_dim),
+                    torch.zeros(padding_shape),
+                    torch.zeros(padding_shape),
                 )
             )
         inputs["position_ids"] = torch.full(inputs["position_ids"].shape, ctx_len - 1)
@@ -590,14 +586,14 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             "position_ids": {0: "batch_size", 1: "seq_len"},
             "pixel_values": {0: "img_batch_size", 2: "img_size", 3: "img_size"},
         }
-        for i in range(txt_cfg.num_hidden_layers):
+        for i in range(self.num_layers):
             dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
             dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
 
         output_names = [
             "logits",
             "pixel_values_RetainedState",
-            *[f"past_{kv}.{i}_RetainedState" for i in range(txt_cfg.num_hidden_layers) for kv in ["key", "value"]],
+            *[f"past_{kv}.{i}_RetainedState" for i in range(self.num_layers) for kv in ["key", "value"]],
         ]
         return inputs, dynamic_axes, output_names
 
@@ -754,7 +750,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
             custom_io["pixel_values"] = kv_cache_dtype
             for suffix in ["", "_RetainedState"]:
-                for i in range(self.num_layers_lang):
+                for i in range(self.num_layers):
                     for kv in ["key", "value"]:
                         custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
                 custom_io["pixel_values_RetainedState"] = kv_cache_dtype
