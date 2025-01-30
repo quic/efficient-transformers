@@ -25,7 +25,7 @@ QAIC_INSTALLED = check_qaic_sdk()
 # Conditionally import QAIC-related modules if the SDK is installed
 __version__ = "0.0.1.dev0"
 if QAIC_INSTALLED:
-    from QEfficient.base import QEFFAutoModel, QEFFAutoModelForCausalLM, QEFFCommonLoader
+    from QEfficient.base import QEFFAutoModel, QEFFAutoModelForCausalLM, QEFFCommonLoader,QEFFAutoModelForImageTextToText
     from QEfficient.compile.compile_helper import compile
     from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
     from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
@@ -43,6 +43,7 @@ if QAIC_INSTALLED:
         "QEFFAutoModel",
         "QEFFAutoModelForCausalLM",
         "QEffAutoPeftModelForCausalLM",
+        "QEFFAutoModelForImageTextToText",
         "QEFFCommonLoader",
     ]
 
