@@ -1,14 +1,11 @@
-from typing import Optional
 
-import numpy as np
 import pytest
-from PIL import Image
 import requests
-import torch
-from transformers import AutoModelForImageTextToText, AutoProcessor
-from transformers import TextStreamer
+from PIL import Image
+from transformers import AutoModelForImageTextToText, AutoProcessor, TextStreamer
+
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
-from QEfficient.utils import hf_download, get_num_layers_vlm, get_padding_shape_vlm
+from QEfficient.utils import hf_download
 from QEfficient.utils.constants import Constants
 
 test_models = [

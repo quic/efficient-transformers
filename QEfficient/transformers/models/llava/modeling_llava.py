@@ -6,18 +6,14 @@
 # -----------------------------------------------------------------------------
 
 from typing import List, Optional, Tuple, Union
+
 import torch
 from torch import nn
-from PIL import Image
-import requests
-from transformers import AutoProcessor
-from transformers import TextStreamer
 from transformers.models.llava.modeling_llava import (
     LlavaCausalLMOutputWithPast,
     LlavaForConditionalGeneration,
     logger,
 )
-from QEfficient.utils.constants import Constants
 
 
 class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
@@ -171,12 +167,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
                     raise ValueError(
                         f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
                     )
-                # special_image_mask = (
-                #     (input_ids == self.config.image_token_index)
-                #     .unsqueeze(-1)
-                #     .expand_as(inputs_embeds)
-                #     .to(inputs_embeds.device)
-                # )
+    
                 mask = input_ids == self.config.image_token_index
                 indices1 = mask.to(torch.int64).cumsum(1) - 1
                 indices0 = torch.arange(mask.shape[0]).view(-1, 1)

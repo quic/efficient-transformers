@@ -53,7 +53,6 @@ from transformers.models.llama.modeling_llama import (
 )
 from transformers.models.llava.modeling_llava import (
     LlavaForConditionalGeneration,
-    LlavaCausalLMOutputWithPast,
 )
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,

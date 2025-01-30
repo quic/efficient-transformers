@@ -11,33 +11,34 @@ import warnings
 from pathlib import Path
 from typing import List, Optional, Union
 
-from PIL import Image
-import QEfficient.generation
-import QEfficient.generation.text_generation_inference
-import requests
 import numpy as np
+import requests
 import torch
 import torch.nn as nn
+from PIL import Image
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
     AutoModelForImageTextToText,
     AutoProcessor,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+    TextStreamer,
 )
-from transformers import TextStreamer
+
 import QEfficient
+import QEfficient.generation
+import QEfficient.generation.text_generation_inference
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.generation.text_generation_inference import write_io_files
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
-from QEfficient.utils import constants, get_padding_shape_from_config, get_num_layers_vlm
+from QEfficient.utils import constants, get_num_layers_vlm, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.constants import Constants
-from QEfficient.generation.text_generation_inference import write_io_files
 
 logger = logging.getLogger(__file__)
 
@@ -485,8 +486,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             # warnings.warn(
             #     "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             # )
-        # breakpoint()
-        # phi3vwrapper_model=Phi3VModelWrapper(model)
         super().__init__(model)
 
         # Set use_cache=True to get KV values as output during ONNX export
@@ -500,9 +499,8 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         self.is_tlm = is_tlm
         self.qpc_session = qpc_session
         self.pad_token_id = model.config.pad_token_id
-        self.ctx_len = 1280
+        self.ctx_len = Constants.CTX_LEN_VLM
         self.generate_func = {
-            # 'MllamaForConditionalGeneration': self._generate_inputs_mllama,
             "LlavaForConditionalGeneration": self.generate_inputs_llava,
         }
 
@@ -568,7 +566,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         ctx_len: int = 1024
         model_name: str = "llava-hf/llava-1.5-7b-hf"
         processor = AutoProcessor.from_pretrained(model_name, use_fast=False)
-        streamer = TextStreamer(processor.tokenizer)
         txt_cfg = self.model.config.text_config
         head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
         img = Image.open(requests.get(Constants.BASE_URL_LLAVA, stream=True).raw)
@@ -583,8 +580,8 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         for i in range(txt_cfg.num_hidden_layers):
             inputs["past_key_values"].append(
                 (
-                    torch.zeros(1, txt_cfg.num_key_value_heads, ctx_len, head_dim),
-                    torch.zeros(1, txt_cfg.num_key_value_heads, ctx_len, head_dim),
+                    torch.zeros(bs, txt_cfg.num_key_value_heads, ctx_len, head_dim),
+                    torch.zeros(bs, txt_cfg.num_key_value_heads, ctx_len, head_dim),
                 )
             )
         inputs["position_ids"] = torch.full(inputs["position_ids"].shape, ctx_len - 1)
@@ -602,7 +599,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             "pixel_values_RetainedState",
             *[f"past_{kv}.{i}_RetainedState" for i in range(txt_cfg.num_hidden_layers) for kv in ["key", "value"]],
         ]
-        breakpoint()
         return inputs, dynamic_axes, output_names
 
     def export(
@@ -874,7 +870,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         inputs["position_ids"] = input_len
         generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
         finished_sequences = inputs["input_ids"] == processor.tokenizer.eos_token_id
-        breakpoint()
         if streamer is not None:
             streamer.put(inputs["input_ids"][0])
         self.qpc_session.skip_buffers(["pixel_values"])
@@ -883,7 +878,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         inputs.pop("pixel_values")
         if "image_sizes" in inputs:
             inputs.pop("image_sizes")
-        breakpoint()
         # Decode loop
         for num_token in range(1, generation_len):
             outputs = self.qpc_session.run(inputs)
@@ -902,7 +896,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             if finished_sequences.all():
                 break
         generated_texts = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        breakpoint()
         return generated_texts
 
     def pytorch_image_text_to_text_generate_generate(
