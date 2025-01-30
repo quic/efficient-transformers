@@ -466,7 +466,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
     def __init__(
         self,
         model: nn.Module,
-        processor: AutoProcessor,
+        processor: Optional[AutoProcessor] = None,
         continuous_batching: bool = False,
         qpc_session=None,
         is_tlm: bool = False,
@@ -560,7 +560,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
 
     def generate_inputs_llava(self, **kwargs):
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        ctx_len: int = 1024
+        ctx_len: int = 1280
         model_name: str = "llava-hf/llava-1.5-7b-hf"
         processor = AutoProcessor.from_pretrained(model_name, use_fast=False)
         img = Image.open(requests.get(Constants.BASE_URL_LLAVA, stream=True).raw)
@@ -675,7 +675,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             raise ValueError(
                 "Prefix caching is enabled only for continuous batching. Please pass `full_batch_size` argument and make sure you pass `continuous_batching=True` in the `from_pretrained` call"
             )
-        breakpoint()
         self.seq_len_constant = prefill_seq_len
         kv_cache_batch_size = (
             kv_cache_batch_size if kv_cache_batch_size else (full_batch_size if full_batch_size else batch_size)
@@ -687,7 +686,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             "seq_len": prefill_seq_len,
             "ctx_len": ctx_len,
             "img_batch_size": 1,
-            "img_size": 336,
+            "img_size": Constants.IMG_SIZE,
             # TODO: should be renamed to kv_cache_batch_size in specialzation too
         }
         prefill_specialization.update({"num_logits_to_keep": 1}) if self.is_tlm else ...
@@ -707,7 +706,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
                 "seq_len": num_speculative_tokens + 1 if self.is_tlm else 1,
                 "ctx_len": ctx_len,
                 "img_batch_size": 1,
-                "img_size": 336,
+                "img_size": Constants.IMG_SIZE,
             }
             if self.continuous_batching:
                 decode_specialization.update({"full_batch_size": kv_cache_batch_size})
@@ -763,9 +762,10 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
     def generate(
         self,
         inputs: torch.Tensor,
-        streamer: Optional[TextStreamer],
+        streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
+        qpc_path: Optional[str] = None,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -779,9 +779,10 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         """
         # AI_100 runtime
         if runtime_ai100:
-            if not isinstance(self.qpc_path, Path):
+            if not isinstance(self.qpc_path, Path) and qpc_path is None:
                 raise TypeError("Please run compile API first!")
-
+            if qpc_path:
+                self.qpc_path = qpc_path
             return self.cloud_ai_100_image_text_to_text_generate(
                 inputs=inputs, device_ids=device_ids, streamer=streamer
             )
@@ -838,12 +839,23 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         generation_len = self.ctx_len - input_len.max()
         assert generation_len > 0, "generation length should be greater than zero"
         generated_ids = np.full((batch_size, generation_len + 1), processor.tokenizer.pad_token_id)
-        img = Image.open(requests.get(Constants.BASE_URL_LLAVA, stream=True).raw)
-        inputs = processor(
-            images=img, text=inputs.pop("prompt"), return_tensors="np", padding="max_length", max_length=padded_len
+        # img = Image.open(requests.get(Constants.BASE_URL_LLAVA, stream=True).raw)
+        breakpoint()
+        # inputs = processor(
+        #     images=img, text=inputs.pop("prompt"), return_tensors="np", padding="max_length", max_length=padded_len
+        # )
+        padding_tensor_1 = torch.full(
+            (inputs["input_ids"].shape[0], prefill_seq_len - inputs["input_ids"].shape[1]),
+            processor.tokenizer.pad_token_id,
         )
-        inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
+        padding_tensor_2 = torch.full((inputs["input_ids"].shape[0], prefill_seq_len - inputs["input_ids"].shape[1]), 0)
+        inputs["input_ids"] = torch.cat((inputs["input_ids"], padding_tensor_1), dim=1)
+        inputs["attention_mask"] = torch.cat((inputs["attention_mask"], padding_tensor_2), dim=1)
+        for key in ["input_ids", "attention_mask", "pixel_values"]:
+            if key in inputs:
+                inputs[key] = inputs[key].numpy()
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+        inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
         for i in range(num_chunks):
             chunk_inputs = inputs.copy()
             chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
@@ -853,7 +865,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
                 write_io_files(inputs, outputs, write_io_dir, "prefill", "aic_batch_io", True, False)
         # Get first token
         inputs["input_ids"] = outputs["logits"].argmax(2)
-        inputs["position_ids"] = input_len
+        inputs["position_ids"] = input_len.numpy()
         generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
         finished_sequences = inputs["input_ids"] == processor.tokenizer.eos_token_id
         if streamer is not None:
@@ -876,12 +888,12 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             inputs["position_ids"] += 1
             generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
 
-            finished_sequences |= inputs["input_ids"] == self.processor.tokenizer.eos_token_id
+            finished_sequences |= inputs["input_ids"] == processor.tokenizer.eos_token_id
             if streamer is not None:
                 streamer.put(inputs["input_ids"][0])
             if finished_sequences.all():
                 break
-        generated_texts = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        generated_texts = processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
         return generated_texts
 
     def pytorch_image_text_to_text_generate_generate(
