@@ -1006,16 +1006,8 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
                 if output_name.startswith("past_"):
                     custom_io_lang[output_name] = kv_cache_dtype
 
-            # custom_io = {}
-            # kv_cache_dtype = "float16"
-            # custom_io["pixel_values"] = kv_cache_dtype
-            # custom_io["pixel_values_RetainedState"] = kv_cache_dtype
-            # for suffix in ["", "_RetainedState"]:
-            #     for i in range(self.num_layers):
-            #         for kv in ["key", "value"]:
-            #             custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
-
             print("generating lang model")
+            compiler_options.update({"retained-state": True})
             self.lang_qpc_path = self._compile(
                 self.lang_onnx_path,
                 compile_dir,
@@ -1176,19 +1168,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         stream: bool = True,
         **kwargs,
     ):
-        # self.lang_qpc_path = Path(
-        #     "/home/rishinr/vision/vision_infra/llama-vision/qpc/Llama-3.2-11B-Vision-Instruct-language"
-        # )
-        # self.vision_qpc_path = Path(
-        #     "/home/rishinr/vision/vision_infra/llama-vision/qpc/Llama-3.2-11B-Vision-Instruct-vision"
-        # )
-        # self.lang_qpc_path = Path(
-        #     "/home/rishinr/.cache/qeff_models/mllama_bc/ModelWrapper-e34b1a9bd1cf14cb/qpc-0fd0400e8969c49e/qpc"
-        # )
-        # self.vision_qpc_path = Path(
-        #     "/home/rishinr/.cache/qeff_models/mllama_bc/VisionEncoder-e34b1a9bd1cf14cb/qpc-b4c5b2ba8c79d148/qpc"
-        # )
-
         lang_session = QAICInferenceSession(self.lang_qpc_path, device_id, activate=False)
         vision_session = QAICInferenceSession(self.vision_qpc_path, device_id)
 
