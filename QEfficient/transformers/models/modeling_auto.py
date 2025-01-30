@@ -664,27 +664,17 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-        # if self.is_tlm:
-        #     # assert num_speculative_tokens cfg is acceptable if defined
-        #     if num_speculative_tokens is None:
-        #         raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` is True.")
-        #     if not isinstance(num_speculative_tokens, int) and num_speculative_tokens < 2:
-        #         ValueError(
-        #             f"`num_speculative_tokens` arg should be an integer greater than 1, got {num_speculative_tokens}"
-        #         )
-        #     num_logits_to_keep = num_speculative_tokens + 1
-        #     if prefill_seq_len < num_logits_to_keep:
-        #         raise ValueError(
-        #             f"sequence length ({prefill_seq_len}) must be at least `num_speculative_tokens+1` ({num_logits_to_keep})"
-        #         )
+        if self.is_tlm:
+            raise TypeError("Speculative decoding for vision models is not implemented")
+        if self.continuous_batching:
+            raise TypeError("Continuos batching is not enabled for vision models")
+        if self.continuous_batching and full_batch_size is None:
+            raise TypeError("missing required argument: 'full_batch_size'")
 
-        # if self.continuous_batching and full_batch_size is None:
-        #     raise TypeError("missing required argument: 'full_batch_size'")
-
-        # if kv_cache_batch_size and not full_batch_size:
-        #     raise ValueError(
-        #         "Prefix caching is enabled only for continuous batching. Please pass `full_batch_size` argument and make sure you pass `continuous_batching=True` in the `from_pretrained` call"
-        #     )
+        if kv_cache_batch_size and not full_batch_size:
+            raise ValueError(
+                "Prefix caching is enabled only for continuous batching. Please pass `full_batch_size` argument and make sure you pass `continuous_batching=True` in the `from_pretrained` call"
+            )
         breakpoint()
         self.seq_len_constant = prefill_seq_len
         kv_cache_batch_size = (

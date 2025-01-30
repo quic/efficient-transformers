@@ -1,4 +1,3 @@
-
 import pytest
 import requests
 from PIL import Image
@@ -51,16 +50,6 @@ def generate_hf_inputs_llava(model_name, model, processor=None):
         add_generation_prompt=True,
     )
     inputs = processor(images=img, text=prompt, return_tensors="pt")
-    # inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
-    # inputs["past_key_values"] = []
-    # padding_shape = get_padding_shape_vlm(model.config)
-    # inputs["past_key_values"] = []
-    # num_hidden_layers = get_num_layers_vlm(model.config)
-    # for i in range(num_hidden_layers):
-    #     inputs["past_key_values"].append((
-    #         torch.zeros(padding_shape),
-    #         torch.zeros(padding_shape),
-    #     ))
     inputs["processor"] = processor
     return inputs
 
@@ -103,9 +92,8 @@ generate_hf_inputs_func_map = {
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
-    prompt_len: int = 1024,
-    ctx_len: int = 1280,
-    # num_speculative_tokens: Optional[int] = None,
+    prompt_len: int = Constants.PL_VLM,
+    ctx_len: int = Constants.CTX_LEN_VLM,
 ):
     """
     Validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
@@ -116,6 +104,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         :n_layers (int): Number of layers for the Model.
     """
     model_config = {"model_name": model_name}
+    # TODO:single layer
     # model_config["n_layer"] = n_layer
     breakpoint()
     model_hf, _ = load_image_text_to_text_model(model_config)

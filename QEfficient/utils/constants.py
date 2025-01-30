@@ -64,6 +64,7 @@ class Constants:
     MAX_RETRIES = 5  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
     NUM_SPECULATIVE_TOKENS = 2
     CTX_LEN_VLM = 1280
+    PL_VLM = 1024
     BASE_URL_LLAVA = (
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg"
     )

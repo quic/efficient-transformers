@@ -167,7 +167,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
                     raise ValueError(
                         f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
                     )
-    
+
                 mask = input_ids == self.config.image_token_index
                 indices1 = mask.to(torch.int64).cumsum(1) - 1
                 indices0 = torch.arange(mask.shape[0]).view(-1, 1)
@@ -175,8 +175,6 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
                 image_inputs_embeds = torch.where(mask.unsqueeze(-1), image_features_expanded, inputs_embeds)
                 # *where to skip image encoder for decode*
                 inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_inputs_embeds)
-                # image_features = image_features.to(inputs_embeds.device, inputs_embeds.dtype)
-                # inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
 
         outputs = self.language_model(
             attention_mask=attention_mask,
