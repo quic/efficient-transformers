@@ -69,11 +69,13 @@ from transformers.models.mixtral.modeling_mixtral import (
 from transformers.models.mllama.modeling_mllama import (
     MllamaCrossAttentionDecoderLayer,
     MllamaForCausalLM,
+    MllamaRotaryEmbedding,
     MllamaSelfAttentionDecoderLayer,
     MllamaTextCrossAttention,
     MllamaTextModel,
     MllamaTextRMSNorm,
     MllamaTextSelfAttention,
+    MllamaVisionModel,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 from transformers.models.phi.modeling_phi import PhiAttention, PhiDecoderLayer, PhiForCausalLM, PhiModel
@@ -165,10 +167,12 @@ from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
 from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaCrossAttentionDecoderLayer,
     QEffMllamaForCausalLM,
+    QEffMllamaRotaryEmbedding,
     QEffMllamaSelfAttentionDecoderLayer,
     QEffMllamaTextCrossAttention,
     QEffMllamaTextModel,
     QEffMllamaTextSelfAttention,
+    QEffMllamaVisionModel,
 )
 from QEfficient.transformers.models.mpt.modeling_mpt import (
     QEffMptAttention,
@@ -256,10 +260,12 @@ class KVCacheTransform(ModuleMappingTransform):
         # mllama
         MllamaForCausalLM: QEffMllamaForCausalLM,
         MllamaTextModel: QEffMllamaTextModel,
+        MllamaVisionModel: QEffMllamaVisionModel,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
         MllamaTextCrossAttention: QEffMllamaTextCrossAttention,
         MllamaCrossAttentionDecoderLayer: QEffMllamaCrossAttentionDecoderLayer,
         MllamaSelfAttentionDecoderLayer: QEffMllamaSelfAttentionDecoderLayer,
+        MllamaRotaryEmbedding: QEffMllamaRotaryEmbedding,
         # Mistral
         MistralAttention: QEffMistralAttention,
         MistralDecoderLayer: QEffMistralDecoderLayer,
