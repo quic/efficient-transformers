@@ -11,11 +11,27 @@ from time import perf_counter
 from typing import List, Optional, Union
 
 import numpy as np
+import pytest
 from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils.constants import Constants
+from QEfficient.utils.device_utils import get_available_device_id
 
+configs = [
+    pytest.param(
+        Constants.INPUT_STR,  # prompts
+        4,  # num_speculative_tokens
+        32,  # prefill_seq_len
+        128,  # ctx_len
+        1,  # prefill_bsz
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # draft_model_name
+        1,  # full_batch_size
+        3,  # max_ngram_size
+        id="CB llama",
+    ),
+]
 
 @dataclass
 class PerfMetrics:
@@ -186,7 +202,11 @@ def find_candidate_pred_tokens(
     return np.full(num_pred_tokens, fill_tok, dtype=np.int64), has_empty_tokens
 
 
-def pld_spec_decode_inference(
+@pytest.mark.parametrize(
+    "prompts, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, target_model_name, full_batch_size, max_ngram_size",
+    configs,
+)
+def test_pld_spec_decode_inference(
     prompts: List[str],
     num_speculative_tokens: int,
     prefill_seq_len: int,
@@ -194,7 +214,6 @@ def pld_spec_decode_inference(
     prefill_bsz: int,
     target_model_name: str,
     full_batch_size: Optional[int],
-    device_group: List[int],
     max_ngram_size: int,
 ) -> CloudAI100ExecInfo:
     """
@@ -214,6 +233,10 @@ def pld_spec_decode_inference(
     Returns:
         CloudAI100ExecInfo: Execution information, including performance metrics and generated text.
     """
+    # get device group
+    device_group: List[int] = get_available_device_id()
+    if not device_group:
+        pytest.skip("No available devices to run model on Cloud AI 100")
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(target_model_name, padding_side="right")
@@ -422,52 +445,14 @@ def pld_spec_decode_inference(
         target_model_name,
         full_batch_size,
     )
-    return exec_info
+    del target_model_session
+    del draft_model_session
+    generated_ids = np.asarray(generated_ids[0]).flatten()
+    gen_len = generated_ids.shape[0]
+    exec_info = target_model.generate(tokenizer, Constants.INPUT_STR, device_group)
+    cloud_ai_100_tokens = exec_info.generated_ids[0][
+        :gen_len
+    ]  # Because we always run for single input and single batch size
+    all_matching = np.array_equal(cloud_ai_100_tokens, generated_ids)
+    assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
 
-
-def comma_separated_ints(x: str):
-    return [int(qid) for qid in x.split(",")]
-
-
-def arg_parse():
-    parser = ArgumentParser(description="Draft-based SpD Inference")
-    parser.add_argument("--prompts", action="append", default=None, help="Input prompt(s)")
-    parser.add_argument("--num-speculative-tokens", type=int, default=3, help="Number of speculative tokens")
-    parser.add_argument("--prefill-seq-len", type=int, default=256, help="Prefill sequence length")
-    parser.add_argument("--ctx-len", type=int, default=1024, help="Context length")
-    parser.add_argument("--prefill-bsz", type=int, default=1, help="Prefill batch size")
-    parser.add_argument("--max-ngram-size", type=int, default=3, help="max ngram size")
-    parser.add_argument(
-        "--target-model-name", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0", help="Target model name"
-    )
-    parser.add_argument("--full-batch-size", type=int, default=2, help="Full batch size")
-    parser.add_argument(
-        "--device-group",
-        type=comma_separated_ints,
-        default="0",
-        help="comma separated device QIDs for target model (e.g., '1,2,3')",
-    )
-    args = parser.parse_args()
-    return args
-
-
-default_prompts = [
-    "can you write a long output and sneak in there as many 'hello, good morning to you' sayings while making sure the whole paragraph makes sense?",
-    "imagine you had to teach a baby how to say 'BANANAS ARE SO YUMMY'. please write a story that says as much as possible 'BANANAS ARE SO YUMMY' so that the baby is able to memorize it and eventually say it with ease.",
-]
-
-
-def main():
-    args = arg_parse()
-    if args.prompts is None:
-        args.prompts = default_prompts
-    exec_info = pld_spec_decode_inference(**vars(args))
-    print(exec_info)
-    prompts = exec_info.prompts
-    generated_texts = exec_info.generated_texts
-    for prompt, generation in zip(prompts, generated_texts):
-        print(f"{prompt=} {generation=}\n")
-
-
-if __name__ == "__main__":
-    main()
