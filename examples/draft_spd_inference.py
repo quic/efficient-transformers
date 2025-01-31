@@ -156,7 +156,8 @@ def draft_spec_decode_inference(
     draft_model_name: str,
     target_model_name: str,
     full_batch_size: Optional[int],
-    device_group: List[int],
+    target_device_group: List[int],
+    draft_device_group: List[int],
 ) -> CloudAI100ExecInfo:
     """
     Perform draft speculative decode inference on the given prompts.
@@ -170,7 +171,8 @@ def draft_spec_decode_inference(
         draft_model_name (str): Name of the draft model.
         target_model_name (str): Name of the target model.
         full_batch_size (Optional[int]): Full batch size.
-        device_group (List[int]): List of device IDs.
+        target_device_group (List[int]): List of device IDs for target model.
+        draft_device_group (List[int]): List of device IDs for draft model.
 
     Returns:
         CloudAI100ExecInfo: Execution information, including performance metrics and generated text.
@@ -189,26 +191,28 @@ def draft_spec_decode_inference(
     )
     draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, continuous_batching=continuous_batching)
 
-    num_devices = len(device_group)
+    target_num_devices = len(target_device_group)
     target_model_qpc_path: str = target_model.compile(
         num_cores=11,
-        num_devices=num_devices,
+        num_devices=target_num_devices,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         aic_enable_depth_first=True,
         full_batch_size=full_batch_size,
         num_speculative_tokens=num_speculative_tokens,
     )
+    draft_num_devices = len(draft_device_group)
     draft_model_qpc_path: str = draft_model.compile(
         num_cores=5,
+        num_devices=draft_num_devices,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         aic_enable_depth_first=True,
         full_batch_size=full_batch_size,
     )
     # init qaic session
-    target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=device_group)
-    draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=device_group)
+    target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=target_device_group)
+    draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=draft_device_group)
 
     # skip inputs/outputs buffers
     target_model_session.skip_buffers(set([x for x in target_model_session.input_names if x.startswith("past_")]))
@@ -323,19 +327,13 @@ def draft_spec_decode_inference(
         all_accept[valid_batch_indices] = num_tokens_selected[valid_batch_indices] == num_speculative_tokens + 1
         mean_num_accepted_tokens += num_tokens_selected[valid_batch_indices].mean().item()
         # append selected tokens to the generated_ids
-        tlm_precode_position_ids = tlm_precode_inputs["position_ids"] + num_tokens_selected.reshape(
-            decode_batch_size, 1
-        )
-        # tlm_precode_position_ids = tlm_precode_inputs["position_ids"] + num_tokens_selected.reshape(decode_batch_size,1)+1
         for bi, valid in enumerate(valid_batch_indices):
             if not valid:
                 continue
             accepted_tokens = num_tokens_selected[bi]
             num_tokens_to_append = min(accepted_tokens, max_gen_len[bi] - len(generated_ids[bi]))
             generated_ids[bi].extend(target_tokens[bi, :num_tokens_to_append].tolist())
-            # position_ids > ctx_len-1 result in erronous output for logits at each seq_len of TLM
-            # (e.g., ctx_len=128 -> position_ids=[127,128,129] will give erronous output at each predicted token)
-            if len(generated_ids[bi]) >= max_gen_len[bi] or (tlm_precode_position_ids[bi] > ctx_len - 1).any():
+            if len(generated_ids[bi]) >= max_gen_len[bi]:
                 valid_batch_indices[bi] = False
         # check if all generations are done
         if not valid_batch_indices.any():
@@ -405,15 +403,19 @@ def draft_spec_decode_inference(
     return exec_info
 
 
-def optional_int(x):
+def optional_int(x: Optional[str]):
     if x is None:
         return None
     return int(x)
 
 
+def comma_separated_ints(x: str):
+    return [int(qid) for qid in x.split(",")]
+
+
 def arg_parse():
     parser = ArgumentParser(description="Draft-based SpD Inference")
-    parser.add_argument("--prompts", type=str, nargs="+", default=Constants.INPUT_STR, help="Input prompt(s)")
+    parser.add_argument("--prompts", action="append", default=None, help="Input prompt(s)")
     parser.add_argument("--num-speculative-tokens", type=int, default=4, help="Number of speculative tokens")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
@@ -425,13 +427,26 @@ def arg_parse():
         "--target-model-name", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0", help="Target model name"
     )
     parser.add_argument("--full-batch-size", type=optional_int, default=None, help="Full batch size")
-    parser.add_argument("--device-group", type=int, nargs="+", default=[0], help="device QIDs")
+    parser.add_argument(
+        "--target-device-group",
+        type=comma_separated_ints,
+        default="0",
+        help="comma separated device QIDs (e.g., '1,2,3')",
+    )
+    parser.add_argument(
+        "--draft-device-group",
+        type=comma_separated_ints,
+        default="0",
+        help="comma separated device QIDs (e.g., '1,2,3')",
+    )
     args = parser.parse_args()
     return args
 
 
 def main():
     args = arg_parse()
+    if args.prompts is None:
+        args.prompts = Constants.INPUT_STR
     exec_info = draft_spec_decode_inference(**vars(args))
     print(exec_info)
     prompts = exec_info.prompts
