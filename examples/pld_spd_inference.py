@@ -129,9 +129,9 @@ def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
     """
     num_chunks = -(input_len // -prefill_seq_len)  # ceil divide without float
     input_len_padded = num_chunks * prefill_seq_len  # Convert input_len to a multiple of prefill_seq_len
-    assert input_len_padded <= ctx_len, (
-        "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
-    )
+    assert (
+        input_len_padded <= ctx_len
+    ), "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
     return input_len_padded
 
 
@@ -304,7 +304,7 @@ def draft_spec_decode_inference(
         # assumes that prefill queue will always be popped from the front
         input_lengths[bi] = input_len
         max_gen_len[bi] -= input_lengths[bi]
-        all_ids[bi, : input_len+1] = prompts_tokenized[bi]["input_ids"][0, :input_len].tolist() + [input_ids.item()]
+        all_ids[bi, : input_len + 1] = prompts_tokenized[bi]["input_ids"][0, :input_len].tolist() + [input_ids.item()]
         prompt_plus_gen_idx[bi] = input_len + 1
     batch_ttft = perf_counter() - e2e_start
 
@@ -329,7 +329,7 @@ def draft_spec_decode_inference(
                 spec_tokens,  # shape: [num_speculative_tokens]
                 has_empty_tokens,
             ) = find_candidate_pred_tokens(
-                all_ids[bi:bi+1, :prompt_plus_gen_idx[bi]],
+                all_ids[bi : bi + 1, : prompt_plus_gen_idx[bi]],
                 fill_tok=-1,
                 max_ngram_size=max_ngram_size,
                 num_pred_tokens=num_speculative_tokens,
@@ -348,14 +348,20 @@ def draft_spec_decode_inference(
         target_tokens = target_logits.argmax(-1)
         # exact matching between draft and target tokens
         num_tokens_selected = np.ones(decode_batch_size, dtype=np.int64)
-        tlm_precode_position_ids = np.full((decode_batch_size, num_speculative_tokens+1), -1, dtype=np.int64)
+        tlm_precode_position_ids = np.full((decode_batch_size, num_speculative_tokens + 1), -1, dtype=np.int64)
         non_empty_valid_indices = ~empty_indices & valid_batch_indices
-        matching = tlm_precode_inputs["input_ids"][non_empty_valid_indices, 1:] == target_tokens[non_empty_valid_indices, :-1]  # shape: [non_empty_valid_indices, num_speculative_tokens]
-        num_tokens_selected[non_empty_valid_indices] = matching.cumprod(axis=1).sum(axis=1) + 1  
+        matching = (
+            tlm_precode_inputs["input_ids"][non_empty_valid_indices, 1:] == target_tokens[non_empty_valid_indices, :-1]
+        )  # shape: [non_empty_valid_indices, num_speculative_tokens]
+        num_tokens_selected[non_empty_valid_indices] = matching.cumprod(axis=1).sum(axis=1) + 1
         if empty_indices.sum() > 0:
-            tlm_precode_position_ids[empty_indices] = tlm_position_ids[empty_indices] + (tlm_precode_inputs["position_ids"][empty_indices, 0] + 1).reshape(-1,1)
+            tlm_precode_position_ids[empty_indices] = tlm_position_ids[empty_indices] + (
+                tlm_precode_inputs["position_ids"][empty_indices, 0] + 1
+            ).reshape(-1, 1)
         if non_empty_valid_indices.sum() > 0:
-            tlm_precode_position_ids[non_empty_valid_indices] = tlm_precode_inputs["position_ids"][non_empty_valid_indices] + num_tokens_selected[non_empty_valid_indices].reshape(-1,1)
+            tlm_precode_position_ids[non_empty_valid_indices] = tlm_precode_inputs["position_ids"][
+                non_empty_valid_indices
+            ] + num_tokens_selected[non_empty_valid_indices].reshape(-1, 1)
         # record accepted tokens
         all_accept[valid_batch_indices] = num_tokens_selected[valid_batch_indices] == num_speculative_tokens + 1
         mean_num_accepted_tokens += num_tokens_selected[valid_batch_indices].mean().item()
@@ -422,9 +428,10 @@ def draft_spec_decode_inference(
 def comma_separated_ints(x: str):
     return [int(qid) for qid in x.split(",")]
 
+
 def arg_parse():
     parser = ArgumentParser(description="Draft-based SpD Inference")
-    parser.add_argument("--prompts", action = "append", default=None, help="Input prompt(s)")
+    parser.add_argument("--prompts", action="append", default=None, help="Input prompt(s)")
     parser.add_argument("--num-speculative-tokens", type=int, default=3, help="Number of speculative tokens")
     parser.add_argument("--prefill-seq-len", type=int, default=256, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=1024, help="Context length")
@@ -435,15 +442,20 @@ def arg_parse():
     )
     parser.add_argument("--full-batch-size", type=int, default=2, help="Full batch size")
     parser.add_argument(
-        "--device-group", type=comma_separated_ints, default="0", help="comma separated device QIDs for target model (e.g., '1,2,3')"
+        "--device-group",
+        type=comma_separated_ints,
+        default="0",
+        help="comma separated device QIDs for target model (e.g., '1,2,3')",
     )
     args = parser.parse_args()
     return args
 
+
 default_prompts = [
-"can you write a long output and sneak in there as many 'hello, good morning to you' sayings while making sure the whole paragraph makes sense?",
-"imagine you had to teach a baby how to say 'BANANAS ARE SO YUMMY'. please write a story that says as much as possible 'BANANAS ARE SO YUMMY' so that the baby is able to memorize it and eventually say it with ease."
+    "can you write a long output and sneak in there as many 'hello, good morning to you' sayings while making sure the whole paragraph makes sense?",
+    "imagine you had to teach a baby how to say 'BANANAS ARE SO YUMMY'. please write a story that says as much as possible 'BANANAS ARE SO YUMMY' so that the baby is able to memorize it and eventually say it with ease.",
 ]
+
 
 def main():
     args = arg_parse()

@@ -415,7 +415,7 @@ def comma_separated_ints(x: str):
 
 def arg_parse():
     parser = ArgumentParser(description="Draft-based SpD Inference")
-    parser.add_argument("--prompts", action = "append", default=None, help="Input prompt(s)")
+    parser.add_argument("--prompts", action="append", default=None, help="Input prompt(s)")
     parser.add_argument("--num-speculative-tokens", type=int, default=4, help="Number of speculative tokens")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
@@ -428,10 +428,16 @@ def arg_parse():
     )
     parser.add_argument("--full-batch-size", type=optional_int, default=None, help="Full batch size")
     parser.add_argument(
-        "--target-device-group", type=comma_separated_ints, default="0", help="comma separated device QIDs (e.g., '1,2,3')"
+        "--target-device-group",
+        type=comma_separated_ints,
+        default="0",
+        help="comma separated device QIDs (e.g., '1,2,3')",
     )
     parser.add_argument(
-        "--draft-device-group", type=comma_separated_ints, default="0", help="comma separated device QIDs (e.g., '1,2,3')"
+        "--draft-device-group",
+        type=comma_separated_ints,
+        default="0",
+        help="comma separated device QIDs (e.g., '1,2,3')",
     )
     args = parser.parse_args()
     return args
