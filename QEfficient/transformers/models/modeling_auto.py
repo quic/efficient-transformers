@@ -380,24 +380,27 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 aic_num_cores=num_cores,
                 **compiler_options,
             )
-        create_and_dump_qconfigs(
-            self.qpc_path,
-            self.onnx_path,
-            self.model.config.__dict__,
-            [cls.__name__ for cls in self._pytorch_transforms],
-            [cls.__name__ for cls in self._onnx_transforms],
-            prefill_seq_len,
-            ctx_len,
-            batch_size,
-            full_batch_size,
-            num_devices,
-            num_cores,
-            mxfp6_matmul,
-            mxint8_kv_cache,
-            num_speculative_tokens,
-            enable_qnn,
-            qnn_config,
-        )
+        try:
+            create_and_dump_qconfigs(
+                self.qpc_path,
+                self.onnx_path,
+                self.model.config.__dict__,
+                [cls.__name__ for cls in self._pytorch_transforms],
+                [cls.__name__ for cls in self._onnx_transforms],
+                prefill_seq_len,
+                ctx_len,
+                batch_size,
+                full_batch_size,
+                num_devices,
+                num_cores,
+                mxfp6_matmul,
+                mxint8_kv_cache,
+                num_speculative_tokens,
+                enable_qnn,
+                qnn_config,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to create the qconfig file: {e}")
 
         return qpc_path
 

@@ -430,17 +430,25 @@ def create_and_dump_qconfigs(
     )
 
     # Extract QAIC SDK Apps Version from SDK XML file
-    tree = ET.parse(Constants.SDK_APPS_XML)
-    root = tree.getroot()
-    qaic_version = root.find(".//base_version").text
+    try:
+        tree = ET.parse(Constants.SDK_APPS_XML)
+        root = tree.getroot()
+        qaic_version = root.find(".//base_version").text
+    except Exception as e:
+        logger.warning(f"Failed to open XML File {Constants.SDK_APPS_XML}: {e}")
+        qaic_version = None
 
     # Extract QNN SDK details from YAML file if the environment variable is set
     qnn_sdk_details = None
     qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
     if qnn_sdk_path:
         qnn_sdk_yaml_path = os.path.join(qnn_sdk_path, QnnConstants.QNN_SDK_YAML)
-        with open(qnn_sdk_yaml_path, "r") as file:
-            qnn_sdk_details = yaml.safe_load(file)
+        try:
+            with open(qnn_sdk_yaml_path, "r") as file:
+                qnn_sdk_details = yaml.safe_load(file)
+        except Exception as e:
+            logger.warning(f"Failed to open YAML File {qnn_sdk_yaml_path}: {e}")
+            qnn_sdk_details = None
 
     qconfigs = {
         "huggingface_config": huggingface_config,
