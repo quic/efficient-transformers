@@ -32,6 +32,7 @@ configs = [
     ),
 ]
 
+
 @dataclass
 class PerfMetrics:
     """
@@ -454,4 +455,3 @@ def test_pld_spec_decode_inference(
     ]  # Because we always run for single input and single batch size
     all_matching = np.array_equal(cloud_ai_100_tokens, generated_ids)
     assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
-
