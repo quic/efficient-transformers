@@ -44,6 +44,11 @@ from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeModel,
 )
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
+from transformers.models.granite.modeling_granite import (
+    GraniteAttention,
+    GraniteForCausalLM,
+    GraniteModel,
+)
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
@@ -142,6 +147,11 @@ from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJBlock,
     QEffGPTJForCausalLM,
     QEffGPTJModel,
+)
+from QEfficient.transformers.models.granite.modeling_granite import (
+    QEffGraniteAttention,
+    QEffGraniteForCausalLM,
+    QEffGraniteModel,
 )
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
@@ -253,6 +263,10 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
         Gemma2Model: QEffGemma2Model,
         Gemma2ForCausalLM: QEffGemma2ForCausalLM,
+        # Granite
+        GraniteModel: QEffGraniteModel,
+        GraniteForCausalLM: QEffGraniteForCausalLM,
+        GraniteAttention: QEffGraniteAttention,
         # mllama
         MllamaForCausalLM: QEffMllamaForCausalLM,
         MllamaTextModel: QEffMllamaTextModel,
