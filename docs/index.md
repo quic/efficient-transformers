@@ -36,27 +36,14 @@ source/upgrade
 ```
 
 ```{toctree}
-:caption: 'Quick start'
+:caption: 'QAIC Inference'
 :maxdepth: 4
 
 source/quick_start
-```
-
-```{toctree}
-:caption: 'Command Line Interface Use (CLI)'
-:maxdepth: 2
 source/cli_api
+source/python_api
 ```
 
- 
-```{toctree}
-:caption: 'Python API'
-:maxdepth: 2
-
-source/hl_api
-source/ll_api
-
-```
 
 ```{toctree}
 :caption: 'QAIC Finetune'
