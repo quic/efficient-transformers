@@ -237,8 +237,10 @@ def fix_prompts(
             prompt_to_lora_id_mapping = prompt_to_lora_id_mapping[
                 : batch_size * (len(prompt_to_lora_id_mapping) // batch_size)
             ]
-
-    return prompt, prompt_to_lora_id_mapping
+    if prompt_to_lora_id_mapping is not None:
+        return prompt, prompt_to_lora_id_mapping
+    else:
+        return prompt
 
 
 def read_prompts_txt_file(prompts_txt_file_path: str):
@@ -332,7 +334,11 @@ def cloud_ai_100_exec_kv(
     """
     batch_size, ctx_len, full_batch_size = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
-    prompt, prompt_to_lora_id_mapping = fix_prompts(prompt, batch_size, prompt_to_lora_id_mapping, full_batch_size)
+    if prompt_to_lora_id_mapping:
+        prompt, prompt_to_lora_id_mapping = fix_prompts(prompt, batch_size, prompt_to_lora_id_mapping, full_batch_size)
+    else:
+        prompt = fix_prompts(prompt, batch_size, prompt_to_lora_id_mapping, full_batch_size)
+
     generate_text = TextGeneration(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
