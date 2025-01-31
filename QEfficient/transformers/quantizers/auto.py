@@ -7,16 +7,43 @@
 
 from transformers.quantizers.auto import AUTO_QUANTIZATION_CONFIG_MAPPING, AUTO_QUANTIZER_MAPPING
 from transformers.quantizers.quantizer_awq import AwqQuantizer
+from transformers.quantizers.quantizer_compressed_tensors import CompressedTensorsHfQuantizer
 from transformers.quantizers.quantizer_gptq import GptqHfQuantizer
-from transformers.utils.quantization_config import AwqConfig, GPTQConfig
+from transformers.utils.quantization_config import AwqConfig, CompressedTensorsConfig, GPTQConfig
 
 from QEfficient.transformers.quantizers.quantizer_awq import QEffAwqConfig, QEffAwqQuantizer
+from QEfficient.transformers.quantizers.quantizer_compressed_tensors import (
+    QEffCompressedTensorsConfig,
+    QEffCompressedTensorsFP8Quantizer,
+    QEffFP8Config,
+    QEffFP8Quantizer,
+)
 from QEfficient.transformers.quantizers.quantizer_gptq import QEffGPTQConfig, QEffGPTQQuantizer
 
-QEFF_AUTO_QUANTIZER_MAPPING = {"awq": QEffAwqQuantizer, "gptq": QEffGPTQQuantizer}
-QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING = {"awq": QEffAwqConfig, "gptq": QEffGPTQConfig}
-DUPLICATE_AUTO_QUANTIZER_MAPPING = {"awq": AwqQuantizer, "gptq": GptqHfQuantizer}
-DUPLICATE_AUTO_QUANTIZATION_CONFIG_MAPPING = {"awq": AwqConfig, "gptq": GPTQConfig}
+QEFF_AUTO_QUANTIZER_MAPPING = {
+    "awq": QEffAwqQuantizer,
+    "gptq": QEffGPTQQuantizer,
+    "compressed-tensors": QEffCompressedTensorsFP8Quantizer,
+    "fp8": QEffFP8Quantizer,
+}
+QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING = {
+    "awq": QEffAwqConfig,
+    "gptq": QEffGPTQConfig,
+    "compressed-tensors": QEffCompressedTensorsConfig,
+    "fp8": QEffFP8Config,
+}
+DUPLICATE_AUTO_QUANTIZER_MAPPING = {
+    "awq": AwqQuantizer,
+    "gptq": GptqHfQuantizer,
+    "compressed-tensors": CompressedTensorsHfQuantizer,
+    "fp8": None,
+}
+DUPLICATE_AUTO_QUANTIZATION_CONFIG_MAPPING = {
+    "awq": AwqConfig,
+    "gptq": GPTQConfig,
+    "compressed-tensors": CompressedTensorsConfig,
+    "fp8": None,
+}
 
 
 def with_replaced_quantizers(func):
