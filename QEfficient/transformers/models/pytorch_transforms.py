@@ -5,11 +5,13 @@
 #
 # -----------------------------------------------------------------------------
 
+from functools import partial
 from types import MethodType
 from typing import Tuple
 
 import transformers
 from torch import nn
+from transformers.models.bert.modeling_bert import BertSelfAttention
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,
@@ -101,6 +103,7 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.custom_attention import QEffBertSelfAttention
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QeffCodeGenBlock,
@@ -343,4 +346,23 @@ class SpDTransform:
                 f"model class {model_class} does not yet support returning multiple logits to keep."
             )
 
+        return model, transformed
+
+
+class BlockAttentionTransorm(ModuleMappingTransform):
+    # supported architectures
+    _module_mapping = {
+        BertSelfAttention: QEffBertSelfAttention,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, block_size) -> Tuple[nn.Module, bool]:
+        transformed = False
+        for module in model.modules():
+            if repl_module := cls._module_mapping.get(type(module)):
+                module.__class__ = repl_module
+                # Bind the partial function to the instance
+                module.forward = MethodType(partial(repl_module.forward, block_size=block_size), module)
+                transformed = True
+                break
         return model, transformed
