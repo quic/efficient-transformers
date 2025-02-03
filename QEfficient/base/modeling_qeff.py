@@ -223,6 +223,7 @@ class QEFFBaseModel(ABC):
         if onnx_path is None and self.onnx_path is None:
             self.export()
 
+        # import ipdb; ipdb.set_trace()
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
@@ -251,6 +252,7 @@ class QEFFBaseModel(ABC):
         if num_speculative_tokens:
             compile_hash.update(to_hashable({"num_speculative_tokens": num_speculative_tokens}))
 
+        # import ipdb; ipdb.set_trace()
         # Check if already compiled
         compile_hash = compile_hash.hexdigest()[:16]
         compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
