@@ -114,6 +114,7 @@ class QEFFBaseModel(ABC):
 
     def _export(
         self,
+        model,
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
@@ -157,7 +158,7 @@ class QEFFBaseModel(ABC):
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
             torch.onnx.export(
-                self.model,
+                model,
                 (example_inputs,),
                 str(tmp_onnx_path),
                 input_names=input_names,

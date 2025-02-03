@@ -42,6 +42,16 @@ from transformers.models.mllama.modeling_mllama import (
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.utils import constants
+from QEfficient.utils.constants import Constants
+
+bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+max_num_images = constants.ONNX_EXPORT_MAX_NUM_IMAGES
+max_image_tiles = constants.ONNX_EXPORT_MAX_IMAGE_TILES
+image_length = constants.ONNX_EXPORT_IMAGE_LENGHT
+image_width = constants.ONNX_EXPORT_IMAGE_WIDTH
+num_channel = constants.ONNX_EXPORT_IMAGE_DEPTH
+seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -1186,8 +1196,45 @@ class ModelWrapper(nn.Module):
             outputs["past_key_values"] = outputs["past_key_values"].to_legacy_cache()
         return outputs
 
-    def generate_input(self, processor):
-        ctx_len = 1024
+    def generate_input(self, processor, kv_offload):
+        
+        #vision_inputs
+        vision_inputs = {
+            "pixel_values": torch.zeros((bs, max_num_images,max_image_tiles,num_channel, image_length, image_width ), dtype=torch.int64),
+            "aspect_ratio_ids": torch.ones((bs, max_num_images), dtype=torch.int64),
+            "aspect_ratio_mask": torch.ones((bs, max_num_images, max_image_tiles,1 ), dtype=torch.int64)
+        }
+
+        vision_output_names = []
+        for i in self.mllama.config.text_config.cross_attention_layers:
+            vision_output_names.append(f"past_key.{i}")
+            vision_output_names.append(f"past_value.{i}")
+
+        vision_dynamic_axes = {
+            "pixel_values": {0: "batch_size", 1: "max_num_images", 2: "max_image_tiles"},
+            "aspect_ratio_ids": {0: "batch_size", 1: "max_num_images"},
+            "aspect_ratio_mask": {
+                0: "batch_size",
+                1: "max_num_images",
+                2: "max_image_tiles",
+            },
+        }
+
+        #lang_inputs
+        lang_inputs = {
+            "input_ids": torch.zeros((bs,seq_len),dtype=torch.int64),
+            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+            "cross_attention_mask": torch.ones((bs, max_image_tiles),dtype=torch.int64),
+            "attention_mask": torch.ones((bs,seq_len),dtype=torch.int64)
+        }
+
+        lang_inputs["position_ids"] = torch.where(
+            lang_inputs.pop("attention_mask") == 1,
+            torch.arange(lang_inputs["input_ids"].shape[1]).view(1, -1),
+            -1,
+        )   
+
+        ctx_len = Constants.CTX_LEN
         txt_cfg = self.mllama.config.get_text_config()
         num_hidden_layers = txt_cfg.num_hidden_layers
         cross_attention_layers = txt_cfg.cross_attention_layers
@@ -1198,54 +1245,32 @@ class ModelWrapper(nn.Module):
         num_patches = (vis_cfg.image_size // vis_cfg.patch_size) ** 2 + 1
         image_tokens_len = vis_cfg.max_num_tiles * num_patches
 
-        url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
-        image = Image.open(requests.get(url, stream=True).raw)
-        conversation = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {
-                        "type": "text",
-                        "text": "How long does it take from invoice date to due date? Be short and concise.",
-                    },
-                ],
-            }
-        ]
-        prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
-        inputs = processor(text=prompt, images=image, return_tensors="pt", add_special_tokens=False)
-        inputs["position_ids"] = torch.where(
-            inputs.pop("attention_mask") == 1,
-            torch.arange(inputs["input_ids"].shape[1]).view(1, -1),
-            -1,
-        )
-        inputs = dict(inputs)
-        inputs["past_key_values"] = DynamicCache(num_hidden_layers)
-        inputs["past_key_values"].key_cache = [0] * num_hidden_layers
-        inputs["past_key_values"].value_cache = [0] * num_hidden_layers
+
+        lang_inputs["past_key_values"] = DynamicCache(num_hidden_layers)
+        lang_inputs["past_key_values"].key_cache = [0] * num_hidden_layers
+        lang_inputs["past_key_values"].value_cache = [0] * num_hidden_layers
+
         for i in range(num_hidden_layers):
             if i in cross_attention_layers:
                 idx = cross_attention_layers.index(i)
                 assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
-                inputs["past_key_values"].key_cache[i] = torch.zeros(1, num_key_value_heads, image_tokens_len, head_dim)
-                inputs["past_key_values"].value_cache[i] = torch.zeros(
+                lang_inputs["past_key_values"].key_cache[i] = torch.zeros(1, num_key_value_heads, image_tokens_len, head_dim)
+                lang_inputs["past_key_values"].value_cache[i] = torch.zeros(
                     1, num_key_value_heads, image_tokens_len, head_dim
                 )
             else:
-                inputs["past_key_values"].key_cache[i] = torch.zeros(1, num_key_value_heads, ctx_len, head_dim)
-                inputs["past_key_values"].value_cache[i] = torch.zeros(1, num_key_value_heads, ctx_len, head_dim)
+                lang_inputs["past_key_values"].key_cache[i] = torch.zeros(1, num_key_value_heads, ctx_len, head_dim)
+                lang_inputs["past_key_values"].value_cache[i] = torch.zeros(1, num_key_value_heads, ctx_len, head_dim)
 
-        output_names = [
+        
+        lang_output_names = [
             "logits",
-            # "pixel_values_RetainedState",
             *[f"past_{kv}.{i}_RetainedState" for i in range(num_hidden_layers) for kv in ["key", "value"]],
         ]
-        dynamic_axes = {
+        
+        lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
-            "pixel_values": {0: "batch_size", 1: "max_num_images", 2: "max_image_tiles"},
-            "aspect_ratio_ids": {0: "batch_size", 1: "max_num_images"},
-            "aspect_ratio_mask": {0: "batch_size", 1: "max_num_images", 2: "max_image_tiles"},
             "cross_attention_mask": {
                 0: "batch_size",
                 1: "seq_len",
@@ -1253,14 +1278,31 @@ class ModelWrapper(nn.Module):
                 3: "max_image_tiles",
             },
         }
+
         for i in range(num_hidden_layers):
             if i in cross_attention_layers:
-                dynamic_axes[f"past_key.{i}"] = {0: "batch_size"}
-                dynamic_axes[f"past_value.{i}"] = {0: "batch_size"}
+                lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size"}
+                lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size"}
             else:
-                dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
-                dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
+                lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
+                lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
+        
+        lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
+        lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, ctx_len - 1)
+        
+        inputs = []
+        output_names = []
+        dynamic_axes = []
 
-        inputs["past_key_values"] = inputs["past_key_values"].to_legacy_cache()
-        inputs["position_ids"] = torch.full(inputs["position_ids"].shape, ctx_len - 1)
+        if kv_offload:
+            inputs.extend([vision_inputs, lang_inputs])
+            output_names.extend([vision_output_names, lang_output_names])
+            dynamic_axes.extend([vision_dynamic_axes, lang_dynamic_axes])
+        else:
+            inputs.append({**vision_inputs, **lang_inputs})
+            output_names = vision_output_names + lang_output_names
+            dynamic_axes.append({**vision_dynamic_axes, **lang_dynamic_axes})
+
         return inputs, output_names, dynamic_axes
+
+        
