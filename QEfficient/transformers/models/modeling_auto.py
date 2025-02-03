@@ -741,64 +741,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
-
-    def _generate_inputs(self, **kwargs):
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        # seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        # fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
-
-        self.ctx_len = kwargs["ctx_len"] if "ctx_len" in kwargs else self.ctx_len
-
-        ## PREPROCESSING THE MULTI-MODAL INPUTS for Phi-3.5 for now
-        # TODO: Create a map for the other models to have their own inputs accordingly
-        images = []
-        placeholder = ""
-
-        # Note: if OOM, you might consider reduce number of frames in this example.
-        for i in range(1, 2):
-            url = f"https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-{i}-2048.jpg"
-            images.append(Image.open(requests.get(url, stream=True).raw))
-            placeholder += f"<|image_{1}|>\n"
-
-        messages = [
-            {"role": "user", "content": placeholder + "Summarize the deck of slides."},
-        ]
-
-        prompt = self.processor.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        inputs = dict(self.processor(images=images, text=prompt, return_tensors="pt"))
-        inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
-        inputs["past_key_values"] = []
-        for i in range(self.num_layers):
-            inputs["past_key_values"].append(
-                (
-                    torch.zeros(bs, self.num_key_value_heads, self.ctx_len, self.head_dim),
-                    torch.zeros(bs, self.num_key_value_heads, self.ctx_len, self.head_dim),
-                )
-            )
-        output_names = [
-            "logits",
-            "pixel_values_RetainedState",
-            "image_sizes_RetainedState",
-            *[f"past_{kv}.{i}_RetainedState" for i in range(self.num_layers) for kv in ["key", "value"]],
-        ]
-        dynamic_axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "position_ids": {0: "batch_size", 1: "seq_len"},
-            # "pixel_values": {0: "img_batch_size"},
-        }
-        for i in range(self.num_layers):
-            dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
-            dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
-
-        # Avoid issues due to index out of range
-        inputs["position_ids"] = torch.full(inputs["position_ids"].shape, self.ctx_len - 1)
-
-        return inputs, dynamic_axes, output_names
-
+    
     def _generate_inputs_mllama(
         self,
     ):
@@ -851,7 +794,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             self.lang_export_path = self.export_lang(lang_inputs, export_dir)
         else:
             self.model = ModelWrapper(self.model)
-            self.inputs, self.output_names, dynamic_axes = self.model.generate_mllama_single(self.processor)
+            self.inputs, self.output_names, dynamic_axes = self.model.generate_inputs(self.processor)
             self._export(self.inputs, self.output_names, dynamic_axes, export_dir=export_dir)
 
     def export_vision(self, vision_input, export_dir):

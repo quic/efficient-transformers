@@ -1186,7 +1186,7 @@ class ModelWrapper(nn.Module):
             outputs["past_key_values"] = outputs["past_key_values"].to_legacy_cache()
         return outputs
 
-    def generate_mllama_single(self, processor):
+    def generate_input(self, processor):
         ctx_len = 1024
         txt_cfg = self.mllama.config.get_text_config()
         num_hidden_layers = txt_cfg.num_hidden_layers
