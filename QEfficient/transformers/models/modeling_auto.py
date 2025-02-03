@@ -30,7 +30,7 @@ from transformers import (
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.base.onnx_transforms import FP16ClipTransform, RemoveCrossAttentionIOTransform, SplitTensorsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import get_compilation_dims
 from QEfficient.transformers.cache_utils import QEffDynamicCache
@@ -724,6 +724,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         self.processor = AutoProcessor.from_pretrained(pretrained_model_name_or_path, padding_side="right", **kwargs)
         self.continuous_batching = continuous_batching
         self.kv_offload = kv_offload
+        # self.model_name=pretrained_model_name_or_path
         self.is_tlm = is_tlm
 
         return self
@@ -832,21 +833,33 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
                 vision_input[k] = v
 
         return lang_inputs, vision_input
+    
 
     def export(
         self,
         export_dir: Optional[str] = None,
         **kwargs,
     ) -> str:
-        self.kv_offload = True
+
         if self.kv_offload:
             print("generating input")
             lang_inputs, vision_input = self._generate_inputs_mllama()
             print("generating vision model")
+        
             self.vision_export_path = self.export_vision(vision_input, export_dir)
             print("generating lang model")
             self.lang_export_path = self.export_lang(lang_inputs, export_dir)
-
+        else:
+            self.model=ModelWrapper(self.model)
+            inputs,output_names, dynamic_axes=self.model.generate_mllama_single(self.processor)
+            print("Generating single qpc onnx")
+            self._export(    
+                inputs,
+                output_names,
+                dynamic_axes,
+                export_dir=export_dir
+            )
+            
     def export_vision(self, vision_input, export_dir):
         model = self.model
         self.vision_encoder = self.model = VisionEncoder(self.model)
@@ -932,7 +945,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         self.lang_output_names = lang_output_names
         model = self.model
         self.model = ModelWrapper(model)
-
+        # self._onnx_transforms.append(RemoveCrossAttentionIOTransform)
         self.lang_onnx_path = self._export(lang_inputs, lang_output_names, lang_dynamic_axes, export_dir=export_dir)
         self.model = model
         return self.lang_onnx_path
@@ -995,16 +1008,33 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
                     "max_image_tiles": "4",
                 },
             ]
-
+            # num_devices=4
             custom_io_lang = {}
             # Inputs
             for output_name in self.lang_output_names:
                 if output_name.startswith("past_"):
                     custom_io_lang[output_name[: -len("_RetainedState")]] = kv_cache_dtype
+
+            # key_to_remove=[]
+            # for names in self.vision_encoder.cross_attention_layers:
+            #     key_to_remove.append(f"past_key.{names}")
+            #     key_to_remove.append(f"past_value.{names}")
+
+            # for key in key_to_remove:
+            #     del custom_io_lang[key]
+
             # outputs
             for output_name in self.lang_output_names:
                 if output_name.startswith("past_"):
                     custom_io_lang[output_name] = kv_cache_dtype
+
+            # key_to_remove=[]
+            # for names in self.vision_encoder.cross_attention_layers:
+            #     key_to_remove.append(f"past_key.{names}_RetainedState")
+            #     key_to_remove.append(f"past_value.{names}_RetainedState")
+            
+            # for key in key_to_remove:
+            #     del custom_io_lang[key]
 
             print("generating lang model")
             compiler_options.update({"retained-state": True})
@@ -1168,7 +1198,13 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         stream: bool = True,
         **kwargs,
     ):
+        
+        # self.lang_qpc_path="/home/ubuntu/.cache/qeff_models/ModelWrapper-31e62a3c446b6bb9_working/qpc-1e94c5946f6bdd98/qpc"
+        self.lang_qpc_path="/home/ubuntu/.cache/qeff_models/ModelWrapper-31e62a3c446b6bb9_working/qpc-1e94c5946f6bdd98/qpc"
+        self.vision_qpc_path="/home/ubuntu/.cache/qeff_models/VisionEncoder-31e62a3c446b6bb9/qpc-7412e902c95a92c9/qpc"
+        
         lang_session = QAICInferenceSession(self.lang_qpc_path, device_id, activate=False)
+
         vision_session = QAICInferenceSession(self.vision_qpc_path, device_id)
 
         batch_size, ctx_len, fbs = get_compilation_dims(self.lang_qpc_path)
@@ -1276,12 +1312,12 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         decode_perf = (num_token - 1) / (end - loop_start)
         total_perf = num_token / (end - start)
 
-        print("TTFT:", round(loop_start - start, 2), "s", file=sys.stderr)
-        print("E2ET:", round(end - start, 2), "s", file=sys.stderr)
-        print("Prefill:", round(prefill_perf, 2), "tok/s", file=sys.stderr)
-        print("Decode:", round(decode_perf, 2), "tok/s", file=sys.stderr)
-        print("E2E:", round(total_perf, 2), "tok/s", file=sys.stderr)
-        if batch_size > 1:
-            print("Prefill (batch):", round(prefill_perf * batch_size, 2), "tok/s", file=sys.stderr)
-            print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s", file=sys.stderr)
-            print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s", file=sys.stderr)
+        # print("TTFT:", round(loop_start - start, 2), "s", file=sys.stderr)
+        # print("E2ET:", round(end - start, 2), "s", file=sys.stderr)
+        # print("Prefill:", round(prefill_perf, 2), "tok/s", file=sys.stderr)
+        # print("Decode:", round(decode_perf, 2), "tok/s", file=sys.stderr)
+        # print("E2E:", round(total_perf, 2), "tok/s", file=sys.stderr)
+        # if batch_size > 1:
+        #     print("Prefill (batch):", round(prefill_perf * batch_size, 2), "tok/s", file=sys.stderr)
+        #     print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s", file=sys.stderr)
+        #     print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s", file=sys.stderr)
