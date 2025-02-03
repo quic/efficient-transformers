@@ -106,10 +106,10 @@ class RemoveCrossAttentionIOTransform(OnnxTransform):
         layers_to_remove = [3, 8, 13, 18, 23, 28, 33, 38]
         names_to_remove = []
         for layer in layers_to_remove:
-            names_to_remove.append(f'past_key.{layer}_RetainedState')
-            names_to_remove.append(f'past_value.{layer}_RetainedState')
-            names_to_remove.append(f'past_key.{layer}')
-            names_to_remove.append(f'past_value.{layer}')
+            names_to_remove.append(f"past_key.{layer}_RetainedState")
+            names_to_remove.append(f"past_value.{layer}_RetainedState")
+            names_to_remove.append(f"past_key.{layer}")
+            names_to_remove.append(f"past_value.{layer}")
 
         graph = model.graph
         transformed = False
