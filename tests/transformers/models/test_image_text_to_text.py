@@ -27,11 +27,13 @@ from transformers import (
 )
 from transformers.image_utils import load_image
 
+from QEfficient.transformers.models.InternVL import get_conv_template
+
 # from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
 
 # from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
-from QEfficient.utils import get_conv_template, hf_download
+from QEfficient.utils import hf_download
 
 # from QEfficient.utils._utils import load_hf_processor
 from QEfficient.utils.constants import Constants
