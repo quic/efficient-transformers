@@ -14,11 +14,9 @@ from time import perf_counter
 from typing import List, Optional, Union
 
 import numpy as np
-import requests
 import torch
 import torch.nn as nn
 import transformers
-from PIL import Image
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
@@ -34,7 +32,6 @@ from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import get_compilation_dims
-from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.mllama.modeling_mllama import ModelWrapper, VisionEncoder
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
@@ -746,8 +743,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         self,
         export_dir: Optional[str] = None,
         **kwargs,
-    ) -> str:       
-
+    ) -> str:
         self.inputs, self.output_names, self.dynamic_axes = self.model.generate_input(self.processor)
         if self.kv_offload:
             self.vision_export_path = self.export_vision(export_dir)
@@ -757,12 +753,11 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             self._export(self.model, self.inputs[0], self.output_names[0], self.dynamic_axes[0], export_dir=export_dir)
 
     def export_vision(self, export_dir):
-        
-        self.vision_encoder_model=VisionEncoder(self.model)
+        self.vision_encoder_model = VisionEncoder(self.model)
 
-        vision_inputs=self.inputs[0]
-        vision_output_names=self.output_names[0]
-        vision_dynamic_axes=self.dynamic_axes[0]
+        vision_inputs = self.inputs[0]
+        vision_output_names = self.output_names[0]
+        vision_dynamic_axes = self.dynamic_axes[0]
 
         self.vision_onnx_path = self._export(
             self.vision_encoder_model,
@@ -775,20 +770,16 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         return self.vision_onnx_path
 
     def export_lang(self, export_dir):
-        self.lang_model= ModelWrapper(self.model)
+        self.lang_model = ModelWrapper(self.model)
 
-        lang_inputs=self.inputs[1]
-        lang_output_names=self.output_names[1]
-        lang_dynamic_axes=self.dynamic_axes[1]
+        lang_inputs = self.inputs[1]
+        lang_output_names = self.output_names[1]
+        lang_dynamic_axes = self.dynamic_axes[1]
 
         self.lang_onnx_path = self._export(
-            self.lang_model,
-            lang_inputs,
-            lang_output_names,
-            lang_dynamic_axes,
-            export_dir=export_dir
-            )
-        
+            self.lang_model, lang_inputs, lang_output_names, lang_dynamic_axes, export_dir=export_dir
+        )
+
         return self.lang_onnx_path
 
     def compile(
