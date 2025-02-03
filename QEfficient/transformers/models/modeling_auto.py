@@ -851,11 +851,10 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             self.lang_export_path = self.export_lang(lang_inputs, export_dir)
         else:
             self.model=ModelWrapper(self.model)
-            inputs,output_names, dynamic_axes=self.model.generate_mllama_single(self.processor)
-            print("Generating single qpc onnx")
+            self.inputs,self.output_names, dynamic_axes=self.model.generate_mllama_single(self.processor)
             self._export(    
-                inputs,
-                output_names,
+                self.inputs,
+                self.output_names,
                 dynamic_axes,
                 export_dir=export_dir
             )
@@ -963,7 +962,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         mxfp6_matmul: bool = False,
         **compiler_options,
     ) -> str:
-        self.kv_offload = True
         if self.kv_offload:
             model = self.model
             self.model = VisionEncoder(model)
@@ -1015,26 +1013,10 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
                 if output_name.startswith("past_"):
                     custom_io_lang[output_name[: -len("_RetainedState")]] = kv_cache_dtype
 
-            # key_to_remove=[]
-            # for names in self.vision_encoder.cross_attention_layers:
-            #     key_to_remove.append(f"past_key.{names}")
-            #     key_to_remove.append(f"past_value.{names}")
-
-            # for key in key_to_remove:
-            #     del custom_io_lang[key]
-
             # outputs
             for output_name in self.lang_output_names:
                 if output_name.startswith("past_"):
                     custom_io_lang[output_name] = kv_cache_dtype
-
-            # key_to_remove=[]
-            # for names in self.vision_encoder.cross_attention_layers:
-            #     key_to_remove.append(f"past_key.{names}_RetainedState")
-            #     key_to_remove.append(f"past_value.{names}_RetainedState")
-            
-            # for key in key_to_remove:
-            #     del custom_io_lang[key]
 
             print("generating lang model")
             compiler_options.update({"retained-state": True})
@@ -1052,6 +1034,52 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             )
             self.model = model
             return self.vision_qpc_path, self.lang_qpc_path
+        else:
+            
+            
+            specializations = [
+                {
+                    "batch_size": batch_size,
+                    "seq_len": prefill_seq_len,
+                    "ctx_len": ctx_len,
+                    "max_num_images": "1",
+                    "max_image_tiles": "4",
+                },
+                {
+                    "batch_size": batch_size,
+                    "seq_len": "1",
+                    "ctx_len": ctx_len,
+                    "max_num_images": "1",
+                    "max_image_tiles": "4",
+                },
+            ]
+            custom_io={}
+            kv_cache_dtype = "float16"
+
+            #inputs
+            for input_name in self.output_names:
+                 if input_name.endswith("_RetainedState"):
+                    custom_io[input_name[: -len("_RetainedState")]] = kv_cache_dtype
+
+            # outputs
+            for output_name in self.output_names:
+                if output_name.endswith("_RetainedState"):
+                    custom_io[output_name] = kv_cache_dtype
+
+            compiler_options.update({"retained-state": True})
+            self.lang_qpc_path = self._compile(
+                self.onnx_path,
+                compile_dir,
+                compile_only=True,
+                specializations=specializations,
+                convert_to_fp16=True,
+                mxfp6_matmul=mxfp6_matmul,
+                mdp_ts_num_devices=num_devices,
+                aic_num_cores=num_cores,
+                custom_io=custom_io,
+                **compiler_options,
+            )
+            
 
     def generate(
         self,
