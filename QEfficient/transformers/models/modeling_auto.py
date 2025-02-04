@@ -873,6 +873,9 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             self.model = model
             return self.vision_qpc_path, self.lang_qpc_path
         else:
+            if not hasattr(self, 'output_names'):
+                self.export()
+
             specializations = [
                 {
                     "batch_size": batch_size,
@@ -1037,9 +1040,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         end = perf_counter()
         if streamer:
             streamer.end()
-        # generated_texts = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        # for i in range(1 if streamer else 0, batch_size):
-        #     print(i, generated_texts[i])
 
         prefill_perf = 1 / (loop_start - start)
         decode_perf = (num_token - 1) / (end - loop_start)
