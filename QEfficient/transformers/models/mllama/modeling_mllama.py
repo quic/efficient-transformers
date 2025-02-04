@@ -1021,7 +1021,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         # vision_inputs
         vision_inputs = {
             "pixel_values": torch.zeros(
-                (bs, max_num_images, max_image_tiles, num_channel, image_length, image_width), dtype=torch.int64
+                (bs, max_num_images, max_image_tiles, num_channel, image_length, image_width), dtype=torch.float32
             ),
             "aspect_ratio_ids": torch.ones((bs, max_num_images), dtype=torch.int64),
             "aspect_ratio_mask": torch.ones((bs, max_num_images, max_image_tiles), dtype=torch.int64),
