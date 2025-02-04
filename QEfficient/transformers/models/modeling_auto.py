@@ -14,10 +14,9 @@ from time import perf_counter
 from typing import List, Optional, Union
 
 import numpy as np
-import requests
 import torch
 import torch.nn as nn
-from PIL import Image
+import transformers
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
@@ -33,7 +32,6 @@ from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import get_compilation_dims
-from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.mllama.modeling_mllama import ModelWrapper, VisionEncoder
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
@@ -722,8 +720,10 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
 
         self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, *args, **kwargs)
         self.processor = AutoProcessor.from_pretrained(pretrained_model_name_or_path, padding_side="right", **kwargs)
+        self.tokenizer = self.processor.tokenizer
         self.continuous_batching = continuous_batching
         self.kv_offload = kv_offload
+        # self.model_name=pretrained_model_name_or_path
         self.is_tlm = is_tlm
 
         return self
@@ -739,202 +739,47 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         mhash = mhash.hexdigest()[:16]
         return mhash
 
-    def _generate_inputs(self, **kwargs):
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        # seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        # fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
-
-        self.ctx_len = kwargs["ctx_len"] if "ctx_len" in kwargs else self.ctx_len
-
-        ## PREPROCESSING THE MULTI-MODAL INPUTS for Phi-3.5 for now
-        # TODO: Create a map for the other models to have their own inputs accordingly
-        images = []
-        placeholder = ""
-
-        # Note: if OOM, you might consider reduce number of frames in this example.
-        for i in range(1, 2):
-            url = f"https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-{i}-2048.jpg"
-            images.append(Image.open(requests.get(url, stream=True).raw))
-            placeholder += f"<|image_{1}|>\n"
-
-        messages = [
-            {"role": "user", "content": placeholder + "Summarize the deck of slides."},
-        ]
-
-        prompt = self.processor.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        inputs = dict(self.processor(images=images, text=prompt, return_tensors="pt"))
-        inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
-        inputs["past_key_values"] = []
-        for i in range(self.num_layers):
-            inputs["past_key_values"].append(
-                (
-                    torch.zeros(bs, self.num_key_value_heads, self.ctx_len, self.head_dim),
-                    torch.zeros(bs, self.num_key_value_heads, self.ctx_len, self.head_dim),
-                )
-            )
-        output_names = [
-            "logits",
-            "pixel_values_RetainedState",
-            "image_sizes_RetainedState",
-            *[f"past_{kv}.{i}_RetainedState" for i in range(self.num_layers) for kv in ["key", "value"]],
-        ]
-        dynamic_axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "position_ids": {0: "batch_size", 1: "seq_len"},
-            # "pixel_values": {0: "img_batch_size"},
-        }
-        for i in range(self.num_layers):
-            dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
-            dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
-
-        # Avoid issues due to index out of range
-        inputs["position_ids"] = torch.full(inputs["position_ids"].shape, self.ctx_len - 1)
-
-        return inputs, dynamic_axes, output_names
-
-    def _generate_inputs_mllama(
-        self,
-    ):
-        url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
-        image = Image.open(requests.get(url, stream=True).raw)
-
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": "If I had to write a haiku for this one, it would be: "},
-                ],
-            }
-        ]
-        input_text = self.processor.apply_chat_template(messages, add_generation_prompt=True)
-
-        split_inputs = self.processor(
-            text=input_text,
-            images=image,
-            return_tensors="pt",
-            add_special_tokens=False,
-            padding="max_length",
-            max_length=32,
-        )
-
-        lang_inputs = {}
-        vision_input = {}
-
-        for k, v in split_inputs.items():
-            if k in ["input_ids", "attention_mask", "cross_attention_mask"]:
-                lang_inputs[k] = v
-            else:
-                vision_input[k] = v
-
-        return lang_inputs, vision_input
-
     def export(
         self,
         export_dir: Optional[str] = None,
         **kwargs,
     ) -> str:
-        self.kv_offload = True
+        self.inputs, self.output_names, self.dynamic_axes = self.model.generate_input(self.kv_offload)
         if self.kv_offload:
-            print("generating input")
-            lang_inputs, vision_input = self._generate_inputs_mllama()
-            print("generating vision model")
-            self.vision_export_path = self.export_vision(vision_input, export_dir)
-            print("generating lang model")
-            self.lang_export_path = self.export_lang(lang_inputs, export_dir)
+            self.vision_export_path = self.export_vision(export_dir)
+            self.lang_export_path = self.export_lang(export_dir)
+        else:
+            self.model = ModelWrapper(self.model)
+            self._export(self.model, self.inputs[0], self.output_names[0], self.dynamic_axes[0], export_dir=export_dir)
 
-    def export_vision(self, vision_input, export_dir):
-        model = self.model
-        self.vision_encoder = self.model = VisionEncoder(self.model)
+    def export_vision(self, export_dir):
+        self.vision_encoder_model = VisionEncoder(self.model)
 
-        vision_output_names = []
-        for i in self.model.cross_attention_layers:
-            vision_output_names.append(f"past_key.{i}")
-            vision_output_names.append(f"past_value.{i}")
-        vision_dynamic_axes = {
-            "pixel_values": {0: "batch_size", 1: "max_num_images", 2: "max_image_tiles"},
-            "aspect_ratio_ids": {0: "batch_size", 1: "max_num_images"},
-            "aspect_ratio_mask": {
-                0: "batch_size",
-                1: "max_num_images",
-                2: "max_image_tiles",
-            },
-        }
+        vision_inputs = self.inputs[0]
+        vision_output_names = self.output_names[0]
+        vision_dynamic_axes = self.dynamic_axes[0]
 
         self.vision_onnx_path = self._export(
-            vision_input,
+            self.vision_encoder_model,
+            vision_inputs,
             vision_output_names,
             vision_dynamic_axes,
             export_dir=export_dir,
         )
 
-        self.model = model
-        self.vision_output_names = vision_output_names
         return self.vision_onnx_path
 
-    def export_lang(self, lang_inputs, export_dir):
-        self.num_layers = num_hidden_layers = self.model.config.get_text_config().num_hidden_layers
+    def export_lang(self, export_dir):
+        self.lang_model = ModelWrapper(self.model)
 
-        lang_inputs["position_ids"] = torch.where(
-            lang_inputs.pop("attention_mask") == 1,
-            torch.arange(lang_inputs["input_ids"].shape[1]).view(1, -1),
-            -1,
+        lang_inputs = self.inputs[1]
+        lang_output_names = self.output_names[1]
+        lang_dynamic_axes = self.dynamic_axes[1]
+
+        self.lang_onnx_path = self._export(
+            self.lang_model, lang_inputs, lang_output_names, lang_dynamic_axes, export_dir=export_dir
         )
 
-        lang_inputs["past_key_values"] = QEffDynamicCache(num_hidden_layers)
-        lang_inputs["past_key_values"].key_cache = [0] * num_hidden_layers
-        lang_inputs["past_key_values"].value_cache = [0] * num_hidden_layers
-
-        for i in range(num_hidden_layers):
-            if i in self.vision_encoder.cross_attention_layers:
-                idx = self.vision_encoder.cross_attention_layers.index(i)
-                assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
-                lang_inputs["past_key_values"].key_cache[i] = torch.zeros((1, 8, 6404, 128))
-                lang_inputs["past_key_values"].value_cache[i] = torch.zeros((1, 8, 6404, 128))
-            else:
-                lang_inputs["past_key_values"].key_cache[i] = torch.zeros((1, 8, 1024, 128))
-                lang_inputs["past_key_values"].value_cache[i] = torch.zeros((1, 8, 1024, 128))
-
-        lang_inputs["position_ids"] = torch.full((1, 1), lang_inputs["past_key_values"].key_cache[0].shape[2] - 1)
-        lang_output_names = ["logits", "past_key_values"]
-        pkv_idx = lang_output_names.index("past_key_values")
-
-        lang_output_names[pkv_idx : pkv_idx + 1] = [
-            f"past_{kv}.{i}_RetainedState" for i in range(num_hidden_layers) for kv in ["key", "value"]
-        ]
-
-        lang_dynamic_axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "position_ids": {0: "batch_size", 1: "seq_len"},
-            "cross_attention_mask": {
-                0: "batch_size",
-                1: "seq_len",
-                2: "max_num_images",
-                3: "max_image_tiles",
-            },
-        }
-
-        for i in range(num_hidden_layers):
-            if i in self.vision_encoder.cross_attention_layers:
-                lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size"}
-                lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size"}
-                continue
-            lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
-            lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
-
-        lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
-        lang_inputs["input_ids"] = torch.tensor([[374]])
-        lang_inputs["cross_attention_mask"] = lang_inputs["cross_attention_mask"][:, -1:]
-        self.lang_output_names = lang_output_names
-        model = self.model
-        self.model = ModelWrapper(model)
-
-        self.lang_onnx_path = self._export(lang_inputs, lang_output_names, lang_dynamic_axes, export_dir=export_dir)
-        self.model = model
         return self.lang_onnx_path
 
     def compile(
@@ -950,11 +795,10 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         mxfp6_matmul: bool = False,
         **compiler_options,
     ) -> str:
-        self.kv_offload = True
         if self.kv_offload:
             model = self.model
             self.model = VisionEncoder(model)
-            vision_specializations = [{"batch_size": "1", "max_num_images": "1", "max_image_tiles": "4"}]
+            vision_specializations = [{"batch_size": batch_size, "max_num_images": "1", "max_image_tiles": "4"}]
 
             custom_io = {}
             kv_cache_dtype = "float16"
@@ -995,12 +839,13 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
                     "max_image_tiles": "4",
                 },
             ]
-
+            # num_devices=4
             custom_io_lang = {}
             # Inputs
             for output_name in self.lang_output_names:
                 if output_name.startswith("past_"):
                     custom_io_lang[output_name[: -len("_RetainedState")]] = kv_cache_dtype
+
             # outputs
             for output_name in self.lang_output_names:
                 if output_name.startswith("past_"):
@@ -1022,6 +867,49 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             )
             self.model = model
             return self.vision_qpc_path, self.lang_qpc_path
+        else:
+            specializations = [
+                {
+                    "batch_size": batch_size,
+                    "seq_len": prefill_seq_len,
+                    "ctx_len": ctx_len,
+                    "max_num_images": "1",
+                    "max_image_tiles": "4",
+                },
+                {
+                    "batch_size": batch_size,
+                    "seq_len": "1",
+                    "ctx_len": ctx_len,
+                    "max_num_images": "1",
+                    "max_image_tiles": "4",
+                },
+            ]
+            custom_io = {}
+            kv_cache_dtype = "float16"
+
+            # inputs
+            for input_name in self.output_names:
+                if input_name.endswith("_RetainedState"):
+                    custom_io[input_name[: -len("_RetainedState")]] = kv_cache_dtype
+
+            # outputs
+            for output_name in self.output_names:
+                if output_name.endswith("_RetainedState"):
+                    custom_io[output_name] = kv_cache_dtype
+
+            compiler_options.update({"retained-state": True})
+            self.lang_qpc_path = self._compile(
+                self.onnx_path,
+                compile_dir,
+                compile_only=True,
+                specializations=specializations,
+                convert_to_fp16=True,
+                mxfp6_matmul=mxfp6_matmul,
+                mdp_ts_num_devices=num_devices,
+                aic_num_cores=num_cores,
+                custom_io=custom_io,
+                **compiler_options,
+            )
 
     def generate(
         self,
@@ -1047,71 +935,121 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             if self.kv_offload:
                 self.kv_offload_generate(inputs, streamer, device_ids)
             else:
-                return self.cloud_ai_100_vlm_generate(inputs=inputs, device_ids=device_ids)
+                return self.cloud_ai_100_generate(inputs=inputs, device_ids=device_ids)
         # PyTorch runtime
         else:
             return self.pytorch_vlm_generate(model=self.model, inputs=inputs, streamer=streamer)
 
-    # TODO: Add the code based on how we did in single inference script
-    def cloud_ai_100_vlm_generate(
+    def cloud_ai_100_generate(
         self,
         inputs: torch.Tensor,
         device_ids: List[int] = [0],
+        enable_debug_logs: bool = False,
     ) -> np.ndarray:
-        """
-        Generates features with list of prompts using AI 100 runtime.
+        qpc_session = QAICInferenceSession(
+            self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
+        )
 
-        ``Mandatory`` Args:
-            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
-        ``Optional`` Args:
-            device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
+        batch_size, ctx_len, fbs = get_compilation_dims(self.qpc_path)
 
-        Returns:
-           np.ndarray: A list of dictionaries containing the generated output features.
-        """
-
-        if self.qpc_session is None:
-            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
-            self.batch_size = self.qpc_session.bindings[0].dims[0]
-            self.seq_len = self.qpc_session.bindings[0].dims[1]
         # Skip inputs/outputs
-        self.qpc_session.skip_buffers(
-            [x for x in self.qpc_session.input_names + self.qpc_session.output_names if x.startswith("past_")]
-            + ["pixel_values_RetainedState", "image_sizes_RetainedState"]
+        qpc_session.skip_buffers(
+            [x for x in qpc_session.input_names + qpc_session.output_names if x.startswith("past_")]
         )
 
         # Read prompt and ctx len from session
-        # batch_size = max(
-        #     [x[self.qpc_session.binding_index_map["input_ids"]][1][0] for x in self.qpc_session.allowed_shapes]
-        #     + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[0]]
-        # )
-
-        # prefill_seq_len = max(
-        #     [x[self.qpc_session.binding_index_map["input_ids"]][1][1] for x in self.qpc_session.allowed_shapes]
-        #     + [self.qpc_session.bindings[self.qpc_session.binding_index_map["input_ids"]].dims[1]]
-        # )
-        # Prepare input
-        input_ids_len = inputs["input_ids"].shape[1]
-        input_ids = np.array(
-            torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - inputs["input_ids"].size(1)), "constant", 0)
-        )
-        attention_mask = np.array(
-            torch.nn.functional.pad(
-                inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
-            )
+        batch_size = max(
+            [x[qpc_session.binding_index_map["input_ids"]][1][0] for x in qpc_session.allowed_shapes]
+            + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[0]]
         )
 
-        inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
+        prefill_seq_len = max(
+            [x[qpc_session.binding_index_map["input_ids"]][1][1] for x in qpc_session.allowed_shapes]
+            + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[1]]
+        )
 
-        outputs = {
-            "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[2]).astype(
-                np.float32
-            ),
-        }
-        self.qpc_session.set_buffers(outputs)
-        outputs = self.qpc_session.run(inputs)
-        outputs = outputs["output"][:, :input_ids_len, :]
-        return outputs
+        # lang_inputs = tokenizer(prompt, return_tensors="np", padding=True)
+        input_len = inputs["attention_mask"].sum(1, keepdims=True)
+        padded_len = inputs["input_ids"].shape[1]
+        num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+        generation_len = None
+        if generation_len is None:
+            generation_len = ctx_len - input_len.max()
+
+        assert generation_len > 0, "generation length should be greater than zero"
+        generated_ids = np.full((batch_size, generation_len + 1), self.tokenizer.pad_token_id)
+        stream = None
+        if stream:
+            streamer = transformers.TextStreamer(self.tokenizer)
+
+        # Prepare inputs for prefill
+        start = perf_counter()
+
+        inputs["position_ids"] = np.where(
+            inputs.pop("attention_mask"), np.arange(padded_len), -1
+        )  # Need to use -1 as position_ids for invalid tokens
+        inputs = dict(inputs)
+
+        # vision_session.deactivate()
+        qpc_session.activate()
+
+        # Run prefill
+        for i in range(num_chunks):
+            chunk_inputs = inputs.copy()
+            chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            outputs = qpc_session.run(chunk_inputs)
+
+        # Skip inputs/outputs again
+        qpc_session.skip_buffers(
+            [x for x in qpc_session.input_names + qpc_session.output_names if x.startswith("past_")]
+        )
+
+        # Get first token
+        inputs["input_ids"] = outputs["logits"].argmax(2)
+        inputs["position_ids"] = input_len
+        inputs["cross_attention_mask"] = inputs["cross_attention_mask"][:, -1:, :, :]
+        generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
+        finished_sequences = inputs["input_ids"] == self.tokenizer.eos_token_id
+        if stream:
+            streamer.put(inputs["input_ids"][0])
+
+        # Decode loop
+        loop_start = perf_counter()
+        for num_token in range(1, generation_len):
+            outputs = qpc_session.run(inputs)
+
+            # Prepare inputs for next iteration
+            inputs["input_ids"] = outputs["logits"].argmax(2)
+            inputs["position_ids"] += 1
+            generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
+            finished_sequences |= inputs["input_ids"] == self.tokenizer.eos_token_id
+            if stream:
+                streamer.put(inputs["input_ids"][0])
+            if finished_sequences.all():
+                break
+
+        end = perf_counter()
+        if stream:
+            streamer.end()
+        generated_texts = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        for i in range(1 if stream else 0, batch_size):
+            print(i, generated_texts[i])
+
+        prefill_perf = 1 / (loop_start - start)
+        decode_perf = (num_token - 1) / (end - loop_start)
+        total_perf = num_token / (end - start)
+
+        print("TTFT:", round(loop_start - start, 2), "s", file=sys.stderr)
+        print("E2ET:", round(end - start, 2), "s", file=sys.stderr)
+        print("Prefill:", round(prefill_perf, 2), "tok/s", file=sys.stderr)
+        print("Decode:", round(decode_perf, 2), "tok/s", file=sys.stderr)
+        print("E2E:", round(total_perf, 2), "tok/s", file=sys.stderr)
+        if batch_size > 1:
+            print("Prefill (batch):", round(prefill_perf * batch_size, 2), "tok/s", file=sys.stderr)
+            print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s", file=sys.stderr)
+            print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s", file=sys.stderr)
 
     def pytorch_vlm_generate(
         self,
@@ -1169,6 +1107,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         **kwargs,
     ):
         lang_session = QAICInferenceSession(self.lang_qpc_path, device_id, activate=False)
+
         vision_session = QAICInferenceSession(self.vision_qpc_path, device_id)
 
         batch_size, ctx_len, fbs = get_compilation_dims(self.lang_qpc_path)
