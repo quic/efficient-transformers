@@ -744,7 +744,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         export_dir: Optional[str] = None,
         **kwargs,
     ) -> str:
-        self.inputs, self.output_names, self.dynamic_axes = self.model.generate_input(self.processor)
+        self.inputs, self.output_names, self.dynamic_axes = self.model.generate_input(self.kv_offload)
         if self.kv_offload:
             self.vision_export_path = self.export_vision(export_dir)
             self.lang_export_path = self.export_lang(export_dir)
