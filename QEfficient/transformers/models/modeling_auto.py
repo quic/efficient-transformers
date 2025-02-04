@@ -1106,12 +1106,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         stream: bool = True,
         **kwargs,
     ):
-        # self.lang_qpc_path="/home/ubuntu/.cache/qeff_models/ModelWrapper-31e62a3c446b6bb9_working/qpc-1e94c5946f6bdd98/qpc"
-        self.lang_qpc_path = (
-            "/home/ubuntu/.cache/qeff_models/ModelWrapper-31e62a3c446b6bb9_working/qpc-1e94c5946f6bdd98/qpc"
-        )
-        self.vision_qpc_path = "/home/ubuntu/.cache/qeff_models/VisionEncoder-31e62a3c446b6bb9/qpc-7412e902c95a92c9/qpc"
-
         lang_session = QAICInferenceSession(self.lang_qpc_path, device_id, activate=False)
 
         vision_session = QAICInferenceSession(self.vision_qpc_path, device_id)
