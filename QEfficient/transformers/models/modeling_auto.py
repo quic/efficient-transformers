@@ -697,6 +697,9 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
     def __init__(
         self,
         model: nn.Module,
+        kv_offload: bool=False,
+        is_tlm: bool = False,
+        continuous_batching: bool = False,
         **kwargs,
     ):
         if kwargs.pop("full_batch_size", None):
@@ -704,6 +707,9 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
 
         super().__init__(model)
         self.model.config.use_cache = True
+        self.kv_offload = kv_offload
+        self.is_tlm = is_tlm
+        self.continuous_batching = continuous_batching
 
     @classmethod
     def from_pretrained(
@@ -721,11 +727,9 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, *args, **kwargs)
         self.processor = AutoProcessor.from_pretrained(pretrained_model_name_or_path, padding_side="right", **kwargs)
         self.tokenizer = self.processor.tokenizer
-        self.continuous_batching = continuous_batching
         self.kv_offload = kv_offload
-        # self.model_name=pretrained_model_name_or_path
         self.is_tlm = is_tlm
-
+        self.continuous_batching = continuous_batching
         return self
 
     @property
@@ -750,7 +754,8 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             self.lang_export_path = self.export_lang(export_dir)
         else:
             self.model = ModelWrapper(self.model)
-            self._export(self.model, self.inputs[0], self.output_names[0], self.dynamic_axes[0], export_dir=export_dir)
+            inputs_old, output_names_old, dynamic_old= self.model.generate_input(processor=self.processor) 
+            self._export(self.inputs[0], self.output_names[0], self.dynamic_axes[0], export_dir=export_dir)
 
     def export_vision(self, export_dir):
         self.vision_encoder_model = VisionEncoder(self.model)
@@ -760,11 +765,11 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         vision_dynamic_axes = self.dynamic_axes[0]
 
         self.vision_onnx_path = self._export(
-            self.vision_encoder_model,
             vision_inputs,
             vision_output_names,
             vision_dynamic_axes,
-            export_dir=export_dir,
+            export_dir,
+            self.vision_encoder_model,
         )
 
         return self.vision_onnx_path
@@ -777,7 +782,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         lang_dynamic_axes = self.dynamic_axes[1]
 
         self.lang_onnx_path = self._export(
-            self.lang_model, lang_inputs, lang_output_names, lang_dynamic_axes, export_dir=export_dir
+            lang_inputs, lang_output_names, lang_dynamic_axes, export_dir, self.lang_model,
         )
 
         return self.lang_onnx_path
@@ -888,14 +893,15 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             kv_cache_dtype = "float16"
 
             # inputs
-            for input_name in self.output_names:
+            for input_name in self.output_names[0]:
                 if input_name.endswith("_RetainedState"):
                     custom_io[input_name[: -len("_RetainedState")]] = kv_cache_dtype
 
             # outputs
-            for output_name in self.output_names:
+            for output_name in self.output_names[0]:
                 if output_name.endswith("_RetainedState"):
                     custom_io[output_name] = kv_cache_dtype
+
 
             compiler_options.update({"retained-state": True})
             self.lang_qpc_path = self._compile(
@@ -935,7 +941,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             if self.kv_offload:
                 self.kv_offload_generate(inputs, streamer, device_ids)
             else:
-                return self.cloud_ai_100_generate(inputs=inputs, device_ids=device_ids)
+                return self.cloud_ai_100_generate(inputs=inputs, device_ids=device_ids, streamer=streamer)
         # PyTorch runtime
         else:
             return self.pytorch_vlm_generate(model=self.model, inputs=inputs, streamer=streamer)
@@ -943,8 +949,9 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
     def cloud_ai_100_generate(
         self,
         inputs: torch.Tensor,
-        device_ids: List[int] = [0],
+        device_ids: List[int],
         enable_debug_logs: bool = False,
+        streamer: Optional[TextStreamer] = None,
     ) -> np.ndarray:
         qpc_session = QAICInferenceSession(
             self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
@@ -979,9 +986,6 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
 
         assert generation_len > 0, "generation length should be greater than zero"
         generated_ids = np.full((batch_size, generation_len + 1), self.tokenizer.pad_token_id)
-        stream = None
-        if stream:
-            streamer = transformers.TextStreamer(self.tokenizer)
 
         # Prepare inputs for prefill
         start = perf_counter()
@@ -1012,7 +1016,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         inputs["cross_attention_mask"] = inputs["cross_attention_mask"][:, -1:, :, :]
         generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
         finished_sequences = inputs["input_ids"] == self.tokenizer.eos_token_id
-        if stream:
+        if streamer:
             streamer.put(inputs["input_ids"][0])
 
         # Decode loop
@@ -1025,17 +1029,17 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             inputs["position_ids"] += 1
             generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
             finished_sequences |= inputs["input_ids"] == self.tokenizer.eos_token_id
-            if stream:
+            if streamer:
                 streamer.put(inputs["input_ids"][0])
             if finished_sequences.all():
                 break
 
         end = perf_counter()
-        if stream:
+        if streamer:
             streamer.end()
-        generated_texts = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        for i in range(1 if stream else 0, batch_size):
-            print(i, generated_texts[i])
+        # generated_texts = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        # for i in range(1 if streamer else 0, batch_size):
+        #     print(i, generated_texts[i])
 
         prefill_perf = 1 / (loop_start - start)
         decode_perf = (num_token - 1) / (end - loop_start)
@@ -1050,6 +1054,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             print("Prefill (batch):", round(prefill_perf * batch_size, 2), "tok/s", file=sys.stderr)
             print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s", file=sys.stderr)
             print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s", file=sys.stderr)
+        return generated_ids
 
     def pytorch_vlm_generate(
         self,
@@ -1068,34 +1073,39 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         Returns:
             torch.Tensor: A list of output features generated by the model for each prompt.
         """
-        # inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
-        # inputs["past_key_values"] = []
-        # for _ in range(model.config.num_hidden_layers):
-        #     inputs["past_key_values"].append((
-        #         torch.zeros(1, model.config.num_key_value_heads, self.ctx_len,self.head_dim),
-        #         torch.zeros(1, model.config.num_key_value_heads, self.ctx_len, self.head_dim),
-        #     ))
-        self.batch_size = inputs["input_ids"].shape[0]
-        generation_len = self.ctx_len - inputs["input_ids"].shape[1]
-        generated_ids = torch.full((self.batch_size, generation_len + 1), self.processor.tokenizer.pad_token_id)
+        inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
+        inputs["past_key_values"] = []
+        import ipdb
+        ipdb.set_trace()
+        self.ctx_len=32
+        self.head_dim = model.config.text_config.hidden_size // model.config.txt_cfg.num_attention_heads
+        for _ in range(model.config.num_hidden_layers):
+            inputs["past_key_values"].append((
+                torch.zeros(1, model.config.num_key_value_heads, self.ctx_len,self.head_dim),
+                torch.zeros(1, model.config.num_key_value_heads, self.ctx_len, self.head_dim),
+            ))
+        # self.ctx_len=256
+        # self.batch_size = inputs["input_ids"].shape[0]
+        # generation_len = self.ctx_len - inputs["input_ids"].shape[1]
+        # generated_ids = torch.full((self.batch_size, generation_len + 1), self.processor.tokenizer.pad_token_id)
 
         outputs = model(**inputs)
 
-        inputs["input_ids"] = outputs[0].argmax(2)
-        inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-        streamer.put(inputs["input_ids"])
+        # inputs["input_ids"] = outputs[0].argmax(2)
+        # inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
+        # streamer.put(inputs["input_ids"])
 
-        for _ in range(generation_len):
-            outputs = model(**inputs)
-            inputs["input_ids"] = outputs[0].argmax(2)
-            inputs["position_ids"] += 1
-            streamer.put(inputs["input_ids"])
-            generated_ids[:, _] = inputs["input_ids"].squeeze(1)
-            generated_texts = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-            for i in range(self.batch_size):
-                print(i, generated_texts[i])
+        # for _ in range(generation_len):
+        #     outputs = model(**inputs)
+        #     inputs["input_ids"] = outputs[0].argmax(2)
+        #     inputs["position_ids"] += 1
+        #     streamer.put(inputs["input_ids"])
+        #     generated_ids[:, _] = inputs["input_ids"].squeeze(1)
+        #     generated_texts = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        #     for i in range(self.batch_size):
+        #         print(i, generated_texts[i])
 
-        return generated_ids
+        return outputs
 
     def kv_offload_generate(
         self,
