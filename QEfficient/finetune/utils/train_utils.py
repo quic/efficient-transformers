@@ -94,8 +94,15 @@ def train(
     if train_config.grad_scaler:
         scaler = GradScaler()
 
+    loss_0_counter = 0
+
     # Start the training loop
     for epoch in range(train_config.num_epochs):
+        if loss_0_counter == train_config.convergence_counter:
+            print(
+                f"Not proceeding with epoch {epoch + 1} since loss value has been close to 0 for last {loss_0_counter} iterations."
+            )
+            break
         print(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
         print(f"train_config.max_train_step: {train_config.max_train_step}")
         # stop when the maximum number of training steps is reached
@@ -149,6 +156,11 @@ def train(
             # Accumalate graidents
             loss = loss / train_config.gradient_accumulation_steps
 
+            if loss <= 1e-4:
+                loss_0_counter += 1
+            else:
+                loss_0_counter = 0
+
             if train_config.enable_ddp:
                 if local_rank == 0:
                     tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
@@ -198,11 +210,20 @@ def train(
                     val_prep,
                 )
 
+            if loss_0_counter == train_config.convergence_counter:
+                print(
+                    f"Loss value has been close to 0 for last {loss_0_counter} iterations. Hence, stopping the fine tuning."
+                )
+                break
+
         pbar.close()
         epoch_end_time = time.perf_counter() - epoch_start_time
         epoch_times.append(epoch_end_time)
 
-        train_epoch_loss = total_loss / len(train_dataloader)
+        if loss_0_counter == train_config.convergence_counter:
+            train_epoch_loss = total_loss / step
+        else:
+            train_epoch_loss = total_loss / len(train_dataloader)
         train_perplexity = torch.exp(train_epoch_loss)
 
         train_prep.append(float(train_perplexity))
