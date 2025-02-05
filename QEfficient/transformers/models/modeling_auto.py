@@ -1587,15 +1587,13 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, **kwargs):
+        model_class_name = model.__class__.__name__
+        if not (model_class_name.endswith("ForConditionalGeneration")):
+            raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
+
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
-
-        k_proj_weights, v_proj_weights = [], []
-        for i in range(self.model.config.decoder_layers):
-            k_proj_weights.append(self.model.model.decoder.layers[i].encoder_attn.k_proj)
-            v_proj_weights.append(self.model.model.decoder.layers[i].encoder_attn.v_proj)
-        self.model.model.encoder.add_cross_attention_module(k_proj_weights, v_proj_weights)
 
     @property
     def model_hash(self) -> str:
@@ -1624,7 +1622,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        encoder_seq_len = constants.ONNX_EXPORT_EXAMPLE_ENCODER_SEQ_LEN
+        encoder_seq_len = self.model.config.max_source_positions
         encoder_feature_count = self.model.config.num_mel_bins
 
         kv_cache_shape = get_padding_shape_from_config(self.model.config, bs, seq_len)
@@ -1634,13 +1632,11 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             "decoder_input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "decoder_position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(self.num_layers)],
-            "cross_key_values": [],
         }
         dynamic_axes = {
             "input_features": {0: "batch_size", 2: "feature_len"},
             "decoder_input_ids": {0: "batch_size", 1: "seq_len"},
             "decoder_position_ids": {0: "batch_size", 1: "seq_len"},
-            "cross_key_values": {0: "batch_size", 2: "enc_ctx_len"},
         }
         pkv_self_dynamic_axes = {
             0: "batch_size",
@@ -1664,13 +1660,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
                         pkv_self_dynamic_axes if self_cross == "self" else pkv_cross_dynamic_axes
                     )
                     output_names.append(f"past_{kv}_{self_cross}.{i}_RetainedState")
-
-        # need a separate loop to ensure order of output_names
-        for i in range(self.num_layers):
-            for kv in ["key", "value"]:
-                example_inputs["cross_key_values"].append(torch.zeros(kv_cross_cache_shape, dtype=torch.float32))
-                dynamic_axes[f"cross_{kv}_.{i}"] = pkv_cross_dynamic_axes
-                output_names.append(f"cross_{kv}.{i}_RetainedState")
 
         self.onnx_path = self._export(
             example_inputs,
@@ -1727,7 +1716,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             "seq_len": 1,
             "encoder_ctx_len": encoder_ctx_len,
             "decoder_ctx_len": decoder_ctx_len,
-            "feature_len": 1,  # important dummy feature so that torch.where knows whether to run encoder or not
+            "feature_len": 1,  # important dummy feature so that torch.where knows whether to run cross attention or not
         }
 
         specializations = [encoder_specializations, decoder_specializations]
@@ -1736,6 +1725,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             onnx_path,
             compile_dir,
             compile_only=True,
+            retained_state=True,
             specializations=specializations,
             convert_to_fp16=True,
             mxfp6_matmul=mxfp6_matmul,
@@ -1753,56 +1743,24 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         generation_len: int,
         sample_rate: int = 16000,
         device_ids: List[int] = None,
-        runtime_ai100: bool = True,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         This method generates output until ``endoftranscript`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
         This is a sequential execution based on the ``batch_size`` of the compiled model and the number of audio tensor passed.
 
         ``Mandatory`` Args:
-            :processor (AutoProcessor): AutoProcessor, usually loaded by AutoProcessor.from_pretrained to extract feature data from input array
-            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+            :processor: autoprocessor to process inputs and decode logits
+            :inputs (np.ndarray): inputs to run the execution.
+            :generation_len (int): length upto which to generate
+            :sample_rate (int): sampling rate at which input audio is stored in inputs (needed for processor)
             :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
         ``optional`` Args:
             :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
-        # AI_100 runtime
-        if runtime_ai100:
-            if not isinstance(self.qpc_path, Path):
-                raise TypeError("Please run compile API first!")
-
-            return self.cloud_ai_100_feature_generate(
-                processor=processor,
-                inputs=inputs,
-                device_ids=device_ids,
-                generation_len=generation_len,
-                sample_rate=sample_rate,
-            )
-        # PyTorch runtime
-        else:
-            return self.pytorch_feature_generate(model=self.model, inputs=inputs)
-
-    def cloud_ai_100_feature_generate(
-        self,
-        processor: AutoProcessor,
-        inputs: torch.Tensor,
-        sample_rate: int,
-        generation_len: int,
-        device_ids: List[int] = [0],
-    ) -> np.ndarray:
-        """
-        Generates features with list of prompts using AI 100 runtime.
-
-        ``Mandatory`` Args:
-            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
-        ``Optional`` Args:
-            device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
-
-        Returns:
-           CloudAI100ExecInfo: AI100 inference information
-        """
+        if not isinstance(self.qpc_path, Path):
+            raise TypeError("Please run compile API first!")
 
         if self.qpc_session is None:
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
@@ -1817,7 +1775,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         decoder_input_ids = (
             torch.ones((self.batch_size, seq_len), dtype=torch.int64) * self.model.config.decoder_start_token_id
         ).numpy()
-        decoder_position_ids = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1)
+        decoder_position_ids = (
+            torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1).numpy()
+        )
 
         model_inputs = dict(
             input_features=input_features,
@@ -1826,11 +1786,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         )
 
         self.qpc_session.skip_buffers(
-            [
-                x
-                for x in self.qpc_session.input_names + self.qpc_session.output_names
-                if x.startswith("past_") or x.startswith("cross_")
-            ]
+            [x for x in self.qpc_session.input_names + self.qpc_session.output_names if x.startswith("past_")]
         )
 
         outputs = {
@@ -1845,6 +1801,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         # array to hold generated tokens
         generated_ids = np.full((self.batch_size, generation_len + 1), processor.tokenizer.pad_token_id)
         generated_ids[:, 0] = [self.model.config.decoder_start_token_id]
+        logits = outputs["logits"]
+        next_token = logits.argmax(-1)
+        generated_ids[:, 1] = next_token.squeeze(1)
 
         model_inputs["input_features"] = np.random.randn(self.batch_size, self.model.config.num_mel_bins, 1).astype(
             np.float32
@@ -1860,8 +1819,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             if next_token[0][0] == processor.tokenizer.eos_token_id:
                 break
 
-            model_inputs["input_ids"] = next_token
-            model_inputs["position_ids"] += 1
+            model_inputs["decoder_input_ids"] = next_token
+            model_inputs["decoder_position_ids"] += 1
         end = perf_counter()
 
         prefill_time, decode_perf, total_perf, total_time = calculate_latency(num_tokens, loop_start, start, end)
@@ -1874,17 +1833,122 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         )
 
         return exec_info
-
-    def pytorch_feature_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
         """
-        Generates features from a list of text prompts using a PyTorch model.
+        Generates features with list of prompts using AI 100 runtime.
 
         ``Mandatory`` Args:
-            model: The transformed PyTorch model used for generating features.
             :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+        ``Optional`` Args:
+            device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
 
         Returns:
-            torch.Tensor: A list of output features generated by the model for each prompt.
+           CloudAI100ExecInfo: AI100 inference information
         """
-        # TODO: implement decode loop for pytorch
-        return model(**inputs)
+
+        import onnxruntime
+
+        session = onnxruntime.InferenceSession(str(self.onnx_path))
+        self.batch_size = 1
+
+        seq_len = 1
+        encoder_context_len = self.model.config.max_source_positions
+
+        # prepare inputs
+        input_features = processor(inputs, sampling_rate=sample_rate, return_tensors="pt").input_features
+        decoder_input_ids = (
+            torch.ones((self.batch_size, seq_len), dtype=torch.int64) * self.model.config.decoder_start_token_id
+        )
+        decoder_position_ids = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1)
+
+        model_inputs = dict(
+            input_features=input_features,
+            decoder_input_ids=decoder_input_ids,
+            decoder_position_ids=decoder_position_ids,
+        )
+
+        for i in range(self.model.config.decoder_layers):
+            model_inputs[f"past_key_self.{i}"] = torch.zeros(
+                (
+                    self.batch_size,
+                    self.model.config.decoder_attention_heads,
+                    generation_len,
+                    self.model.config.d_model // self.model.config.decoder_attention_heads,
+                ),
+                dtype=torch.float32,
+            )
+            model_inputs[f"past_value_self.{i}"] = torch.zeros(
+                (
+                    self.batch_size,
+                    self.model.config.decoder_attention_heads,
+                    encoder_context_len,
+                    self.model.config.d_model // self.model.config.decoder_attention_heads,
+                ),
+                dtype=torch.float32,
+            )
+            model_inputs[f"past_key_cross.{i}"] = torch.zeros(
+                (
+                    self.batch_size,
+                    self.model.config.decoder_attention_heads,
+                    generation_len,
+                    self.model.config.d_model // self.model.config.decoder_attention_heads,
+                ),
+                dtype=torch.float32,
+            )
+            model_inputs[f"past_value_cross.{i}"] = torch.zeros(
+                (
+                    self.batch_size,
+                    self.model.config.decoder_attention_heads,
+                    encoder_context_len,
+                    self.model.config.d_model // self.model.config.decoder_attention_heads,
+                ),
+                dtype=torch.float32,
+            )
+
+        # encoder run
+        start = perf_counter()
+        # print(model_inputs)
+        # import ipdb; ipdb.set_trace()
+        outputs = session.run(None, {k: v.detach().numpy() for k, v in model_inputs.items()})
+
+        # array to hold generated tokens
+        generated_ids = np.full((self.batch_size, generation_len + 1), processor.tokenizer.pad_token_id)
+        generated_ids[:, 0] = [self.model.config.decoder_start_token_id]
+        logits = outputs["logits"]
+        next_token = logits.argmax(-1)
+        generated_ids[:, 1] = next_token.squeeze(1)
+
+        model_inputs["input_features"] = np.random.randn(self.batch_size, self.model.config.num_mel_bins, 1).astype(
+            np.float32
+        )
+
+        loop_start = perf_counter()
+        for num_tokens in range(generation_len):
+            outputs = session.run(None, model_inputs)
+            logits = outputs[0]
+            next_token = logits.argmax(-1)
+            generated_ids[:, num_tokens + 1] = next_token.squeeze(1)
+
+            if next_token[0][0] == processor.tokenizer.eos_token_id:
+                break
+
+            model_inputs["decoder_input_ids"] = next_token
+            model_inputs["decoder_position_ids"] += 1
+
+            for i in range(self.model.config.decoder_layers):
+                model_inputs[f"past_key_self.{i}"] = outputs[i * 4]
+                model_inputs[f"past_value_self.{i}"] = outputs[i * 4 + 1]
+                model_inputs[f"past_key_cross.{i}"] = outputs[i * 4 + 2]
+                model_inputs[f"past_value_cross.{i}"] = outputs[i * 4 + 3]
+
+        end = perf_counter()
+
+        prefill_time, decode_perf, total_perf, total_time = calculate_latency(num_tokens, loop_start, start, end)
+
+        exec_info = CloudAI100ExecInfo(
+            batch_size=self.batch_size,
+            generated_texts=processor.batch_decode(generated_ids),
+            generated_ids=generated_ids,
+            perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
+        )
+
+        return exec_info

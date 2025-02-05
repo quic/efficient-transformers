@@ -29,6 +29,7 @@ if QAIC_INSTALLED:
         QEFFAutoModel,
         QEFFAutoModelForCausalLM,
         QEFFAutoModelForImageTextToText,
+        QEFFAutoModelForSpeechSeq2Seq,
         QEFFCommonLoader,
     )
     from QEfficient.compile.compile_helper import compile
