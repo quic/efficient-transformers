@@ -1,25 +1,13 @@
-# coding=utf-8
-# Adapted from
-# https://github.com/huggingface/transformers/blob/v4.28.0/src/transformers/models/llama/modeling_llama.py
-# Copyright 2023 The vLLM team.
-# Copyright 2022 EleutherAI and the HuggingFace Inc. team. All rights reserved.
+# -----------------------------------------------------------------------------
 #
-# This code is based on EleutherAI's GPT-NeoX library and the GPT-NeoX
-# and OPT implementations in this library. It has been modified from its
-# original forms to accommodate minor architectural differences compared
-# to GPT-NeoX and OPT used by the Meta AI team that trained the model.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# -----------------------------------------------------------------------------
+# This file is adapted from vllm implementation by snowflake here: https://github.com/Snowflake-Labs/vllm/blob/swiftkv/vllm/model_executor/models/llama_swiftkv.py
+# The Modules are updated as required by Cloud AI 100 HW requirements.
+
+
 """Inference-only LLaMA model compatible with HuggingFace weights."""
 
 import math
@@ -294,8 +282,6 @@ class LlamaSwiftKVModel(nn.Module):
         )
         hidden_states = inputs_embeds
 
-        # create position embeddings to be shared across the decoder layers
-        # position_embeddings = self.rotary_emb(hidden_states, position_ids)
         next_decoder_cache = None
 
         for layer_idx in range(self.config.num_key_value_layers):
@@ -359,44 +345,6 @@ class LlamaSwiftKVModel(nn.Module):
 
 
 class LlamaSwiftKVForCausalLM(nn.Module):
-    """
-    # packed_modules_mapping = {
-    #     "kv_proj_swiftkv": ["k_proj_swiftkv", "v_proj_swiftkv"],
-    #     "qkv_proj": ["q_proj", "k_proj", "v_proj"],
-    #     "gate_up_proj": ["gate_proj", "up_proj"],
-    # }
-
-    # # BitandBytes specific attributes
-    # default_bitsandbytes_target_modules = [
-    #     ".gate_proj.",
-    #     ".down_proj.",
-    #     ".up_proj.",
-    #     ".q_proj.",
-    #     ".k_proj.",
-    #     ".v_proj.",
-    #     ".o_proj.",
-    #     ".k_proj_swiftkv.",
-    #     ".v_proj_swiftkv.",
-    # ]
-
-    # # in TP, these weights are partitioned along the column dimension (dim=-1)
-    # column_parallel_weights_modules = [
-    #     ".q_proj_swiftkv.",
-    #     ".down_proj.",
-    #     ".o_proj.",
-    # ]
-    # bitsandbytes_stacked_params_mapping = {
-    #     # shard_name, weight_name, index
-    #     "k_proj_swiftkv": ("kv_proj_swiftkv", 1),
-    #     "v_proj_swiftkv": ("kv_proj_swiftkv", 2),
-    #     "q_proj": ("qkv_proj", 0),
-    #     "k_proj": ("qkv_proj", 1),
-    #     "v_proj": ("qkv_proj", 2),
-    #     "gate_proj": ("gate_up_proj", 0),
-    #     "up_proj": ("gate_up_proj", 1),
-    # }
-    """
-
     def __init__(self, *, config):
         super().__init__()
 
