@@ -394,3 +394,15 @@ def create_json(file_path: str, json_data: object):
             json.dump(json_data, file, indent=4)
     except Exception as e:
         print(f"Failed to create JSON File {file_path}: {e}")
+
+
+def model_swap(func):
+    def wrapper(*args, **kwargs):
+        if "model" in kwargs and kwargs["model"] is not None:
+            original_model = args[0].model
+            args[0].model = kwargs["model"]
+            onnx_path = func(*args, **kwargs)
+            args[0].model = original_model
+            return onnx_path
+
+    return wrapper

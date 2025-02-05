@@ -25,7 +25,7 @@ from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
-from QEfficient.utils._utils import load_json
+from QEfficient.utils._utils import load_json, model_swap
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,7 @@ class QEFFBaseModel(ABC):
             :str: Path of the compiled ``qpc`` package.
         """
 
+    @model_swap
     def _export(
         self,
         example_inputs: Dict[str, torch.Tensor],
@@ -134,9 +135,6 @@ class QEFFBaseModel(ABC):
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
         """
-        if model:
-            self.model=model
-            
         export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
         export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
         onnx_path = export_dir / f"{self.model_name}.onnx"
