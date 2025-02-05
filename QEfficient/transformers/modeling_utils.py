@@ -147,7 +147,6 @@ from .models.whisper.modeling_whisper import (
     QEffWhisperDecoder,
     QEffWhisperDecoderLayer,
     QEffWhisperEncoder,
-    QEffWhisperForConditionalGeneration,
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
 )
@@ -267,5 +266,4 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     WhisperDecoder: QEffWhisperDecoder,
     WhisperPositionalEmbedding: QEffWhisperPositionalEmbedding,
     WhisperModel: QEffWhisperModel,
-    WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
 }
