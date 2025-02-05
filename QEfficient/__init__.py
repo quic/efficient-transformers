@@ -48,6 +48,7 @@ if QAIC_INSTALLED:
         "cloud_ai_100_exec_kv",
         "QEFFAutoModel",
         "QEFFAutoModelForCausalLM",
+        "QEFFAutoModelForSpeechSeq2Seq",
         "QEffAutoPeftModelForCausalLM",
         "QEFFAutoModelForImageTextToText",
         "QEFFCommonLoader",

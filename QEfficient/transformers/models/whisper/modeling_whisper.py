@@ -90,7 +90,7 @@ class QEffWhisperAttention(WhisperAttention):
                 past_key_value.key_cache[self.layer_idx] = key_states
                 past_key_value.value_cache[self.layer_idx] = value_states
             else:
-                # self attention decoder and first cross attention pass
+                # self attention decoder
                 key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
                 value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
                 if past_key_value is not None:
