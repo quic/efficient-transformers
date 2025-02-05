@@ -4,7 +4,7 @@ import torchvision.transforms as T
 from PIL import Image
 from torchvision.transforms.functional import InterpolationMode
 
-from QEfficient.utils import get_conv_template
+from QEfficient.transformers.models.InternVL.conversation import get_conv_template
 
 # from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 
