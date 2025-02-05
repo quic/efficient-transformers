@@ -51,6 +51,9 @@ from transformers.models.llama.modeling_llama import (
     LlamaModel,
     LlamaRMSNorm,
 )
+from transformers.models.llava.modeling_llava import (
+    LlavaForConditionalGeneration,
+)
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
     MistralDecoderLayer,
@@ -143,11 +146,18 @@ from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJForCausalLM,
     QEffGPTJModel,
 )
+from QEfficient.transformers.models.InternVL.modeling_internvl_chat_vision import (
+    QEffInternVisionEmbeddings,
+    QEffInternVLChatModel,
+)
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
+)
+from QEfficient.transformers.models.llava.modeling_llava import (
+    QEffLlavaForConditionalGeneration,
 )
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
@@ -253,6 +263,8 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
         Gemma2Model: QEffGemma2Model,
         Gemma2ForCausalLM: QEffGemma2ForCausalLM,
+        # Llava
+        LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
         # mllama
         MllamaForCausalLM: QEffMllamaForCausalLM,
         MllamaTextModel: QEffMllamaTextModel,
@@ -301,6 +313,9 @@ class KVCacheTransform(ModuleMappingTransform):
         GPTBigCodeBlock: QEffGPTBigCodeBlock,
         GPTBigCodeModel: QEffGPTBigCodeModel,
         GPTBigCodeForCausalLM: QEffGPTBigCodeForCausalLM,
+        # InternVL
+        "InternVLChatModel": QEffInternVLChatModel,
+        "InternVisionEmbeddings": QEffInternVisionEmbeddings,
     }
 
     @classmethod

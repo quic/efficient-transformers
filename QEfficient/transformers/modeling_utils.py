@@ -77,6 +77,11 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
 )
 
 from QEfficient.customop import CustomRMSNormAIC
+from QEfficient.transformers.models.InternVL.modeling_internvl_chat_vision import (
+    InternVLChatModel,
+    QEffInternVisionEmbeddings,
+    QEffInternVLChatModel,
+)
 
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
@@ -157,6 +162,7 @@ qeff_supported_architectures = ModelArchitectures(
         Starcoder2ForCausalLM.__name__,
         GPTBigCodeForCausalLM.__name__,
         MllamaForCausalLM.__name__,
+        InternVLChatModel.__name__,
     ]
 )
 
@@ -241,4 +247,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     GPTBigCodeAttention: QEffGPTBigCodeAttention,
     GPTBigCodeBlock: QEffGPTBigCodeBlock,
     GPTBigCodeModel: QEffGPTBigCodeModel,
+    # InternVL
+    "InternVLChatModel": QEffInternVLChatModel,
+    "InternVisionEmbeddings": QEffInternVisionEmbeddings,
 }

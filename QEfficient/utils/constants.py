@@ -57,12 +57,21 @@ class Constants:
     # Export Constants.
     SEQ_LEN = 32
     CTX_LEN = 32
+    SEQ_LEN_VLM = 3072
+    CTX_LEN_VLM_INTERN = 4096
     PROMPT_LEN = 8
     INPUT_STR = ["My name is"]
     GB = 2**30
     MAX_QPC_LIMIT = 30
     MAX_RETRIES = 5  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
     NUM_SPECULATIVE_TOKENS = 2
+    CTX_LEN_VLM_LLAVA = 1280
+    IMG_SIZE = 336
+    PL_VLM = 1024
+    BASE_URL_LLAVA = (
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg"
+    )
+    PROMPT_LLAVA = "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud"
 
 
 @dataclass

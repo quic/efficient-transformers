@@ -40,12 +40,21 @@ class ModuleMappingTransform(PytorchTransform):
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         transformed = False
         for module in model.modules():
+            # if repl_module := cls._module_mapping.get(type(module)):
+            if repl_module := cls._module_mapping.get(module.__class__.__name__):
+                module.__class__ = repl_module
+                # Handling the __init__ calls in the models
+                if hasattr(module, "__qeff_init__"):
+                    module.__qeff_init__()
+                transformed = True
+
             if repl_module := cls._module_mapping.get(type(module)):
                 module.__class__ = repl_module
                 # Handling the __init__ calls in the models
                 if hasattr(module, "__qeff_init__"):
                     module.__qeff_init__()
                 transformed = True
+
         return model, transformed
 
     @classmethod
