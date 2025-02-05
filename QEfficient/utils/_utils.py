@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import importlib
 import json
 import os
 import subprocess
@@ -16,8 +15,7 @@ import requests
 import torch
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
-from transformers import AutoConfig, AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
-from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
+from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger

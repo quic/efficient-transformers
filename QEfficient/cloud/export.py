@@ -9,7 +9,8 @@ import argparse
 import os
 from typing import Optional
 
-from QEfficient.utils import check_and_assign_cache_dir, load_qeff_model
+from QEfficient.base.common import QEFFCommonLoader
+from QEfficient.utils import check_and_assign_cache_dir
 from QEfficient.utils.logging_utils import logger
 
 # Specifically for Docker images.
@@ -37,12 +38,12 @@ def get_onnx_model_path(
     """
     logger.info(f"Exporting Pytorch {model_name} model to ONNX...")
 
-    qeff_model = load_qeff_model(
-        model_name,
-        cache_dir,
-        hf_token,
-        full_batch_size,
-        local_model_dir,
+    qeff_model = QEFFCommonLoader.from_pretrained(
+        pretrained_model_name_or_path=model_name,
+        cache_dir=cache_dir,
+        hf_token=hf_token,
+        full_batch_size=full_batch_size,
+        local_model_dir=local_model_dir,
     )
     onnx_model_path = qeff_model.export()
     logger.info(f"Generated onnx_path: {onnx_model_path}")
