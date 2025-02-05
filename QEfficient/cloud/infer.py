@@ -10,7 +10,8 @@ import logging
 import sys
 from typing import List, Optional
 
-from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer, load_qeff_model
+from QEfficient.base.common import QEFFCommonLoader
+from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
 
@@ -77,9 +78,6 @@ def main(
         hf_token=hf_token,
     )
 
-    if enable_qnn and qnn_config is not None:
-        logger.error("QNN compilation is currently not supported in High Level APIs of QEFFAutoModelForCausalLM.")
-
     if "--mxfp6" in sys.argv:
         if args.mxfp6:
             logger.warning("mxfp6 is going to be deprecated in a future release, use -mxfp6_matmul instead.")
@@ -87,12 +85,12 @@ def main(
         if args.mxint8:
             logger.warning("mxint8 is going to be deprecated in a future release, use -mxint8_kv_cache instead.")
 
-    qeff_model = load_qeff_model(
-        model_name,
-        cache_dir,
-        hf_token,
-        full_batch_size,
-        local_model_dir,
+    qeff_model = QEFFCommonLoader.from_pretrained(
+        pretrained_model_name_or_path=model_name,
+        cache_dir=cache_dir,
+        hf_token=hf_token,
+        full_batch_size=full_batch_size,
+        local_model_dir=local_model_dir,
     )
 
     #########
@@ -111,6 +109,7 @@ def main(
         full_batch_size=full_batch_size,
         allow_mxint8_mdp_io=allow_mxint8_mdp_io,
         enable_qnn=enable_qnn,
+        qnn_config=qnn_config,
         **kwargs,
     )
 
