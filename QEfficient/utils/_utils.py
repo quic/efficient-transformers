@@ -324,6 +324,20 @@ def get_num_layers_from_config(config):
     return n_layer
 
 
+def get_num_layers_vlm(config):
+    if hasattr(config, "architectures") and "LlavaForConditionalGeneration" in config.architectures:
+        num_layers = config.text_config.num_hidden_layers
+    return num_layers
+
+
+def get_padding_shape_vlm(config, batch_size=1):
+    if hasattr(config, "architectures") and "LlavaForConditionalGeneration" in config.architectures:
+        n_heads = config.text_config.num_key_value_heads
+        d_head = config.text_config.hidden_size // config.text_config.num_attention_heads
+        padding_shape = [batch_size, n_heads, Constants.CTX_LEN_VLM, d_head]
+    return padding_shape
+
+
 def execute_command(process: str, command: str, output_file_path: Optional[str] = None):
     """
     Executes the give command using subprocess.
