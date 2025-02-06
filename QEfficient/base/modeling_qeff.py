@@ -339,6 +339,7 @@ class QEFFBaseModel(ABC):
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         qnn_config: Optional[str] = None,
+        kv_cache_batch_size: Optional[int] = None,
     ) -> str:
         """
         Interface for QNN compiler
@@ -356,6 +357,7 @@ class QEFFBaseModel(ABC):
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
             :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
             :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
+            :kv_cache_batch_size (int): kv_cache_batch_size for Prefix Caching. ``Defaults to None.``
         """
         if onnx_path is None and self.onnx_path is None:
             self.export()
@@ -415,6 +417,7 @@ class QEFFBaseModel(ABC):
             full_batch_size=full_batch_size,
             qnn_config=qnn_config,
             qnn_binary_dir=qpc_path,
+            kv_cache_batch_size=kv_cache_batch_size,
         )
 
         self.qpc_path = qpc_path
