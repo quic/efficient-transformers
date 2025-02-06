@@ -12,7 +12,6 @@ from QEfficient.transformers.quantizers.auto import (  # noqa: F401
 from QEfficient.utils._utils import (  # noqa: F401
     Constants,
     check_and_assign_cache_dir,
-    get_conv_template,
     get_num_layers_from_config,
     get_num_layers_vlm,
     get_onnx_dir_name,

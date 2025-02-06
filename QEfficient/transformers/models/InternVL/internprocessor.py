@@ -6,10 +6,6 @@ from torchvision.transforms.functional import InterpolationMode
 
 from QEfficient.transformers.models.InternVL.conversation import get_conv_template
 
-# from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
-
-# from QEfficient.utils._utils import load_hf_processor
-
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
