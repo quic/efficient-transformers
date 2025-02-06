@@ -233,6 +233,8 @@ def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
+
+    pytest.skip("Disabled due to possible bug in compiler in latest version >1.20")
     if model_name == "microsoft/Phi-3-mini-4k-instruct":
         n_layer = 2  # test only 2 layer models
     else:
