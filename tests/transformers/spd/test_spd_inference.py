@@ -106,6 +106,7 @@ def test_spec_decode_inference(
     target_model_name: str,
     full_batch_size: Optional[int],
 ):
+    pytest.skip("Disabled due to possible bug in compiler in latest version >1.20")
     # get device group
     device_group: List[int] = get_available_device_id()
     if not device_group:
