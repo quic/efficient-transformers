@@ -356,6 +356,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 mxfp6_matmul=mxfp6_matmul,
                 mxint8_kv_cache=mxint8_kv_cache,
                 qnn_config=qnn_config,
+                kv_cache_batch_size=kv_cache_batch_size,
             )
         else:
             # Custom IO
