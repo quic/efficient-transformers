@@ -1046,7 +1046,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         lang_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
-            "cross_attention_mask": torch.zeros((bs, seq_len, max_num_images, max_image_tiles), dtype=torch.int64),
+            "cross_attention_mask": torch.zeros((bs, seq_len, max_num_images,max_image_tiles), dtype=torch.int64),
             "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
         }
 
@@ -1218,7 +1218,7 @@ class ModelWrapper(nn.Module):
         if "past_key_values" in outputs:
             outputs["past_key_values"] = outputs["past_key_values"].to_legacy_cache()
         return outputs
-
+    
     def generate_input(self, processor):
         ctx_len = 1024
         txt_cfg = self.mllama.config.get_text_config()
@@ -1233,7 +1233,6 @@ class ModelWrapper(nn.Module):
 
         url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
         from PIL import Image
-
         image = Image.open(requests.get(url, stream=True).raw)
         conversation = [
             {

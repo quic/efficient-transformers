@@ -16,6 +16,7 @@ from typing import List, Optional, Union
 import numpy as np
 import torch
 import torch.nn as nn
+import transformers
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
@@ -696,7 +697,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
     def __init__(
         self,
         model: nn.Module,
-        kv_offload: bool = False,
+        kv_offload: bool=False,
         is_tlm: bool = False,
         continuous_batching: bool = False,
         **kwargs,
@@ -753,22 +754,22 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             self.lang_export_path = self.export_lang(export_dir)
         else:
             self.model = ModelWrapper(self.model)
-            inputs_old, output_names_old, dynamic_old = self.model.generate_input(processor=self.processor)
+            inputs_old, output_names_old, dynamic_old= self.model.generate_input(processor=self.processor) 
             self._export(self.inputs[0], self.output_names[0], self.dynamic_axes[0], export_dir=export_dir)
 
     def export_vision(self, export_dir):
         self.vision_encoder_model = VisionEncoder(self.model)
 
         vision_inputs = self.inputs[0]
-        self.vision_output_names = self.output_names[0]
+        vision_output_names = self.output_names[0]
         vision_dynamic_axes = self.dynamic_axes[0]
 
         self.vision_onnx_path = self._export(
             vision_inputs,
-            self.vision_output_names,
+            vision_output_names,
             vision_dynamic_axes,
             export_dir,
-            model=self.vision_encoder_model,
+            self.vision_encoder_model,
         )
 
         return self.vision_onnx_path
@@ -777,15 +778,11 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         self.lang_model = ModelWrapper(self.model)
 
         lang_inputs = self.inputs[1]
-        self.lang_output_names = self.output_names[1]
+        lang_output_names = self.output_names[1]
         lang_dynamic_axes = self.dynamic_axes[1]
 
         self.lang_onnx_path = self._export(
-            lang_inputs,
-            self.lang_output_names,
-            lang_dynamic_axes,
-            export_dir,
-            model=self.lang_model,
+            lang_inputs, lang_output_names, lang_dynamic_axes, export_dir, self.lang_model,
         )
 
         return self.lang_onnx_path
@@ -804,8 +801,8 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         **compiler_options,
     ) -> str:
         if self.kv_offload:
-            if not hasattr(self, "vision_output_names"):
-                self.export()
+            model = self.model
+            self.model = VisionEncoder(model)
             vision_specializations = [{"batch_size": batch_size, "max_num_images": "1", "max_image_tiles": "4"}]
 
             custom_io = {}
@@ -814,6 +811,8 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             for output_name in self.vision_output_names:
                 custom_io[output_name] = kv_cache_dtype
 
+            model = self.model
+            self.model = self.vision_encoder
             print("compiling vision model")
             self.vision_qpc_path = self._compile(
                 self.vision_onnx_path,
@@ -827,6 +826,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
                 custom_io=custom_io,
                 **compiler_options,
             )
+            self.model = ModelWrapper(model)
 
             lang_specializations = [
                 {
@@ -870,10 +870,10 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
                 custom_io=custom_io_lang,
                 **compiler_options,
             )
-
+            self.model = model
             return self.vision_qpc_path, self.lang_qpc_path
         else:
-            if not hasattr(self, "output_names"):
+            if not hasattr(self, 'output_names'):
                 self.export()
 
             specializations = [
@@ -904,6 +904,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             for output_name in self.output_names[0]:
                 if output_name.endswith("_RetainedState"):
                     custom_io[output_name] = kv_cache_dtype
+
 
             compiler_options.update({"retained-state": True})
             self.lang_qpc_path = self._compile(
@@ -1075,17 +1076,14 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
         inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
         inputs["past_key_values"] = []
         import ipdb
-
         ipdb.set_trace()
-        self.ctx_len = 32
+        self.ctx_len=32
         self.head_dim = model.config.text_config.hidden_size // model.config.txt_cfg.num_attention_heads
         for _ in range(model.config.num_hidden_layers):
-            inputs["past_key_values"].append(
-                (
-                    torch.zeros(1, model.config.num_key_value_heads, self.ctx_len, self.head_dim),
-                    torch.zeros(1, model.config.num_key_value_heads, self.ctx_len, self.head_dim),
-                )
-            )
+            inputs["past_key_values"].append((
+                torch.zeros(1, model.config.num_key_value_heads, self.ctx_len,self.head_dim),
+                torch.zeros(1, model.config.num_key_value_heads, self.ctx_len, self.head_dim),
+            ))
         # self.ctx_len=256
         # self.batch_size = inputs["input_ids"].shape[0]
         # generation_len = self.ctx_len - inputs["input_ids"].shape[1]
