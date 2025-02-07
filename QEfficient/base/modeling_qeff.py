@@ -25,7 +25,7 @@ from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
-from QEfficient.utils._utils import load_json, model_swap
+from QEfficient.utils._utils import load_json
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
 logger = logging.getLogger(__name__)
