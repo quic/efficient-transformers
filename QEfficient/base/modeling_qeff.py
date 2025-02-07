@@ -21,8 +21,10 @@ import torch
 
 from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
+from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
+from QEfficient.utils._utils import load_json
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
 logger = logging.getLogger(__name__)
@@ -251,7 +253,9 @@ class QEFFBaseModel(ABC):
 
         # Check if already compiled
         compile_hash = compile_hash.hexdigest()[:16]
-        qpc_path = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
+        compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
+        qpc_path = compile_dir / "qpc"
+        qpc_path.mkdir(parents=True, exist_ok=True)
         if qpc_path.is_dir():
             if (qpc_path / "programqpc.bin").is_file():
                 self.qpc_path = qpc_path
@@ -314,6 +318,102 @@ class QEFFBaseModel(ABC):
                     ]
                 )
             )
+
+        self.qpc_path = qpc_path
+        return qpc_path
+
+    def _qnn_compile(
+        self,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        specializations: Optional[List[Dict[str, int]]] = None,
+        prefill_seq_len: int = 32,
+        ctx_len: int = 128,
+        batch_size: int = 1,
+        full_batch_size: Optional[int] = None,
+        mdp_ts_num_devices: int = 1,
+        num_cores: int = 16,
+        mxfp6_matmul: bool = False,
+        mxint8_kv_cache: bool = False,
+        qnn_config: Optional[str] = None,
+    ) -> str:
+        """
+        Interface for QNN compiler
+
+        Args:
+            :onnx_path (str): Onnx file to compile
+            :compile_dir (str): Directory path to compile the qpc. A suffix is added to the directory path to avoid reusing same qpc for different parameters.
+            :specializations (list): List of specializations to compile for
+            :prefill_seq_len (int, optional): The length of the Prefill prompt should be less that ``prefill_seq_len``. ``Defaults to 32``.
+            :ctx_len (int, optional): Maximum ``ctx`` that the compiled model can remember. ``Defaults to 128``.
+            :batch_size (int, optional): Batch size. ``Defaults to 1``.
+            :full_batch_size (int, optional): Continuous batching batch size.
+            :mdp_ts_num_devices (int): Number of devices to partition to use Multi-Device Partitioning with tensor-slicing.
+            :num_cores (int): Number of cores used to compile the model.
+            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
+            :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
+            :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
+        """
+        if onnx_path is None and self.onnx_path is None:
+            self.export()
+
+        onnx_path = Path(onnx_path or self.onnx_path)
+        compile_dir = Path(compile_dir or onnx_path.parent)
+        qpc_path = compile_dir / "qpc"
+        if not onnx_path.is_file():
+            raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
+
+        compile_hash = hashlib.sha256(to_hashable("qnn"))
+
+        if specializations is not None:
+            compile_hash.update(to_hashable(specializations))
+
+        if qnn_config is not None:
+            qnn_config_values = load_json(qnn_config)
+            compile_hash.update(to_hashable(qnn_config_values))
+
+        if mdp_ts_num_devices > 1:
+            compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
+
+        compile_hash.update(to_hashable({"num_cores": num_cores}))
+        compile_hash.update(to_hashable({"mxfp6_matmul": mxfp6_matmul}))
+        compile_hash.update(to_hashable({"mxint8_kv_cache": mxint8_kv_cache}))
+
+        # Check if already compiled
+        compile_hash = compile_hash.hexdigest()[:16]
+        qpc_path = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
+        if qpc_path.is_dir():
+            if (qpc_path / "programqpc.bin").is_file():
+                self.qpc_path = qpc_path
+                return qpc_path
+            # Probably compilation failure last time, delete directory to start over
+            shutil.rmtree(qpc_path)
+
+        # Write specializations.json file
+        if specializations is not None:
+            specializations_json = compile_dir / "specializations.json"
+            with open(specializations_json, "w") as fp:
+                json.dump(
+                    {"specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]},
+                    fp,
+                    indent=4,
+                )
+
+        qnn_compile(
+            onnx_path=onnx_path,
+            qpc_base_path=compile_dir,
+            num_cores=num_cores,
+            device_group=list(range(mdp_ts_num_devices)),
+            batch_size=batch_size,
+            prompt_len=prefill_seq_len,
+            ctx_len=ctx_len,
+            mxfp6=mxfp6_matmul,
+            mxint8=mxint8_kv_cache,
+            full_batch_size=full_batch_size,
+            qnn_config=qnn_config,
+            qnn_binary_dir=qpc_path,
+        )
 
         self.qpc_path = qpc_path
         return qpc_path

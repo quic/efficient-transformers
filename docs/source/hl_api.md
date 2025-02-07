@@ -8,7 +8,12 @@
    :member-order: bysource
    :members:
 ``` 
-
+## `QEFFAutoModel`
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel
+   :member-order: bysource
+   :members:
+``` 
 ## `QEffAutoPeftModelForCausalLM`
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
@@ -49,6 +54,6 @@
 ```{eval-rst}
 .. automodule:: QEfficient.generation.text_generation_inference
    :members:
-   :show-inheritance: 
+   :show-inheritance:
    :exclude-members:  latency_stats_bertstyle,cloud_ai_100_exec_kv_helper
 ```

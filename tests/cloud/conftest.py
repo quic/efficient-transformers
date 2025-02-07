@@ -47,6 +47,8 @@ class ModelSetup:
         mxint8,
         full_batch_size,
         device_group,
+        enable_qnn,
+        qnn_config,
     ):
         """
         Initialization set up
@@ -66,6 +68,8 @@ class ModelSetup:
         param: mxint8: bool
         param: full_batch_size: int
         param: device_group: List[int]
+        param: enable_qnn: bool
+        param: qnn_config: str
         """
         self.model_name = model_name
         self.num_cores = num_cores
@@ -84,13 +88,15 @@ class ModelSetup:
         self.mxint8 = mxint8
         self.full_batch_size = full_batch_size
         self.device_group = device_group
+        self.enable_qnn = enable_qnn
+        self.qnn_config = qnn_config
 
     def model_card_dir(self):
         return str(os.path.join(QEFF_MODELS_DIR, str(self.model_name)))
 
     def qpc_base_dir_path(self):
         base_dir_name = str(
-            f"qpc_{self.num_cores}cores_{self.batch_size}bs_{self.prompt_len}pl_{self.ctx_len}cl_{self.mos}mos"
+            f"qpc{'_qnn_' if self.enable_qnn else '_'}{self.num_cores}cores_{self.batch_size}bs_{self.prompt_len}pl_{self.ctx_len}cl_{self.mos}mos"
             + f"{f'_{self.full_batch_size}fbs_' if self.full_batch_size is not None else '_'}"
             + f"{len(self.device_group) if self.device_group is not None else 1}"
             + "devices"
@@ -156,6 +162,8 @@ def setup(
     mxint8,
     full_batch_size,
     device_group,
+    enable_qnn,
+    qnn_config,
 ):
     """
     It is a fixture or shared object of all testing script within or inner folder,
@@ -180,6 +188,8 @@ def setup(
         bool(mxint8),
         full_batch_size,
         device_group,
+        enable_qnn,
+        qnn_config,
     )
 
     yield model_setup
@@ -217,6 +227,8 @@ def pytest_generate_tests(metafunc):
     metafunc.parametrize("mxint8", json_data["mxint8"], ids=lambda x: "mxint8=" + str(x))
     metafunc.parametrize("full_batch_size", json_data["full_batch_size"], ids=lambda x: "full_batch_size=" + str(x))
     metafunc.parametrize("device_group", json_data["device_group"], ids=lambda x: "device_group=" + str(x))
+    metafunc.parametrize("enable_qnn", json_data["enable_qnn"], ids=lambda x: "enable_qnn=" + str(x))
+    metafunc.parametrize("qnn_config", json_data["qnn_config"], ids=lambda x: "qnn_config=" + str(x))
 
 
 def pytest_collection_modifyitems(config, items):
@@ -270,6 +282,12 @@ def pytest_collection_modifyitems(config, items):
             if item.module.__name__ in ["test_export", "test_compile", "test_execute", "test_infer"]:
                 if hasattr(item, "callspec"):
                     params = item.callspec.params
+                    if not params["enable_qnn"] and params["qnn_config"] is not None:
+                        item.add_marker(
+                            pytest.mark.skip(reason="Skipping because same as enable_qnn = false and qnn_config = None")
+                        )
+                    if params["enable_qnn"]:
+                        item.add_marker(pytest.mark.qnn)
 
             if item.module.__name__ in ["test_export", "test_compile", "test_execute"]:
                 if hasattr(item, "callspec"):
