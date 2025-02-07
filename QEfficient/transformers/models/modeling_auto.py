@@ -85,35 +85,6 @@ class QEFFTransformersBase(QEFFBaseModel):
             mname = mname[4:]
         return mname
 
-class QEFFVLMBase(QEFFBaseModel):
-    """
-    Parent class for models QEFF provides from transformers i.e. (AutoModel, AutoModelForCausalLM, AutoModelForAudioClassification etc.) from transformers/models/modeling_auto.py file.
-    """
-
-    _hf_auto_class: type
-    
-    @classmethod
-    @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, kv_offload: bool = False, *args, **kwargs):
-        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
-            logger.warning('Updating attn_implementation="eager"')
-
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return model
-
-    # TODO: Is this required?
-    @property
-    def model_name(self) -> str:
-        mname = self.model.__class__.__name__
-        if mname.startswith("QEff") or mname.startswith("QEFF"):
-            mname = mname[4:]
-        return mname
-
 
 class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
@@ -802,7 +773,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
-        mhash.update(to_hashable({"vision_model": True}))
+        mhash.update(to_hashable({"QEffVisionEncoderForTextImageToTextModel": True}))
         mhash = mhash.hexdigest()[:16]
         return mhash
     
@@ -856,6 +827,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
+        mhash.update(to_hashable({"QEffCausalLMForTextImageToTextModel": True}))
         mhash = mhash.hexdigest()[:16]
         return mhash
     
@@ -1085,7 +1057,7 @@ class QEffAutoModelForImageTextToText2QPC:
         batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
 
         from transformers import AutoProcessor
-        processor = AutoProcessor.from_pretrained("meta-llama/Llama-3.2-11B-Vision-Instruct")
+        processor = AutoProcessor.from_pretrained("meta-llama/Llama-3.2-11B-Vision-Instruct", token="")
         tokenizer = processor.tokenizer
 
         if tokenizer.pad_token_id is None:
@@ -1197,12 +1169,12 @@ class QEffAutoModelForImageTextToText2QPC:
             print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s", file=sys.stderr)
 
 
-class QEFFAutoModelForImageTextToText1QPC(QEFFBaseModel):
+class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
+    
     _hf_auto_class = AutoModelForImageTextToText
     _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform, VlmNoKVOffloadTransorm]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
-    
-    
+
     def __init__(
         self,
         model: nn.Module,
@@ -1212,28 +1184,45 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFBaseModel):
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
     
         super().__init__(model)
-        self.model.config.use_cache = True
+        self.model.config.text_config.use_cache = True
+        self.input_shapes, self.output_names = None, None
 
     @classmethod
     def from_pretrained(
         cls,
         pretrained_model_name_or_path,
-        continuous_batching: bool = False,
-        is_tlm: bool = False,
-        kv_offload: bool = False,
         *args,
         **kwargs,
     ):
-        self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, *args, **kwargs)
-        return self
+        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
+            logger.warning('Updating attn_implementation="eager"')
+
+        if kwargs.get("low_cpu_mem_usage", None):
+            logger.warning("Updating low_cpu_mem_usage=False")      
+
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+
+        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        return cls(model, **kwargs)
     
+    def set_io_info(self):
+        if self.output_names is None or self.input_shapes is None:
+            _, self.output_names, _, self.input_shapes = self.model.generate_dummy_io_info(kv_offload = True)
+
+    def export(
+        self,
+        export_dir: Optional[str] = None,
+        **kwargs,
+    ) -> str:
+        inputs, self.output_names, dynamic_axes, self.input_shapes =self.model.generate_dummy_io_info()
+        self._export(inputs, self.output_names, dynamic_axes, export_dir=export_dir)
     
     def compile(
         self,
         img_size: int,
-        vision_onnx_path: Optional[str] = None,
-        lang_onnx_path: Optional[str] = None,
+        onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
+        *,
         prefill_seq_len: int = 32,
         ctx_len: int = 128,
         batch_size: int = 1,
@@ -1241,12 +1230,10 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFBaseModel):
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         max_num_image: int = 1,
-        
         **compiler_options,
-
     ) -> str:
-        if not hasattr(self, "output_names"):
-                self.export()
+        if self.output_names is None:
+            self.set_io_info()
 
         specializations = [
             {
@@ -1269,17 +1256,18 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFBaseModel):
         kv_cache_dtype = "float16"
 
         # inputs
-        for input_name in self.output_names[0]:
+        for input_name in self.output_names:
             if input_name.endswith("_RetainedState"):
                 custom_io[input_name[: -len("_RetainedState")]] = kv_cache_dtype
 
         # outputs
-        for output_name in self.output_names[0]:
+        for output_name in self.output_names:
             if output_name.endswith("_RetainedState"):
                 custom_io[output_name] = kv_cache_dtype
 
         compiler_options.update({"retained-state": True})
         self._compile(
+            onnx_path,
             compile_dir,
             compile_only=True,
             specializations=specializations,
@@ -1290,6 +1278,26 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFBaseModel):
             custom_io=custom_io,
             **compiler_options,
         )
+    def generate(
+        self,
+        inputs: torch.Tensor,
+        streamer: Optional[TextStreamer] = None,
+        device_ids: List[int] = None,
+        runtime_ai100: bool = True,
+    ) -> Union[torch.Tensor, np.ndarray]:
+        """
+        This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+        ``Mandatory`` Args:
+            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+        ``optional`` Args:
+            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
+            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
+        Returns:
+            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
+        """
+  
+        return self.cloud_ai_100_generate(inputs=inputs, device_ids=device_ids, streamer=streamer)
+
 
     def cloud_ai_100_generate(
         self,
@@ -1400,19 +1408,13 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFBaseModel):
     
     @property
     def model_hash(self) -> str:
-        # Compute the hash with: model_config, continuous_batching, transforms
+
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
+        mhash.update(to_hashable({"QEFFAutoModelForImageTextToText1QPC": True}))
         mhash = mhash.hexdigest()[:16]
         return mhash
-    def export(
-        self,
-        export_dir: Optional[str] = None,
-        **kwargs,
-    ) -> str:
-        inputs, self.output_names, dynamic_axes, self.input_shapes =self.model.generate_dummy_io_info()
-        self._export(inputs, self.output_names, dynamic_axes, export_dir=export_dir)
     
     @property
     def model_name(self) -> str:
