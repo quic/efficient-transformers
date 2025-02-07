@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 
 import onnx
 import torch
+import torch.nn as nn
 
 from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
@@ -120,6 +121,7 @@ class QEFFBaseModel(ABC):
         export_kwargs: Optional[Dict[str, any]] = None,
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
+        model: nn.Module = None,
     ) -> str:
         """
         Export the Pytorch model to ONNX.
@@ -132,6 +134,9 @@ class QEFFBaseModel(ABC):
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
         """
+        if model:
+            self.model=model
+            
         export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
         export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
         onnx_path = export_dir / f"{self.model_name}.onnx"
@@ -175,6 +180,7 @@ class QEFFBaseModel(ABC):
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
+
             for transform in self._onnx_transforms:
                 model, transformed = transform.apply(model, **transform_kwargs)
             model.metadata_props.append(

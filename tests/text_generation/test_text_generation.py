@@ -91,7 +91,6 @@ def test_generate_text_stream(
     text_generator = TextGeneration(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
-        device_id=device_id,
         ctx_len=ctx_len,
         full_batch_size=full_batch_size,
     )

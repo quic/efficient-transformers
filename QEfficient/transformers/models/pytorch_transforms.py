@@ -69,11 +69,14 @@ from transformers.models.mixtral.modeling_mixtral import (
 from transformers.models.mllama.modeling_mllama import (
     MllamaCrossAttentionDecoderLayer,
     MllamaForCausalLM,
+    MllamaForConditionalGeneration,
+    MllamaRotaryEmbedding,
     MllamaSelfAttentionDecoderLayer,
     MllamaTextCrossAttention,
     MllamaTextModel,
     MllamaTextRMSNorm,
     MllamaTextSelfAttention,
+    MllamaVisionModel,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 from transformers.models.phi.modeling_phi import PhiAttention, PhiDecoderLayer, PhiForCausalLM, PhiModel
@@ -165,10 +168,13 @@ from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
 from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaCrossAttentionDecoderLayer,
     QEffMllamaForCausalLM,
+    QEffMllamaForConditionalGeneration,
+    QEffMllamaRotaryEmbedding,
     QEffMllamaSelfAttentionDecoderLayer,
     QEffMllamaTextCrossAttention,
     QEffMllamaTextModel,
     QEffMllamaTextSelfAttention,
+    QEffMllamaVisionModel,
 )
 from QEfficient.transformers.models.mpt.modeling_mpt import (
     QEffMptAttention,
@@ -254,12 +260,16 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma2Model: QEffGemma2Model,
         Gemma2ForCausalLM: QEffGemma2ForCausalLM,
         # mllama
-        MllamaForCausalLM: QEffMllamaForCausalLM,
-        MllamaTextModel: QEffMllamaTextModel,
-        MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
+        MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextCrossAttention: QEffMllamaTextCrossAttention,
-        MllamaCrossAttentionDecoderLayer: QEffMllamaCrossAttentionDecoderLayer,
+        MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
         MllamaSelfAttentionDecoderLayer: QEffMllamaSelfAttentionDecoderLayer,
+        MllamaCrossAttentionDecoderLayer: QEffMllamaCrossAttentionDecoderLayer,
+        MllamaRotaryEmbedding: QEffMllamaRotaryEmbedding,
+        MllamaVisionModel: QEffMllamaVisionModel,
+        MllamaTextModel: QEffMllamaTextModel,
+        MllamaForCausalLM: QEffMllamaForCausalLM,
+        MllamaForConditionalGeneration: QEffMllamaForConditionalGeneration,
         # Mistral
         MistralAttention: QEffMistralAttention,
         MistralDecoderLayer: QEffMistralDecoderLayer,

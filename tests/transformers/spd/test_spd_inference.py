@@ -92,6 +92,7 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     return bonus_token_inputs, dlm_decode_inputs
 
 
+@pytest.mark.on_qaic
 @pytest.mark.parametrize(
     "prompts, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, draft_model_name, target_model_name, full_batch_size",
     configs,
@@ -126,7 +127,7 @@ def test_spec_decode_inference(
 
     num_devices = len(device_group)
     target_model_qpc_path: str = target_model.compile(
-        num_cores=11,
+        num_cores=10,
         num_devices=num_devices,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
@@ -135,15 +136,15 @@ def test_spec_decode_inference(
         num_speculative_tokens=num_speculative_tokens,
     )
     draft_model_qpc_path: str = draft_model.compile(
-        num_cores=5,
+        num_cores=4,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         aic_enable_depth_first=True,
         full_batch_size=full_batch_size,
     )
     # init qaic session
-    target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=device_group)
-    draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=device_group)
+    target_model_session = QAICInferenceSession(target_model_qpc_path)
+    draft_model_session = QAICInferenceSession(draft_model_qpc_path)
 
     # skip inputs/outputs buffers
     target_model_session.skip_buffers(set([x for x in target_model_session.input_names if x.startswith("past_")]))
