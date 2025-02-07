@@ -1026,6 +1026,11 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         cache_position: Optional[torch.LongTensor] = None,
         num_logits_to_keep: int = 0,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
+        
+        # FIXME This condition needs to be checked. 
+        if past_key_values is not None:
+            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
+            
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -1093,8 +1098,10 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             cache_position=cache_position,
             num_logits_to_keep=num_logits_to_keep,
         )
-
+        if "past_key_values" in outputs:
+            outputs["past_key_values"] = outputs["past_key_values"].to_legacy_cache()
         return outputs
+
 
     def generate_dummy_io_info(self, kv_offload = False):
         # vision_inputs
