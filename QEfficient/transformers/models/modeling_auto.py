@@ -736,9 +736,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
     def __init__(self, model: nn.modules):
         super().__init__(model)
         self.model = QeffCommomVisionEncoder(model)
-        
-        # self.config = self.model.config.get_text_config()
-
+    
     def export(self, inputs, output_names, dynamic_axes, export_dir = None):
         return self._export(inputs, output_names, dynamic_axes,export_dir)
     
@@ -840,9 +838,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     
 
 class QEffAutoModelForImageTextToText2QPC:
-    # _hf_auto_class = AutoModelForImageTextToText
-    # _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
-    # _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(
         self,
@@ -878,24 +873,6 @@ class QEffAutoModelForImageTextToText2QPC:
     @property
     def qpc_path(self):
         return [self.vision_model.qpc_path, self.lang_model.qpc_path]
-
-    # @property
-    # def model_hash(self) -> str:
-    #     # Compute the hash with: model_config, continuous_batching, transforms
-    #     mhash = hashlib.sha256()
-    #     mhash.update(to_hashable(self.model.config.to_diff_dict()))
-    #     mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
-    #     mhash.update(to_hashable({"is_tlm": self.is_tlm}))
-    #     mhash.update(to_hashable(self._transform_names()))
-    #     mhash = mhash.hexdigest()[:16]
-    #     return mhash
-    
-    # @property
-    # def model_name(self) -> str:
-    #     mname = self.model.__class__.__name__
-    #     if mname.startswith("QEff") or mname.startswith("QEFF"):
-    #         mname = mname[4:]
-    #     return mname
 
     def set_io_info(self):
         if self.output_names is None or self.input_shapes is None:
@@ -993,7 +970,7 @@ class QEffAutoModelForImageTextToText2QPC:
                 "img_size": img_size,
             },
         ]
-        # num_devices=4
+
         custom_io_lang = {}
         # Inputs
         for output_name in self.output_names['lang']:
@@ -1047,8 +1024,6 @@ class QEffAutoModelForImageTextToText2QPC:
         streamer: Optional[TextStreamer] = None,
         device_id: List[int] = None,
         generation_len: int = None,
-        stream: bool = True,
-        **kwargs,
     ):
         lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_id, activate=False)
 
@@ -1056,12 +1031,9 @@ class QEffAutoModelForImageTextToText2QPC:
 
         batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
 
-        from transformers import AutoProcessor
-        processor = AutoProcessor.from_pretrained("meta-llama/Llama-3.2-11B-Vision-Instruct", token="")
-        tokenizer = processor.tokenizer
+        eos_token_id= 0
 
-        if tokenizer.pad_token_id is None:
-            tokenizer.pad_token_id = tokenizer.eos_token_id
+        pad_token_id=1
 
         # Skip inputs/outputs
         lang_session.skip_buffers(
@@ -1087,7 +1059,7 @@ class QEffAutoModelForImageTextToText2QPC:
         if generation_len is None:
             generation_len = ctx_len - input_len.max()
         assert generation_len > 0, "generation length should be greater than zero"
-        generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
+        generated_ids = np.full((batch_size, generation_len + 1), pad_token_id)
 
         # Prepare inputs for prefill
         start = perf_counter()
@@ -1127,8 +1099,8 @@ class QEffAutoModelForImageTextToText2QPC:
         lang_inputs["position_ids"] = input_len
         lang_inputs["cross_attention_mask"] = lang_inputs["cross_attention_mask"][:, -1:, :, :]
         generated_ids[:, 0] = lang_inputs["input_ids"].squeeze(1)
-        finished_sequences = lang_inputs["input_ids"] == tokenizer.eos_token_id
-        if stream:
+        finished_sequences = lang_inputs["input_ids"] == eos_token_id
+        if streamer:
             streamer.put(lang_inputs["input_ids"][0])
 
         # Decode loop
@@ -1140,19 +1112,16 @@ class QEffAutoModelForImageTextToText2QPC:
             lang_inputs["input_ids"] = outputs["logits"].argmax(2)
             lang_inputs["position_ids"] += 1
             generated_ids[:, num_token] = lang_inputs["input_ids"].squeeze(1)
-            finished_sequences |= lang_inputs["input_ids"] == tokenizer.eos_token_id
+            finished_sequences |= lang_inputs["input_ids"] == eos_token_id
 
-            if stream:
+            if streamer:
                 streamer.put(lang_inputs["input_ids"][0])
             if finished_sequences.all():
                 break
 
         end = perf_counter()
-        if stream:
+        if streamer:
             streamer.end()
-        generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        for i in range(1 if stream else 0, batch_size):
-            print(i, generated_texts[i])
 
         prefill_perf = 1 / (loop_start - start)
         decode_perf = (num_token - 1) / (end - loop_start)
@@ -1167,6 +1136,7 @@ class QEffAutoModelForImageTextToText2QPC:
             print("Prefill (batch):", round(prefill_perf * batch_size, 2), "tok/s", file=sys.stderr)
             print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s", file=sys.stderr)
             print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s", file=sys.stderr)
+        return generated_ids
 
 
 class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
@@ -1283,7 +1253,7 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         inputs: torch.Tensor,
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
-        runtime_ai100: bool = True,
+        generation_len: int = None,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -1296,7 +1266,7 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
   
-        return self.cloud_ai_100_generate(inputs=inputs, device_ids=device_ids, streamer=streamer)
+        return self.cloud_ai_100_generate(inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer)
 
 
     def cloud_ai_100_generate(
@@ -1304,6 +1274,7 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         inputs: torch.Tensor,
         device_ids: List[int],
         enable_debug_logs: bool = False,
+        generation_len: int = None,
         streamer: Optional[TextStreamer] = None,
     ) -> np.ndarray:
         qpc_session = QAICInferenceSession(
@@ -1311,6 +1282,9 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         )
 
         batch_size, ctx_len, fbs = get_compilation_dims(self.qpc_path)
+
+        eos_token_id=0
+        pad_token_id=1
 
         # Skip inputs/outputs
         qpc_session.skip_buffers(
@@ -1328,7 +1302,6 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[1]]
         )
 
-        # lang_inputs = tokenizer(prompt, return_tensors="np", padding=True)
         input_len = inputs["attention_mask"].sum(1, keepdims=True)
         padded_len = inputs["input_ids"].shape[1]
         num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
@@ -1338,7 +1311,7 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             generation_len = ctx_len - input_len.max()
 
         assert generation_len > 0, "generation length should be greater than zero"
-        generated_ids = np.full((batch_size, generation_len + 1), self.tokenizer.pad_token_id)
+        generated_ids = np.full((batch_size, generation_len + 1), pad_token_id)
 
         # Prepare inputs for prefill
         start = perf_counter()
@@ -1368,7 +1341,7 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         inputs["position_ids"] = input_len
         inputs["cross_attention_mask"] = inputs["cross_attention_mask"][:, -1:, :, :]
         generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
-        finished_sequences = inputs["input_ids"] == self.tokenizer.eos_token_id
+        finished_sequences = inputs["input_ids"] == eos_token_id
         if streamer:
             streamer.put(inputs["input_ids"][0])
 
@@ -1381,7 +1354,7 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             inputs["input_ids"] = outputs["logits"].argmax(2)
             inputs["position_ids"] += 1
             generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
-            finished_sequences |= inputs["input_ids"] == self.tokenizer.eos_token_id
+            finished_sequences |= inputs["input_ids"] == eos_token_id
             if streamer:
                 streamer.put(inputs["input_ids"][0])
             if finished_sequences.all():
