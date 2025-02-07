@@ -355,20 +355,18 @@ class SpDTransform:
 
         return model, transformed
 
-class VlmKVOffloadTransorm(ModuleMappingTransform):
 
+class VlmKVOffloadTransorm(ModuleMappingTransform):
     # supported architectures
     _module_mapping = {
         # Llama
-       MllamaTextCrossAttention: QEffMllamaTextCrossAttentionTwoQPC,
-
+        MllamaTextCrossAttention: QEffMllamaTextCrossAttentionTwoQPC,
     }
 
-class VlmNoKVOffloadTransorm(ModuleMappingTransform):
 
+class VlmNoKVOffloadTransorm(ModuleMappingTransform):
     # supported architectures
     _module_mapping = {
         # Llama
         MllamaTextCrossAttention: QEffMllamaTextCrossAttentionSingleQPC,
-
     }

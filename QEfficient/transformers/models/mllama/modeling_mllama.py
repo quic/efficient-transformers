@@ -10,7 +10,6 @@
 import math
 from typing import List, Optional, Tuple, Union
 
-import requests
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
@@ -341,12 +340,14 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
 
         return outputs
 
+
 class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
     """
     Copied from MllamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mllama/modeling_mllama.py
     The only differences are:
         - add new args cache idx for the kv retention
     """
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -368,12 +369,8 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
         if cross_attention_states is not None:
             key_states = self.k_proj(cross_attention_states)
             value_states = self.v_proj(cross_attention_states)
-            key_states = key_states.view(
-                bsz, -1, self.num_key_value_heads, self.head_dim
-            ).transpose(1, 2)
-            value_states = value_states.view(
-                bsz, -1, self.num_key_value_heads, self.head_dim
-            ).transpose(1, 2)
+            key_states = key_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+            value_states = value_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
             if past_key_value is not None:
                 # if we have a new image + new tokens, we only computed key_states on that new image
                 # we still update the cross key states, past_image, new_image. And use it!
@@ -398,9 +395,7 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
 
         key_states = self.k_norm(key_states)
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(
-            self.head_dim
-        )
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
 
         if attention_mask is not None:  # no matter the length, we just slice it
             causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
@@ -409,9 +404,7 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
             #     attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights
             # )
 
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(
-            query_states.dtype
-        )
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
         attn_output = attn_output.transpose(1, 2).contiguous()
@@ -422,6 +415,8 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
             attn_weights = None
 
         return attn_output, attn_weights, past_key_value
+
+
 class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
     """
     Copied from MllamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mllama/modeling_mllama.py
@@ -1026,7 +1021,6 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         cache_position: Optional[torch.LongTensor] = None,
         num_logits_to_keep: int = 0,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-        
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -1097,9 +1091,9 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
 
         return outputs
 
-    def generate_dummy_io_info(self, kv_offload = False):
+    def generate_dummy_io_info(self, kv_offload=False):
         # vision_inputs
-        inputs_shape={}
+        inputs_shape = {}
         vision_inputs = {
             "pixel_values": torch.zeros(
                 (bs, max_num_images, max_image_tiles, num_channel, image_size, image_size), dtype=torch.float32
@@ -1176,11 +1170,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
-            "cross_attention_mask": {
-                0: "batch_size",
-                1: "seq_len",
-                2: "max_num_images"
-            },
+            "cross_attention_mask": {0: "batch_size", 1: "seq_len", 2: "max_num_images"},
         }
 
         for i in range(num_hidden_layers):
@@ -1199,21 +1189,19 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         dynamic_axes = {}
 
         if kv_offload:
+            inputs["vision"] = vision_inputs
+            inputs["lang"] = lang_inputs
 
-            inputs['vision']=vision_inputs
-            inputs['lang']=lang_inputs
+            output_names["vision"] = vision_output_names
+            output_names["lang"] = lang_output_names
 
-            output_names['vision']=vision_output_names
-            output_names['lang']=lang_output_names
-
-            dynamic_axes['vision']=vision_dynamic_axes
-            dynamic_axes['lang']=lang_dynamic_axes
+            dynamic_axes["vision"] = vision_dynamic_axes
+            dynamic_axes["lang"] = lang_dynamic_axes
 
         else:
-            
-            inputs={**vision_inputs, **lang_inputs}
-            dynamic_axes= {**vision_dynamic_axes, **lang_dynamic_axes}
-            output_names=lang_output_names
+            inputs = {**vision_inputs, **lang_inputs}
+            dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
+            output_names = lang_output_names
 
         return inputs, output_names, dynamic_axes, inputs_shape
 

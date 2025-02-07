@@ -20,7 +20,6 @@ from transformers import (
     AutoModel,
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
-    AutoProcessor,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
     TextStreamer,
@@ -31,7 +30,6 @@ from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import get_compilation_dims
-from QEfficient.transformers.models.mllama.modeling_mllama import ModelWrapper
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheTransform,
@@ -45,6 +43,7 @@ from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 
 logger = logging.getLogger(__file__)
+
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
@@ -696,14 +695,14 @@ class QEFFAutoModel(QEFFTransformersBase):
 class QeffCommomVisionEncoder(nn.Module):
     def __init__(self, model):
         super().__init__()
-        self.model=model
+        self.model = model
         self.cross_attention_layers = self.model.config.get_text_config().cross_attention_layers
-        
+
     def forward(
-    self,
-    pixel_values: Optional[torch.FloatTensor] = None,
-    aspect_ratio_mask: Optional[torch.Tensor] = None,
-    aspect_ratio_ids: Optional[torch.Tensor] = None,
+        self,
+        pixel_values: Optional[torch.FloatTensor] = None,
+        aspect_ratio_mask: Optional[torch.Tensor] = None,
+        aspect_ratio_ids: Optional[torch.Tensor] = None,
     ) -> List[Tuple[torch.Tensor]]:
         vision_outputs = self.model.vision_model(
             pixel_values=pixel_values,
@@ -729,17 +728,18 @@ class QeffCommomVisionEncoder(nn.Module):
             outputs.append((key_states, value_states))
         return outputs
 
+
 class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
     _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
-    
+
     def __init__(self, model: nn.modules):
         super().__init__(model)
         self.model = QeffCommomVisionEncoder(model)
-    
-    def export(self, inputs, output_names, dynamic_axes, export_dir = None):
-        return self._export(inputs, output_names, dynamic_axes,export_dir)
-    
+
+    def export(self, inputs, output_names, dynamic_axes, export_dir=None):
+        return self._export(inputs, output_names, dynamic_axes, export_dir)
+
     def compile(
         self,
         compile_dir,
@@ -751,7 +751,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         aic_num_cores,
         custom_io,
         **compiler_options,
-
     ) -> str:
         return self._compile(
             compile_dir=compile_dir,
@@ -764,7 +763,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             custom_io=custom_io,
             **compiler_options,
         )
-    
+
     @property
     def model_hash(self) -> str:
         # Compute the hash with: model_config, continuous_batching, transforms
@@ -774,7 +773,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable({"QEffVisionEncoderForTextImageToTextModel": True}))
         mhash = mhash.hexdigest()[:16]
         return mhash
-    
+
     @property
     def model_name(self) -> str:
         mname = self.model.__class__.__name__
@@ -784,16 +783,22 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
 
 
 class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
-    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform,VlmKVOffloadTransorm]
+    _pytorch_transforms = [
+        AwqToMatmulNbitsTransform,
+        GPTQToMatmulNbitsTransform,
+        CustomOpsTransform,
+        KVCacheTransform,
+        VlmKVOffloadTransorm,
+    ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model):
         super().__init__(model)
         # self.model.config.text_config.use_cache=True
-    
-    def export(self, inputs, output_names, dynamic_axes, export_dir = None):
-        return self._export(inputs, output_names, dynamic_axes,export_dir)
-    
+
+    def export(self, inputs, output_names, dynamic_axes, export_dir=None):
+        return self._export(inputs, output_names, dynamic_axes, export_dir)
+
     def compile(
         self,
         compile_dir,
@@ -805,7 +810,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         aic_num_cores,
         custom_io,
         **compiler_options,
-
     ) -> str:
         return self._compile(
             compile_dir=compile_dir,
@@ -818,7 +822,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             custom_io=custom_io,
             **compiler_options,
         )
-    
+
     @property
     def model_hash(self) -> str:
         # Compute the hash with: model_config, continuous_batching, transforms
@@ -828,17 +832,16 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable({"QEffCausalLMForTextImageToTextModel": True}))
         mhash = mhash.hexdigest()[:16]
         return mhash
-    
+
     @property
     def model_name(self) -> str:
         mname = self.model.__class__.__name__
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
-    
+
 
 class QEffAutoModelForImageTextToText2QPC:
-
     def __init__(
         self,
         model: nn.Module,
@@ -846,7 +849,7 @@ class QEffAutoModelForImageTextToText2QPC:
     ):
         if kwargs.pop("full_batch_size", None):
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
-        self.model=model
+        self.model = model
         self.config = model.config
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model)
@@ -869,14 +872,14 @@ class QEffAutoModelForImageTextToText2QPC:
     @property
     def onnx_path(self):
         return [self.vision_model.onnx_path, self.lang_model.onnx_path]
-    
+
     @property
     def qpc_path(self):
         return [self.vision_model.qpc_path, self.lang_model.qpc_path]
 
     def set_io_info(self):
         if self.output_names is None or self.input_shapes is None:
-            _, self.output_names, _, self.input_shapes = self.lang_model.model.generate_dummy_io_info(kv_offload = True)
+            _, self.output_names, _, self.input_shapes = self.lang_model.model.generate_dummy_io_info(kv_offload=True)
 
     def export(
         self,
@@ -885,18 +888,13 @@ class QEffAutoModelForImageTextToText2QPC:
     ) -> str:
         dummy_inputs, self.output_names, dynamic_axes, self.input_shapes = self.model.generate_dummy_io_info(True)
         self.vision_model.export(
-            dummy_inputs['vision'],
-            self.output_names['vision'],
-            dynamic_axes['vision']  ,
+            dummy_inputs["vision"],
+            self.output_names["vision"],
+            dynamic_axes["vision"],
             export_dir,
         )
 
-        self.lang_model.export(
-            dummy_inputs['lang'],
-            self.output_names['lang'],
-            dynamic_axes['lang'],
-            export_dir
-            )
+        self.lang_model.export(dummy_inputs["lang"], self.output_names["lang"], dynamic_axes["lang"], export_dir)
 
     def compile(
         self,
@@ -911,34 +909,28 @@ class QEffAutoModelForImageTextToText2QPC:
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         max_num_image: int = 1,
-        
         **compiler_options,
-
     ) -> str:
-        # TODO seperate the method to get output names 
+        # TODO seperate the method to get output names
         if self.output_names is None:
             self.set_io_info()
-            
-        vision_specializations = [
-            { 
-                "batch_size": batch_size,
-                "max_num_images": max_num_image,
-                "img_size": img_size
-            }
-        ]
+
+        vision_specializations = [{"batch_size": batch_size, "max_num_images": max_num_image, "img_size": img_size}]
         custom_io_vision = {}
         kv_cache_dtype = "float16"
         custom_io_vision["pixel_values"] = kv_cache_dtype
         self.set_io_info()
-        for output_name in self.output_names['vision']:
+        for output_name in self.output_names["vision"]:
             custom_io_vision[output_name] = kv_cache_dtype
-        
+
         if vision_onnx_path:
             self.vision_model.onnx_path = vision_onnx_path
         if lang_onnx_path:
             self.lang_model.onnx_path = lang_onnx_path
-    
-        if (self.vision_model.onnx_path is None and vision_onnx_path is None) or (self.lang_model.onnx_path is None and lang_onnx_path is None):
+
+        if (self.vision_model.onnx_path is None and vision_onnx_path is None) or (
+            self.lang_model.onnx_path is None and lang_onnx_path is None
+        ):
             self.export()
 
         print("compiling vision model")
@@ -960,7 +952,6 @@ class QEffAutoModelForImageTextToText2QPC:
                 "ctx_len": ctx_len,
                 "max_num_images": max_num_image,
                 "img_size": img_size,
-
             },
             {
                 "batch_size": batch_size,
@@ -973,12 +964,12 @@ class QEffAutoModelForImageTextToText2QPC:
 
         custom_io_lang = {}
         # Inputs
-        for output_name in self.output_names['lang']:
+        for output_name in self.output_names["lang"]:
             if output_name.startswith("past_"):
                 custom_io_lang[output_name[: -len("_RetainedState")]] = kv_cache_dtype
 
         # outputs
-        for output_name in self.output_names['lang']:
+        for output_name in self.output_names["lang"]:
             if output_name.startswith("past_"):
                 custom_io_lang[output_name] = kv_cache_dtype
 
@@ -1013,27 +1004,26 @@ class QEffAutoModelForImageTextToText2QPC:
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
-        
+
         if runtime_ai100:
             return self.kv_offload_generate(inputs=inputs, device_ids=device_ids, streamer=streamer)
-        
 
     def kv_offload_generate(
         self,
         inputs: List[str] = None,
         streamer: Optional[TextStreamer] = None,
-        device_id: List[int] = None,
+        device_ids: List[int] = None,
         generation_len: int = None,
     ):
-        lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_id, activate=False)
+        lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
 
-        vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_id)
+        vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
 
         batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
 
-        eos_token_id= 0
+        eos_token_id = 0
 
-        pad_token_id=1
+        pad_token_id = 1
 
         # Skip inputs/outputs
         lang_session.skip_buffers(
@@ -1140,9 +1130,14 @@ class QEffAutoModelForImageTextToText2QPC:
 
 
 class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
-    
     _hf_auto_class = AutoModelForImageTextToText
-    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform, VlmNoKVOffloadTransorm]
+    _pytorch_transforms = [
+        AwqToMatmulNbitsTransform,
+        GPTQToMatmulNbitsTransform,
+        CustomOpsTransform,
+        KVCacheTransform,
+        VlmNoKVOffloadTransorm,
+    ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(
@@ -1152,7 +1147,7 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
     ):
         if kwargs.pop("full_batch_size", None):
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
-    
+
         super().__init__(model)
         self.model.config.text_config.use_cache = True
         self.input_shapes, self.output_names = None, None
@@ -1168,25 +1163,25 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             logger.warning('Updating attn_implementation="eager"')
 
         if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")      
+            logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         return cls(model, **kwargs)
-    
+
     def set_io_info(self):
         if self.output_names is None or self.input_shapes is None:
-            _, self.output_names, _, self.input_shapes = self.model.generate_dummy_io_info(kv_offload = True)
+            _, self.output_names, _, self.input_shapes = self.model.generate_dummy_io_info(kv_offload=True)
 
     def export(
         self,
         export_dir: Optional[str] = None,
         **kwargs,
     ) -> str:
-        inputs, self.output_names, dynamic_axes, self.input_shapes =self.model.generate_dummy_io_info()
+        inputs, self.output_names, dynamic_axes, self.input_shapes = self.model.generate_dummy_io_info()
         self._export(inputs, self.output_names, dynamic_axes, export_dir=export_dir)
-    
+
     def compile(
         self,
         img_size: int,
@@ -1211,15 +1206,14 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
                 "max_num_images": max_num_image,
-                "img_size": img_size
-
+                "img_size": img_size,
             },
             {
                 "batch_size": batch_size,
                 "seq_len": "1",
                 "ctx_len": ctx_len,
                 "max_num_images": max_num_image,
-                "img_size": img_size
+                "img_size": img_size,
             },
         ]
         custom_io = {}
@@ -1248,6 +1242,7 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             custom_io=custom_io,
             **compiler_options,
         )
+
     def generate(
         self,
         inputs: torch.Tensor,
@@ -1265,9 +1260,10 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
-  
-        return self.cloud_ai_100_generate(inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer)
 
+        return self.cloud_ai_100_generate(
+            inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
+        )
 
     def cloud_ai_100_generate(
         self,
@@ -1283,8 +1279,8 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
 
         batch_size, ctx_len, fbs = get_compilation_dims(self.qpc_path)
 
-        eos_token_id=0
-        pad_token_id=1
+        eos_token_id = 0
+        pad_token_id = 1
 
         # Skip inputs/outputs
         qpc_session.skip_buffers(
@@ -1378,23 +1374,23 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s", file=sys.stderr)
             print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s", file=sys.stderr)
         return generated_ids
-    
+
     @property
     def model_hash(self) -> str:
-
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEFFAutoModelForImageTextToText1QPC": True}))
         mhash = mhash.hexdigest()[:16]
         return mhash
-    
+
     @property
     def model_name(self) -> str:
         mname = self.model.__class__.__name__
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
+
 
 class QEFFAutoModelForImageTextToText:
     _hf_auto_class = AutoModelForImageTextToText
