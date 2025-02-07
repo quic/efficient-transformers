@@ -113,7 +113,6 @@ class QEFFBaseModel(ABC):
             :str: Path of the compiled ``qpc`` package.
         """
 
-    @model_swap
     def _export(
         self,
         example_inputs: Dict[str, torch.Tensor],
