@@ -841,7 +841,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         return mname
 
 
-class QEffAutoModelForImageTextToText2QPC:
+class _QEffAutoModelForImageTextToText2QPC:
     def __init__(
         self,
         model: nn.Module,
@@ -1129,7 +1129,7 @@ class QEffAutoModelForImageTextToText2QPC:
         return generated_ids
 
 
-class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
+class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
     _hf_auto_class = AutoModelForImageTextToText
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
@@ -1393,11 +1393,20 @@ class QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
 
 
 class QEFFAutoModelForImageTextToText:
+    """
+    A factory class for creating QEFFAutoModelForImageTextToText instances with for single and Dual QPC approach
+    Attributes:
+        _hf_auto_class (class): The Hugging Face AutoModel class for ImageTextToText models.
+    """
+
     _hf_auto_class = AutoModelForImageTextToText
+
+    def __new__(cls, model, kv_offload=False, **kwargs):
+        return cls._get_qeff_class(model, kv_offload, **kwargs)
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path, kv_offload, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path, kv_offload=False, **kwargs):
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
@@ -1408,8 +1417,24 @@ class QEFFAutoModelForImageTextToText:
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        
+        return cls._get_qeff_class(model, kv_offload, **kwargs)
 
+    @classmethod
+    def _get_qeff_class(cls, model, kv_offload, **kwargs):
+        """
+        Return the appropriate QEFFAutoModelForImageTextToText subclass based on kv_offload.
+
+        Args:
+            model: The model instance.
+            kv_offload (bool): Whether to enable key-value offloading.
+            **kwargs: Additional keyword arguments for model configuration.
+
+        Returns:
+            QEFFAutoModelForImageTextToText: An instance of the appropriate QEFFAutoModelForImageTextToText subclass.
+        """
         if kv_offload:
-            return QEffAutoModelForImageTextToText2QPC(model, **kwargs)
+            return _QEffAutoModelForImageTextToText2QPC(model, **kwargs)
         else:
-            return QEFFAutoModelForImageTextToText1QPC(model, **kwargs)
+            return _QEFFAutoModelForImageTextToText1QPC(model, **kwargs)
+
