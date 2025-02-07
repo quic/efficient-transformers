@@ -171,7 +171,8 @@ from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaForConditionalGeneration,
     QEffMllamaRotaryEmbedding,
     QEffMllamaSelfAttentionDecoderLayer,
-    QEffMllamaTextCrossAttention,
+    QEffMllamaTextCrossAttentionSingleQPC,
+    QEffMllamaTextCrossAttentionTwoQPC,
     QEffMllamaTextModel,
     QEffMllamaTextSelfAttention,
     QEffMllamaVisionModel,
@@ -261,7 +262,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma2ForCausalLM: QEffGemma2ForCausalLM,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
-        MllamaTextCrossAttention: QEffMllamaTextCrossAttention,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
         MllamaSelfAttentionDecoderLayer: QEffMllamaSelfAttentionDecoderLayer,
         MllamaCrossAttentionDecoderLayer: QEffMllamaCrossAttentionDecoderLayer,
@@ -354,3 +354,21 @@ class SpDTransform:
             )
 
         return model, transformed
+
+class VlmKVOffloadTransorm(ModuleMappingTransform):
+
+    # supported architectures
+    _module_mapping = {
+        # Llama
+       MllamaTextCrossAttention: QEffMllamaTextCrossAttentionTwoQPC,
+
+    }
+
+class VlmNoKVOffloadTransorm(ModuleMappingTransform):
+
+    # supported architectures
+    _module_mapping = {
+        # Llama
+        MllamaTextCrossAttention: QEffMllamaTextCrossAttentionSingleQPC,
+
+    }
