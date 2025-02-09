@@ -29,7 +29,7 @@ import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.generation.text_generation_inference import get_compilation_dims
+from QEfficient.generation.text_generation_inference import CloudAI100ExecInfoNew, PerfMetrics, get_compilation_dims
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheTransform,
@@ -1151,6 +1151,7 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         super().__init__(model)
         self.model.config.text_config.use_cache = True
         self.input_shapes, self.output_names = None, None
+        self.num_layers = model.config.text_config.num_hidden_layers
 
     @classmethod
     def from_pretrained(
@@ -1166,74 +1167,69 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        from transformers import AutoConfig
 
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
+        config._attn_implementation = "eager"
+        config.vision_config.use_flash_attn = "false"
+        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
+
         return cls(model, **kwargs)
-
-    def set_io_info(self):
-        if self.output_names is None or self.input_shapes is None:
-            _, self.output_names, _, self.input_shapes = self.model.generate_dummy_io_info(kv_offload=True)
 
     def export(
         self,
         export_dir: Optional[str] = None,
         **kwargs,
     ) -> str:
-        inputs, self.output_names, dynamic_axes, self.input_shapes = self.model.generate_dummy_io_info()
-        self._export(inputs, self.output_names, dynamic_axes, export_dir=export_dir)
+        inputs = self.model.get_dummy_inputs()
+        dynamic_axes = self.model.get_onnx_dynamic_axes()
+        output_names = self.model.get_output_names()
+        self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
 
     def compile(
         self,
-        img_size: int,
+        img_size: int = None,
         onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
         *,
-        prefill_seq_len: int = 32,
-        ctx_len: int = 128,
+        prefill_seq_len: int = None,
+        ctx_len: int = None,
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
-        max_num_image: int = 1,
+        mxint8_kv_cache: bool = False,
         **compiler_options,
     ) -> str:
-        if self.output_names is None:
-            self.set_io_info()
+        output_names = self.model.get_output_names()
 
-        specializations = [
-            {
-                "batch_size": batch_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
-                "max_num_images": max_num_image,
-                "img_size": img_size,
-            },
-            {
-                "batch_size": batch_size,
-                "seq_len": "1",
-                "ctx_len": ctx_len,
-                "max_num_images": max_num_image,
-                "img_size": img_size,
-            },
-        ]
+        # Get specializations from modelling file
+        specializations = self.model.get_specializations(
+            batch_size=batch_size,
+            prefill_seq_len=prefill_seq_len,
+            ctx_len=ctx_len,
+            img_size=img_size,
+            **compiler_options,
+        )
+
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+
         custom_io = {}
-        kv_cache_dtype = "float16"
-
         # inputs
-        for input_name in self.output_names:
+        for input_name in output_names:
             if input_name.endswith("_RetainedState"):
                 custom_io[input_name[: -len("_RetainedState")]] = kv_cache_dtype
 
         # outputs
-        for output_name in self.output_names:
+        for output_name in output_names:
             if output_name.endswith("_RetainedState"):
                 custom_io[output_name] = kv_cache_dtype
 
-        compiler_options.update({"retained-state": True})
         self._compile(
             onnx_path,
             compile_dir,
             compile_only=True,
+            retained_state=True,
             specializations=specializations,
             convert_to_fp16=True,
             mxfp6_matmul=mxfp6_matmul,
@@ -1242,6 +1238,9 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             custom_io=custom_io,
             **compiler_options,
         )
+
+    def get_onnx_dynamic_axes(self):
+        return self.model.get_onnx_dynamic_axes()
 
     def generate(
         self,
@@ -1279,12 +1278,15 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
 
         batch_size, ctx_len, fbs = get_compilation_dims(self.qpc_path)
 
-        eos_token_id = 0
         pad_token_id = 1
 
         # Skip inputs/outputs
         qpc_session.skip_buffers(
-            [x for x in qpc_session.input_names + qpc_session.output_names if x.startswith("past_")]
+            [
+                x
+                for x in qpc_session.input_names + qpc_session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
         )
 
         # Read prompt and ctx len from session
@@ -1299,10 +1301,11 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         )
 
         input_len = inputs["attention_mask"].sum(1, keepdims=True)
-        padded_len = inputs["input_ids"].shape[1]
-        num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
+        input_ids_length = inputs["input_ids"].shape[1]
+
+        num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
+
         padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
-        generation_len = None
         if generation_len is None:
             generation_len = ctx_len - input_len.max()
 
@@ -1310,70 +1313,73 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         generated_ids = np.full((batch_size, generation_len + 1), pad_token_id)
 
         # Prepare inputs for prefill
-        start = perf_counter()
+        prefill_start = perf_counter()
 
-        inputs["position_ids"] = np.where(
-            inputs.pop("attention_mask"), np.arange(padded_len), -1
-        )  # Need to use -1 as position_ids for invalid tokens
-        inputs = dict(inputs)
+        input_ids = inputs["input_ids"]
+        input_ids_size = input_ids.shape[1]
+        inputs["input_ids"] = torch.nn.functional.pad(
+            inputs["input_ids"],
+            (0, padded_len - input_ids_size),
+            "constant",
+            1,
+        )
+        inputs["attention_mask"] = torch.nn.functional.pad(
+            inputs["attention_mask"], (0, padded_len - input_ids_size), "constant", 0
+        )
 
-        # vision_session.deactivate()
+        for k, v in inputs.items():
+            inputs[k] = np.array(v)
+
+        inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
+        inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+
         qpc_session.activate()
 
         # Run prefill
+
         for i in range(num_chunks):
             chunk_inputs = inputs.copy()
             chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             outputs = qpc_session.run(chunk_inputs)
 
-        # Skip inputs/outputs again
-        qpc_session.skip_buffers(
-            [x for x in qpc_session.input_names + qpc_session.output_names if x.startswith("past_")]
-        )
-
+        prefill_time = prefill_start - perf_counter()
         # Get first token
         inputs["input_ids"] = outputs["logits"].argmax(2)
-        inputs["position_ids"] = input_len
-        inputs["cross_attention_mask"] = inputs["cross_attention_mask"][:, -1:, :, :]
+        inputs["position_ids"] = input_len.numpy()
         generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
-        finished_sequences = inputs["input_ids"] == eos_token_id
         if streamer:
             streamer.put(inputs["input_ids"][0])
 
+        qpc_session.skip_buffers(["pixel_values"])
+        inputs.pop("pixel_values")
+
         # Decode loop
-        loop_start = perf_counter()
+        decode_start = perf_counter()
         for num_token in range(1, generation_len):
             outputs = qpc_session.run(inputs)
-
             # Prepare inputs for next iteration
             inputs["input_ids"] = outputs["logits"].argmax(2)
             inputs["position_ids"] += 1
             generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
-            finished_sequences |= inputs["input_ids"] == eos_token_id
             if streamer:
                 streamer.put(inputs["input_ids"][0])
-            if finished_sequences.all():
-                break
 
-        end = perf_counter()
+        decode_end = perf_counter()
         if streamer:
             streamer.end()
 
-        prefill_perf = 1 / (loop_start - start)
-        decode_perf = (num_token - 1) / (end - loop_start)
-        total_perf = num_token / (end - start)
+        decode_perf = (num_token - 1) / (decode_end - decode_start)
+        total_time = decode_end - prefill_start
+        total_perf = num_token / total_time
 
-        print("TTFT:", round(loop_start - start, 2), "s", file=sys.stderr)
-        print("E2ET:", round(end - start, 2), "s", file=sys.stderr)
-        print("Prefill:", round(prefill_perf, 2), "tok/s", file=sys.stderr)
-        print("Decode:", round(decode_perf, 2), "tok/s", file=sys.stderr)
-        print("E2E:", round(total_perf, 2), "tok/s", file=sys.stderr)
-        if batch_size > 1:
-            print("Prefill (batch):", round(prefill_perf * batch_size, 2), "tok/s", file=sys.stderr)
-            print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s", file=sys.stderr)
-            print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s", file=sys.stderr)
-        return generated_ids
+        return CloudAI100ExecInfoNew(
+            batch_size=batch_size,
+            generated_ids=generated_ids,
+            perf_metrics=PerfMetrics(
+                prefill_time=prefill_time, decode_perf=decode_perf, total_perf=total_perf, total_time=total_time
+            ),
+        )
 
     @property
     def model_hash(self) -> str:
@@ -1417,7 +1423,7 @@ class QEFFAutoModelForImageTextToText:
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        
+
         return cls._get_qeff_class(model, kv_offload, **kwargs)
 
     @classmethod
@@ -1437,4 +1443,3 @@ class QEFFAutoModelForImageTextToText:
             return _QEffAutoModelForImageTextToText2QPC(model, **kwargs)
         else:
             return _QEFFAutoModelForImageTextToText1QPC(model, **kwargs)
-

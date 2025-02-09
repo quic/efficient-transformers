@@ -39,7 +39,6 @@ from transformers.models.mllama.modeling_mllama import (
     rotate_half,
 )
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_utils import (
     _create_causal_mask,
     _prepare_aspect_ratio_attention_mask,
@@ -1204,56 +1203,3 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             output_names = lang_output_names
 
         return inputs, output_names, dynamic_axes, inputs_shape
-
-
-class ModelWrapper(nn.Module):
-    def __init__(self, mllama):
-        super().__init__()
-        self.mllama = mllama
-        self.num_hidden_layers = mllama.config.get_text_config().num_hidden_layers
-        self.config = self.mllama.config.get_text_config()
-
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        pixel_values: Optional[torch.FloatTensor] = None,
-        aspect_ratio_mask: Optional[torch.Tensor] = None,
-        aspect_ratio_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        cross_attention_mask: Optional[torch.Tensor] = None,
-        cross_attention_states: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        num_logits_to_keep: int = 0,
-    ):
-        if past_key_values is not None:
-            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
-        outputs = self.mllama(
-            input_ids=input_ids,
-            pixel_values=pixel_values,
-            aspect_ratio_mask=aspect_ratio_mask,
-            aspect_ratio_ids=aspect_ratio_ids,
-            attention_mask=attention_mask,
-            cross_attention_mask=cross_attention_mask,
-            cross_attention_states=cross_attention_states,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            inputs_embeds=inputs_embeds,
-            labels=labels,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            cache_position=cache_position,
-            num_logits_to_keep=num_logits_to_keep,
-        )
-        if "past_key_values" in outputs:
-            outputs["past_key_values"] = outputs["past_key_values"].to_legacy_cache()
-        return outputs

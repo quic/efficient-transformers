@@ -63,6 +63,19 @@ class CloudAI100ExecInfo:
         \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)}"
 
 
+@dataclass
+class CloudAI100ExecInfoNew:
+    batch_size: int
+    generated_ids: Union[List[np.ndarray], np.ndarray]
+    perf_metrics: PerfMetrics
+
+    def __repr__(self):
+        return f"Average Prefill time a.k.a TTFT is= {round(self.perf_metrics.prefill_time, 2)}\
+        \nDecode token/sec is= {round(self.perf_metrics.decode_perf * self.batch_size, 2)}\
+        \nTotal token/sec is= {round(self.perf_metrics.total_perf * self.batch_size, 2)}\
+        \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)}"
+
+
 io_files = []
 
 
