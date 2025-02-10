@@ -385,7 +385,7 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
     _match_string_replace_method = {
         "InternVLChatModel": {
             "forward": QEffInternVLModel.forward,
-            "generate_dummy_inputs": QEffInternVLModel.generate_dummy_inputs,
+            "get_dummy_inputs": QEffInternVLModel.get_dummy_inputs,
             "get_specializations": QEffInternVLModel.get_specializations,
             "get_onnx_dynamic_axes": QEffInternVLModel.get_onnx_dynamic_axes,
             "get_output_names": QEffInternVLModel.get_output_names,

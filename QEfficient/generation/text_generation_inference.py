@@ -74,8 +74,8 @@ class CloudAI100ExecInfoNew:
         \nDecode token/sec is= {round(self.perf_metrics.decode_perf * self.batch_size, 2)}\
         \nTotal token/sec is= {round(self.perf_metrics.total_perf * self.batch_size, 2)}\
         \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)}"
-
-
+ 
+ 
 io_files = []
 
 

@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 import hashlib
-import logging
 import sys
 import warnings
 from pathlib import Path
@@ -825,7 +824,7 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         export_dir: Optional[str] = None,
         **kwargs,
     ) -> str:
-        inputs = self.model.generate_dummy_inputs()
+        inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
         self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
@@ -848,6 +847,7 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         output_names = self.model.get_output_names()
 
         # Get specializations from modelling file
+        # TODO: expose this via the auto class as well
         specializations = self.model.get_specializations(batch_size=batch_size, prefill_seq_len=prefill_seq_len,
                                                          ctx_len=ctx_len, img_size=img_size, **compiler_options)
 
@@ -878,7 +878,6 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             )
         return self.qpc_path
     
-    @property
     def get_onnx_dynamic_axes(self):
         return self.model.get_onnx_dynamic_axes()
 
@@ -913,127 +912,121 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         )
 
     def cloud_ai_100_generate(
-        self,
-        inputs: torch.Tensor,
-        device_ids: List[int],
-        enable_debug_logs: bool = False,
-        generation_len: int = None,
-        streamer: Optional[TextStreamer] = None,
-        generation_len: Optional[int] = None
-    ) -> np.ndarray:
-        qpc_session = QAICInferenceSession(
-            self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
-        )
+            self,
+            inputs: torch.Tensor,
+            device_ids: List[int],
+            enable_debug_logs: bool = False,
+            generation_len: int = None,
+            streamer: Optional[TextStreamer] = None,
+        ) -> np.ndarray:
+            qpc_session = QAICInferenceSession(
+                self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
+            )
 
-        batch_size, ctx_len, fbs = get_compilation_dims(self.qpc_path)
-        
-        # Skip inputs/outputs
-        qpc_session.skip_buffers(
-            [x for x in (qpc_session.input_names + qpc_session.output_names) if x.startswith("past_")] + ["pixel_values_RetainedState"]
-        )
+            batch_size, ctx_len, fbs = get_compilation_dims(self.qpc_path)
 
-        # Read prompt and ctx len from session
-        batch_size = max(
-            [x[qpc_session.binding_index_map["input_ids"]][1][0] for x in qpc_session.allowed_shapes]
-            + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[0]]
-        )
+            pad_token_id = 1
 
-        prefill_seq_len = max(
-            [x[qpc_session.binding_index_map["input_ids"]][1][1] for x in qpc_session.allowed_shapes]
-            + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[1]]
-        )
+            # Skip inputs/outputs
+            qpc_session.skip_buffers(
+                [x for x in qpc_session.input_names + qpc_session.output_names if x.startswith("past_") or x.endswith("_RetainedState")]
+            )
 
-        input_len = inputs["attention_mask"].sum(1, keepdims=True)
-        input_ids_length = inputs["input_ids"].shape[1]
+            # Read prompt and ctx len from session
+            batch_size = max(
+                [x[qpc_session.binding_index_map["input_ids"]][1][0] for x in qpc_session.allowed_shapes]
+                + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[0]]
+            )
 
-        num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
+            prefill_seq_len = max(
+                [x[qpc_session.binding_index_map["input_ids"]][1][1] for x in qpc_session.allowed_shapes]
+                + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[1]]
+            )
 
-        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
-        if generation_len is None:
-            generation_len = ctx_len - input_len.max()
+            input_len = inputs["attention_mask"].sum(1, keepdims=True)
+            input_ids_length = inputs["input_ids"].shape[1]
 
-        assert generation_len > 0, "generation length should be greater than zero"
-        generated_ids = np.full((batch_size, generation_len + 1), -1)
+            num_chunks = -(input_ids_length //-prefill_seq_len)  # ceil divide without float
+            
+            padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+            if generation_len is None:
+                generation_len = ctx_len - input_len.max()
 
-        # Prepare inputs for prefill
-        prefill_start = perf_counter()
+            assert generation_len > 0, "generation length should be greater than zero"
+            generated_ids = np.full((batch_size, generation_len + 1), pad_token_id)
 
-        input_ids = inputs["input_ids"]
-        input_ids_size = input_ids.shape[1]
-        inputs["input_ids"] = torch.nn.functional.pad(
-            inputs["input_ids"],
-            (0, padded_len - input_ids_size),
-            "constant",
-            1,
-        )
-        inputs["attention_mask"] = torch.nn.functional.pad(
-            inputs["attention_mask"], (0, padded_len - input_ids_size), "constant", 0
-        )
+            # Prepare inputs for prefill
+            prefill_start = perf_counter()
 
-        for k, v in inputs.items():
-            inputs[k] = np.array(v)
+            input_ids = inputs["input_ids"]
+            input_ids_size = input_ids.shape[1]
+            inputs["input_ids"] = torch.nn.functional.pad(
+                inputs["input_ids"],
+                (0, padded_len - input_ids_size),
+                "constant",
+                1,
+            )
+            inputs["attention_mask"] = torch.nn.functional.pad(
+                inputs["attention_mask"],
+                (0, padded_len - input_ids_size), "constant", 0
+            )
 
-        inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
-        inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+            for k, v in inputs.items():
+                inputs[k] = np.array(v)
 
-        qpc_session.activate()
+            inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
+            inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
 
-        # Run prefill
+            qpc_session.activate()
 
-        for i in range(num_chunks):
-            chunk_inputs = inputs.copy()
-            chunk_inputs["input_ids"] = inputs["input_ids"].numpy()[:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
-            chunk_inputs['pixel_values'] = chunk_inputs['pixel_values'].numpy().astype(np.float16)
-            chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
-            outputs = qpc_session.run(chunk_inputs)
+            # Run prefill
+            
+            for i in range(num_chunks):
+                chunk_inputs = inputs.copy()
+                chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+                chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+                outputs = qpc_session.run(chunk_inputs)
 
-        # Skip inputs/outputs again
-        qpc_session.skip_buffers(
-            ["pixel_values"]
-        )
-
-        # Get first token
-        inputs = {}
-        inputs["input_ids"] = outputs["logits"].argmax(2)
-        inputs["position_ids"] = input_len.numpy().astype(np.int64)
-        # inputs["cross_attention_mask"] = inputs["cross_attention_mask"][:, -1:, :, :]
-        generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
-        # finished_sequences = inputs["input_ids"] == self.tokenizer.eos_token_id
-        if streamer:
-            streamer.put(inputs["input_ids"][0])
-
-        qpc_session.skip_buffers(["pixel_values"])
-        inputs.pop("pixel_values")
-
-        # Decode loop
-        decode_start = perf_counter()
-        for num_token in range(1, generation_len):
-            outputs = qpc_session.run(inputs)
-            # Prepare inputs for next iteration
+            prefill_time = prefill_start-perf_counter()
+            # Get first token
             inputs["input_ids"] = outputs["logits"].argmax(2)
-            inputs["position_ids"] += 1
-            generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
+            inputs["position_ids"] = input_len.numpy()
+            generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
             if streamer:
                 streamer.put(inputs["input_ids"][0])
 
-        decode_end = perf_counter()
-        if streamer:
-            streamer.end()
+            qpc_session.skip_buffers(["pixel_values"])
+            inputs.pop("pixel_values")
 
-        decode_perf = (num_token - 1) / (decode_end - decode_start)
-        total_time = decode_end - prefill_start
-        total_perf = num_token / total_time
+            # Decode loop
+            decode_start = perf_counter()
+            for num_token in range(1, generation_len):
+                outputs = qpc_session.run(inputs)
+                # Prepare inputs for next iteration
+                inputs["input_ids"] = outputs["logits"].argmax(2)
+                inputs["position_ids"] += 1
+                generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
+                if streamer:
+                    streamer.put(inputs["input_ids"][0])
 
-        print("TTFT:", round(loop_start - start, 2), "s", file=sys.stderr)
-        print("E2ET:", round(end - start, 2), "s", file=sys.stderr)
-        print("Prefill:", round(prefill_perf, 2), "tok/s", file=sys.stderr)
-        print("Decode:", round(decode_perf, 2), "tok/s", file=sys.stderr)
-        print("E2E:", round(total_perf, 2), "tok/s", file=sys.stderr)
-        if batch_size > 1:
-            print("Prefill (batch):", round(prefill_perf * batch_size, 2), "tok/s", file=sys.stderr)
-            print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s", file=sys.stderr)
-            print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s", file=sys.stderr)
-        return generated_ids[:, :generation_len]
+            decode_end = perf_counter()
+            if streamer:
+                streamer.end()
+
+            decode_perf = (num_token - 1) / (decode_end - decode_start)
+            total_time = decode_end - prefill_start
+            total_perf = num_token / total_time
+            
+            return CloudAI100ExecInfoNew(
+                batch_size=batch_size,
+                generated_ids=generated_ids,
+                perf_metrics=PerfMetrics(
+                    prefill_time=prefill_time,
+                    decode_perf=decode_perf,
+                    total_perf=total_perf,
+                    total_time=total_time
+                )
+            )
     
     @property
     def model_hash(self) -> str:
@@ -1064,9 +1057,9 @@ class QEFFAutoModelForImageTextToText:
     @classmethod
     def from_pytorch_model(cls, model: nn.Module, kv_offload=False, **kwargs):
         if kv_offload:
-            return QEffAutoModelForImageTextToText2QPC(model, **kwargs)
+            return _QEffAutoModelForImageTextToText2QPC(model, **kwargs)
         else:
-            return QEFFAutoModelForImageTextToText1QPC(model, **kwargs)
+            return _QEFFAutoModelForImageTextToText1QPC(model, **kwargs)
         
     
     @classmethod

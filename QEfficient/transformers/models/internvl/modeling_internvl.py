@@ -62,7 +62,7 @@ class QEffInternVLModel(nn.Module):
         return output_names
         
     
-    def generate_dummy_inputs(self, kv_offload: bool = False):
+    def get_dummy_inputs(self, kv_offload: bool = False):
         if kv_offload:
             raise ValueError("kv_offload method not supported for InternVL yet!")
         NUM_CROPS = 13
