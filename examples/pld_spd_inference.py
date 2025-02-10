@@ -209,7 +209,7 @@ def pld_spec_decode_inference(
         target_model_name (str): Name of the target model.
         full_batch_size (Optional[int]): Full batch size.
         device_group (List[int]): List of device IDs.
-        max_ngram_size (int): Max ngram size
+        max_ngram_size (int): Max ngram size.
 
     Returns:
         CloudAI100ExecInfo: Execution information, including performance metrics and generated text.
