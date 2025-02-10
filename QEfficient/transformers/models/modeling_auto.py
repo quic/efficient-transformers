@@ -10,7 +10,7 @@ import sys
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
@@ -341,49 +341,13 @@ class QEFFAutoModel(QEFFTransformersBase):
         return model(**inputs)
 
 
-class QeffCommomVisionEncoder(nn.Module):
-    def __init__(self, model):
-        super().__init__()
-        self.model = model
-        self.cross_attention_layers = self.model.config.get_text_config().cross_attention_layers
-
-    def forward(
-        self,
-        pixel_values: Optional[torch.FloatTensor] = None,
-        aspect_ratio_mask: Optional[torch.Tensor] = None,
-        aspect_ratio_ids: Optional[torch.Tensor] = None,
-    ) -> List[Tuple[torch.Tensor]]:
-        vision_outputs = self.model.vision_model(
-            pixel_values=pixel_values,
-            aspect_ratio_ids=aspect_ratio_ids,
-            aspect_ratio_mask=aspect_ratio_mask,
-        )
-        cross_attention_states = vision_outputs[0]
-        cross_attention_states = self.model.multi_modal_projector(cross_attention_states).reshape(
-            -1, cross_attention_states.shape[-2], self.model.hidden_size
-        )
-
-        bsz = pixel_values.shape[0]
-        outputs = []
-        for i in self.cross_attention_layers:
-            cross_attn = self.model.language_model.model.layers[i].cross_attn
-            key_states = cross_attn.k_proj(cross_attention_states)
-            value_states = cross_attn.v_proj(cross_attention_states)
-            key_states = key_states.view(bsz, -1, cross_attn.num_key_value_heads, cross_attn.head_dim).transpose(1, 2)
-            value_states = value_states.view(bsz, -1, cross_attn.num_key_value_heads, cross_attn.head_dim).transpose(
-                1, 2
-            )
-            outputs.append((key_states, value_states))
-        return outputs
-
-
 class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
     _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.modules):
         super().__init__(model)
-        self.model = QeffCommomVisionEncoder(model)
+        self.model = model.get_qeff_vision_encoder()
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -891,9 +855,6 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             **compiler_options,
         )
         return self.qpc_path
-
-    def get_onnx_dynamic_axes(self):
-        return self.model.get_onnx_dynamic_axes()
 
     def get_onnx_dynamic_axes(self):
         return self.model.get_onnx_dynamic_axes()

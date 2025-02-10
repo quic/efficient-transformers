@@ -147,10 +147,12 @@ class InternProcessor:
 def test_image_text_to_text_intern():
     model_name = "OpenGVLab/InternVL2_5-1B"
     config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)  # noqa: F841
-    # config.llm_config.num_hidden_layers = 1
-    # config.vision_config.num_hidden_layers = 1
-    # model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=False, config=config, trust_remote_code=True)
-    model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=False, trust_remote_code=True)
+    config.llm_config.num_hidden_layers = 1
+    config.vision_config.num_hidden_layers = 1
+    model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_name, kv_offload=False, config=config, trust_remote_code=True
+    )
+    # model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=False, trust_remote_code=True)
 
     model.export()
     model.compile(num_cores=14)
