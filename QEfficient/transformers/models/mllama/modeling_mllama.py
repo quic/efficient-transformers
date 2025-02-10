@@ -48,10 +48,10 @@ from QEfficient.utils import constants
 from QEfficient.utils.constants import Constants
 
 bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-max_num_images = constants.ONNX_EXPORT_MAX_NUM_IMAGES
-max_image_tiles = constants.ONNX_EXPORT_MAX_IMAGE_TILES
-image_size = constants.ONNX_EXPORT_IMAGE_WIDTH
-num_channel = constants.ONNX_EXPORT_IMAGE_DEPTH
+max_num_images = 1
+max_image_tiles = 4
+image_size = 560
+num_channel = 3
 seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
 
@@ -998,7 +998,46 @@ class QEffMllamaForCausalLM(MllamaForCausalLM):
         )
 
 
+class QEffMllamaVisionEncoder(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.cross_attention_layers = self.model.config.get_text_config().cross_attention_layers
+
+    def forward(
+        self,
+        pixel_values: Optional[torch.FloatTensor] = None,
+        aspect_ratio_mask: Optional[torch.Tensor] = None,
+        aspect_ratio_ids: Optional[torch.Tensor] = None,
+    ) -> List[Tuple[torch.Tensor]]:
+        vision_outputs = self.model.vision_model(
+            pixel_values=pixel_values,
+            aspect_ratio_ids=aspect_ratio_ids,
+            aspect_ratio_mask=aspect_ratio_mask,
+        )
+        cross_attention_states = vision_outputs[0]
+        cross_attention_states = self.model.multi_modal_projector(cross_attention_states).reshape(
+            -1, cross_attention_states.shape[-2], self.model.hidden_size
+        )
+
+        bsz = pixel_values.shape[0]
+        outputs = []
+        for i in self.cross_attention_layers:
+            cross_attn = self.model.language_model.model.layers[i].cross_attn
+            key_states = cross_attn.k_proj(cross_attention_states)
+            value_states = cross_attn.v_proj(cross_attention_states)
+            key_states = key_states.view(bsz, -1, cross_attn.num_key_value_heads, cross_attn.head_dim).transpose(1, 2)
+            value_states = value_states.view(bsz, -1, cross_attn.num_key_value_heads, cross_attn.head_dim).transpose(
+                1, 2
+            )
+            outputs.append((key_states, value_states))
+        return outputs
+
+
 class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
+    def get_qeff_vision_encoder(self):
+        return QEffMllamaVisionEncoder(self)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
