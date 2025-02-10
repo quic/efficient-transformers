@@ -5,8 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import copy
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -176,6 +174,8 @@ inputs = dict(inputs)
 batch_size, prompt_len = inputs["input_ids"].shape
 inputs["pixel_values"] = pixel_values.clone()
 pad_inputs["pixel_values"] = pixel_values.clone()
+import copy  # noqa: E402
+
 orig_inputs = copy.deepcopy(pad_inputs)
 inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
 inputs.pop("attention_mask")
@@ -222,7 +222,7 @@ streamer.end()
 generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 print(generated_texts)
 
-exec_info = model.generate(inputs=inputs, generation_len=128)
+exec_info = model.generate(inputs=orig_inputs, generation_len=128)
 print(exec_info)
 generated_ids_aic = exec_info.generated_ids
 print(generated_ids_aic)
