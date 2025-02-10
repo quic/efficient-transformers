@@ -541,19 +541,19 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
 
         # TODO : remove below after testing
         model_config = {"model_name": pretrained_model_name_or_path}
-        model_config["n_layer_text"] = 1
-        model_config["n_layer_vision"] = 1
+        # model_config["n_layer_text"] = 1
+        # model_config["n_layer_vision"] = 1
         if model_config["model_name"] == "OpenGVLab/InternVL2_5-1B":
             config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
             config.llm_config.use_cache = True
-            config.llm_config.num_hidden_layers = model_config["n_layer_text"]
-            config.vision_config.num_hidden_layers = model_config["n_layer_vision"]
+            # config.llm_config.num_hidden_layers = model_config["n_layer_text"]
+            # config.vision_config.num_hidden_layers = model_config["n_layer_vision"]
             config.llm_config._attn_implementation = "eager"
             config.vision_config.use_flash_attn = "false"
         elif model_config["model_name"] == "llava-hf/llava-1.5-7b-hf":
             config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
-            config.text_config.num_hidden_layers = model_config["n_layer_text"]
-            config.vision_config.num_hidden_layers = model_config["n_layer_vision"]
+            # config.text_config.num_hidden_layers = model_config["n_layer_text"]
+            # config.vision_config.num_hidden_layers = model_config["n_layer_vision"]
             config._attn_implementation = "eager"
             config.vision_config.use_flash_attn = "false"
         # TODO : remove above after testing
@@ -762,7 +762,8 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
                 raise TypeError("Please run compile API first!")
 
             return self.cloud_ai_100_vlm_generate(inputs=inputs, device_ids=device_ids)
-
+        
+    
     def cloud_ai_100_vlm_generate(
         self,
         inputs: torch.Tensor,
@@ -866,6 +867,7 @@ class QEFFAutoModelForImageTextToText(QEFFTransformersBase):
             if finished_sequences.all():
                 break
         generated_texts = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        breakpoint()
         return generated_texts
 
 

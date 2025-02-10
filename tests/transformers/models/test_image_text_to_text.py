@@ -49,8 +49,8 @@ def load_vlm_model(model_config):
     if model_config["model_name"] == "OpenGVLab/InternVL2_5-1B":
         config = AutoConfig.from_pretrained(model_config["model_path"])
         config.llm_config.use_cache = True
-        config.llm_config.num_hidden_layers = model_config["n_layer_text"]
-        config.vision_config.num_hidden_layers = model_config["n_layer_vision"]
+        # config.llm_config.num_hidden_layers = model_config["n_layer_text"]
+        # config.vision_config.num_hidden_layers = model_config["n_layer_vision"]
         config.llm_config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
         model_hf = AutoModelForCausalLM.from_pretrained(
@@ -58,40 +58,19 @@ def load_vlm_model(model_config):
         )
     elif model_config["model_name"] == "llava-hf/llava-1.5-7b-hf":
         config = AutoConfig.from_pretrained(model_config["model_path"])
-        config.text_config.num_hidden_layers = model_config["n_layer_text"]
-        config.vision_config.num_hidden_layers = model_config["n_layer_vision"]
+        # config.text_config.num_hidden_layers = model_config["n_layer_text"]
+        # config.vision_config.num_hidden_layers = model_config["n_layer_vision"]
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
         model_hf = AutoModelForImageTextToText.from_pretrained(
             model_config["model_path"], low_cpu_mem_usage=False, config=config
         )
-    elif model_config["model_name"] == "HuggingFaceTB/SmolVLM-256M-Instruct":
-        config = AutoConfig.from_pretrained(model_config["model_path"])
-        config.text_config.num_hidden_layers = model_config["n_layer_text"]
-        config.vision_config.num_hidden_layers = model_config["n_layer_vision"]
-        config._attn_implementation = "eager"
-        config.vision_config.use_flash_attn = "false"
-        model_hf = AutoModelForVision2Seq.from_pretrained(
-            model_config["model_path"], low_cpu_mem_usage=False, config=config
-        )
+    
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
     return model_hf, params
 
-
-def generate_hf_inputs_smol(model_name, model, processor):
-    image = load_image("https://cdn.britannica.com/61/93061-050-99147DCE/Statue-of-Liberty-Island-New-York-Bay.jpg")
-    messages = [
-        {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Can you describe this image?"}]},
-    ]
-    # Prepare inputs
-    prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
-    inputs = processor(text=prompt, images=[image], return_tensors="pt")
-    return inputs
-
-
 def generate_hf_inputs_intern(model_name, model, processor):
-    ## PREPROCESSING THE MULTI-MODAL INPUTS
     pixel_values = []
     for i in range(1, 2):
         url = f"https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-{i}-2048.jpg"
@@ -113,7 +92,6 @@ def generate_hf_inputs_llava(model_name, model, processor=None):
         add_generation_prompt=True,
     )
     inputs = processor(images=img, text=prompt, return_tensors="pt")
-    # inputs["processor"] = processor
     return inputs
 
 
@@ -124,7 +102,6 @@ def generate_hf_inputs_llava(model_name, model, processor=None):
 generate_hf_inputs_func_map = {
     "llava-hf/llava-1.5-7b-hf": generate_hf_inputs_llava,
     "OpenGVLab/InternVL2_5-1B": generate_hf_inputs_intern,
-    "HuggingFaceTB/SmolVLM-256M-Instruct": generate_hf_inputs_smol,
 }
 
 
@@ -189,7 +166,6 @@ def check_vlm_pytorch_vs_kv_vs_ort_vs_ai100(
         mxfp6=False,
         aic_enable_depth_first=False,
     )
-
     qeff_model.qpc_path = qpc_path
     qeff_model.generate(inputs, streamer, device_ids=None, runtime_ai100=True)
 
