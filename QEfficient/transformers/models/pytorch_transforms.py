@@ -51,6 +51,9 @@ from transformers.models.llama.modeling_llama import (
     LlamaModel,
     LlamaRMSNorm,
 )
+from transformers.models.llava.modeling_llava import (
+    LlavaForConditionalGeneration,
+)
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
     MistralDecoderLayer,
@@ -152,6 +155,9 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaForCausalLM,
     QEffLlamaModel,
 )
+from QEfficient.transformers.models.llava.modeling_llava import (
+    QEffLlavaForConditionalGeneration,
+)
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
     QEffMistralDecoderLayer,
@@ -250,6 +256,8 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaDecoderLayer: QEffLlamaDecoderLayer,
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
+        # Llava
+        LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
         # Gemma
         GemmaAttention: QEffGemmaAttention,
         GemmaDecoderLayer: QEffGemmaDecoderLayer,
