@@ -190,6 +190,7 @@ class QEFFBaseModel(ABC):
 
         except Exception as e:
             logger.error(f"ONNX export (or) ONNXTransforms failed: {e}")
+
             raise e
 
         finally:
