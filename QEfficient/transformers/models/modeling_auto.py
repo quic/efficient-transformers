@@ -1054,8 +1054,8 @@ class QEFFAutoModelForImageTextToText:
 
     _hf_auto_class = AutoModelForImageTextToText
     
-    @classmethod
-    def from_pytorch_model(cls, model: nn.Module, kv_offload=False, **kwargs):
+
+    def __new__(self, model: nn.Module, kv_offload=False, **kwargs):
         if kv_offload:
             return _QEffAutoModelForImageTextToText2QPC(model, **kwargs)
         else:
@@ -1073,13 +1073,8 @@ class QEFFAutoModelForImageTextToText:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-
-        return cls._get_qeff_class(model, kv_offload, **kwargs)
-
-        return cls.from_pytorch_model(model, kv_offload=kv_offload)
-
+        return cls(model, kv_offload=kv_offload, **kwargs)
 
 
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP={
@@ -1204,7 +1199,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         
         
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
-            return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__].from_pytorch_model(model ,kv_offload=kv_offload if kv_offload else False)
+            return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](model ,kv_offload=kv_offload if kv_offload else False)
         
         return cls(model, is_tlm=is_tlm, continuous_batching = continuous_batching)
 
