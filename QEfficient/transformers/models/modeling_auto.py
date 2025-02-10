@@ -1563,23 +1563,23 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
     ``Mandatory`` Args:
         :model (nn.Module): PyTorch model
 
-    .. code-block:: python # TODO - update this for speech
+    .. code-block:: python
 
-        from QEfficient import QEFFAutoModel
-        from transformers import AutoTokenizer
+        from QEfficient import QEFFAutoModelForSpeechSeq2Seq
+        from processors import AutoProcessor
 
-        # Initialize the model using from_pretrained similar to transformers.AutoModel.
-        model = QEFFAutoModel.from_pretrained("model_name")
+        # Initialize the model using from_pretrained similar to transformers.AutoModelForSpeechSeq2Seq.
+        model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained("model_name")
 
         # Now you can directly compile the model for Cloud AI 100
         model.compile(num_cores=16, device_group=[0])  # Considering you have a Cloud AI 100 SKU
 
         #prepare input
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        inputs = tokenizer("My name is", return_tensors="pt")
+        processor = AutoProcessor.from_pretrained(model_name)
+        input_audio, sample_rate = [...] # audio data loaded in via some external audio package, such as librosa or soundfile
 
         # You can now execute the model
-        model.generate(inputs)
+        model.generate(processor, inputs, sample_rate=sample_rate)
     """
 
     _hf_auto_class = AutoModelForSpeechSeq2Seq
@@ -1754,8 +1754,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             :generation_len (int): length upto which to generate
             :sample_rate (int): sampling rate at which input audio is stored in inputs (needed for processor)
             :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
-        ``optional`` Args:
-            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
