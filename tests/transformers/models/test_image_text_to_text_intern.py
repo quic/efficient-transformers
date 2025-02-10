@@ -203,7 +203,9 @@ orig_inputs = copy.deepcopy(pad_inputs)
 
 
 import ipdb; ipdb.set_trace()
-generated_ids_aic = model.generate(inputs=orig_inputs, generation_len=128)
+exec_info = model.generate(inputs=inputs, generation_len=128)
+print(exec_info)
+generated_ids_aic = exec_info.generated_ids
 print(generated_ids_aic)
 generated_texts = tokenizer.batch_decode(generated_ids_aic, skip_special_tokens=True)
 print(generated_texts)
