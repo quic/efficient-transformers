@@ -19,17 +19,140 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
+from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Attention,
+    Qwen2Config,
     Qwen2DecoderLayer,
     Qwen2ForCausalLM,
     Qwen2Model,
+    Qwen2RotaryEmbedding,
     apply_rotary_pos_emb,
     logger,
     repeat_kv,
+    rotate_half,
 )
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+
+
+#  Can be replaced with llama/modeling_llama.py::QEffLlamaRotaryEmbedding but keeping it following transformers ideology
+class QEffQwen2RotaryEmbedding(Qwen2RotaryEmbedding):
+    """
+    Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
+    The only differences are:
+    - Add static sin/cos computations.
+    """
+
+    def __init__(
+        self,
+        dim=None,
+        max_position_embeddings=2048,
+        base=10000,
+        device=None,
+        scaling_factor=1.0,
+        rope_type="default",
+        config: Optional[Qwen2Config] = None,
+    ):
+        super(Qwen2RotaryEmbedding, self).__init__()  # Initialize nn.Module
+        # TODO (joao): remove the `if` below, only used for BC
+        self.rope_kwargs = {}
+        if config is None:
+            logger.warning_once(
+                "`LlamaRotaryEmbedding` can now be fully parameterized by passing the model config through the "
+                "`config` argument. All other arguments will be removed in v4.45"
+            )
+            self.rope_kwargs = {
+                "rope_type": rope_type,
+                "factor": scaling_factor,
+                "dim": dim,
+                "base": base,
+                "max_position_embeddings": max_position_embeddings,
+            }
+            self.rope_type = rope_type
+            self.max_seq_len_cached = max_position_embeddings
+            self.original_max_seq_len = max_position_embeddings
+        else:
+            # BC: "rope_type" was originally "type"
+            if config.rope_scaling is not None:
+                self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
+            else:
+                self.rope_type = "default"
+            self.max_seq_len_cached = config.max_position_embeddings
+            self.original_max_seq_len = config.max_position_embeddings
+
+        self.config = config
+        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+
+        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device, **self.rope_kwargs)
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+
+        # Build here to make `torch.jit.trace` work.
+        self._set_cos_sin_cache(
+            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+        )
+
+    def _set_cos_sin_cache(self, seq_len, device, dtype):
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
+
+        freqs = torch.outer(t, self.inv_freq)
+
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def forward(self, x, seq_len=None):
+        # x: [bs, num_attention_heads, seq_len, head_size]
+        if seq_len > self.max_seq_len_cached:
+            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
+
+        return (
+            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
+            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
+        )
+
+
+def apply_qeff_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+    """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
+
+    Explanation:
+        Multimodal 3D rotary position embedding is an extension to 1D rotary position embedding. The input embedding
+        sequence contains vision (images / videos) embedding and text embedding or just contains text embedding. For
+        vision embedding part, we apply rotary position embedding on temporal, height and width dimension seperately.
+        Here we split the channel dimension to 3 chunks for the temporal, height and width rotary position embedding.
+        For text embedding part, we just apply 1D rotary position embedding. The three rotary position index (temporal,
+        height and width) of text embedding is always the same, so the text embedding rotary position embedding has no
+        difference with modern LLMs.
+
+    Args:
+        q (`torch.Tensor`): The query tensor.
+        k (`torch.Tensor`): The key tensor.
+        cos (`torch.Tensor`): The cosine part of the rotary embedding.
+        sin (`torch.Tensor`): The sine part of the rotary embedding.
+        position_ids (`torch.Tensor`):
+            The position indices of the tokens corresponding to the query and key tensors. For example, this can be
+            used to pass offsetted position ids when working with a KV-cache.
+        mrope_section(`List(int)`):
+            Multimodal rope section is for channel dimension of temporal, height and width in rope calculation.
+        unsqueeze_dim (`int`, *optional*, defaults to 1):
+            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
+            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
+            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
+            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
+            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
+            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
+    Returns:
+        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
+    """
+
+    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
+    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
+
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+
+    return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
 
 class QEffQwen2Attention(Qwen2Attention):
@@ -38,6 +161,19 @@ class QEffQwen2Attention(Qwen2Attention):
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
+    def __init__(self, config, layer_idx = None):
+        super().__init__(config, layer_idx)
+        # Define the general __qeff_init__() for any changes in the init calls
+        # Set the init in the module mapping pytorch transforms
+        self.config = config
+        self.__qeff_init__()
+    
+    def __qeff_init__(self):
+        self.rotary_emb = QEffQwen2RotaryEmbedding(
+            self.head_dim,
+            max_position_embeddings=self.max_position_embeddings,
+            base=self.rope_theta,
+        )
 
     def forward(
         self,
@@ -71,18 +207,8 @@ class QEffQwen2Attention(Qwen2Attention):
                 )
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
 
-        if position_embeddings is None:
-            logger.warning_once(
-                "The attention layers in this model are transitioning from computing the RoPE embeddings internally "
-                "through `position_ids` (2D tensor with the indexes of the tokens), to using externally computed "
-                "`position_embeddings` (Tuple of tensors, containing cos and sin). In v4.46 `position_ids` will be "
-                "removed and `position_embeddings` will be mandatory."
-            )
-            cos, sin = self.rotary_emb(value_states, position_ids)
-        else:
-            cos, sin = position_embeddings
-
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        query_states, key_states = apply_qeff_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
             # Update the cache_kwargs with position_ids for Cloud AI 100
@@ -124,6 +250,7 @@ class QEffQwen2Attention(Qwen2Attention):
             attn_weights = None
 
         return attn_output, attn_weights, past_key_value
+
 
 
 class QEffQwen2Model(Qwen2Model):

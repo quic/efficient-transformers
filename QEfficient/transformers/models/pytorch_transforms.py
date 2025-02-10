@@ -104,7 +104,7 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Model,
 )
 
-from QEfficient.base.pytorch_transforms import ModuleMappingTransform
+from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.codegen.modeling_codegen import (
@@ -149,6 +149,7 @@ from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJForCausalLM,
     QEffGPTJModel,
 )
+from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVLModel, QEffInternVisionEmbeddings
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
@@ -377,4 +378,20 @@ class VlmNoKVOffloadTransorm(ModuleMappingTransform):
     _module_mapping = {
         # Llama
         MllamaTextCrossAttention: QEffMllamaTextCrossAttentionSingleQPC,
+
     }
+
+class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
+    _match_string_replace_method = {
+        "InternVLChatModel": {
+            "forward": QEffInternVLModel.forward,
+            "generate_dummy_inputs": QEffInternVLModel.generate_dummy_inputs,
+            "get_specializations": QEffInternVLModel.get_specializations,
+            "get_onnx_dynamic_axes": QEffInternVLModel.get_onnx_dynamic_axes,
+            "get_output_names": QEffInternVLModel.get_output_names,
+            },
+        "InternVisionEmbeddings": {
+            "forward": QEffInternVisionEmbeddings.forward
+            }
+    }
+    _match_class_replace_method = {}
