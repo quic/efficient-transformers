@@ -149,7 +149,7 @@ from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJForCausalLM,
     QEffGPTJModel,
 )
-from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVLModel, QEffInternVisionEmbeddings
+from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
@@ -378,8 +378,8 @@ class VlmNoKVOffloadTransorm(ModuleMappingTransform):
     _module_mapping = {
         # Llama
         MllamaTextCrossAttention: QEffMllamaTextCrossAttentionSingleQPC,
-
     }
+
 
 class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
     _match_string_replace_method = {
@@ -389,9 +389,7 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
             "get_specializations": QEffInternVLModel.get_specializations,
             "get_onnx_dynamic_axes": QEffInternVLModel.get_onnx_dynamic_axes,
             "get_output_names": QEffInternVLModel.get_output_names,
-            },
-        "InternVisionEmbeddings": {
-            "forward": QEffInternVisionEmbeddings.forward
-            }
+        },
+        "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
     }
     _match_class_replace_method = {}

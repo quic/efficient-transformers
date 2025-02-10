@@ -27,7 +27,6 @@ from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2ForCausalLM,
     Qwen2Model,
     Qwen2RotaryEmbedding,
-    apply_rotary_pos_emb,
     logger,
     repeat_kv,
     rotate_half,
@@ -161,13 +160,14 @@ class QEffQwen2Attention(Qwen2Attention):
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
-    def __init__(self, config, layer_idx = None):
+
+    def __init__(self, config, layer_idx=None):
         super().__init__(config, layer_idx)
         # Define the general __qeff_init__() for any changes in the init calls
         # Set the init in the module mapping pytorch transforms
         self.config = config
         self.__qeff_init__()
-    
+
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen2RotaryEmbedding(
             self.head_dim,
@@ -250,7 +250,6 @@ class QEffQwen2Attention(Qwen2Attention):
             attn_weights = None
 
         return attn_output, attn_weights, past_key_value
-
 
 
 class QEffQwen2Model(Qwen2Model):

@@ -44,7 +44,6 @@ from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
 
 
-
 class QEFFTransformersBase(QEFFBaseModel):
     """
     Parent class for models QEFF provides from transformers i.e. (AutoModel, AutoModelForCausalLM, AutoModelForAudioClassification etc.) from transformers/models/modeling_auto.py file.
@@ -53,8 +52,10 @@ class QEFFTransformersBase(QEFFBaseModel):
     _hf_auto_class: type
 
     def __init__(self, model: nn.Module) -> None:
-        if hasattr(model, "config") and hasattr(model.config, "quantization_config") and not isinstance(
-            model.config.quantization_config, tuple(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values())
+        if (
+            hasattr(model, "config")
+            and hasattr(model.config, "quantization_config")
+            and not isinstance(model.config.quantization_config, tuple(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values()))
         ):
             raise AssertionError("Please use `from_pretrained` method to load quantized models")
 
@@ -83,6 +84,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
+
 
 class QEFFAutoModel(QEFFTransformersBase):
     """
@@ -776,7 +778,14 @@ class _QEffAutoModelForImageTextToText2QPC:
 
 class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
     _hf_auto_class = AutoModelForImageTextToText
-    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform, KVCacheModuleMethodMapperTransform, VlmNoKVOffloadTransorm]
+    _pytorch_transforms = [
+        AwqToMatmulNbitsTransform,
+        GPTQToMatmulNbitsTransform,
+        CustomOpsTransform,
+        KVCacheTransform,
+        KVCacheModuleMethodMapperTransform,
+        VlmNoKVOffloadTransorm,
+    ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(
@@ -818,7 +827,7 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
         return cls(model, **kwargs)
-    
+
     def export(
         self,
         export_dir: Optional[str] = None,
@@ -828,7 +837,7 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
         self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
-    
+
     def compile(
         self,
         img_size: Optional[int] = None,
@@ -848,8 +857,13 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
 
         # Get specializations from modelling file
         # TODO: expose this via the auto class as well
-        specializations = self.model.get_specializations(batch_size=batch_size, prefill_seq_len=prefill_seq_len,
-                                                         ctx_len=ctx_len, img_size=img_size, **compiler_options)
+        specializations = self.model.get_specializations(
+            batch_size=batch_size,
+            prefill_seq_len=prefill_seq_len,
+            ctx_len=ctx_len,
+            img_size=img_size,
+            **compiler_options,
+        )
 
         custom_io = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
@@ -864,20 +878,20 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
                 custom_io[output_name] = kv_cache_dtype
 
         self._compile(
-                onnx_path,
-                compile_dir,
-                compile_only=True,
-                retained_state=True,
-                specializations=specializations,
-                convert_to_fp16=True,
-                mxfp6_matmul=mxfp6_matmul,
-                custom_io=custom_io,
-                mdp_ts_num_devices=num_devices,
-                aic_num_cores=num_cores,
-                **compiler_options,
-            )
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            retained_state=True,
+            specializations=specializations,
+            convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            custom_io=custom_io,
+            mdp_ts_num_devices=num_devices,
+            aic_num_cores=num_cores,
+            **compiler_options,
+        )
         return self.qpc_path
-    
+
     def get_onnx_dynamic_axes(self):
         return self.model.get_onnx_dynamic_axes()
 
@@ -904,130 +918,132 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         """
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
-  
-        return self.cloud_ai_100_generate(inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len)
+
+        return self.cloud_ai_100_generate(
+            inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
+        )
 
         return self.cloud_ai_100_generate(
             inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
         )
 
     def cloud_ai_100_generate(
-            self,
-            inputs: torch.Tensor,
-            device_ids: List[int],
-            enable_debug_logs: bool = False,
-            generation_len: int = None,
-            streamer: Optional[TextStreamer] = None,
-        ) -> np.ndarray:
-            qpc_session = QAICInferenceSession(
-                self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
-            )
+        self,
+        inputs: torch.Tensor,
+        device_ids: List[int],
+        enable_debug_logs: bool = False,
+        generation_len: int = None,
+        streamer: Optional[TextStreamer] = None,
+    ) -> np.ndarray:
+        qpc_session = QAICInferenceSession(
+            self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
+        )
 
-            batch_size, ctx_len, fbs = get_compilation_dims(self.qpc_path)
+        batch_size, ctx_len, fbs = get_compilation_dims(self.qpc_path)
 
-            pad_token_id = 1
+        pad_token_id = 1
 
-            # Skip inputs/outputs
-            qpc_session.skip_buffers(
-                [x for x in qpc_session.input_names + qpc_session.output_names if x.startswith("past_") or x.endswith("_RetainedState")]
-            )
+        # Skip inputs/outputs
+        qpc_session.skip_buffers(
+            [
+                x
+                for x in qpc_session.input_names + qpc_session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
+        )
 
-            # Read prompt and ctx len from session
-            batch_size = max(
-                [x[qpc_session.binding_index_map["input_ids"]][1][0] for x in qpc_session.allowed_shapes]
-                + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[0]]
-            )
+        # Read prompt and ctx len from session
+        batch_size = max(
+            [x[qpc_session.binding_index_map["input_ids"]][1][0] for x in qpc_session.allowed_shapes]
+            + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[0]]
+        )
 
-            prefill_seq_len = max(
-                [x[qpc_session.binding_index_map["input_ids"]][1][1] for x in qpc_session.allowed_shapes]
-                + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[1]]
-            )
+        prefill_seq_len = max(
+            [x[qpc_session.binding_index_map["input_ids"]][1][1] for x in qpc_session.allowed_shapes]
+            + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[1]]
+        )
 
-            input_len = inputs["attention_mask"].sum(1, keepdims=True)
-            input_ids_length = inputs["input_ids"].shape[1]
+        input_len = inputs["attention_mask"].sum(1, keepdims=True)
+        input_ids_length = inputs["input_ids"].shape[1]
 
-            num_chunks = -(input_ids_length //-prefill_seq_len)  # ceil divide without float
-            
-            padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
-            if generation_len is None:
-                generation_len = ctx_len - input_len.max()
+        num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
 
-            assert generation_len > 0, "generation length should be greater than zero"
-            generated_ids = np.full((batch_size, generation_len + 1), pad_token_id)
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+        if generation_len is None:
+            generation_len = ctx_len - input_len.max()
 
-            # Prepare inputs for prefill
-            prefill_start = perf_counter()
+        assert generation_len > 0, "generation length should be greater than zero"
+        generated_ids = np.full((batch_size, generation_len + 1), pad_token_id)
 
-            input_ids = inputs["input_ids"]
-            input_ids_size = input_ids.shape[1]
-            inputs["input_ids"] = torch.nn.functional.pad(
-                inputs["input_ids"],
-                (0, padded_len - input_ids_size),
-                "constant",
-                1,
-            )
-            inputs["attention_mask"] = torch.nn.functional.pad(
-                inputs["attention_mask"],
-                (0, padded_len - input_ids_size), "constant", 0
-            )
+        # Prepare inputs for prefill
+        prefill_start = perf_counter()
 
-            for k, v in inputs.items():
-                inputs[k] = np.array(v)
+        input_ids = inputs["input_ids"]
+        input_ids_size = input_ids.shape[1]
+        inputs["input_ids"] = torch.nn.functional.pad(
+            inputs["input_ids"],
+            (0, padded_len - input_ids_size),
+            "constant",
+            1,
+        )
+        inputs["attention_mask"] = torch.nn.functional.pad(
+            inputs["attention_mask"], (0, padded_len - input_ids_size), "constant", 0
+        )
 
-            inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
-            inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+        for k, v in inputs.items():
+            inputs[k] = np.array(v)
 
-            qpc_session.activate()
+        inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
+        inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
 
-            # Run prefill
-            
-            for i in range(num_chunks):
-                chunk_inputs = inputs.copy()
-                chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
-                chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
-                outputs = qpc_session.run(chunk_inputs)
+        qpc_session.activate()
 
-            prefill_time = prefill_start-perf_counter()
-            # Get first token
+        # Run prefill
+
+        for i in range(num_chunks):
+            chunk_inputs = inputs.copy()
+            chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            outputs = qpc_session.run(chunk_inputs)
+
+        prefill_time = prefill_start - perf_counter()
+        # Get first token
+        inputs["input_ids"] = outputs["logits"].argmax(2)
+        inputs["position_ids"] = input_len.numpy()
+        generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
+        if streamer:
+            streamer.put(inputs["input_ids"][0])
+
+        qpc_session.skip_buffers(["pixel_values"])
+        inputs.pop("pixel_values")
+
+        # Decode loop
+        decode_start = perf_counter()
+        for num_token in range(1, generation_len):
+            outputs = qpc_session.run(inputs)
+            # Prepare inputs for next iteration
             inputs["input_ids"] = outputs["logits"].argmax(2)
-            inputs["position_ids"] = input_len.numpy()
-            generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
+            inputs["position_ids"] += 1
+            generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
             if streamer:
                 streamer.put(inputs["input_ids"][0])
 
-            qpc_session.skip_buffers(["pixel_values"])
-            inputs.pop("pixel_values")
+        decode_end = perf_counter()
+        if streamer:
+            streamer.end()
 
-            # Decode loop
-            decode_start = perf_counter()
-            for num_token in range(1, generation_len):
-                outputs = qpc_session.run(inputs)
-                # Prepare inputs for next iteration
-                inputs["input_ids"] = outputs["logits"].argmax(2)
-                inputs["position_ids"] += 1
-                generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
-                if streamer:
-                    streamer.put(inputs["input_ids"][0])
+        decode_perf = (num_token - 1) / (decode_end - decode_start)
+        total_time = decode_end - prefill_start
+        total_perf = num_token / total_time
 
-            decode_end = perf_counter()
-            if streamer:
-                streamer.end()
+        return CloudAI100ExecInfoNew(
+            batch_size=batch_size,
+            generated_ids=generated_ids,
+            perf_metrics=PerfMetrics(
+                prefill_time=prefill_time, decode_perf=decode_perf, total_perf=total_perf, total_time=total_time
+            ),
+        )
 
-            decode_perf = (num_token - 1) / (decode_end - decode_start)
-            total_time = decode_end - prefill_start
-            total_perf = num_token / total_time
-            
-            return CloudAI100ExecInfoNew(
-                batch_size=batch_size,
-                generated_ids=generated_ids,
-                perf_metrics=PerfMetrics(
-                    prefill_time=prefill_time,
-                    decode_perf=decode_perf,
-                    total_perf=total_perf,
-                    total_time=total_time
-                )
-            )
-    
     @property
     def model_hash(self) -> str:
         mhash = hashlib.sha256()
@@ -1053,15 +1069,13 @@ class QEFFAutoModelForImageTextToText:
     """
 
     _hf_auto_class = AutoModelForImageTextToText
-    
 
     def __new__(self, model: nn.Module, kv_offload=False, **kwargs):
         if kv_offload:
             return _QEffAutoModelForImageTextToText2QPC(model, **kwargs)
         else:
             return _QEFFAutoModelForImageTextToText1QPC(model, **kwargs)
-        
-    
+
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path, kv_offload=False, **kwargs):
@@ -1077,9 +1091,7 @@ class QEFFAutoModelForImageTextToText:
         return cls(model, kv_offload=kv_offload, **kwargs)
 
 
-MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP={
-    "InternVLChatModel" : QEFFAutoModelForImageTextToText
-}
+MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoModelForImageTextToText}
 
 
 class QEFFAutoModelForCausalLM(QEFFBaseModel):
@@ -1126,7 +1138,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if hasattr(model.config, "quantization_config") and not isinstance(
             model.config.quantization_config, tuple(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values())
         ):
-            logger.warning("Please use `from_pretrained` method to load quantized models, might give unexpected results")        
+            logger.warning(
+                "Please use `from_pretrained` method to load quantized models, might give unexpected results"
+            )
 
         super().__init__(model)
 
@@ -1146,10 +1160,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
-    
+
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__
-    
+
     @classmethod
     def from_pretrained(
         cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, *args, **kwargs
@@ -1185,7 +1199,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             warnings.warn(
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
-            
+
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -1196,13 +1210,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         kv_offload = kwargs.pop("kv_offload", None)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        
-        
-        if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
-            return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](model ,kv_offload=kv_offload if kv_offload else False)
-        
-        return cls(model, is_tlm=is_tlm, continuous_batching = continuous_batching)
 
+        if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
+            return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
+                model, kv_offload=kv_offload if kv_offload else False
+            )
+
+        return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching)
 
     @property
     def model_hash(self) -> str:
