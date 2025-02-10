@@ -44,15 +44,14 @@ from QEfficient.transformers.modeling_utils import (
     _prepare_aspect_ratio_attention_mask,
     _prepare_cross_attention_mask,
 )
-from QEfficient.utils import constants
-from QEfficient.utils.constants import Constants
 
-bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-max_num_images = 1
-max_image_tiles = 4
-image_size = 560
-num_channel = 3
-seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+CTX_LEN = 128
+SEQ_LEN = 32
+IMG_SIZE = 560
+BS = 1
+MAX_NUM_IMG = 1
+NUM_CHANEEL = 3
+MAX_NUM_IMG_TILES = 4
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -1129,49 +1128,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
 
         return outputs
 
-    def generate_dummy_io_info(self, kv_offload=False):
-        # vision_inputs
-        inputs_shape = {}
-        vision_inputs = {
-            "pixel_values": torch.zeros(
-                (bs, max_num_images, max_image_tiles, num_channel, image_size, image_size), dtype=torch.float32
-            ),
-            "aspect_ratio_ids": torch.ones((bs, max_num_images), dtype=torch.int64),
-            "aspect_ratio_mask": torch.ones((bs, max_num_images, max_image_tiles), dtype=torch.int64),
-        }
-
-        vision_output_names = []
-        for i in self.config.text_config.cross_attention_layers:
-            vision_output_names.append(f"past_key.{i}")
-            vision_output_names.append(f"past_value.{i}")
-
-        vision_dynamic_axes = {
-            "pixel_values": {0: "batch_size", 1: "max_num_images", 4: "img_size", 5: "img_size"},
-            "aspect_ratio_ids": {0: "batch_size", 1: "max_num_images"},
-            "aspect_ratio_mask": {0: "batch_size", 1: "max_num_images"},
-        }
-
-        for name, tensor in vision_inputs.items():
-            inputs_shape[name] = tensor.shape
-
-        # lang_inputs
-        lang_inputs = {
-            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
-            "cross_attention_mask": torch.zeros((bs, seq_len, max_num_images, max_image_tiles), dtype=torch.int64),
-            "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
-        }
-
-        for name, tensor in lang_inputs.items():
-            inputs_shape[name] = tensor.shape
-
-        lang_inputs["position_ids"] = torch.where(
-            lang_inputs.pop("attention_mask") == 1,
-            torch.arange(lang_inputs["input_ids"].shape[1]).view(1, -1),
-            -1,
-        )
-
-        ctx_len = Constants.CTX_LEN
+    def get_dummy_inputs(self, kv_offload: bool = False):
         txt_cfg = self.config.get_text_config()
         num_hidden_layers = txt_cfg.num_hidden_layers
         cross_attention_layers = txt_cfg.cross_attention_layers
@@ -1181,6 +1138,28 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         vis_cfg = self.config.vision_config
         num_patches = (vis_cfg.image_size // vis_cfg.patch_size) ** 2 + 1
         image_tokens_len = vis_cfg.max_num_tiles * num_patches
+
+        # vision inputs
+        vision_inputs = {
+            "pixel_values": torch.zeros(
+                (BS, MAX_NUM_IMG, MAX_NUM_IMG_TILES, NUM_CHANEEL, IMG_SIZE, IMG_SIZE), dtype=torch.float32
+            ),
+            "aspect_ratio_ids": torch.ones((BS, MAX_NUM_IMG), dtype=torch.int64),
+            "aspect_ratio_mask": torch.ones((BS, MAX_NUM_IMG, MAX_NUM_IMG_TILES), dtype=torch.int64),
+        }
+
+        # lang_inputs
+        lang_inputs = {
+            "input_ids": torch.zeros((BS, SEQ_LEN), dtype=torch.int64),
+            "cross_attention_mask": torch.zeros((BS, SEQ_LEN, MAX_NUM_IMG, MAX_NUM_IMG_TILES), dtype=torch.int64),
+            "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
+        }
+
+        lang_inputs["position_ids"] = torch.where(
+            lang_inputs.pop("attention_mask") == 1,
+            torch.arange(lang_inputs["input_ids"].shape[1]).view(1, -1),
+            -1,
+        )
 
         lang_inputs["past_key_values"] = DynamicCache(num_hidden_layers)
         lang_inputs["past_key_values"].key_cache = [0] * num_hidden_layers
@@ -1197,13 +1176,72 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
                     1, num_key_value_heads, image_tokens_len, head_dim
                 )
             else:
-                lang_inputs["past_key_values"].key_cache[i] = torch.zeros(1, num_key_value_heads, ctx_len, head_dim)
-                lang_inputs["past_key_values"].value_cache[i] = torch.zeros(1, num_key_value_heads, ctx_len, head_dim)
+                lang_inputs["past_key_values"].key_cache[i] = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim)
+                lang_inputs["past_key_values"].value_cache[i] = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim)
 
-        lang_output_names = [
-            "logits",
-            *[f"past_{kv}.{i}_RetainedState" for i in range(num_hidden_layers) for kv in ["key", "value"]],
+        lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
+        lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
+        inputs = {}
+
+        if kv_offload:
+            inputs["vision"] = vision_inputs
+            inputs["lang"] = lang_inputs
+        else:
+            inputs = {**vision_inputs, **lang_inputs}
+
+        return inputs
+
+    def get_specializations(
+        self,
+        batch_size: int,
+        prefill_seq_len: int,
+        ctx_len: int,
+        img_size: int,
+        kv_offload: bool = False,
+        **compiler_options,
+    ):
+        # TODO: check if this should be named num_crops or something else
+        max_num_images = compiler_options.get("max_num_images", 1)
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else SEQ_LEN
+        ctx_len = ctx_len if ctx_len else CTX_LEN
+        img_size = img_size if img_size else IMG_SIZE
+
+        vision = [{"batch_size": batch_size, "max_num_images": max_num_images, "img_size": img_size}]
+        lang = [
+            {
+                "batch_size": batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "max_num_images": max_num_images,
+                "img_size": img_size,
+            },
+            {
+                "batch_size": batch_size,
+                "seq_len": "1",
+                "ctx_len": ctx_len,
+                "max_num_images": max_num_images,
+                "img_size": img_size,
+            },
         ]
+        specializations = {}
+
+        if kv_offload:
+            specializations["vision"] = vision
+            specializations["lang"] = lang
+            return specializations
+        else:
+            return lang
+
+    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+        txt_cfg = self.config.get_text_config()
+        num_hidden_layers = txt_cfg.num_hidden_layers
+        cross_attention_layers = txt_cfg.cross_attention_layers
+
+        vision_dynamic_axes = {
+            "pixel_values": {0: "batch_size", 1: "max_num_images", 4: "img_size", 5: "img_size"},
+            "aspect_ratio_ids": {0: "batch_size", 1: "max_num_images"},
+            "aspect_ratio_mask": {0: "batch_size", 1: "max_num_images"},
+        }
 
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
@@ -1219,26 +1257,31 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
                 lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
                 lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
 
-        lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
-        lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, ctx_len - 1)
-
-        inputs = {}
-        output_names = {}
         dynamic_axes = {}
-
         if kv_offload:
-            inputs["vision"] = vision_inputs
-            inputs["lang"] = lang_inputs
-
-            output_names["vision"] = vision_output_names
-            output_names["lang"] = lang_output_names
-
             dynamic_axes["vision"] = vision_dynamic_axes
             dynamic_axes["lang"] = lang_dynamic_axes
-
         else:
-            inputs = {**vision_inputs, **lang_inputs}
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
-            output_names = lang_output_names
+        return dynamic_axes
 
-        return inputs, output_names, dynamic_axes, inputs_shape
+    def get_output_names(self, kv_offload: bool = False):
+        txt_cfg = self.config.get_text_config()
+        num_hidden_layers = txt_cfg.num_hidden_layers
+
+        vision_output_names = []
+        for i in self.config.text_config.cross_attention_layers:
+            vision_output_names.append(f"past_key.{i}")
+            vision_output_names.append(f"past_value.{i}")
+
+        lang_output_names = [
+            "logits",
+            *[f"past_{kv}.{i}_RetainedState" for i in range(num_hidden_layers) for kv in ["key", "value"]],
+        ]
+
+        output_names = {}
+        if kv_offload:
+            output_names["vision"] = vision_output_names
+            output_names["lang"] = lang_output_names
+        else:
+            return lang_output_names

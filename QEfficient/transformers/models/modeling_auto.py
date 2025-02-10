@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 import hashlib
-import sys
 import warnings
 from pathlib import Path
 from time import perf_counter
@@ -489,24 +488,22 @@ class _QEffAutoModelForImageTextToText2QPC:
     def qpc_path(self):
         return [self.vision_model.qpc_path, self.lang_model.qpc_path]
 
-    def set_io_info(self):
-        if self.output_names is None or self.input_shapes is None:
-            _, self.output_names, _, self.input_shapes = self.lang_model.model.generate_dummy_io_info(kv_offload=True)
-
     def export(
         self,
         export_dir: Optional[str] = None,
         **kwargs,
     ) -> str:
-        dummy_inputs, self.output_names, dynamic_axes, self.input_shapes = self.model.generate_dummy_io_info(True)
+        inputs = self.model.get_dummy_inputs()
+        dynamic_axes = self.model.get_onnx_dynamic_axes()
+        output_names = self.model.get_output_names()
         self.vision_model.export(
-            dummy_inputs["vision"],
-            self.output_names["vision"],
+            inputs["vision"],
+            output_names["vision"],
             dynamic_axes["vision"],
             export_dir,
         )
 
-        self.lang_model.export(dummy_inputs["lang"], self.output_names["lang"], dynamic_axes["lang"], export_dir)
+        self.lang_model.export(inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir)
 
     def compile(
         self,
@@ -514,25 +511,30 @@ class _QEffAutoModelForImageTextToText2QPC:
         vision_onnx_path: Optional[str] = None,
         lang_onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
-        prefill_seq_len: int = 32,
-        ctx_len: int = 128,
+        prefill_seq_len: int = None,
+        ctx_len: int = None,
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
-        max_num_image: int = 1,
+        mxint8_kv_cache: bool = False,
         **compiler_options,
     ) -> str:
-        # TODO seperate the method to get output names
-        if self.output_names is None:
-            self.set_io_info()
+        output_names = self.model.get_output_names()
 
-        vision_specializations = [{"batch_size": batch_size, "max_num_images": max_num_image, "img_size": img_size}]
+        specializations = self.model.get_specializations(
+            batch_size=batch_size,
+            prefill_seq_len=prefill_seq_len,
+            ctx_len=ctx_len,
+            img_size=img_size,
+            kv_offlaod=True,
+            **compiler_options,
+        )
+
         custom_io_vision = {}
-        kv_cache_dtype = "float16"
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io_vision["pixel_values"] = kv_cache_dtype
-        self.set_io_info()
-        for output_name in self.output_names["vision"]:
+        for output_name in output_names["vision"]:
             custom_io_vision[output_name] = kv_cache_dtype
 
         if vision_onnx_path:
@@ -545,11 +547,10 @@ class _QEffAutoModelForImageTextToText2QPC:
         ):
             self.export()
 
-        print("compiling vision model")
-        self.vision_model.compile(
+        self.vision_model._compile(
             compile_dir,
             compile_only=True,
-            specializations=vision_specializations,
+            specializations=specializations["vision"],
             convert_to_fp16=True,
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
@@ -557,40 +558,24 @@ class _QEffAutoModelForImageTextToText2QPC:
             custom_io=custom_io_vision,
             **compiler_options,
         )
-        lang_specializations = [
-            {
-                "batch_size": batch_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
-                "max_num_images": max_num_image,
-                "img_size": img_size,
-            },
-            {
-                "batch_size": batch_size,
-                "seq_len": "1",
-                "ctx_len": ctx_len,
-                "max_num_images": max_num_image,
-                "img_size": img_size,
-            },
-        ]
 
         custom_io_lang = {}
         # Inputs
-        for output_name in self.output_names["lang"]:
+        for output_name in output_names["lang"]:
             if output_name.startswith("past_"):
                 custom_io_lang[output_name[: -len("_RetainedState")]] = kv_cache_dtype
 
         # outputs
-        for output_name in self.output_names["lang"]:
+        for output_name in output_names["lang"]:
             if output_name.startswith("past_"):
                 custom_io_lang[output_name] = kv_cache_dtype
 
-        self.lang_model.compile(
+        self.lang_model._compile(
             compile_dir,
             compile_only=True,
-            specializations=lang_specializations,
-            convert_to_fp16=True,
             retained_state=True,
+            specializations=specializations["lang"],
+            convert_to_fp16=True,
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -663,7 +648,7 @@ class _QEffAutoModelForImageTextToText2QPC:
         generated_ids = np.full((batch_size, generation_len + 1), pad_token_id)
 
         # Prepare inputs for prefill
-        start = perf_counter()
+        prefill_start = perf_counter()
         vision_inputs = {
             k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
@@ -690,6 +675,7 @@ class _QEffAutoModelForImageTextToText2QPC:
             ]
             outputs = lang_session.run(chunk_inputs)
 
+        prefill_time = prefill_start - perf_counter()
         # Skip inputs/outputs again
         lang_session.skip_buffers(
             [x for x in lang_session.input_names + lang_session.output_names if x.startswith("past_")]
@@ -705,7 +691,7 @@ class _QEffAutoModelForImageTextToText2QPC:
             streamer.put(lang_inputs["input_ids"][0])
 
         # Decode loop
-        loop_start = perf_counter()
+        decode_start = perf_counter()
         for num_token in range(1, generation_len):
             outputs = lang_session.run(lang_inputs)
 
@@ -720,24 +706,21 @@ class _QEffAutoModelForImageTextToText2QPC:
             if finished_sequences.all():
                 break
 
-        end = perf_counter()
+        decode_end = perf_counter()
         if streamer:
             streamer.end()
 
-        prefill_perf = 1 / (loop_start - start)
-        decode_perf = (num_token - 1) / (end - loop_start)
-        total_perf = num_token / (end - start)
+        decode_perf = (num_token - 1) / (decode_end - decode_start)
+        total_time = decode_end - prefill_start
+        total_perf = num_token / total_time
 
-        print("TTFT:", round(loop_start - start, 2), "s", file=sys.stderr)
-        print("E2ET:", round(end - start, 2), "s", file=sys.stderr)
-        print("Prefill:", round(prefill_perf, 2), "tok/s", file=sys.stderr)
-        print("Decode:", round(decode_perf, 2), "tok/s", file=sys.stderr)
-        print("E2E:", round(total_perf, 2), "tok/s", file=sys.stderr)
-        if batch_size > 1:
-            print("Prefill (batch):", round(prefill_perf * batch_size, 2), "tok/s", file=sys.stderr)
-            print("Decode (batch):", round(decode_perf * batch_size, 2), "tok/s", file=sys.stderr)
-            print("E2E (batch):", round(total_perf * batch_size, 2), "tok/s", file=sys.stderr)
-        return generated_ids
+        return CloudAI100ExecInfoNew(
+            batch_size=batch_size,
+            generated_ids=generated_ids,
+            perf_metrics=PerfMetrics(
+                prefill_time=prefill_time, decode_perf=decode_perf, total_perf=total_perf, total_time=total_time
+            ),
+        )
 
 
 class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
@@ -950,11 +933,16 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         inputs["attention_mask"] = torch.nn.functional.pad(
             inputs["attention_mask"], (0, padded_len - input_ids_size), "constant", 0
         )
-
+        if "cross_attention_mask" in inputs:
+            inputs["cross_attention_mask"] = torch.nn.functional.pad(
+                inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_size)
+            )
         for k, v in inputs.items():
             inputs[k] = np.array(v)
 
-        inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
+        if "pixel_values_RetainedState" in qpc_session.output_names:
+            inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
+
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
 
         qpc_session.activate()
@@ -971,12 +959,18 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         # Get first token
         inputs["input_ids"] = outputs["logits"].argmax(2)
         inputs["position_ids"] = input_len.numpy()
+
+        if "cross_attention_mask" in inputs:
+            bs, _, num_images, img_tiles = inputs["cross_attention_mask"].shape
+            inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64).numpy()
+
         generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
         if streamer:
             streamer.put(inputs["input_ids"][0])
 
-        qpc_session.skip_buffers(["pixel_values"])
-        inputs.pop("pixel_values")
+        if "pixel_values_RetainedState" in qpc_session.output_names:
+            qpc_session.skip_buffers(["pixel_values"])
+            inputs.pop("pixel_values")
 
         # Decode loop
         decode_start = perf_counter()
