@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import numpy as np
+import pytest
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
@@ -15,17 +16,6 @@ from transformers import AutoConfig, AutoTokenizer, TextStreamer
 
 from conversation import get_conv_template
 from QEfficient import QEFFAutoModelForCausalLM
-
-model_name = "OpenGVLab/InternVL2_5-1B"
-config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-# config.llm_config.num_hidden_layers = 1
-# config.vision_config.num_hidden_layers = 1
-# model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=False, config=config, trust_remote_code=True)
-model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=False, trust_remote_code=True)
-
-model.export()
-model.compile(num_cores=14)
-
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
@@ -153,78 +143,92 @@ class InternProcessor:
         return query
 
 
-### Pytorch execution
-qeff_pt_model = model.model
+@pytest.mark.on_qaic
+def test_image_text_to_text_intern():
+    model_name = "OpenGVLab/InternVL2_5-1B"
+    config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)  # noqa: F841
+    # config.llm_config.num_hidden_layers = 1
+    # config.vision_config.num_hidden_layers = 1
+    # model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=False, config=config, trust_remote_code=True)
+    model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=False, trust_remote_code=True)
 
-prompt = "Please describe the image and generate a short story around it"
-ctx_len = 4096
-tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
+    model.export()
+    model.compile(num_cores=14)
 
-internProcessor = InternProcessor(qeff_pt_model, tokenizer)
-pixel_values = internProcessor.load_image(
-    "/local/mnt/workspace/open-source/efficient-transformers/image1.jpg", max_num=12
-)
-question = "<image>\n" + prompt
-query = internProcessor(pixel_values, question)
-pad_inputs = tokenizer(query, return_tensors="pt", padding="max_length", max_length=3840, padding_side="right")
+    ### Pytorch execution
+    qeff_pt_model = model.model
 
-inputs = tokenizer(query, return_tensors="pt")
-inputs = dict(inputs)
+    prompt = "Please describe the image and generate a short story around it"
+    ctx_len = 4096
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
 
-batch_size, prompt_len = inputs["input_ids"].shape
-inputs["pixel_values"] = pixel_values.clone()
-pad_inputs["pixel_values"] = pixel_values.clone()
-import copy  # noqa: E402
-
-orig_inputs = copy.deepcopy(pad_inputs)
-inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
-inputs.pop("attention_mask")
-
-head_dim = qeff_pt_model.language_model.config.hidden_size // qeff_pt_model.language_model.config.num_attention_heads
-inputs["past_key_values"] = [
-    tuple(
-        [
-            torch.zeros(
-                batch_size,
-                qeff_pt_model.language_model.config.num_key_value_heads,
-                ctx_len,
-                head_dim,
-                dtype=torch.float32,
-            )
-            for _ in range(2)
-        ]
+    internProcessor = InternProcessor(qeff_pt_model, tokenizer)
+    pixel_values = internProcessor.load_image(
+        "/local/mnt/workspace/open-source/efficient-transformers/image1.jpg", max_num=12
     )
-    for _ in range(qeff_pt_model.language_model.config.num_hidden_layers)
-]
+    question = "<image>\n" + prompt
+    query = internProcessor(pixel_values, question)
+    pad_inputs = tokenizer(query, return_tensors="pt", padding="max_length", max_length=3840, padding_side="right")
 
-streamer = TextStreamer(tokenizer)
-generation_len = 10
-generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
-pt_outputs = qeff_pt_model(**inputs)
-inputs["input_ids"] = pt_outputs[0].argmax(2)
-inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-streamer.put(inputs["input_ids"])
-generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
-finished_sequences = inputs["input_ids"] == tokenizer.eos_token_id
-for i in range(1, generation_len):
-    outputs = qeff_pt_model(**inputs)
-    inputs["input_ids"] = outputs[0].argmax(2)
-    print(inputs["input_ids"])
-    # print(tokenizer.decode(inputs["input_ids"]))
-    inputs["position_ids"] += 1
-    generated_ids[:, i] = inputs["input_ids"].squeeze(1)
-    finished_sequences |= inputs["input_ids"] == tokenizer.eos_token_id
-    if finished_sequences.all():
-        break
+    inputs = tokenizer(query, return_tensors="pt")
+    inputs = dict(inputs)
 
-streamer.end()
+    batch_size, prompt_len = inputs["input_ids"].shape
+    inputs["pixel_values"] = pixel_values.clone()
+    pad_inputs["pixel_values"] = pixel_values.clone()
+    import copy  # noqa: E402
 
-generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-print(generated_texts)
+    orig_inputs = copy.deepcopy(pad_inputs)
+    inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
+    inputs.pop("attention_mask")
 
-exec_info = model.generate(inputs=orig_inputs, generation_len=128)
-print(exec_info)
-generated_ids_aic = exec_info.generated_ids
-print(generated_ids_aic)
-generated_texts = tokenizer.batch_decode(generated_ids_aic, skip_special_tokens=True)
-print(generated_texts)
+    head_dim = (
+        qeff_pt_model.language_model.config.hidden_size // qeff_pt_model.language_model.config.num_attention_heads
+    )
+    inputs["past_key_values"] = [
+        tuple(
+            [
+                torch.zeros(
+                    batch_size,
+                    qeff_pt_model.language_model.config.num_key_value_heads,
+                    ctx_len,
+                    head_dim,
+                    dtype=torch.float32,
+                )
+                for _ in range(2)
+            ]
+        )
+        for _ in range(qeff_pt_model.language_model.config.num_hidden_layers)
+    ]
+
+    streamer = TextStreamer(tokenizer)
+    generation_len = 10
+    generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
+    pt_outputs = qeff_pt_model(**inputs)
+    inputs["input_ids"] = pt_outputs[0].argmax(2)
+    inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
+    streamer.put(inputs["input_ids"])
+    generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
+    finished_sequences = inputs["input_ids"] == tokenizer.eos_token_id
+    for i in range(1, generation_len):
+        outputs = qeff_pt_model(**inputs)
+        inputs["input_ids"] = outputs[0].argmax(2)
+        print(inputs["input_ids"])
+        # print(tokenizer.decode(inputs["input_ids"]))
+        inputs["position_ids"] += 1
+        generated_ids[:, i] = inputs["input_ids"].squeeze(1)
+        finished_sequences |= inputs["input_ids"] == tokenizer.eos_token_id
+        if finished_sequences.all():
+            break
+
+    streamer.end()
+
+    generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+    print(generated_texts)
+
+    exec_info = model.generate(inputs=orig_inputs, generation_len=128)
+    print(exec_info)
+    generated_ids_aic = exec_info.generated_ids
+    print(generated_ids_aic)
+    generated_texts = tokenizer.batch_decode(generated_ids_aic, skip_special_tokens=True)
+    print(generated_texts)
