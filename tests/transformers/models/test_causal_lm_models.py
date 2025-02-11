@@ -38,8 +38,8 @@ test_models = [
     "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
     "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
     "ibm-granite/granite-20b-code-base",
-    "ibm-granite/granite-3.1-8b-instruct",
-    "ibm-granite/granite-guardian-3.1-8b",
+    "ibm-granite/granite-3.1-1b-a400m-instruct",
+    "ibm-granite/granite-guardian-3.1-2b",
 ]
 
 spd_test_models = [
