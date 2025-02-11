@@ -5,16 +5,13 @@
 #
 # -----------------------------------------------------------------------------
 
-from dataclasses import dataclass
-from typing import Tuple, Union
-
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from QEfficient.utils import constants
-from QEfficient.utils._utils import get_padding_shape_from_config
+from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.logging_utils import logger
 
 
@@ -143,7 +140,7 @@ class QEffInternVLModel(nn.Module):
         )
         return outputs.logits, pixel_values, outputs.past_key_values
 
-    def get_input_info(self):
+    def get_inputs_info(self):
         return [
             IOInfo(name="input_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
             IOInfo(name="position_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
@@ -178,10 +175,3 @@ class QEffInternVisionEmbeddings(nn.Module):
 
         embeddings = embeddings + position_embedding.to(target_dtype)
         return embeddings
-
-
-@dataclass
-class IOInfo:
-    name: str
-    datatype: np.dtype
-    shape: Tuple[Union[int, str], ...]

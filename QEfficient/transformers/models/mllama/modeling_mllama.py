@@ -8,7 +8,6 @@
 """PyTorch Mllama model."""
 
 import math
-from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
@@ -46,6 +45,7 @@ from QEfficient.transformers.modeling_utils import (
     _prepare_aspect_ratio_attention_mask,
     _prepare_cross_attention_mask,
 )
+from QEfficient.utils._utils import IOInfo
 
 CTX_LEN = 128
 SEQ_LEN = 32
@@ -1285,7 +1285,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             return lang_output_names
         return output_names
 
-    def get_input_info(self):
+    def get_inputs_info(self):
         return [
             IOInfo(
                 name="pixel_values",
@@ -1300,10 +1300,3 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             ),
             IOInfo(name="attention_mask", datatype=np.int64, shape=("batch_size", "seq_len")),
         ]
-
-
-@dataclass
-class IOInfo:
-    name: str
-    datatype: np.dtype
-    shape: Tuple[Union[int, str], ...]
