@@ -493,9 +493,9 @@ class _QEffAutoModelForImageTextToText2QPC:
         export_dir: Optional[str] = None,
         **kwargs,
     ) -> str:
-        inputs = self.model.get_dummy_inputs()
-        dynamic_axes = self.model.get_onnx_dynamic_axes()
-        output_names = self.model.get_output_names()
+        inputs = self.model.get_dummy_inputs(kv_offload=True)
+        dynamic_axes = self.model.get_onnx_dynamic_axes(kv_offload=True)
+        output_names = self.model.get_output_names(kv_offload=True)
         self.vision_model.export(
             inputs["vision"],
             output_names["vision"],
@@ -520,13 +520,14 @@ class _QEffAutoModelForImageTextToText2QPC:
         mxint8_kv_cache: bool = False,
         **compiler_options,
     ) -> str:
-        output_names = self.model.get_output_names()
+        output_names = self.model.get_output_names(kv_offload=True)
 
         specializations = self.model.get_specializations(
             batch_size=batch_size,
             prefill_seq_len=prefill_seq_len,
             ctx_len=ctx_len,
             img_size=img_size,
+            kv_offload=True,
             kv_offlaod=True,
             **compiler_options,
         )
@@ -589,6 +590,7 @@ class _QEffAutoModelForImageTextToText2QPC:
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
+        generation_len: Optional[int] = None,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
         This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -600,9 +602,12 @@ class _QEffAutoModelForImageTextToText2QPC:
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
+        if not runtime_ai100:
+            raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
-        if runtime_ai100:
-            return self.kv_offload_generate(inputs=inputs, device_ids=device_ids, streamer=streamer)
+        return self.kv_offload_generate(
+            inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
+        )
 
     def kv_offload_generate(
         self,
@@ -616,8 +621,6 @@ class _QEffAutoModelForImageTextToText2QPC:
         vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
 
         batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
-
-        eos_token_id = 0
 
         pad_token_id = 1
 
@@ -638,8 +641,8 @@ class _QEffAutoModelForImageTextToText2QPC:
         )
 
         input_len = inputs["attention_mask"].sum(1, keepdims=True)
-        padded_len = inputs["input_ids"].shape[1]
-        num_chunks = -(padded_len // -prefill_seq_len)  # ceil divide without float
+        input_ids_length = inputs["input_ids"].shape[1]
+        num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
         padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
 
         if generation_len is None:
@@ -649,17 +652,35 @@ class _QEffAutoModelForImageTextToText2QPC:
 
         # Prepare inputs for prefill
         prefill_start = perf_counter()
+
+        inputs["input_ids"] = torch.nn.functional.pad(
+            inputs["input_ids"],
+            (0, padded_len - input_ids_length),
+            "constant",
+            1,
+        )
+        inputs["attention_mask"] = torch.nn.functional.pad(
+            inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
+        )
+        if "cross_attention_mask" in inputs:
+            inputs["cross_attention_mask"] = torch.nn.functional.pad(
+                inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_length)
+            )
+
+        for k, v in inputs.items():
+            inputs[k] = np.array(v)
+
         vision_inputs = {
             k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
+
         vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
-        vision_outputs = vision_session.run(dict(vision_inputs))
+        vision_outputs = vision_session.run(vision_inputs)
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
         lang_inputs["position_ids"] = np.where(
             lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
         )  # Need to use -1 as position_ids for invalid tokens
-        lang_inputs = dict(lang_inputs)
 
         vision_session.deactivate()
         lang_session.activate()
@@ -675,7 +696,7 @@ class _QEffAutoModelForImageTextToText2QPC:
             ]
             outputs = lang_session.run(chunk_inputs)
 
-        prefill_time = prefill_start - perf_counter()
+        prefill_time = perf_counter() - prefill_start
         # Skip inputs/outputs again
         lang_session.skip_buffers(
             [x for x in lang_session.input_names + lang_session.output_names if x.startswith("past_")]
@@ -683,10 +704,12 @@ class _QEffAutoModelForImageTextToText2QPC:
 
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
-        lang_inputs["position_ids"] = input_len
-        lang_inputs["cross_attention_mask"] = lang_inputs["cross_attention_mask"][:, -1:, :, :]
+        lang_inputs["position_ids"] = input_len.numpy()
+        if "cross_attention_mask" in lang_inputs:
+            bs, _, num_images, img_tiles = lang_inputs["cross_attention_mask"].shape
+            lang_inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64).numpy()
         generated_ids[:, 0] = lang_inputs["input_ids"].squeeze(1)
-        finished_sequences = lang_inputs["input_ids"] == eos_token_id
+
         if streamer:
             streamer.put(lang_inputs["input_ids"][0])
 
@@ -699,12 +722,9 @@ class _QEffAutoModelForImageTextToText2QPC:
             lang_inputs["input_ids"] = outputs["logits"].argmax(2)
             lang_inputs["position_ids"] += 1
             generated_ids[:, num_token] = lang_inputs["input_ids"].squeeze(1)
-            finished_sequences |= lang_inputs["input_ids"] == eos_token_id
 
             if streamer:
                 streamer.put(lang_inputs["input_ids"][0])
-            if finished_sequences.all():
-                break
 
         decode_end = perf_counter()
         if streamer:
@@ -864,10 +884,6 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
         return self.cloud_ai_100_generate(
-            inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
-        )
-
-        return self.cloud_ai_100_generate(
             inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
         )
 
@@ -922,20 +938,18 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         # Prepare inputs for prefill
         prefill_start = perf_counter()
 
-        input_ids = inputs["input_ids"]
-        input_ids_size = input_ids.shape[1]
         inputs["input_ids"] = torch.nn.functional.pad(
             inputs["input_ids"],
-            (0, padded_len - input_ids_size),
+            (0, padded_len - input_ids_length),
             "constant",
             1,
         )
         inputs["attention_mask"] = torch.nn.functional.pad(
-            inputs["attention_mask"], (0, padded_len - input_ids_size), "constant", 0
+            inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
         )
         if "cross_attention_mask" in inputs:
             inputs["cross_attention_mask"] = torch.nn.functional.pad(
-                inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_size)
+                inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_length)
             )
         for k, v in inputs.items():
             inputs[k] = np.array(v)

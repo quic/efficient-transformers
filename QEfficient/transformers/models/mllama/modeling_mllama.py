@@ -1285,3 +1285,4 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             output_names["lang"] = lang_output_names
         else:
             return lang_output_names
+        return output_names
