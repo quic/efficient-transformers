@@ -15,6 +15,7 @@ import torch.nn.functional as F
 
 from QEfficient.utils import constants
 from QEfficient.utils._utils import get_padding_shape_from_config
+from QEfficient.utils.logging_utils import logger
 
 
 class QEffInternVLModel(nn.Module):
@@ -22,10 +23,20 @@ class QEffInternVLModel(nn.Module):
         self, batch_size: int, prefill_seq_len: int, ctx_len: int, img_size: int, **compiler_options
     ):
         # TODO: check if this should be named num_crops or something else
-        num_crops = compiler_options.get("num_crops", 13)
+        num_crops = compiler_options.get("num_crops", None)
+        if num_crops is None:
+            logger.warning(
+                "User should pass `num_crops` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 13"
+            )
+            num_crops = 13
+
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 3840  # 4096-256
         ctx_len = ctx_len if ctx_len else 4096
-        img_size = img_size if img_size else 448
+        if img_size is None and hasattr(self.config.vision_config, "image_size"):
+            img_size = getattr(self.config.vision_config, "image_size")
+        elif img_size is None:
+            img_size = 448
+            logger.warning("Setting img_size to be 448, as it was neither passed nor found in vision_config")
 
         return [
             {
@@ -73,7 +84,11 @@ class QEffInternVLModel(nn.Module):
         if kv_offload:
             raise ValueError("kv_offload method not supported for InternVL yet!")
         NUM_CROPS = 13
-        C, H, W = 3, 448, 448
+        C = 3
+        if vis_cfg := getattr(self.config, "vision_config", None):
+            img_size = getattr(vis_cfg, "image_size", 336)
+        else:
+            img_size = 336
 
         # Define shapes
         inputs_shapes = {}
@@ -82,7 +97,7 @@ class QEffInternVLModel(nn.Module):
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
-        inputs_shapes["pixel_values"] = (NUM_CROPS, C, H, W)
+        inputs_shapes["pixel_values"] = (NUM_CROPS, C, img_size, img_size)
 
         # Define inputs
         inputs = {}

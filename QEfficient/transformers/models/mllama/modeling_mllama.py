@@ -49,11 +49,9 @@ from QEfficient.transformers.modeling_utils import (
 
 CTX_LEN = 128
 SEQ_LEN = 32
-IMG_SIZE = 560
 BS = 1
 MAX_NUM_IMG = 1
-NUM_CHANEEL = 3
-MAX_NUM_IMG_TILES = 4
+NUM_CHANNEL = 3
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -123,15 +121,6 @@ class QEffMllamaTextCrossAttentionSingleQPC(MllamaTextCrossAttention):
         value_states = self.v_proj(cross_attention_states)
         key_states = key_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        # if past_key_value is not None:
-        #     # if we have a new image + new tokens, we only computed key_states on that new image
-        #     # we still update the cross key states, past_image, new_image. And use it!
-        #     key_states, value_states = past_key_value.update(
-        #         key_states,
-        #         value_states,
-        #         self.layer_idx,
-        #         {"batch_index": batch_index, "position_ids": position_ids},
-        #     )
 
         # Out-of-place Scatter new into old
         # out-of-place is important so the original tensor is not affected,
@@ -1140,20 +1129,21 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         vis_cfg = self.config.vision_config
         num_patches = (vis_cfg.image_size // vis_cfg.patch_size) ** 2 + 1
         image_tokens_len = vis_cfg.max_num_tiles * num_patches
-
+        img_size = vis_cfg.get("image_size", 448)
+        max_num_img_tiles = vis_cfg.get("max_num_tiles", 4)
         # vision inputs
         vision_inputs = {
             "pixel_values": torch.zeros(
-                (BS, MAX_NUM_IMG, MAX_NUM_IMG_TILES, NUM_CHANEEL, IMG_SIZE, IMG_SIZE), dtype=torch.float32
+                (BS, MAX_NUM_IMG, max_num_img_tiles, NUM_CHANNEL, img_size, img_size), dtype=torch.float32
             ),
             "aspect_ratio_ids": torch.ones((BS, MAX_NUM_IMG), dtype=torch.int64),
-            "aspect_ratio_mask": torch.ones((BS, MAX_NUM_IMG, MAX_NUM_IMG_TILES), dtype=torch.int64),
+            "aspect_ratio_mask": torch.ones((BS, MAX_NUM_IMG, max_num_img_tiles), dtype=torch.int64),
         }
 
         # lang_inputs
         lang_inputs = {
             "input_ids": torch.zeros((BS, SEQ_LEN), dtype=torch.int64),
-            "cross_attention_mask": torch.zeros((BS, SEQ_LEN, MAX_NUM_IMG, MAX_NUM_IMG_TILES), dtype=torch.int64),
+            "cross_attention_mask": torch.zeros((BS, SEQ_LEN, MAX_NUM_IMG, max_num_img_tiles), dtype=torch.int64),
             "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
         }
 
@@ -1202,11 +1192,17 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         kv_offload: bool = False,
         **compiler_options,
     ):
+        vis_cfg = self.config.vision_config
+
         # TODO: check if this should be named num_crops or something else
         max_num_images = compiler_options.get("max_num_images", 1)
         prefill_seq_len = prefill_seq_len if prefill_seq_len else SEQ_LEN
         ctx_len = ctx_len if ctx_len else CTX_LEN
-        img_size = img_size if img_size else IMG_SIZE
+        if img_size is None and hasattr(vis_cfg, "image_size"):
+            img_size = getattr(vis_cfg, "image_size")
+        elif img_size is None:
+            img_size = 448
+            logger.warning("Setting `img_size=448` as it was neither passed nor found in vision_config")
 
         vision = [{"batch_size": batch_size, "max_num_images": max_num_images, "img_size": img_size}]
         lang = [

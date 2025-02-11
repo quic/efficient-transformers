@@ -15,10 +15,11 @@ from transformers.models.llava.modeling_llava import (
     LlavaForConditionalGeneration,
 )
 
+from QEfficient.utils.logging_utils import logger
+
 BS = 1
 NUM_CHANNEL = 3
 SEQ_LEN = 592
-IMAGE_SIZE = 336
 CTX_LEN = 1024
 
 
@@ -56,11 +57,14 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         num_layers = self.config.text_config.num_hidden_layers
         num_key_value_heads = self.config.text_config.num_key_value_heads
         head_dim = self.config.text_config.hidden_size // self.config.text_config.num_attention_heads
-
+        if vis_cfg := getattr(self.config, "vision_config", None):
+            img_size = getattr(vis_cfg, "image_size", 336)
+        else:
+            img_size = 336
         inputs = {
             "input_ids": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
             "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
-            "pixel_values": torch.zeros((BS, NUM_CHANNEL, IMAGE_SIZE, IMAGE_SIZE), dtype=torch.float32),
+            "pixel_values": torch.zeros((BS, NUM_CHANNEL, img_size, img_size), dtype=torch.float32),
         }
         inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
         inputs["past_key_values"] = []
@@ -81,7 +85,11 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         max_num_images = compiler_options.get("max_num_images", 1)
         prefill_seq_len = prefill_seq_len if prefill_seq_len else SEQ_LEN
         ctx_len = ctx_len if ctx_len else CTX_LEN
-        img_size = img_size if img_size else IMAGE_SIZE
+        if img_size is None and hasattr(self.config.vision_config, "image_size"):
+            img_size = getattr(self.config.vision_config, "image_size")
+        elif img_size is None:
+            img_size = 336
+            logger.warning("Setting img_size to be 336, as it was neither passed nor found in vision_config")
 
         return [
             {
