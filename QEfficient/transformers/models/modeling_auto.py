@@ -511,15 +511,34 @@ class _QEffAutoModelForImageTextToText2QPC:
         vision_onnx_path: Optional[str] = None,
         lang_onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
-        prefill_seq_len: int = None,
-        ctx_len: int = None,
+        *,
+        prefill_seq_len: Optional[int] = None,
+        ctx_len: Optional[int] = None,
         batch_size: int = 1,
+        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: Optional[int] = None,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
+        num_speculative_tokens: Optional[int] = None,
+        enable_qnn: bool = False,
+        qnn_config: Optional[str] = None,
         **compiler_options,
     ) -> str:
+        if (
+            any(
+                param is not None
+                for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens, qnn_config]
+            )
+            or enable_qnn
+        ):
+            raise ValueError(
+                f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens', and 'qnn_config' to be None, and 'enable_qnn' to be False but got: "
+                f"full_batch_size={full_batch_size}, kv_cache_batch_size={kv_cache_batch_size}, num_speculative_tokens={num_speculative_tokens}, "
+                f"enable_qnn={enable_qnn}, qnn_config={qnn_config}"
+            )
+
         output_names = self.model.get_output_names(kv_offload=True)
 
         specializations = self.model.get_specializations(
@@ -807,19 +826,37 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
 
     def compile(
         self,
-        img_size: Optional[int] = None,
         onnx_path: Optional[str] = None,
+        img_size: Optional[int] = None,
         compile_dir: Optional[str] = None,
         *,
         prefill_seq_len: Optional[int] = None,
         ctx_len: Optional[int] = None,
         batch_size: int = 1,
+        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: Optional[int] = None,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
+        num_speculative_tokens: Optional[int] = None,
+        enable_qnn: bool = False,
+        qnn_config: Optional[str] = None,
         **compiler_options,
     ) -> str:
+        if (
+            any(
+                param is not None
+                for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens, qnn_config]
+            )
+            or enable_qnn
+        ):
+            raise ValueError(
+                f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens', and 'qnn_config' to be None, and 'enable_qnn' to be False but got: "
+                f"full_batch_size={full_batch_size}, kv_cache_batch_size={kv_cache_batch_size}, num_speculative_tokens={num_speculative_tokens}, "
+                f"enable_qnn={enable_qnn}, qnn_config={qnn_config}"
+            )
+
         output_names = self.model.get_output_names()
 
         # Get specializations from modelling file

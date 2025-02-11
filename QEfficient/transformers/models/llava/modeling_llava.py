@@ -5,6 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
+from dataclasses import dataclass
+from typing import Tuple, Union
+
+import numpy as np
 import torch
 import torch.utils.checkpoint
 from transformers.models.llava.modeling_llava import (
@@ -121,3 +125,17 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             for kv in ["key", "value"]:
                 output_names.append(f"past_{kv}.{i}_RetainedState")
         return output_names
+
+    def get_input_info(self):
+        return [
+            IOInfo(name="input_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
+            IOInfo(name="attention_mask", datatype=np.int64, shape=("batch_size", "seq_len")),
+            IOInfo(name="pixel_values", datatype=np.float32, shape=("batch_size", 3, "img_size", "img_size")),
+        ]
+
+
+@dataclass
+class IOInfo:
+    name: str
+    datatype: np.dtype
+    shape: Tuple[Union[int, str], ...]

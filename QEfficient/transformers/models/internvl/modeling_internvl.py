@@ -5,6 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
+from dataclasses import dataclass
+from typing import Tuple, Union
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -124,6 +128,13 @@ class QEffInternVLModel(nn.Module):
         )
         return outputs.logits, pixel_values, outputs.past_key_values
 
+    def get_input_info(self):
+        return [
+            IOInfo(name="input_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
+            IOInfo(name="position_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
+            IOInfo(name="pixel_values", datatype=np.float32, shape=("num_crops", 3, "img_size", "img_size")),
+        ]
+
 
 class QEffInternVisionEmbeddings(nn.Module):
     def forward(self, pixel_values: torch.FloatTensor) -> torch.Tensor:
@@ -152,3 +163,10 @@ class QEffInternVisionEmbeddings(nn.Module):
 
         embeddings = embeddings + position_embedding.to(target_dtype)
         return embeddings
+
+
+@dataclass
+class IOInfo:
+    name: str
+    datatype: np.dtype
+    shape: Tuple[Union[int, str], ...]

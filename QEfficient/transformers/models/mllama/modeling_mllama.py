@@ -8,8 +8,10 @@
 """PyTorch Mllama model."""
 
 import math
+from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
@@ -1286,3 +1288,26 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         else:
             return lang_output_names
         return output_names
+
+    def get_input_info(self):
+        return [
+            IOInfo(
+                name="pixel_values",
+                datatype=np.float32,
+                shape=("batch_size", "max_num_images", 4, 3, "img_size", "img_size"),
+            ),
+            IOInfo(name="aspect_ratio_ids", datatype=np.int64, shape=("batch_size", "max_num_images")),
+            IOInfo(name="aspect_ratio_mask", datatype=np.int64, shape=("batch_size", "max_num_images", 4)),
+            IOInfo(name="input_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
+            IOInfo(
+                name="cross_attention_mask", datatype=np.int64, shape=("batch_size", "seq_len", "max_num_images", 4)
+            ),
+            IOInfo(name="attention_mask", datatype=np.int64, shape=("batch_size", "seq_len")),
+        ]
+
+
+@dataclass
+class IOInfo:
+    name: str
+    datatype: np.dtype
+    shape: Tuple[Union[int, str], ...]
