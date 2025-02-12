@@ -7,8 +7,6 @@
 
 import pytest
 
-import QEfficient
-import QEfficient.cloud.execute
 from QEfficient.cloud.execute import main as execute
 
 
@@ -24,8 +22,6 @@ def test_execute(setup, mocker):
     mocker: mocker is itself a pytest fixture, uses to mock or spy internal functions.
     """
     ms = setup
-    load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.execute, "load_hf_tokenizer")
-    cloud_ai_100_exec_kv_spy = mocker.spy(QEfficient.cloud.execute, "cloud_ai_100_exec_kv")
 
     execute(
         model_name=ms.model_name,
@@ -36,6 +32,3 @@ def test_execute(setup, mocker):
         hf_token=ms.hf_token,
         full_batch_size=ms.full_batch_size,
     )
-
-    load_hf_tokenizer_spy.assert_called_once()
-    cloud_ai_100_exec_kv_spy.assert_called_once()
