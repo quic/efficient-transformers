@@ -326,7 +326,3 @@ def pytest_sessionfinish(session, exitstatus):
     if inside_worker is None:
         qeff_models_clean_up()
         logger.info("...PYTEST Session Ended.")
-
-@pytest.fixture
-def mocker():
-    print("")
