@@ -5,18 +5,18 @@
 #
 # -----------------------------------------------------------------------------
 
+from enum import IntEnum, auto
+from io import BytesIO
 import numpy as np
 import pytest
+from PIL import Image
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
-from PIL import Image
 from torchvision.transforms.functional import InterpolationMode
 from transformers import AutoConfig, AutoTokenizer, TextStreamer
 import requests
-from io import BytesIO
 
-from enum import IntEnum, auto
 from typing import List
 
 from QEfficient import QEFFAutoModelForCausalLM
