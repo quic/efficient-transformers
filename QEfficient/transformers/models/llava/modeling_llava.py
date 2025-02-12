@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import numpy as np
 import torch
 import torch.utils.checkpoint
 from transformers.models.llava.modeling_llava import (
