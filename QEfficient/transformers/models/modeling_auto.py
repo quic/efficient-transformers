@@ -22,7 +22,11 @@ from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTrans
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
-from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
+from QEfficient.transformers.quantizers.quant_transforms import (
+    AwqToMatmulNbitsTransform,
+    FP8DeQuantLinearToLinearTransform,
+    GPTQToMatmulNbitsTransform,
+)
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 
@@ -94,7 +98,13 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
 
     _hf_auto_class = AutoModelForCausalLM
-    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
+    _pytorch_transforms = [
+        AwqToMatmulNbitsTransform,
+        GPTQToMatmulNbitsTransform,
+        FP8DeQuantLinearToLinearTransform,
+        CustomOpsTransform,
+        KVCacheTransform,
+    ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(
