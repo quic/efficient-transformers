@@ -8,14 +8,16 @@
 import json
 import os
 import subprocess
+import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
+import yaml
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants, QnnConstants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -394,3 +396,87 @@ def create_json(file_path: str, json_data: object):
             json.dump(json_data, file, indent=4)
     except Exception as e:
         print(f"Failed to create JSON File {file_path}: {e}")
+
+
+def create_and_dump_qconfigs(
+    qpc_path,
+    onnx_path,
+    huggingface_config,
+    pytorch_transforms,
+    onnx_transforms,
+    prefill_seq_len,
+    ctx_len,
+    batch_size,
+    full_batch_size,
+    num_devices,
+    num_cores,
+    mxfp6_matmul,
+    mxint8_kv_cache,
+    num_speculative_tokens,
+    enable_qnn,
+    qnn_config,
+):
+    """
+    This Method creates a JSON file which contains all the configs for a model.
+    Such as huggingface configs, QEff transforms, QAIC sdk version, QNN sdk, compilation dir, qpc dir and
+    many other compilation options.
+    """
+    qconfig_file_path = os.path.join(os.path.dirname(qpc_path), "qconfig.json")
+    onnx_path = str(onnx_path)
+    specializations_file_path = str(os.path.join(os.path.dirname(qpc_path), "specializations.json"))
+    compile_dir = str(os.path.dirname(qpc_path))
+    qnn_config_path = (
+        (qnn_config if qnn_config is not None else "QEfficient/compile/qnn_config.json") if enable_qnn else None
+    )
+
+    # Extract QAIC SDK Apps Version from SDK XML file
+    tree = ET.parse(Constants.SDK_APPS_XML)
+    root = tree.getroot()
+    qaic_version = root.find(".//base_version").text
+
+    # Extract QNN SDK details from YAML file if the environment variable is set
+    qnn_sdk_details = None
+    qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
+    if qnn_sdk_path:
+        qnn_sdk_yaml_path = os.path.join(qnn_sdk_path, QnnConstants.QNN_SDK_YAML)
+        with open(qnn_sdk_yaml_path, "r") as file:
+            qnn_sdk_details = yaml.safe_load(file)
+
+    qconfigs = {
+        "huggingface_config": huggingface_config,
+        "qpc_config": {
+            "QEff_config": {
+                "pytorch_transforms": pytorch_transforms,
+                "onnx_transforms": onnx_transforms,
+                "onnx_path": onnx_path,
+            },
+        },
+    }
+
+    aic_compiler_config = {
+        "apps_sdk_version": qaic_version,
+        "compile_dir": compile_dir,
+        "specializtions_file_path": specializations_file_path,
+        "prefill_seq_len": prefill_seq_len,
+        "ctx_len": ctx_len,
+        "batch_size": batch_size,
+        "full_batch_size": full_batch_size,
+        "num_devices": num_devices,
+        "num_cores": num_cores,
+        "mxfp6_matmul": mxfp6_matmul,
+        "mxint8_kv_cache": mxint8_kv_cache,
+        "num_speculative_tokens": num_speculative_tokens,
+    }
+    qnn_config = {
+        "enable_qnn": enable_qnn,
+        "qnn_config_path": qnn_config_path,
+    }
+    # Put AIC or qnn details.
+    if enable_qnn:
+        qconfigs["qpc_config"]["qnn_config"] = qnn_config
+        if qnn_sdk_details:
+            qconfigs["qpc_config"]["qnn_config"].update(qnn_sdk_details)
+    else:
+        qconfigs["qpc_config"]["aic_compiler_config"] = aic_compiler_config
+
+    create_json(qconfig_file_path, qconfigs)
