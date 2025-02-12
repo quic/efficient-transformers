@@ -14,7 +14,6 @@ from PIL import Image
 from torchvision.transforms.functional import InterpolationMode
 from transformers import AutoConfig, AutoTokenizer, TextStreamer
 import requests
-from PIL import Image
 from io import BytesIO
 
 from enum import IntEnum, auto
@@ -24,6 +23,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
+
 
 class SeparatorStyle(IntEnum):
     """Separator styles."""
@@ -49,24 +49,27 @@ class SeparatorStyle(IntEnum):
     MPT = auto()
 
 
-name='internvl2_5'
-system_template='<|im_start|>system\n{system_message}'
-system_message='你是书生·万象，英文名是InternVL，是由上海人工智能实验室、清华大学及多家合作单位联合开发的多模态大语言模型。'
-roles=('<|im_start|>user\n', '<|im_start|>assistant\n')
-sep_style=SeparatorStyle.MPT
-sep='<|im_end|>\n'
+name = "internvl2_5"
+system_template = "<|im_start|>system\n{system_message}"
+system_message = (
+    "你是书生·万象，英文名是InternVL，是由上海人工智能实验室、清华大学及多家合作单位联合开发的多模态大语言模型。"
+)
+roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
+sep_style = SeparatorStyle.MPT
+sep = "<|im_end|>\n"
 # All messages. Each item is (role, message).
 messages: List[List[str]] = []
 offset: int = 0
-sep = '\n'
+sep = "\n"
 sep2 = None
 stop_str = None
 stop_token_ids: List[int] = None
 
+
 def get_prompt() -> str:
     """Get the prompt for generation."""
     system_prompt = system_template.format(system_message=system_message)
-    
+
     if sep_style == SeparatorStyle.MPT:
         ret = system_prompt + sep
         for role, message in messages:
@@ -78,11 +81,13 @@ def get_prompt() -> str:
                 ret += role
         return ret
     else:
-        raise NotImplementedError(f'{sep_style} style seperator not supported')
+        raise NotImplementedError(f"{sep_style} style seperator not supported")
+
 
 def append_message(messages, role: str, message: str):
     """Append a new message."""
     messages.append([role, message])
+
 
 class InternProcessor:
     def __init__(self, model: nn.Module, tokenizer):
@@ -161,7 +166,6 @@ class InternProcessor:
         return processed_images
 
     def load_image(self, image, input_size=448, max_num=12):
-
         transform = self.build_transform(input_size=input_size)
         images = self.dynamic_preprocess(image, image_size=input_size, use_thumbnail=True, max_num=max_num)
         pixel_values = [transform(image) for image in images]
@@ -208,7 +212,7 @@ def test_image_text_to_text_intern():
     )
 
     model.export()
-    model.compile(num_cores=14,num_devices=4, mxfp6_matmul=True)
+    model.compile(num_cores=14, num_devices=4, mxfp6_matmul=True)
     ### Pytorch execution
     qeff_pt_model = model.model
 
@@ -217,13 +221,11 @@ def test_image_text_to_text_intern():
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
 
     internProcessor = InternProcessor(qeff_pt_model, tokenizer)
-    url = f"https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg"
+    url = "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg"
     img = requests.get(url, stream=True)
-    image = Image.open(BytesIO(img.content)).convert('RGB')
-    image = image.resize((1000,747))
-    pixel_values = internProcessor.load_image(
-        image, max_num=12
-    )
+    image = Image.open(BytesIO(img.content)).convert("RGB")
+    image = image.resize((1000, 747))
+    pixel_values = internProcessor.load_image(image, max_num=12)
     question = "<image>\n" + prompt
     query = internProcessor(pixel_values, question)
     pad_inputs = tokenizer(query, return_tensors="pt", padding="max_length", max_length=3840, padding_side="right")
