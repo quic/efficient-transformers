@@ -24,8 +24,8 @@ def fetch_nodes_info(
     context_length: int,
     file_path: str = "custom_io_config.yaml",
     full_batch_size: Optional[int] = None,
-    decode_only: Optional[bool] = False,
     kv_precision: Optional[str] = "float16",
+    kv_cache_batch_size: Optional[int] = None,
 ) -> None:
     # Load the ONNX model
     onnx_model = onnx.load(onnx_graph_path)
@@ -46,7 +46,8 @@ def fetch_nodes_info(
             if full_batch_size:
                 input_info["Shape"] = f"(1, 1), ({full_batch_size}, 1)"
             else:
-                input_info["Shape"] = "(1, 1)"
+                print("ERROR: Full batch size is required for populating batch_index in custom_io_config.yaml")
+                exit()
         else:
             shapes = []
             for input_shape in node.type.tensor_type.shape.dim:
@@ -67,7 +68,9 @@ def fetch_nodes_info(
                 for shape in shapes:
                     if isinstance(shape, str):
                         if "full_batch_size" in shape:
-                            if full_batch_size:
+                            if ("past_key" in node.name or "past_value" in node.name) and kv_cache_batch_size:
+                                shapeList.append(kv_cache_batch_size)
+                            elif full_batch_size:
                                 shapeList.append(full_batch_size)
                             else:
                                 print("ERROR: Full batch size is required to generate custom_io_config.yaml")
@@ -107,7 +110,7 @@ def fetch_nodes_info(
                         .replace("[", "(")
                         .replace("]", ")")
                     )
-                shape = shape_2 if decode_only else shape_1 + "," + shape_2
+                shape = shape_1 + "," + shape_2
             elif ("batch_size" in shapes or "full_batch_size" in shapes) and (
                 "ctx_len" in shapes or "max_context_len" in shapes
             ):
