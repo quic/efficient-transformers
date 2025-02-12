@@ -15,7 +15,7 @@ QEFFAutoModel provides a common interface for loading the HuggingFace models usi
 from typing import Any
 
 from transformers import AutoConfig
-from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
+from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -42,7 +42,7 @@ class QEFFCommonLoader:
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path)
         architecture = config.architectures[0] if config.architectures else None
 
-        if architecture in MODEL_FOR_CAUSAL_LM_MAPPING:
+        if architecture in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
             model_class = QEFFAutoModelForCausalLM
         else:
             raise NotImplementedError(
@@ -57,7 +57,7 @@ class QEFFCommonLoader:
         qeff_model = model_class.from_pretrained(
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else pretrained_model_name_or_path),
             cache_dir=cache_dir,
-            hf_token=hf_token,
+            token=hf_token,
             continuous_batching=continuous_batching,
         )
         return qeff_model
