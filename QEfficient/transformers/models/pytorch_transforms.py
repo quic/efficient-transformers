@@ -365,7 +365,7 @@ class SpDTransform:
         return model, transformed
 
 
-class VlmKVOffloadTransorm(ModuleMappingTransform):
+class VlmKVOffloadTransform(ModuleMappingTransform):
     # supported architectures
     _module_mapping = {
         # Llama
@@ -373,7 +373,7 @@ class VlmKVOffloadTransorm(ModuleMappingTransform):
     }
 
 
-class VlmNoKVOffloadTransorm(ModuleMappingTransform):
+class VlmNoKVOffloadTransform(ModuleMappingTransform):
     # supported architectures
     _module_mapping = {
         # Llama

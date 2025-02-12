@@ -18,13 +18,13 @@ class QEffInternVLModel(nn.Module):
     def get_specializations(
         self, batch_size: int, prefill_seq_len: int, ctx_len: int, img_size: int, **compiler_options
     ):
-        # TODO: check if this should be named num_crops or something else
-        num_crops = compiler_options.get("num_crops", None)
-        if num_crops is None:
+        # TODO: check if this should be named num_patches or something else
+        num_patches = compiler_options.get("num_patches", None)
+        if num_patches is None:
             logger.warning(
-                "User should pass `num_crops` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 13"
+                "User should pass `num_patches` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 13"
             )
-            num_crops = 13
+            num_patches = 13
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 3840  # 4096-256
         ctx_len = ctx_len if ctx_len else 4096
@@ -39,14 +39,14 @@ class QEffInternVLModel(nn.Module):
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "num_crops": num_crops,
+                "num_patches": num_patches,
                 "img_size": img_size,
             },
             {
                 "batch_size": batch_size,
                 "seq_len": "1",
                 "ctx_len": ctx_len,
-                "num_crops": num_crops,
+                "num_patches": num_patches,
                 "img_size": img_size,
             },
         ]
@@ -58,7 +58,7 @@ class QEffInternVLModel(nn.Module):
         dynamic_axes = {}
         dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
-        dynamic_axes["pixel_values"] = {0: "num_crops", 2: "img_size", 3: "img_size"}
+        dynamic_axes["pixel_values"] = {0: "num_patches", 2: "img_size", 3: "img_size"}
 
         pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
         for i in range(self.language_model.config.num_hidden_layers):
@@ -79,12 +79,12 @@ class QEffInternVLModel(nn.Module):
     def get_dummy_inputs(self, kv_offload: bool = False):
         if kv_offload:
             raise ValueError("kv_offload method not supported for InternVL yet!")
-        NUM_CROPS = 13
+        num_patches = 13
         C = 3
         if vis_cfg := getattr(self.config, "vision_config", None):
-            img_size = getattr(vis_cfg, "image_size", 336)
+            img_size = getattr(vis_cfg, "image_size", 448)
         else:
-            img_size = 336
+            img_size = 448
 
         # Define shapes
         inputs_shapes = {}
@@ -93,7 +93,7 @@ class QEffInternVLModel(nn.Module):
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
-        inputs_shapes["pixel_values"] = (NUM_CROPS, C, img_size, img_size)
+        inputs_shapes["pixel_values"] = (num_patches, C, img_size, img_size)
 
         # Define inputs
         inputs = {}
@@ -143,7 +143,7 @@ class QEffInternVLModel(nn.Module):
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="pixel_values", datatype=torch.float32, shape=("num_crops", 3, "img_size", "img_size")),
+            IOInfo(name="pixel_values", datatype=torch.float32, shape=("num_patches", 3, "img_size", "img_size")),
         ]
 
 

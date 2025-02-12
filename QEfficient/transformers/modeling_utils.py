@@ -308,7 +308,7 @@ def _create_causal_mask(
     """
     A utility attention mask class that allows one to:
         - Create a causal 4d mask
-        - Create a causal 4d mask with slided window
+        - Create a causal 4d mask with sliding window
     """
     if sliding_window is not None:
         query_indices = position_ids.unsqueeze(-1)

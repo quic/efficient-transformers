@@ -44,11 +44,9 @@ from QEfficient.transformers.modeling_utils import (
     _prepare_aspect_ratio_attention_mask,
     _prepare_cross_attention_mask,
 )
+from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 
-CTX_LEN = 128
-SEQ_LEN = 32
-BS = 1
 MAX_NUM_IMG = 1
 NUM_CHANNEL = 3
 
@@ -388,9 +386,6 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
         if attention_mask is not None:  # no matter the length, we just slice it
             causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
             attn_weights = attn_weights + causal_mask
-            # attn_weights = torch.where(
-            #     attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights
-            # )
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
@@ -1119,6 +1114,10 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         return outputs
 
     def get_dummy_inputs(self, kv_offload: bool = False):
+        BS = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        SEQ_LEN = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        CTX_LEN = constants.ONNX_EXPORT_CTX_LEN
+
         txt_cfg = self.config.get_text_config()
         num_hidden_layers = txt_cfg.num_hidden_layers
         cross_attention_layers = txt_cfg.cross_attention_layers
@@ -1192,11 +1191,9 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         **compiler_options,
     ):
         vis_cfg = self.config.vision_config
-
-        # TODO: check if this should be named num_crops or something else
         max_num_images = compiler_options.get("max_num_images", 1)
-        prefill_seq_len = prefill_seq_len if prefill_seq_len else SEQ_LEN
-        ctx_len = ctx_len if ctx_len else CTX_LEN
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
+        ctx_len = ctx_len if ctx_len else 128
         if img_size is None and hasattr(vis_cfg, "image_size"):
             img_size = getattr(vis_cfg, "image_size")
         elif img_size is None:

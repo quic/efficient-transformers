@@ -33,8 +33,8 @@ from QEfficient.transformers.models.pytorch_transforms import (
     KVCacheModuleMethodMapperTransform,
     KVCacheTransform,
     SpDTransform,
-    VlmKVOffloadTransorm,
-    VlmNoKVOffloadTransorm,
+    VlmKVOffloadTransform,
+    VlmNoKVOffloadTransform,
 )
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
@@ -401,7 +401,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         GPTQToMatmulNbitsTransform,
         CustomOpsTransform,
         KVCacheTransform,
-        VlmKVOffloadTransorm,
+        VlmKVOffloadTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
@@ -454,7 +454,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         return mname
 
 
-class _QEffAutoModelForImageTextToText2QPC:
+class _QEffAutoModelForImageTextToTextDuaSingleQPC:
     UNSUPPORTED_MODELS = ["LlavaForConditionalGeneration", "InternVLChatModel"]
 
     def __init__(
@@ -788,7 +788,7 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         CustomOpsTransform,
         KVCacheTransform,
         KVCacheModuleMethodMapperTransform,
-        VlmNoKVOffloadTransorm,
+        VlmNoKVOffloadTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
@@ -1128,7 +1128,7 @@ class QEFFAutoModelForImageTextToText:
             logger.warning(f"Advised to use kv_offload=True for {model.__class__.__name__}")
 
         if kv_offload:
-            return _QEffAutoModelForImageTextToText2QPC(model, **kwargs)
+            return _QEffAutoModelForImageTextToTextDuaSingleQPC(model, **kwargs)
         else:
             return _QEFFAutoModelForImageTextToText1QPC(model, **kwargs)
 

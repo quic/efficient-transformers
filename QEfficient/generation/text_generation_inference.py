@@ -57,10 +57,10 @@ class CloudAI100ExecInfo:
     perf_metrics: PerfMetrics
 
     def __repr__(self):
-        return f"Average Prefill time a.k.a TTFT is= {round(self.perf_metrics.prefill_time, 2)}\
-        \nDecode token/sec is= {round(self.perf_metrics.decode_perf * self.batch_size, 2)}\
-        \nTotal token/sec is= {round(self.perf_metrics.total_perf * self.batch_size, 2)}\
-        \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)}"
+        return f"Average Prefill time a.k.a TTFT is= {round(self.perf_metrics.prefill_time, 2)} sec\
+        \nDecode is= {round(self.perf_metrics.decode_perf * self.batch_size, 2)} tokens/sec\
+        \nTotal is= {round(self.perf_metrics.total_perf * self.batch_size, 2)} tokens/sec\
+        \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)} tokens/sec"
 
 
 @dataclass
@@ -70,10 +70,10 @@ class CloudAI100ExecInfoNew:
     perf_metrics: PerfMetrics
 
     def __repr__(self):
-        return f"Average Prefill time a.k.a TTFT is= {round(self.perf_metrics.prefill_time, 2)}\
-        \nDecode token/sec is= {round(self.perf_metrics.decode_perf * self.batch_size, 2)}\
-        \nTotal token/sec is= {round(self.perf_metrics.total_perf * self.batch_size, 2)}\
-        \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)}"
+        return f"Average Prefill time a.k.a TTFT is= {round(self.perf_metrics.prefill_time, 2)} sec\
+        \nDecode is= {round(self.perf_metrics.decode_perf * self.batch_size, 2)} token/sec\
+        \nTotal is= {round(self.perf_metrics.total_perf * self.batch_size, 2)} token/sec\
+        \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)} sec"
 
 
 io_files = []
