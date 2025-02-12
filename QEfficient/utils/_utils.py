@@ -8,9 +8,11 @@
 import json
 import os
 import subprocess
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
+import torch
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
@@ -406,3 +408,13 @@ def model_swap(func):
             return onnx_path
 
     return wrapper
+
+
+@dataclass
+class IOInfo:
+    name: str
+    datatype: torch.dtype
+    shape: Tuple[Union[int, str], ...]
+
+    def __repr__(self):
+        return f"input_name:{self.name}\tdatatype:{self.datatype}\tshape:{self.shape}"

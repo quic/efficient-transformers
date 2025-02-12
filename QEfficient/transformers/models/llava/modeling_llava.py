@@ -134,7 +134,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
 
     def get_inputs_info(self):
         return [
-            IOInfo(name="input_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="attention_mask", datatype=np.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="pixel_values", datatype=np.float32, shape=("batch_size", 3, "img_size", "img_size")),
+            IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
+            IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
+            IOInfo(name="pixel_values", datatype=torch.float32, shape=("batch_size", 3, "img_size", "img_size")),
         ]

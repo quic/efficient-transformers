@@ -42,6 +42,8 @@ from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
 
+MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6 = ["MllamaForConditionalGeneration"]
+
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
@@ -453,6 +455,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
 
 
 class _QEffAutoModelForImageTextToText2QPC:
+    UNSUPPORTED_MODELS = ["LlavaForConditionalGeneration", "InternVLChatModel"]
+
     def __init__(
         self,
         model: nn.Module,
@@ -462,10 +466,19 @@ class _QEffAutoModelForImageTextToText2QPC:
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         self.model = model
         self.config = model.config
+        if self.model_name in self.UNSUPPORTED_MODELS:
+            raise NotImplementedError(f"kv_offload is not yet supported for {self.model.__class__.__name__}")
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model)
 
         self.input_shapes, self.output_names = None, None
+
+    @property
+    def model_name(self) -> str:
+        mname = self.model.__class__.__name__
+        if mname.startswith("QEff") or mname.startswith("QEFF"):
+            mname = mname[4:]
+        return mname
 
     @classmethod
     def from_pretrained(
@@ -567,12 +580,17 @@ class _QEffAutoModelForImageTextToText2QPC:
         ):
             self.export()
 
+        if mxfp6_matmul and self.model_name in MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6:
+            logger.warning(
+                "Due to accuracy issues of vision model fixing it's precision to fp16, while language model will be compiled for mxfp6"
+            )
+
         self.vision_model._compile(
             compile_dir,
             compile_only=True,
             specializations=specializations["vision"],
             convert_to_fp16=True,
-            mxfp6_matmul=mxfp6_matmul,
+            mxfp6_matmul=False,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             custom_io=custom_io_vision,
@@ -881,6 +899,11 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             if output_name.endswith("_RetainedState"):
                 custom_io[output_name] = kv_cache_dtype
 
+        if self.model_name in MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6:
+            logger.warning(
+                f"It is advised to use fp16 precision during compilation for {self.model.__class__.__name__} to avoid accuracy issues, got mxfp6_matmul=True"
+            )
+
         self._compile(
             onnx_path,
             compile_dir,
@@ -924,6 +947,29 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
         )
 
+    def auto_correct_inputs(self, inputs):
+        checked = True
+        inputs_info = self.model.get_inputs_info()
+        for valid_input_info in inputs_info:
+            if valid_input_info.name not in inputs:
+                checked = False
+                break
+            if inputs[valid_input_info.name].dtype != valid_input_info.datatype:
+                checked = False
+                break
+
+        if not checked:
+            err_str: str = (
+                "Expected following input names and shapes to be passed\n"
+                + "\n".join([val.__repr__() for val in inputs_info])
+                + "got"
+                + f"{[(k, v.shape, v.dtype) for k, v in inputs.items()]}"
+            )
+
+            raise RuntimeError(err_str)
+
+        return {k: v for k, v in inputs.items() if k in [iinfo.name for iinfo in inputs_info]}
+
     def cloud_ai_100_generate(
         self,
         inputs: torch.Tensor,
@@ -932,6 +978,7 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
         generation_len: int = None,
         streamer: Optional[TextStreamer] = None,
     ) -> np.ndarray:
+        inputs = self.auto_correct_inputs(inputs)
         qpc_session = QAICInferenceSession(
             self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
         )
@@ -1077,6 +1124,9 @@ class QEFFAutoModelForImageTextToText:
     _hf_auto_class = AutoModelForImageTextToText
 
     def __new__(self, model: nn.Module, kv_offload=False, **kwargs):
+        if model.config.architectures[0] in MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6 and not kv_offload:
+            logger.warning(f"Advised to use kv_offload=True for {model.__class__.__name__}")
+
         if kv_offload:
             return _QEffAutoModelForImageTextToText2QPC(model, **kwargs)
         else:

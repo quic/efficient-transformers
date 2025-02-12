@@ -389,6 +389,7 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
             "get_specializations": QEffInternVLModel.get_specializations,
             "get_onnx_dynamic_axes": QEffInternVLModel.get_onnx_dynamic_axes,
             "get_output_names": QEffInternVLModel.get_output_names,
+            "get_inputs_info": QEffInternVLModel.get_inputs_info,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
     }
