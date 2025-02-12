@@ -6,12 +6,13 @@
 # -----------------------------------------------------------------------------
 
 import os
+
 import pytest
 
 import QEfficient
 import QEfficient.cloud.compile
-from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.cloud.execute import main as execute
+from QEfficient.cloud.export import get_onnx_model_path
 
 
 @pytest.mark.cli
@@ -25,7 +26,7 @@ def test_compile(setup, mocker):
     mocker: mocker is itself a pytest fixture, uses to mock or spy internal functions.
     """
     ms = setup
-    onnx_model_path  = get_onnx_model_path(
+    onnx_model_path = get_onnx_model_path(
         model_name=ms.model_name,
         cache_dir=ms.cache_dir,
         hf_token=ms.hf_token,
@@ -38,7 +39,7 @@ def test_compile(setup, mocker):
         qpc_path=os.path.dirname(ms.qpc_dir_path()),
         num_cores=ms.num_cores,
         device_group=ms.device_group,
-        custom_io_file_path= (onnx_model_path.parent) / "qpc-a8d3e6e2752dcb0d/custom_io.yaml",
+        custom_io_file_path=(onnx_model_path.parent) / "qpc-a8d3e6e2752dcb0d/custom_io.yaml",
         aic_enable_depth_first=ms.aic_enable_depth_first,
         mos=ms.mos,
         batch_size=ms.batch_size,
