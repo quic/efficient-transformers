@@ -47,7 +47,16 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     qeff_pt_embeddings = qeff_pt_outputs[0][0].detach().numpy()
     mad = np.mean(np.abs(pt_embeddings - qeff_pt_embeddings))
     print("Mad for PyTorch and PyTorch transformed qeff_model is ", mad)
-    assert mad <= 0, f"MAD is too high for onnx and Pytorch: {mad}"
+    assert mad <= 0, f"MAD is too high for PyTorch and transformed PyTorch model: {mad}"
+
+    # Test for block attention
+    if model_name == "BAAI/bge-small-en-v1.5":
+        qeff_model_with_block_attention = QEFFAutoModel(pt_model, block_size=32)
+        qeff_pt_outputs = qeff_model_with_block_attention.generate(inputs=inputs, runtime_ai100=False)
+        qeff_pt_embeddings = qeff_pt_outputs[0][0].detach().numpy()
+        mad = np.mean(np.abs(pt_embeddings - qeff_pt_embeddings))
+        print("Mad for PyTorch and PyTorch transformed qeff_model with block attention is ", mad)
+        assert mad <= 0, f"MAD is too high for PyTorch and transformed PyTorch model with block attention: {mad}"
 
     onnx_model = qeff_model.export()
     ort_session = ort.InferenceSession(str(onnx_model))
@@ -65,8 +74,8 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     pt_embeddings = pt_outputs[0][0].detach().numpy()
     onnx_embeddings = onnx_outputs[0]
     mad = np.mean(np.abs(pt_embeddings - onnx_embeddings))
-    print("Mad for onnx and PyTorch is ", mad)
-    assert mad <= 10**-5, f"MAD is too high for onnx and Pytorch: {mad}"
+    print("Mad for ONNX and PyTorch is ", mad)
+    assert mad <= 10**-5, f"MAD is too high for ONNX and PyTorch: {mad}"
 
     qeff_model.compile(
         num_cores=14,
@@ -75,8 +84,8 @@ def check_embed_pytorch_vs_ort_vs_ai100(
 
     # Compare ONNX and AI 100 outputs
     mad = np.mean(np.abs(ai100_output - onnx_outputs[0]))
-    print("Mad for onnx and AI 100 output is ", mad)
-    assert mad <= 10**-3, f"MAD is too high for onnx and Pytorch: {mad}"
+    print("Mad for ONNX and AI 100 output is ", mad)
+    assert mad <= 10**-3, f"MAD is too high for ONNX and AI 100: {mad}"
 
 
 @pytest.mark.on_qaic

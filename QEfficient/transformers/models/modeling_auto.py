@@ -7,6 +7,7 @@
 
 import hashlib
 import logging
+import time
 import warnings
 from pathlib import Path
 from typing import List, Optional, Union
@@ -20,7 +21,12 @@ import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform, SpDTransform
+from QEfficient.transformers.models.pytorch_transforms import (
+    BlockAttentionTransorm,
+    CustomOpsTransform,
+    KVCacheTransform,
+    SpDTransform,
+)
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import constants, get_padding_shape_from_config
@@ -452,14 +458,16 @@ class QEFFAutoModel(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, **kwargs):
+    def __init__(self, model: nn.Module, block_size: Optional[int] = None, **kwargs):
+        if block_size:
+            BlockAttentionTransorm.apply(model, block_size=block_size)
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path, block_size: Optional[int] = None, *args, **kwargs):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModel.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
@@ -499,7 +507,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         except TypeError:
             kwargs.pop("add_pooling_layer", None)
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model)
+        return cls(model, block_size)
 
     @property
     def model_hash(self) -> str:
@@ -658,7 +666,11 @@ class QEFFAutoModel(QEFFTransformersBase):
             ),
         }
         self.qpc_session.set_buffers(outputs)
+
+        start_time = time.perf_counter()
         outputs = self.qpc_session.run(inputs)
+        end_time = time.perf_counter() - start_time
+        print("Time taken to generate output: ", end_time)
         outputs = outputs["output"][:, :input_ids_len, :]
         return outputs
 
