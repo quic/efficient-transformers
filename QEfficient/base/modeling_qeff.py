@@ -18,7 +18,6 @@ from typing import Dict, List, Optional
 
 import onnx
 import torch
-import torch.nn as nn
 
 from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
@@ -121,7 +120,6 @@ class QEFFBaseModel(ABC):
         export_kwargs: Optional[Dict[str, any]] = None,
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
-        model: nn.Module = None,
     ) -> str:
         """
         Export the Pytorch model to ONNX.

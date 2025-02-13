@@ -1062,7 +1062,7 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             outputs = qpc_session.run(chunk_inputs)
 
-        prefill_time = prefill_start - perf_counter()
+        prefill_time = perf_counter() - prefill_start
         # Get first token
         inputs["input_ids"] = outputs["logits"].argmax(2)
         inputs["position_ids"] = input_len.numpy()
@@ -1142,7 +1142,6 @@ class QEFFAutoModelForImageTextToText:
         elif kv_offload is None:
             kv_offload = False
 
-        print(f"{kv_offload}")
         if kv_offload:
             return _QEffAutoModelForImageTextToTextDuaSingleQPC(model, **kwargs)
         else:
