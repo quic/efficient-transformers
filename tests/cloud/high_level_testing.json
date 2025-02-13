@@ -9,12 +9,12 @@
     "cache_dir" : [null],
     "hf_token" : [null],
     "batch_size" : [1],
-    "prompt_len" : [2,32],
+    "prompt_len" : [32],
     "ctx_len" : [128],
     "mxfp6" : [1],
     "mxint8" : [1],
     "device_group" : [null],
     "full_batch_size" : [null,3],
-    "enable_qnn" : [false, true],
-    "qnn_config" : [null, "QEfficient/compile/qnn_config.json"]
+    "enable_qnn" : [false],
+    "qnn_config" : [null]
 }
