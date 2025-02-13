@@ -1127,8 +1127,14 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         vis_cfg = self.config.vision_config
         num_patches = (vis_cfg.image_size // vis_cfg.patch_size) ** 2 + 1
         image_tokens_len = vis_cfg.max_num_tiles * num_patches
-        img_size = vis_cfg.get("image_size", 448)
-        max_num_img_tiles = vis_cfg.get("max_num_tiles", 4)
+
+        if vis_cfg := getattr(self.config, "vision_config", None):
+            img_size = getattr(vis_cfg, "image_size", 448)
+            max_num_img_tiles = getattr(vis_cfg, "max_num_tiles", 4)
+        else:
+            img_size = 448
+            max_num_img_tiles = 4
+
         # vision inputs
         vision_inputs = {
             "pixel_values": torch.zeros(

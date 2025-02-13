@@ -130,6 +130,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModel.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
 
+        This API can also be used as exception for VLM model since transformers support loading InternChatVL models via AutoModel API we support it via AutoModelForCausalLM API
         Args:
             :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
             :args, kwargs: Additional arguments to pass to transformers.AutoModel.
@@ -165,6 +166,14 @@ class QEFFAutoModel(QEFFTransformersBase):
         except TypeError:
             kwargs.pop("add_pooling_layer", None)
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+        # This is support models that should be classified to in a different auto class but transformers load them via this class
+        kv_offload = kwargs.pop("kv_offload", None)
+        if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
+            return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
+                model, kv_offload=kv_offload
+            )
+
         return cls(model)
 
     @property
@@ -1123,10 +1132,17 @@ class QEFFAutoModelForImageTextToText:
 
     _hf_auto_class = AutoModelForImageTextToText
 
-    def __new__(self, model: nn.Module, kv_offload=False, **kwargs):
+    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = None, **kwargs):
         if model.config.architectures[0] in MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6 and not kv_offload:
-            logger.warning(f"Advised to use kv_offload=True for {model.__class__.__name__}")
+            # For models with mxfp6 accuracy issue, we will use kv_offload=True by default
+            if kv_offload is None:
+                kv_offload = True
+            else:
+                logger.warning(f"Advised to use kv_offload=True for {model.__class__.__name__}")
+        elif kv_offload is None:
+            kv_offload = False
 
+        print(f"{kv_offload}")
         if kv_offload:
             return _QEffAutoModelForImageTextToTextDuaSingleQPC(model, **kwargs)
         else:
@@ -1134,7 +1150,16 @@ class QEFFAutoModelForImageTextToText:
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path, kv_offload=False, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, kv_offload: Optional[bool] = None, **kwargs):
+        """Used to load models supported by transformers.AutoModelForImageTextToText for Cloud AI 100.
+
+        Args:
+            pretrained_model_name_or_path (str): Path or model card name on HuggingFace
+            kv_offload (Optional[bool], optional): Should the KV of vision encoder be offloaded to CPU and use Two QPC. Defaults to None.
+
+        Returns:
+            _type_: _description_
+        """
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
@@ -1228,6 +1253,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
 
+        This API can also be used as exception for VLM model since transformers support loading InternChatVL models via AutoModel API we support it via AutoModelForCausalLM API
         Args:
             :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
             :continuous_batching (bool): Whether this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
@@ -1263,13 +1289,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
-        kv_offload = kwargs.pop("kv_offload", None)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
+        # This is support models that should be classified to in a different auto class but transformers load them via this class
+        kv_offload = kwargs.pop("kv_offload", None)
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
-                model, kv_offload=kv_offload if kv_offload else False
+                model, kv_offload=kv_offload
             )
 
         return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching)
