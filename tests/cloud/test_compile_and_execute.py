@@ -8,6 +8,7 @@
 import os
 
 import pytest
+import yaml
 
 import QEfficient
 import QEfficient.cloud.compile
@@ -33,6 +34,23 @@ def test_compile(setup, mocker):
         full_batch_size=ms.full_batch_size,
         local_model_dir=ms.local_model_dir,
     )
+
+    base_key = "past_key."
+    base_value = "past_value."
+    precision = "float16"
+
+    data = []
+
+    for i in range(12):
+        data.append({"IOName": f"{base_key}{i}", "Precision": precision})
+        data.append({"IOName": f"{base_value}{i}", "Precision": precision})
+
+    for i in range(12):
+        data.append({"IOName": f"{base_key}{i}_RetainedState", "Precision": precision})
+        data.append({"IOName": f"{base_value}{i}_RetainedState", "Precision": precision})
+
+    with open(((onnx_model_path.parent) / "qpc-a8d3e6e2752dcb0d/custom_io.yaml"), "w") as file:
+        yaml.dump(data, file)
 
     qpc_path = QEfficient.compile(
         onnx_path=onnx_model_path,
