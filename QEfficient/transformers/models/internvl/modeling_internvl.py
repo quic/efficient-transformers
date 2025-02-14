@@ -19,7 +19,7 @@ class QEffInternVLModel(nn.Module):
         self, batch_size: int, prefill_seq_len: int, ctx_len: int, img_size: int, **compiler_options
     ):
         # TODO: check if this should be named num_patches or something else
-        num_patches = compiler_options.get("num_patches", None)
+        num_patches = compiler_options.pop("num_patches", None)
         if num_patches is None:
             logger.warning(
                 "User should pass `num_patches` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 13"

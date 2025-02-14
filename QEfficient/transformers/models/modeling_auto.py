@@ -463,7 +463,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         return mname
 
 
-class _QEffAutoModelForImageTextToTextDuaSingleQPC:
+class _QEffAutoModelForImageTextToTextDualQPC:
     UNSUPPORTED_MODELS = ["LlavaForConditionalGeneration", "InternVLChatModel"]
 
     def __init__(
@@ -789,7 +789,7 @@ class _QEffAutoModelForImageTextToTextDuaSingleQPC:
         )
 
 
-class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
+class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase):
     _hf_auto_class = AutoModelForImageTextToText
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
@@ -908,7 +908,7 @@ class _QEFFAutoModelForImageTextToText1QPC(QEFFTransformersBase):
             if output_name.endswith("_RetainedState"):
                 custom_io[output_name] = kv_cache_dtype
 
-        if self.model_name in MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6:
+        if self.model_name in MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6 and mxfp6_matmul:
             logger.warning(
                 f"It is advised to use fp16 precision during compilation for {self.model.__class__.__name__} to avoid accuracy issues, got mxfp6_matmul=True"
             )
@@ -1143,9 +1143,9 @@ class QEFFAutoModelForImageTextToText:
             kv_offload = False
 
         if kv_offload:
-            return _QEffAutoModelForImageTextToTextDuaSingleQPC(model, **kwargs)
+            return _QEffAutoModelForImageTextToTextDualQPC(model, **kwargs)
         else:
-            return _QEFFAutoModelForImageTextToText1QPC(model, **kwargs)
+            return _QEFFAutoModelForImageTextToTextSingleQPC(model, **kwargs)
 
     @classmethod
     @with_replaced_quantizers

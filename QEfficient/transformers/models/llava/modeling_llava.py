@@ -78,7 +78,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
     def get_specializations(
         self, batch_size: int, prefill_seq_len: int, ctx_len: int, img_size: int, **compiler_options
     ):
-        max_num_images = compiler_options.get("max_num_images", 1)
+        max_num_images = compiler_options.pop("max_num_images", 1)
         prefill_seq_len = prefill_seq_len if prefill_seq_len else SEQ_LEN
         ctx_len = ctx_len if ctx_len else CTX_LEN
         if img_size is None and hasattr(self.config.vision_config, "image_size"):

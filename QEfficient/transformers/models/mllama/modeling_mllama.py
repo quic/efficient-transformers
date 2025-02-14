@@ -1197,7 +1197,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         **compiler_options,
     ):
         vis_cfg = self.config.vision_config
-        max_num_images = compiler_options.get("max_num_images", 1)
+        max_num_images = compiler_options.pop("max_num_images", 1)
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else 128
         if img_size is None and hasattr(vis_cfg, "image_size"):
