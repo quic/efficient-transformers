@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Optional, Tuple, Union
 import random
 from typing import Optional, Tuple
 
