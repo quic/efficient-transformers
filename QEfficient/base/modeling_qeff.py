@@ -175,6 +175,7 @@ class QEFFBaseModel(ABC):
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
+
             for transform in self._onnx_transforms:
                 model, transformed = transform.apply(model, **transform_kwargs)
             model.metadata_props.append(
@@ -187,6 +188,7 @@ class QEFFBaseModel(ABC):
 
         except Exception as e:
             logger.error(f"ONNX export (or) ONNXTransforms failed: {e}")
+
             raise e
 
         finally:
