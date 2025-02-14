@@ -5,12 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
-from enum import IntEnum, auto
 from io import BytesIO
 from typing import List
 
-import numpy as np
-import pytest
 import requests
 import torch
 import torch.nn as nn
@@ -25,77 +22,31 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
-class SeparatorStyle(IntEnum):
-    """Separator styles."""
-
-    ADD_COLON_SINGLE = auto()
-    ADD_COLON_TWO = auto()
-    # Needed
-    ADD_COLON_SPACE_SINGLE = auto()
-    NO_COLON_SINGLE = auto()
-    NO_COLON_TWO = auto()
-    ADD_NEW_LINE_SINGLE = auto()
-    LLAMA2 = auto()
-    CHATGLM = auto()
-    CHATML = auto()
-    CHATINTERN = auto()
-    DOLLY = auto()
-    RWKV = auto()
-    PHOENIX = auto()
-    ROBIN = auto()
-    FALCON_CHAT = auto()
-    CHATGLM3 = auto()
-    INTERNVL_ZH = auto()
-    MPT = auto()
-
-
-name = "internvl2_5"
-system_template = "<|im_start|>system\n{system_message}"
-system_message = (
-    "你是书生·万象，英文名是InternVL，是由上海人工智能实验室、清华大学及多家合作单位联合开发的多模态大语言模型。"
-)
-roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
-sep_style = SeparatorStyle.MPT
-sep = "<|im_end|>\n"
-# All messages. Each item is (role, message).
-messages: List[List[str]] = []
-offset: int = 0
-sep = "\n"
-sep2 = None
-stop_str = None
-stop_token_ids: List[int] = None
-
-
-def get_prompt() -> str:
+# Process the input messages to generate prompt for the model.
+def get_prompt(messages) -> str:
     """Get the prompt for generation."""
-    system_prompt = system_template.format(system_message=system_message)
+    ## Chat template used for InternVL
+    system_prompt = "<|im_start|>system\n你是书生·万象，英文名是InternVL，是由上海人工智能实验室、清华大学及多家合作单位联合开发的多模态大语言模型。"
+    sep = "<|im_end|>\n"
 
-    if sep_style == SeparatorStyle.MPT:
-        ret = system_prompt + sep
-        for role, message in messages:
-            if message:
-                if type(message) is tuple:
-                    message, _, _ = message
-                ret += role + message + sep
-            else:
-                ret += role
-        return ret
-    else:
-        raise NotImplementedError(f"{sep_style} style seperator not supported")
-
-
-def append_message(messages, role: str, message: str):
-    """Append a new message."""
-    messages.append([role, message])
+    ret = system_prompt + sep
+    for role, message in messages:
+        if message:
+            if type(message) is tuple:
+                message, _, _ = message
+            ret += role + message + sep
+        else:
+            ret += role
+    return ret
 
 
+# Processor class for InternVL models
 class InternProcessor:
     def __init__(self, model: nn.Module, tokenizer):
         self.model = model
         image_size = self.model.config.force_image_size or self.model.config.vision_config.image_size
         patch_size = self.model.config.vision_config.patch_size
         self.template = model.config.template
-        self.system_message = system_message
         self.num_image_token = int((image_size // patch_size) ** 2 * (self.model.config.downsample_ratio**2))
         self.tokenizer = tokenizer
 
@@ -176,6 +127,8 @@ class InternProcessor:
         self,
         pixel_values,
         question,
+        messages,
+        roles,
         history=None,
         num_patches_list=None,
         IMG_START_TOKEN="<img>",
@@ -191,9 +144,9 @@ class InternProcessor:
         img_context_token_id = self.tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
         self.model.img_context_token_id = img_context_token_id
 
-        append_message(messages, roles[0], question)
-        append_message(messages, roles[1], None)
-        query = get_prompt()
+        messages.append([roles[0], question])
+        messages.append([roles[1], None])
+        query = get_prompt(messages)
         if verbose and pixel_values is not None:
             image_bs = pixel_values.shape[0]
             print(f"dynamic ViT batch size: {image_bs}")
@@ -203,91 +156,58 @@ class InternProcessor:
         return query
 
 
-@pytest.mark.on_qaic
-def test_image_text_to_text_intern():
-    model_name = "OpenGVLab/InternVL2_5-1B"
+def run_intern_on_aic(model_name, prompt, image_url, messages, roles):
     config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)  # noqa: F841
+    config.llm_config.num_hidden_layers = 24
+    config.vision_config.num_hidden_layers = 24
+
+    ## STEP 1 -- LOAD THE MODEL
+
     model = QEFFAutoModelForCausalLM.from_pretrained(
         model_name, kv_offload=False, config=config, trust_remote_code=True
     )
 
-    model.export()
+    ## STEP 2 -- EXPORT & COMPILE THE MODEL
+
     model.compile(num_cores=14, num_devices=4, mxfp6_matmul=True)
-    ### Pytorch execution
+
+    ## STEP 3 -- SETUP THE PROCESSOR
+
+    # InternVL doesn't have an AutoProcessor yet, so we will use our own processor class "InternProcessor"
     qeff_pt_model = model.model
-
-    prompt = "Please describe the image in detail."
-    ctx_len = 4096
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
-
     internProcessor = InternProcessor(qeff_pt_model, tokenizer)
-    url = "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg"
-    img = requests.get(url, stream=True)
+
+    ## STEP 4 -- PREPROCESS THE INPUTS
+
+    img = requests.get(image_url, stream=True)
     image = Image.open(BytesIO(img.content)).convert("RGB")
+
+    # Resizing the image to have num_crops=13
+    # We can fix a different size and the compile the model with appropriate `num_crops`
     image = image.resize((1000, 747))
+
+    # preprocess the resized image
     pixel_values = internProcessor.load_image(image, max_num=12)
     question = "<image>\n" + prompt
-    query = internProcessor(pixel_values, question)
-    pad_inputs = tokenizer(query, return_tensors="pt", padding="max_length", max_length=3840, padding_side="right")
+    query = internProcessor(pixel_values, question, messages, roles)
+    inputs = tokenizer(query, return_tensors="pt", padding="max_length", max_length=3840, padding_side="right")
+    inputs["pixel_values"] = pixel_values
 
-    inputs = tokenizer(query, return_tensors="pt")
-    inputs = dict(inputs)
-
-    batch_size, prompt_len = inputs["input_ids"].shape
-    inputs["pixel_values"] = pixel_values.clone()
-    pad_inputs["pixel_values"] = pixel_values.clone()
-    import copy  # noqa: E402
-
-    orig_inputs = copy.deepcopy(pad_inputs)
-    inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
-    inputs.pop("attention_mask")
-
-    head_dim = (
-        qeff_pt_model.language_model.config.hidden_size // qeff_pt_model.language_model.config.num_attention_heads
-    )
-    inputs["past_key_values"] = [
-        tuple(
-            [
-                torch.zeros(
-                    batch_size,
-                    qeff_pt_model.language_model.config.num_key_value_heads,
-                    ctx_len,
-                    head_dim,
-                    dtype=torch.float32,
-                )
-                for _ in range(2)
-            ]
-        )
-        for _ in range(qeff_pt_model.language_model.config.num_hidden_layers)
-    ]
-
+    ## STEP 5 -- RUN INFERENCE VIA GENERATE FUNCTION
     streamer = TextStreamer(tokenizer)
-    generation_len = 2
-    generated_ids = np.full((batch_size, generation_len + 1), tokenizer.pad_token_id)
-    pt_outputs = qeff_pt_model(**inputs)
-    inputs["input_ids"] = pt_outputs[0].argmax(2)
-    inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-    streamer.put(inputs["input_ids"])
-    generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
-    finished_sequences = inputs["input_ids"] == tokenizer.eos_token_id
-    for i in range(1, generation_len):
-        outputs = qeff_pt_model(**inputs)
-        inputs["input_ids"] = outputs[0].argmax(2)
-        streamer.put(inputs["input_ids"])
-        inputs["position_ids"] += 1
-        generated_ids[:, i] = inputs["input_ids"].squeeze(1)
-        finished_sequences |= inputs["input_ids"] == tokenizer.eos_token_id
-        if finished_sequences.all():
-            break
+    model.generate(inputs=inputs, streamer=streamer, generation_len=128)
 
-    streamer.end()
 
-    generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-    print(generated_texts)
+if __name__ == "__main__":
+    model_name = "OpenGVLab/InternVL2_5-1B"
 
-    exec_info = model.generate(inputs=orig_inputs, generation_len=128)
-    print(exec_info)
-    generated_ids_aic = exec_info.generated_ids
-    print(generated_ids_aic)
-    generated_texts = tokenizer.batch_decode(generated_ids_aic, skip_special_tokens=True)
-    print(generated_texts)
+    # Chat Template information for prompt preprocessing
+    messages: List[List[str]] = []
+    roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
+
+    # Inputs for the model
+    prompt = "Please describe the image in detail."
+    image_url = "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-2-2048.jpg"
+
+    run_intern_on_aic(model_name=model_name, prompt=prompt, image_url=image_url, messages=messages, roles=roles)
