@@ -464,6 +464,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
 
 
 class _QEffAutoModelForImageTextToTextDualQPC:
+    _hf_auto_class = AutoModelForImageTextToText
     UNSUPPORTED_MODELS = ["LlavaForConditionalGeneration", "InternVLChatModel"]
 
     def __init__(
@@ -490,16 +491,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         return mname
 
     @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_model_name_or_path,
-        kv_offload: bool = False,
-        *args,
-        **kwargs,
-    ):
-        if kwargs.pop("full_batch_size", None):
-            raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
-        model = super().from_pretrained(pretrained_model_name_or_path, kv_offload=kv_offload, *args, **kwargs)
+    def from_pretrained(cls, pretrained_model_name_or_path: str, **kwargs):
+        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
+            logger.warning('Updating attn_implementation="eager"')
+
+        if kwargs.get("low_cpu_mem_usage", None):
+            logger.warning("Updating low_cpu_mem_usage=False")
+
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
         return cls(model, **kwargs)
 
     @property
