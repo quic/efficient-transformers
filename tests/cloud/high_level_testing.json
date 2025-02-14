@@ -15,6 +15,6 @@
     "mxint8" : [1],
     "device_group" : [null],
     "full_batch_size" : [null,3],
-    "enable_qnn" : [false],
-    "qnn_config" : [null]
+    "enable_qnn" : [false, true],
+    "qnn_config" : [null, "QEfficient/compile/qnn_config.json"]
 }
