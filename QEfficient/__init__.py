@@ -51,6 +51,7 @@ if QAIC_INSTALLED:
         "QEFFAutoModelForSpeechSeq2Seq",
         "QEffAutoPeftModelForCausalLM",
         "QEFFAutoModelForImageTextToText",
+        "QEFFAutoModelForSpeechSeq2Seq",
         "QEFFCommonLoader",
     ]
 

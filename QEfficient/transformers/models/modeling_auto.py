@@ -31,7 +31,17 @@ import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+<<<<<<< HEAD
 from QEfficient.generation.text_generation_inference import CloudAI100ExecInfo, CloudAI100ExecInfoNew, PerfMetrics, calculate_latency, get_compilation_dims
+=======
+from QEfficient.generation.text_generation_inference import (
+    CloudAI100ExecInfo,
+    CloudAI100ExecInfoNew,
+    PerfMetrics,
+    calculate_latency,
+    get_compilation_dims,
+)
+>>>>>>> 6ac1968 (reformatting some files after rebase)
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheModuleMethodMapperTransform,
@@ -45,7 +55,10 @@ from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbits
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
+<<<<<<< HEAD
 from time import perf_counter
+=======
+>>>>>>> 6ac1968 (reformatting some files after rebase)
 
 MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6 = ["MllamaForConditionalGeneration"]
 
@@ -1555,6 +1568,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         else:
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
+
 
 class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
     """
