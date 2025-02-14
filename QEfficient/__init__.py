@@ -51,6 +51,7 @@ if check_qaic_sdk():
         "QEFFAutoModelForCausalLM",
         "QEffAutoPeftModelForCausalLM",
         "QEFFAutoModelForImageTextToText",
+        "QEFFAutoModelForSpeechSeq2Seq",
         "QEFFCommonLoader",
     ]
 
