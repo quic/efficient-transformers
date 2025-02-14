@@ -36,7 +36,7 @@ source/upgrade
 ```
 
 ```{toctree}
-:caption: 'QAIC Inference'
+:caption: 'Inference on Cloud AI 100'
 :maxdepth: 4
 
 source/quick_start
