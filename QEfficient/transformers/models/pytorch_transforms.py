@@ -154,12 +154,12 @@ from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJForCausalLM,
     QEffGPTJModel,
 )
-from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
 from QEfficient.transformers.models.granite.modeling_granite import (
     QEffGraniteAttention,
     QEffGraniteForCausalLM,
     QEffGraniteModel,
 )
+from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
