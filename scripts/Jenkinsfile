@@ -69,6 +69,8 @@ pipeline {
                        timeout(time: 15, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
+                    	   source /qnn_sdk/bin/envsetup.sh &&
+                      	   source /qnn_sdk/bin/envcheck -c &&
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/cli &&
