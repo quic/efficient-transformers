@@ -4,7 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
-from typing import Dict, Tuple, Type
+from types import MethodType
+from typing import Callable, Dict, Tuple, Type
 
 from torch import nn
 
@@ -87,3 +88,25 @@ class ModuleMutatorTransform(PytorchTransform):
     @classmethod
     def mutate(cls, original_module: nn.Module, parent_module: nn.Module):
         raise NotImplementedError("Please implement your own method by inheriting this class")
+
+
+class ModuleMethodMapperTransform(PytorchTransform):
+    """
+    Serves as base class for any transform that want to map a particular method of a class to a new method implementation.
+    """
+
+    _match_class_replace_method: Dict[nn.Module, Dict[str, Callable]]
+    _match_string_replace_method: Dict[str, Dict[str, Callable]]
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        transformed = False
+        for module in model.modules():
+            if (repl_method_map := cls._match_class_replace_method.get(type(module))) or (
+                repl_method_map := cls._match_string_replace_method.get(module.__class__.__name__)
+            ):
+                for orig_method_name, mapped_method in repl_method_map.items():
+                    setattr(module, orig_method_name, MethodType(mapped_method, module))
+                    transformed = True
+
+        return model, transformed
