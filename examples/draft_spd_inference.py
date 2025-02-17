@@ -158,6 +158,8 @@ def draft_spec_decode_inference(
     full_batch_size: Optional[int],
     target_device_group: List[int],
     draft_device_group: List[int],
+    draft_model_session: Optional[QAICInferenceSession] = None,
+    target_model_session: Optional[QAICInferenceSession] = None,
 ) -> CloudAI100ExecInfo:
     """
     Perform draft speculative decode inference on the given prompts.
@@ -186,33 +188,34 @@ def draft_spec_decode_inference(
 
     # export_and_compile tlm and dlm
     continuous_batching = full_batch_size is not None
-    target_model = AutoModelForCausalLM.from_pretrained(
-        target_model_name, continuous_batching=continuous_batching, is_tlm=True
-    )
-    draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, continuous_batching=continuous_batching)
-
-    target_num_devices = len(target_device_group)
-    target_model_qpc_path: str = target_model.compile(
-        num_cores=11,
-        num_devices=target_num_devices,
-        prefill_seq_len=prefill_seq_len,
-        ctx_len=ctx_len,
-        aic_enable_depth_first=True,
-        full_batch_size=full_batch_size,
-        num_speculative_tokens=num_speculative_tokens,
-    )
-    draft_num_devices = len(draft_device_group)
-    draft_model_qpc_path: str = draft_model.compile(
-        num_cores=5,
-        num_devices=draft_num_devices,
-        prefill_seq_len=prefill_seq_len,
-        ctx_len=ctx_len,
-        aic_enable_depth_first=True,
-        full_batch_size=full_batch_size,
-    )
-    # init qaic session
-    target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=target_device_group)
-    draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=draft_device_group)
+    if target_model_session is None:
+        target_model = AutoModelForCausalLM.from_pretrained(
+            target_model_name, continuous_batching=continuous_batching, is_tlm=True
+        )
+        target_num_devices = len(target_device_group)
+        target_model_qpc_path: str = target_model.compile(
+            num_cores=11,
+            num_devices=target_num_devices,
+            prefill_seq_len=prefill_seq_len,
+            ctx_len=ctx_len,
+            aic_enable_depth_first=True,
+            full_batch_size=full_batch_size,
+            num_speculative_tokens=num_speculative_tokens,
+        )
+        target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=target_device_group)
+    if draft_model_session is None:
+        draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, continuous_batching=continuous_batching)
+        draft_num_devices = len(draft_device_group)
+        draft_model_qpc_path: str = draft_model.compile(
+            num_cores=5,
+            num_devices=draft_num_devices,
+            prefill_seq_len=prefill_seq_len,
+            ctx_len=ctx_len,
+            aic_enable_depth_first=True,
+            full_batch_size=full_batch_size,
+        )
+        # init qaic session
+        draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=draft_device_group)
 
     # skip inputs/outputs buffers
     target_model_session.skip_buffers(set([x for x in target_model_session.input_names if x.startswith("past_")]))
