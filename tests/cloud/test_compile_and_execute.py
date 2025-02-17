@@ -11,7 +11,6 @@ import pytest
 import yaml
 
 import QEfficient
-import QEfficient.cloud.compile
 from QEfficient.cloud.execute import main as execute
 from QEfficient.cloud.export import get_onnx_model_path
 

@@ -50,14 +50,13 @@ class QEFFCommonLoader:
             )
 
         local_model_dir = kwargs.pop("local_model_dir", None)
-        cache_dir = kwargs.pop("cache_dir", None)
         hf_token = kwargs.pop("hf_token", None)
         continuous_batching = True if kwargs.pop("full_batch_size", None) else False
 
         qeff_model = model_class.from_pretrained(
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else pretrained_model_name_or_path),
-            cache_dir=cache_dir,
             token=hf_token,
             continuous_batching=continuous_batching,
+            **kwargs,
         )
         return qeff_model
