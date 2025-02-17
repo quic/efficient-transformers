@@ -53,6 +53,5 @@ if check_qaic_sdk():
         "QEFFCommonLoader",
     ]
 
-    logger.warning("QAIC SDK is installed; eager mode features are enabled!")
 else:
     logger.warning("QAIC SDK is not installed, eager mode features won't be available!")

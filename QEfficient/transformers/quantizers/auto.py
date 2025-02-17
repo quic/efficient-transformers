@@ -53,11 +53,11 @@ def with_replaced_quantizers(func):
 
         for k in QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.keys():
             # Replace quantization config
-            transformers_replaced_quantization_config_mapping[k] = AUTO_QUANTIZATION_CONFIG_MAPPING[k]
+            transformers_replaced_quantization_config_mapping[k] = AUTO_QUANTIZATION_CONFIG_MAPPING.get(k, None)
             AUTO_QUANTIZATION_CONFIG_MAPPING[k] = QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING[k]
 
             # Replace quantizer
-            transformers_replaced_quantizer_mapping[k] = AUTO_QUANTIZER_MAPPING[k]
+            transformers_replaced_quantizer_mapping[k] = AUTO_QUANTIZER_MAPPING.get(k, None)
             AUTO_QUANTIZER_MAPPING[k] = QEFF_AUTO_QUANTIZER_MAPPING[k]
 
         # Call the function for loading quantized models here
