@@ -8,6 +8,7 @@
 import random
 from typing import Optional, Tuple
 
+import numpy as np
 import torch
 from torch import nn
 from transformers.cache_utils import Cache, EncoderDecoderCache, StaticCache
@@ -22,12 +23,14 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperDecoder,
     WhisperDecoderLayer,
     WhisperEncoder,
+    WhisperForConditionalGeneration,
     WhisperModel,
     WhisperPositionalEmbedding,
     logger,
 )
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils._utils import IOInfo
 
 
 class QEffWhisperPositionalEmbedding(WhisperPositionalEmbedding):
@@ -767,3 +770,111 @@ class QEffWhisperModel(WhisperModel):
             encoder_hidden_states=None,
             encoder_attentions=None,
         )
+
+
+class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
+    """
+    Encoder-decoder model with LM head for automatic speech recognition
+
+    The only differences are:
+    - Added get_dummy_inputs, get_onnx_dynamic_axes, get_output_names for AutoModel export
+    """
+
+    def get_dummy_inputs(
+        self,
+    ):
+        bs = 1
+        seq_len = 32
+        encoder_seq_len = self.config.max_source_positions
+        encoder_feature_count = self.config.num_mel_bins
+        num_key_value_heads = self.config.decoder_attention_heads
+        head_dim = self.config.d_model // num_key_value_heads
+        num_layers = self.config.num_hidden_layers
+
+        inputs = {
+            "input_features": torch.zeros((bs, encoder_feature_count, 1), dtype=torch.float32),
+            "decoder_input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+            "decoder_position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+            "past_key_values": [[] for _ in range(num_layers)],
+        }
+
+        kv_cache_shape = (bs, num_key_value_heads, seq_len, head_dim)
+        kv_cross_cache_shape = (bs, num_key_value_heads, encoder_seq_len, head_dim)
+
+        for i in range(num_layers):
+            for self_cross in ["self", "cross"]:
+                for kv in ["key", "value"]:
+                    inputs["past_key_values"][i].append(
+                        torch.zeros(
+                            kv_cache_shape if self_cross == "self" else kv_cross_cache_shape, dtype=torch.float32
+                        )
+                    )
+
+        return inputs
+
+    def get_specializations(
+        self, batch_size: int, encoder_ctx_len: int, decoder_ctx_len: int, feature_len: int, **compiler_options
+    ):
+        encoder_specializations = {
+            "batch_size": batch_size,
+            "seq_len": 1,
+            "encoder_ctx_len": encoder_ctx_len,
+            "decoder_ctx_len": decoder_ctx_len,
+            "feature_len": feature_len,
+        }
+
+        decoder_specializations = {
+            "batch_size": batch_size,
+            "seq_len": 1,
+            "encoder_ctx_len": encoder_ctx_len,
+            "decoder_ctx_len": decoder_ctx_len,
+            "feature_len": 1,  # important dummy feature so that torch.where knows whether to run cross attention or not
+        }
+
+        specializations = [encoder_specializations, decoder_specializations]
+
+        return specializations
+
+    def get_onnx_dynamic_axes(
+        self,
+    ):
+        num_layers = self.config.num_hidden_layers
+
+        dynamic_axes = {
+            "input_features": {0: "batch_size", 2: "feature_len"},
+            "decoder_input_ids": {0: "batch_size", 1: "seq_len"},
+            "decoder_position_ids": {0: "batch_size", 1: "seq_len"},
+        }
+        pkv_self_dynamic_axes = {
+            0: "batch_size",
+            2: "decoder_ctx_len",
+        }
+        pkv_cross_dynamic_axes = {
+            0: "batch_size",
+            2: "encoder_ctx_len",
+        }
+        for i in range(num_layers):
+            for self_cross in ["self", "cross"]:
+                for kv in ["key", "value"]:
+                    dynamic_axes[f"past_{kv}_{self_cross}.{i}"] = (
+                        pkv_self_dynamic_axes if self_cross == "self" else pkv_cross_dynamic_axes
+                    )
+
+        return dynamic_axes
+
+    def get_output_names(
+        self,
+    ):
+        output_names = ["logits"]
+        for i in range(self.config.num_hidden_layers):
+            for self_cross in ["self", "cross"]:
+                for kv in ["key", "value"]:
+                    output_names.append(f"past_{kv}_{self_cross}.{i}_RetainedState")
+        return output_names
+
+    def get_inputs_info(self):
+        return [
+            IOInfo(name="input_features", datatype=np.float32, shape=("batch_size", "num_mel_bins", "feature_len")),
+            IOInfo(name="decoder_input_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
+            IOInfo(name="decoder_position_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
+        ]

@@ -19,7 +19,6 @@ from transformers import (
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
     AutoModelForSpeechSeq2Seq,
-    AutoProcessor,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
     TextStreamer,
@@ -30,7 +29,6 @@ from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import (
-    CloudAI100ExecInfo,
     CloudAI100ExecInfoNew,
     PerfMetrics,
     calculate_latency,
@@ -208,7 +206,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
         ``Optional`` Args:
-           :export_dir (str, optional): The directory path to store ONNX-graph.
+        :export_dir (str, optional): The directory path to store ONNX-graph.
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
@@ -319,7 +317,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
 
         Returns:
-           np.ndarray: A list of dictionaries containing the generated output features.
+        np.ndarray: A list of dictionaries containing the generated output features.
         """
 
         if self.qpc_session is None:
@@ -1636,61 +1634,15 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
         ``Optional`` Args:
-           :export_dir (str, optional): The directory path to store ONNX-graph.
+        :export_dir (str, optional): The directory path to store ONNX-graph.
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
         """
-        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        encoder_seq_len = self.model.config.max_source_positions
-        encoder_feature_count = self.model.config.num_mel_bins
-
-        kv_cache_shape = get_padding_shape_from_config(self.model.config, bs, seq_len)
-        kv_cross_cache_shape = get_padding_shape_from_config(self.model.config, bs, encoder_seq_len)
-        example_inputs = {
-            "input_features": torch.zeros((bs, encoder_feature_count, 1), dtype=torch.float32),
-            "decoder_input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "decoder_position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
-            "past_key_values": [[] for _ in range(self.num_layers)],
-        }
-        dynamic_axes = {
-            "input_features": {0: "batch_size", 2: "feature_len"},
-            "decoder_input_ids": {0: "batch_size", 1: "seq_len"},
-            "decoder_position_ids": {0: "batch_size", 1: "seq_len"},
-        }
-        pkv_self_dynamic_axes = {
-            0: "batch_size",
-            2: "decoder_ctx_len",
-        }
-        pkv_cross_dynamic_axes = {
-            0: "batch_size",
-            2: "encoder_ctx_len",
-        }
-        output_names = ["logits"]
-
-        for i in range(self.num_layers):
-            for self_cross in ["self", "cross"]:
-                for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(
-                        torch.zeros(
-                            kv_cache_shape if self_cross == "self" else kv_cross_cache_shape, dtype=torch.float32
-                        )
-                    )
-                    dynamic_axes[f"past_{kv}_{self_cross}.{i}"] = (
-                        pkv_self_dynamic_axes if self_cross == "self" else pkv_cross_dynamic_axes
-                    )
-                    output_names.append(f"past_{kv}_{self_cross}.{i}_RetainedState")
-
-        self.onnx_path = self._export(
-            example_inputs,
-            output_names,
-            dynamic_axes,
-            export_dir=export_dir,
-            encoder_decoder=True,
-        )
-
-        return self.onnx_path
+        inputs = self.model.get_dummy_inputs()
+        dynamic_axes = self.model.get_onnx_dynamic_axes()
+        output_names = self.model.get_output_names()
+        self._export(inputs, output_names, dynamic_axes, export_dir=export_dir, encoder_decoder=True)
 
     def compile(
         self,
@@ -1724,25 +1676,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-        encoder_specializations = {
-            "batch_size": batch_size,
-            "seq_len": 1,
-            "encoder_ctx_len": encoder_ctx_len,
-            "decoder_ctx_len": decoder_ctx_len,
-            "feature_len": feature_len,
-        }
+        specializations = self.model.get_specializations(batch_size, encoder_ctx_len, decoder_ctx_len, feature_len)
 
-        decoder_specializations = {
-            "batch_size": batch_size,
-            "seq_len": 1,
-            "encoder_ctx_len": encoder_ctx_len,
-            "decoder_ctx_len": decoder_ctx_len,
-            "feature_len": 1,  # important dummy feature so that torch.where knows whether to run cross attention or not
-        }
-
-        specializations = [encoder_specializations, decoder_specializations]
-
-        self.qpc_path = self._compile(
+        self._compile(
             onnx_path,
             compile_dir,
             compile_only=True,
@@ -1755,14 +1691,33 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             **compiler_options,
         )
 
-        return self.qpc_path
+    def auto_correct_inputs(self, inputs):
+        checked = True
+        inputs_info = self.model.get_inputs_info()
+        for valid_input_info in inputs_info:
+            if valid_input_info.name not in inputs:
+                checked = False
+                break
+            if inputs[valid_input_info.name].dtype != valid_input_info.datatype:
+                checked = False
+                break
+
+        if not checked:
+            err_str: str = (
+                "Expected following input names and shapes to be passed\n"
+                + "\n".join([val.__repr__() for val in inputs_info])
+                + "\ngot"
+                + f"{[(k, v.shape, v.dtype) for k, v in inputs.items()]}"
+            )
+
+            raise RuntimeError(err_str)
+
+        return {k: v for k, v in inputs.items() if k in [iinfo.name for iinfo in inputs_info]}
 
     def generate(
         self,
-        processor: AutoProcessor,
         inputs: torch.Tensor,
         generation_len: int,
-        sample_rate: int = 16000,
         device_ids: List[int] = None,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
@@ -1781,28 +1736,11 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
 
+        inputs = self.auto_correct_inputs(inputs)
+
         if self.qpc_session is None:
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
-
-        seq_len = 1
-
-        # prepare inputs
-        input_features = (
-            processor(inputs, sampling_rate=sample_rate, return_tensors="pt").input_features.numpy().astype(np.float32)
-        )
-        decoder_input_ids = (
-            torch.ones((self.batch_size, seq_len), dtype=torch.int64) * self.model.config.decoder_start_token_id
-        ).numpy()
-        decoder_position_ids = (
-            torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1).numpy()
-        )
-
-        model_inputs = dict(
-            input_features=input_features,
-            decoder_input_ids=decoder_input_ids,
-            decoder_position_ids=decoder_position_ids,
-        )
 
         self.qpc_session.skip_buffers(
             [x for x in self.qpc_session.input_names + self.qpc_session.output_names if x.startswith("past_")]
@@ -1815,38 +1753,37 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
 
         # encoder run
         start = perf_counter()
-        outputs = self.qpc_session.run(model_inputs)
+        outputs = self.qpc_session.run(inputs)
 
         # array to hold generated tokens
-        generated_ids = np.full((self.batch_size, generation_len + 1), processor.tokenizer.pad_token_id)
+        generated_ids = np.full((self.batch_size, generation_len + 1), self.model.config.eos_token_id)
         generated_ids[:, 0] = [self.model.config.decoder_start_token_id]
         logits = outputs["logits"]
         next_token = logits.argmax(-1)
         generated_ids[:, 1] = next_token.squeeze(1)
 
-        model_inputs["input_features"] = np.random.randn(self.batch_size, self.model.config.num_mel_bins, 1).astype(
+        inputs["input_features"] = np.random.randn(self.batch_size, self.model.config.num_mel_bins, 1).astype(
             np.float32
         )
 
         loop_start = perf_counter()
         for num_tokens in range(generation_len):
-            outputs = self.qpc_session.run(model_inputs)
+            outputs = self.qpc_session.run(inputs)
             logits = outputs["logits"]
             next_token = logits.argmax(-1)
             generated_ids[:, num_tokens + 1] = next_token.squeeze(1)
 
-            if next_token[0][0] == processor.tokenizer.eos_token_id:
+            if next_token[0][0] == self.model.config.eos_token_id:
                 break
 
-            model_inputs["decoder_input_ids"] = next_token
-            model_inputs["decoder_position_ids"] += 1
+            inputs["decoder_input_ids"] = next_token
+            inputs["decoder_position_ids"] += 1
         end = perf_counter()
 
         prefill_time, decode_perf, total_perf, total_time = calculate_latency(num_tokens, loop_start, start, end)
 
-        exec_info = CloudAI100ExecInfo(
+        exec_info = CloudAI100ExecInfoNew(
             batch_size=self.batch_size,
-            generated_texts=processor.batch_decode(generated_ids),
             generated_ids=generated_ids,
             perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
         )

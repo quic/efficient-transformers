@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+import numpy as np
+import torch
 from datasets import load_dataset
 from transformers import AutoProcessor
 
@@ -24,12 +26,27 @@ processor = AutoProcessor.from_pretrained(base_model_name)
 ## STEP 2 -- init base model
 qeff_model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(base_model_name)
 
-## STEP 3 -- export model
-onnx_path = qeff_model.export()
+## STEP 3 -- export and compile model
+qeff_model.compile()
 
-## STEP 4 -- compile model
-qeff_model.compile(onnx_path)
+## STEP 4 -- prepare generate inputs
+bs = 1
+seq_len = 1
+input_features = (
+    processor(data, sampling_rate=sample_rate, return_tensors="pt").input_features.numpy().astype(np.float32)
+)
+decoder_input_ids = (
+    torch.ones((bs, seq_len), dtype=torch.int64) * qeff_model.model.config.decoder_start_token_id
+).numpy()
+decoder_position_ids = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1).numpy()
+inputs = dict(
+    input_features=input_features,
+    decoder_input_ids=decoder_input_ids,
+    decoder_position_ids=decoder_position_ids,
+)
 
 ## STEP 5 -- generate output for loaded input and processor
-exec_info = qeff_model.generate(processor, inputs=data, sample_rate=sample_rate, generation_len=ctx_len)
-print(exec_info.generated_texts)
+exec_info = qeff_model.generate(inputs=inputs, generation_len=ctx_len)
+
+## STEP 6 (optional) -- use processor to decode output
+print(processor.batch_decode(exec_info.generated_ids))

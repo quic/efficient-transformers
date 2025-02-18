@@ -320,22 +320,38 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
         "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
     )
 
-    onnx_model_path = qeff_model.export()
+    qeff_model.export()
 
-    ort_tokens = run_seq2seq_ort(onnx_model_path, qeff_model.model.config, processor, data, sample_rate, ctx_len)
+    ort_tokens = run_seq2seq_ort(qeff_model.onnx_path, qeff_model.model.config, processor, data, sample_rate, ctx_len)
 
     assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for pytorch output and ort output"
 
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    _ = qeff_model.compile(
+    qeff_model.compile(
         encoder_ctx_len=qeff_model.model.config.max_source_positions,
         decoder_ctx_len=ctx_len,
         num_cores=14,
         batch_size=batch_size,
     )
-    exec_info = qeff_model.generate(processor, inputs=data, sample_rate=sample_rate, generation_len=ctx_len)
+
+    bs = 1
+    seq_len = 1
+    input_features = (
+        processor(data, sampling_rate=sample_rate, return_tensors="pt").input_features.numpy().astype(np.float32)
+    )
+    decoder_input_ids = (
+        torch.ones((bs, seq_len), dtype=torch.int64) * qeff_model.model.config.decoder_start_token_id
+    ).numpy()
+    decoder_position_ids = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1).numpy()
+    inputs = dict(
+        input_features=input_features,
+        decoder_input_ids=decoder_input_ids,
+        decoder_position_ids=decoder_position_ids,
+    )
+
+    exec_info = qeff_model.generate(inputs=inputs, generation_len=ctx_len)
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
     assert (pytorch_kv_tokens == cloud_ai_100_tokens).all(), (
         "Tokens don't match for pytorch output and Cloud AI 100 output."
