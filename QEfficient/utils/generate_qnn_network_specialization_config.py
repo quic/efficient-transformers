@@ -46,8 +46,9 @@ def fetch_nodes_info(
             if full_batch_size:
                 input_info["Shape"] = f"(1, 1), ({full_batch_size}, 1)"
             else:
-                print("ERROR: Full batch size is required for populating batch_index in custom_io_config.yaml")
-                exit()
+                raise AttributeError(
+                    "ERROR: Full batch size is required for populating batch_index in custom_io_config.yaml"
+                )
         else:
             shapes = []
             for input_shape in node.type.tensor_type.shape.dim:
@@ -73,8 +74,9 @@ def fetch_nodes_info(
                             elif full_batch_size:
                                 shapeList.append(full_batch_size)
                             else:
-                                print("ERROR: Full batch size is required to generate custom_io_config.yaml")
-                                exit()
+                                raise AttributeError(
+                                    "ERROR: Full batch size is required to generate custom_io_config.yaml"
+                                )
                         elif "batch_size" in shape:
                             shapeList.append(batch_size)
                         elif shape in ["ctx_len", "max_context_len"]:
