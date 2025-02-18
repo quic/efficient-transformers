@@ -37,7 +37,11 @@ from QEfficient.transformers.models.pytorch_transforms import (
     VlmNoKVOffloadTransform,
 )
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
-from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
+from QEfficient.transformers.quantizers.quant_transforms import (
+    AwqToMatmulNbitsTransform,
+    FP8DeQuantLinearToLinearTransform,
+    GPTQToMatmulNbitsTransform,
+)
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
@@ -1199,7 +1203,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     """
 
     _hf_auto_class = AutoModelForCausalLM
-    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
+    _pytorch_transforms = [
+        AwqToMatmulNbitsTransform,
+        GPTQToMatmulNbitsTransform,
+        FP8DeQuantLinearToLinearTransform,
+        CustomOpsTransform,
+        KVCacheTransform,
+    ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(
@@ -1291,11 +1301,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
 
+        kv_offload = kwargs.pop("kv_offload", None)
+
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
-        kv_offload = kwargs.pop("kv_offload", None)
+
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model, kv_offload=kv_offload

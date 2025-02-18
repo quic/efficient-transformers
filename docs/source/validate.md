@@ -9,6 +9,8 @@
 | [CodeLlama-13b-hf](https://huggingface.co/codellama/CodeLlama-13b-hf) |✔️ |
 | [CodeLlama-34b-hf](https://huggingface.co/codellama/CodeLlama-34b-hf) |✔️ |
 | [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1) |✔️ |
+| [DeepSeek-R1-Distill-Llama-70B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-70B)|✔️ |
+| [DeepSeek-R1-Distill-Qwen-32B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B)|✔️ |
 | [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) |✔️ |
 | [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b) |✔️ |
 | [GPT2](https://huggingface.co/openai-community/gpt2) |✔️ |
