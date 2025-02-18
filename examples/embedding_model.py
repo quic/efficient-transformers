@@ -6,6 +6,8 @@
 # -----------------------------------------------------------------------------
 
 # This is the work example of the Embedding model with the AI 100
+# For more information, visit: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+
 import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer
