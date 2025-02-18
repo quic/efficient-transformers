@@ -42,6 +42,13 @@ def get_prompt(messages) -> str:
 
 # Processor class for InternVL models
 class InternProcessor:
+    """
+    InternVL model only has an AutoTokenizer so this class performs the processing tasks similar to an AutoProcessor.
+    The methods used here are borrowed from the original InternVL modelling files.
+    "https://huggingface.co/OpenGVLab/InternVL2_5-1B/"
+
+    """
+
     def __init__(self, model: nn.Module, tokenizer):
         self.model = model
         image_size = self.model.config.force_image_size or self.model.config.vision_config.image_size
@@ -185,7 +192,9 @@ def run_intern_on_aic(model_name, prompt, image_url, messages, roles, prefill_se
     question = "<image>\n" + prompt
     query = internProcessor(pixel_values, question, messages, roles)
     # inputs = tokenizer(query, return_tensors="pt", padding="max_length", padding_side="right")
-    inputs = tokenizer(query, return_tensors="pt", padding="max_length", max_length=prefill_seq_len, padding_side="right")
+    inputs = tokenizer(
+        query, return_tensors="pt", padding="max_length", max_length=prefill_seq_len, padding_side="right"
+    )
 
     inputs["pixel_values"] = pixel_values
 
@@ -207,12 +216,12 @@ if __name__ == "__main__":
     prefill_seq_len = 3840
 
     run_intern_on_aic(
-        model_name=model_name, 
-        prompt=prompt, 
-        image_url=image_url, 
-        messages=messages, 
-        roles=roles, 
-        prefill_seq_len=prefill_seq_len
+        model_name=model_name,
+        prompt=prompt,
+        image_url=image_url,
+        messages=messages,
+        roles=roles,
+        prefill_seq_len=prefill_seq_len,
     )
 
 
