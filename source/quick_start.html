@@ -5,7 +5,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Transformed models and QPC storage &mdash; efficient-transformers main documentation</title>
-      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
       <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=547657ed" />
 
@@ -84,7 +84,7 @@
 <p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-execute"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
@@ -263,7 +263,7 @@ Once we have compiled the QPC, we can now use the precompiled QPC in execute API
 <div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># We can now export the modified models to ONNX framework</span>
 <span class="c1"># This will generate single ONNX Model for both Prefill and Decode Variations which are optimized for</span>
 <span class="c1"># Cloud AI 100 Platform.</span>
-<span class="kn">from</span> <span class="nn">QEfficient</span> <span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span> <span class="k">as</span> <span class="n">AutoModelForCausalLM</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span> <span class="k">as</span> <span class="n">AutoModelForCausalLM</span>
 
 <span class="c1"># Model-Card name (This is HF Model Card name) : https://huggingface.co/gpt2-xl</span>
 <span class="n">model_name</span> <span class="o">=</span> <span class="s2">&quot;gpt2&quot;</span>  <span class="c1"># Similar, we can change model name and generate corresponding models, if we have added the support in the lib.</span>
@@ -292,7 +292,7 @@ Please raise an <a class="reference external" href="https://github.com/quic/effi
 <div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Initiate the Original Transformer model</span>
 <span class="c1"># import os</span>
 
-<span class="kn">from</span> <span class="nn">QEfficient</span> <span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span> <span class="k">as</span> <span class="n">AutoModelForCausalLM</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span> <span class="k">as</span> <span class="n">AutoModelForCausalLM</span>
 
 <span class="c1"># Please uncomment and use appropriate Cache Directory for transformers, in case you don&#39;t want to use default ~/.cache dir.</span>
 <span class="c1"># os.environ[&quot;TRANSFORMERS_CACHE&quot;] = &quot;/local/mnt/workspace/hf_cache&quot;</span>
