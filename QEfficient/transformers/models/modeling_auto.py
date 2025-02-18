@@ -1209,6 +1209,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         is_tlm: bool = False,
         **kwargs,
     ):
+        model_class_name = model.__class__.__name__
+        if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
+            raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
+
         # TODO: remove from version 1.20
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True

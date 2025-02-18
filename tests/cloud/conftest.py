@@ -242,7 +242,7 @@ def pytest_collection_modifyitems(config, items):
     ----------
     Ref: https://docs.pytest.org/en/4.6.x/reference.html#collection-hooks
     """
-    run_first = ["test_export", "test_compile", "test_execute", "test_infer"]
+    run_first = ["test_export", "test_infer"]
     modules_name = {item.module.__name__ for item in items}
     cloud_modules = []
     non_cloud_modules = []
@@ -279,7 +279,7 @@ def pytest_collection_modifyitems(config, items):
         first_model = items[0].callspec.params["model_name"] if hasattr(items[0], "callspec") else None
 
         for item in items:
-            if item.module.__name__ in ["test_export", "test_compile", "test_execute", "test_infer"]:
+            if item.module.__name__ in ["test_export", "test_compile_and_execute", "test_infer"]:
                 if hasattr(item, "callspec"):
                     params = item.callspec.params
                     if not params["enable_qnn"] and params["qnn_config"] is not None:
@@ -289,7 +289,7 @@ def pytest_collection_modifyitems(config, items):
                     if params["enable_qnn"]:
                         item.add_marker(pytest.mark.qnn)
 
-            if item.module.__name__ in ["test_export", "test_compile", "test_execute"]:
+            if item.module.__name__ in ["test_export", "test_compile_and_execute"]:
                 if hasattr(item, "callspec"):
                     params = item.callspec.params
                     if params["model_name"] != first_model:
