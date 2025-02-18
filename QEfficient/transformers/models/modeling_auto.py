@@ -1203,7 +1203,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     """
 
     _hf_auto_class = AutoModelForCausalLM
-    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
+    _pytorch_transforms = [
+        AwqToMatmulNbitsTransform,
+        GPTQToMatmulNbitsTransform,
+        FP8DeQuantLinearToLinearTransform,
+        CustomOpsTransform,
+        KVCacheTransform,
+    ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(
