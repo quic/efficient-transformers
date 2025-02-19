@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>QEfficient.utils.device_utils &mdash; efficient-transformers main documentation</title>
-      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=19f00094" />
       <link rel="stylesheet" type="text/css" href="../../../_static/my_theme.css?v=547657ed" />
 
@@ -68,9 +68,9 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.compile.compile_helper.compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.export.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.finetune.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
@@ -130,14 +130,14 @@
 <span class="c1">#</span>
 <span class="c1"># -----------------------------------------------------------------------------</span>
 
-<span class="kn">import</span> <span class="nn">math</span>
-<span class="kn">import</span> <span class="nn">subprocess</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
 
-<span class="kn">from</span> <span class="nn">QEfficient.utils.constants</span> <span class="kn">import</span> <span class="n">Constants</span>
-<span class="kn">from</span> <span class="nn">QEfficient.utils.logging_utils</span> <span class="kn">import</span> <span class="n">logger</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils.constants</span><span class="w"> </span><span class="kn">import</span> <span class="n">Constants</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils.logging_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
 
 
-<div class="viewcode-block" id="get_available_device_id"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.device_utils.get_available_device_id">[docs]</a><span class="k">def</span> <span class="nf">get_available_device_id</span><span class="p">():</span>
+<div class="viewcode-block" id="get_available_device_id"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.device_utils.get_available_device_id">[docs]</a><span class="k">def</span><span class="w"> </span><span class="nf">get_available_device_id</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    API to check available device id.</span>
 
@@ -168,7 +168,7 @@
                 <span class="k">return</span> <span class="kc">None</span></div>
 
 
-<span class="k">def</span> <span class="nf">is_qpc_size_gt_32gb</span><span class="p">(</span><span class="n">params</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">mxfp6</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">is_qpc_size_gt_32gb</span><span class="p">(</span><span class="n">params</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">mxfp6</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
     <span class="k">if</span> <span class="n">mxfp6</span><span class="p">:</span>
         <span class="n">qpc_size</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">((</span><span class="n">params</span> <span class="o">*</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">Constants</span><span class="o">.</span><span class="n">GB</span><span class="p">)</span>
     <span class="k">else</span><span class="p">:</span>
@@ -180,7 +180,7 @@
     <span class="k">return</span> <span class="n">qpc_size</span> <span class="o">&gt;</span> <span class="n">Constants</span><span class="o">.</span><span class="n">MAX_QPC_LIMIT</span>
 
 
-<span class="k">def</span> <span class="nf">is_multi_qranium_setup_available</span><span class="p">():</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">is_multi_qranium_setup_available</span><span class="p">():</span>
     <span class="n">result</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">command</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;/opt/qti-aic/tools/qaic-util&quot;</span><span class="p">,</span> <span class="s2">&quot;-q&quot;</span><span class="p">]</span>
     <span class="k">try</span><span class="p">:</span>
