@@ -1259,6 +1259,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         return self.__class__.__name__ + "\n" + self.model.__repr__
 
     @classmethod
+    @with_replaced_quantizers
     def from_pretrained(
         cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, *args, **kwargs
     ):
