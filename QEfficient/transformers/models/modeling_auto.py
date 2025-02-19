@@ -96,6 +96,29 @@ class QEFFTransformersBase(QEFFBaseModel):
             mname = mname[4:]
         return mname
 
+    def auto_correct_inputs(self, inputs):
+        checked = True
+        inputs_info = self.model.get_inputs_info()
+        for valid_input_info in inputs_info:
+            if valid_input_info.name not in inputs:
+                checked = False
+                break
+            if inputs[valid_input_info.name].dtype != valid_input_info.datatype:
+                checked = False
+                break
+
+        if not checked:
+            err_str: str = (
+                "Expected following input names and shapes to be passed\n"
+                + "\n".join([val.__repr__() for val in inputs_info])
+                + "\ngot"
+                + f"{[(k, v.shape, v.dtype) for k, v in inputs.items()]}"
+            )
+
+            raise RuntimeError(err_str)
+
+        return {k: v for k, v in inputs.items() if k in [iinfo.name for iinfo in inputs_info]}
+
 
 class QEFFAutoModel(QEFFTransformersBase):
     """
@@ -964,29 +987,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase):
             inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
         )
 
-    def auto_correct_inputs(self, inputs):
-        checked = True
-        inputs_info = self.model.get_inputs_info()
-        for valid_input_info in inputs_info:
-            if valid_input_info.name not in inputs:
-                checked = False
-                break
-            if inputs[valid_input_info.name].dtype != valid_input_info.datatype:
-                checked = False
-                break
-
-        if not checked:
-            err_str: str = (
-                "Expected following input names and shapes to be passed\n"
-                + "\n".join([val.__repr__() for val in inputs_info])
-                + "got"
-                + f"{[(k, v.shape, v.dtype) for k, v in inputs.items()]}"
-            )
-
-            raise RuntimeError(err_str)
-
-        return {k: v for k, v in inputs.items() if k in [iinfo.name for iinfo in inputs_info]}
-
     def cloud_ai_100_generate(
         self,
         inputs: torch.Tensor,
@@ -1691,33 +1691,12 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
             **compiler_options,
         )
 
-    def auto_correct_inputs(self, inputs):
-        checked = True
-        inputs_info = self.model.get_inputs_info()
-        for valid_input_info in inputs_info:
-            if valid_input_info.name not in inputs:
-                checked = False
-                break
-            if inputs[valid_input_info.name].dtype != valid_input_info.datatype:
-                checked = False
-                break
-
-        if not checked:
-            err_str: str = (
-                "Expected following input names and shapes to be passed\n"
-                + "\n".join([val.__repr__() for val in inputs_info])
-                + "\ngot"
-                + f"{[(k, v.shape, v.dtype) for k, v in inputs.items()]}"
-            )
-
-            raise RuntimeError(err_str)
-
-        return {k: v for k, v in inputs.items() if k in [iinfo.name for iinfo in inputs_info]}
-
     def generate(
         self,
         inputs: torch.Tensor,
         generation_len: int,
+        streamer: Optional[TextStreamer] = None,
+        enable_debug_logs: bool = False,
         device_ids: List[int] = None,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
@@ -1739,7 +1718,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         inputs = self.auto_correct_inputs(inputs)
 
         if self.qpc_session is None:
-            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
+            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids, enable_debug_logs=enable_debug_logs)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
         self.qpc_session.skip_buffers(
@@ -1762,6 +1741,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         next_token = logits.argmax(-1)
         generated_ids[:, 1] = next_token.squeeze(1)
 
+        if streamer:
+            streamer.put(next_token)
+
         inputs["input_features"] = np.random.randn(self.batch_size, self.model.config.num_mel_bins, 1).astype(
             np.float32
         )
@@ -1778,14 +1760,15 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
 
             inputs["decoder_input_ids"] = next_token
             inputs["decoder_position_ids"] += 1
+
+            if streamer:
+                streamer.put(next_token)
         end = perf_counter()
 
         prefill_time, decode_perf, total_perf, total_time = calculate_latency(num_tokens, loop_start, start, end)
 
-        exec_info = CloudAI100ExecInfoNew(
+        return CloudAI100ExecInfoNew(
             batch_size=self.batch_size,
             generated_ids=generated_ids,
             perf_metrics=PerfMetrics(prefill_time, decode_perf, total_perf, total_time),
         )
-
-        return exec_info
