@@ -10,7 +10,6 @@ import hashlib
 import torch.nn as nn
 import transformers
 
-from QEfficient.base.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_utils import TransformersToQEffModulesDict
@@ -96,8 +95,5 @@ def transform(model: QEFFBaseModel, form_factor="cloud"):
     if form_factor != "cloud":
         raise ValueError("Only form_factor='cloud' is supported as of now!")
     # FIXME: move this to class and use model.transform()
-    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:
-        transform_lm(model.model)  # type: ignore
-        return model
-    else:
-        raise NotImplementedError(f"Recieved unsupported class of type {type(model)}")
+    transform_lm(model.model)  # type: ignore
+    return model

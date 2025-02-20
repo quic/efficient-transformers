@@ -92,6 +92,7 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     return bonus_token_inputs, dlm_decode_inputs
 
 
+@pytest.mark.skip()  # remove when the SDK 1.20.0 issue solved for compiling this model
 @pytest.mark.parametrize(
     "prompts, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, draft_model_name, target_model_name, full_batch_size",
     configs,
