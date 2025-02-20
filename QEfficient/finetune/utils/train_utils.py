@@ -94,8 +94,25 @@ def train(
     if train_config.grad_scaler:
         scaler = GradScaler()
 
+    loss_0_counter = torch.tensor([0]).to(device)
+
+    if train_config.enable_ddp:
+        dist.broadcast(loss_0_counter, src=0)
+
     # Start the training loop
     for epoch in range(train_config.num_epochs):
+        if loss_0_counter.item() == train_config.convergence_counter:
+            if train_config.enable_ddp:
+                print(
+                    f"Not proceeding with epoch {epoch + 1} on device {local_rank} since loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps."
+                )
+                break
+            else:
+                print(
+                    f"Not proceeding with epoch {epoch + 1} since loss value has been <= {train_config.convergence_loss}  for last {loss_0_counter.item()} steps."
+                )
+                break
+     
         if train_config.use_peft and train_config.from_peft_checkpoint:
             intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
             if epoch < intermediate_epoch:
@@ -171,6 +188,18 @@ def train(
             total_loss += loss.detach().float()
             # Accumalate graidents
             loss = loss / train_config.gradient_accumulation_steps
+            if train_config.enable_ddp:
+                if local_rank == 0:
+                    if loss <= train_config.convergence_loss:
+                        loss_0_counter += 1
+                    else:
+                        loss_0_counter = torch.tensor([0]).to(device)
+                dist.broadcast(loss_0_counter, src=0)
+            else:
+                if loss <= train_config.convergence_loss:
+                    loss_0_counter += 1
+                else:
+                    loss_0_counter = torch.tensor([0]).to(device)
 
             if train_config.enable_ddp:
                 if local_rank == 0:
@@ -222,12 +251,28 @@ def train(
                     val_step_perplexity,
                     val_prep,
                 )
+            if train_config.enable_ddp:
+                if loss_0_counter.item() == train_config.convergence_counter:
+                    print(
+                        f"Loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps. Hence, stopping the fine tuning on device {local_rank}."
+                    )
+                    break
+            else:
+                if loss_0_counter.item() == train_config.convergence_counter:
+                    print(
+                        f"Loss value has been  <= {train_config.convergence_loss}  for last {loss_0_counter.item()} steps. Hence, stopping the fine tuning."
+                    )
+                    break
 
         pbar.close()
         epoch_end_time = time.perf_counter() - epoch_start_time
         epoch_times.append(epoch_end_time)
+
         if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
             train_epoch_loss = total_loss / (len(train_dataloader) - intermediate_step)
+
+        if loss_0_counter.item() == train_config.convergence_counter:
+            train_epoch_loss = total_loss / step
         else:
             train_epoch_loss = total_loss / len(train_dataloader)
         train_perplexity = torch.exp(train_epoch_loss)

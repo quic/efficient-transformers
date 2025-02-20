@@ -8,9 +8,11 @@
 import json
 import os
 import subprocess
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
+import torch
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
@@ -394,3 +396,25 @@ def create_json(file_path: str, json_data: object):
             json.dump(json_data, file, indent=4)
     except Exception as e:
         print(f"Failed to create JSON File {file_path}: {e}")
+
+
+def model_swap(func):
+    def wrapper(*args, **kwargs):
+        if "model" in kwargs and kwargs["model"] is not None:
+            original_model = args[0].model
+            args[0].model = kwargs["model"]
+            onnx_path = func(*args, **kwargs)
+            args[0].model = original_model
+            return onnx_path
+
+    return wrapper
+
+
+@dataclass
+class IOInfo:
+    name: str
+    datatype: torch.dtype
+    shape: Tuple[Union[int, str], ...]
+
+    def __repr__(self):
+        return f"input_name:{self.name}\tdatatype:{self.datatype}\tshape:{self.shape}"

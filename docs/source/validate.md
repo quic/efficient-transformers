@@ -9,6 +9,8 @@
 | [CodeLlama-13b-hf](https://huggingface.co/codellama/CodeLlama-13b-hf) |✔️ |
 | [CodeLlama-34b-hf](https://huggingface.co/codellama/CodeLlama-34b-hf) |✔️ |
 | [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1) |✔️ |
+| [DeepSeek-R1-Distill-Llama-70B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-70B)|✔️ |
+| [DeepSeek-R1-Distill-Qwen-32B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B)|✔️ |
 | [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) |✔️ |
 | [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b) |✔️ |
 | [GPT2](https://huggingface.co/openai-community/gpt2) |✔️ |
@@ -17,6 +19,8 @@
 | [Gemma-2-2b](https://huggingface.co/google/gemma-2-2b) |✔️ |
 | [Gemma-2-9b](https://huggingface.co/google/gemma-2-9b) |✔️ |
 | [Gemma-2-27b](https://huggingface.co/google/gemma-2-27b) |✔️ |
+| [Granite-3.1-8b-instruct](https://huggingface.co/ibm-granite/granite-3.1-8b-instruct) |✔️ |
+| [Granite-guardian-3.1-8b](https://huggingface.co/ibm-granite/granite-guardian-3.1-8b) |✔️ |
 | [Granite-20b-code-base](https://huggingface.co/ibm-granite/granite-20b-code-base-8k) | ✔️ |
 | [Granite-20b-code-instruct-8k](https://huggingface.co/ibm-granite/granite-20b-code-instruct-8k) | ✔️ |
 | [Jais-adapted-7b](https://huggingface.co/inceptionai/jais-adapted-7b) |✔️ |

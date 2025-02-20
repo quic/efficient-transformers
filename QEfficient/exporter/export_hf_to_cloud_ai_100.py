@@ -13,7 +13,7 @@ from typing import Optional, Tuple, Union
 import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.base.common import AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP, QEFF_MODEL_TYPE, QEFFCommonLoader
+from QEfficient.base.common import QEFFCommonLoader
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.exporter.export_utils import export_onnx, fix_onnx_fp16, generate_input_files, run_model_on_ort
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -307,30 +307,6 @@ def export_kvstyle_transformed_model_to_onnx(
     return model_name
 
 
-def export_for_cloud(
-    model_name: str,
-    qeff_model: QEFFBaseModel,
-    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
-    onnx_dir_path: str,
-    seq_length: int = Constants.SEQ_LEN,
-    full_batch_size: Optional[int] = None,
-) -> str:
-    # FIXME: move all this to class instead of here, and just call qeff_model.export here.
-    if AUTO_MODEL_MAP_TO_MODEL_TYPE_MAP.get(qeff_model.__class__, None) == QEFF_MODEL_TYPE.CAUSALLM:  # type: ignore
-        return export_lm_model_for_cloud(
-            model_name=model_name,
-            qeff_model=qeff_model,  # type: ignore
-            tokenizer=tokenizer,
-            onnx_dir_path=onnx_dir_path,
-            seq_length=seq_length,
-            full_batch_size=full_batch_size,
-        )
-    else:
-        raise NotImplementedError(
-            f"Only model type {QEFFAutoModelForCausalLM.__class__.__name__} is supported for export, got {type(qeff_model)}"
-        )
-
-
 def export_lm_model_for_cloud(
     model_name: str,
     qeff_model: QEFFAutoModelForCausalLM,
@@ -411,7 +387,7 @@ def qualcomm_efficient_converter(
         if model_kv
         else QEFFCommonLoader.from_pretrained(
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-            token=hf_token,
+            hf_token=hf_token,
             cache_dir=cache_dir,
             full_batch_size=full_batch_size,
         )
@@ -434,7 +410,7 @@ def qualcomm_efficient_converter(
     )
 
     if form_factor == "cloud":
-        generated_onnx_model_path = export_for_cloud(
+        generated_onnx_model_path = export_lm_model_for_cloud(
             model_name=model_name,
             qeff_model=model_kv,
             tokenizer=tokenizer,

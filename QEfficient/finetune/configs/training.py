@@ -39,6 +39,10 @@ class train_config:
     intermediate_step_save: int = 1000
     batching_strategy: str = "packing"
     enable_sorting_for_ddp: bool = True
+    convergence_counter: int = 5  # its value should be >= 1, stop fine tuning when loss <= convergence_loss (defined below) for #convergence_counter steps
+    convergence_loss: float = (
+        1e-4  # if loss value is <= convergence_loss for #convergence_counter consecutive steps, fine tuning stops
+    )
 
     # TODO: vbaddi: Uncomment post adding qaic to Pytorch Profiler
     # flop_counter: bool = False # Enable flop counter to measure model throughput, can not be used with pytorch profiler at the same time.
