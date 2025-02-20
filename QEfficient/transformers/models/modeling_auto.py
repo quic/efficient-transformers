@@ -96,6 +96,8 @@ class QEFFTransformersBase(QEFFBaseModel):
             mname = mname[4:]
         return mname
 
+    
+class MultimodalUtilityMixin:
     def auto_correct_inputs(self, inputs):
         checked = True
         inputs_info = self.model.get_inputs_info()
@@ -820,7 +822,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
 
-class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase):
+class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, MultimodalUtilityMixin):
     _hf_auto_class = AutoModelForImageTextToText
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
@@ -1574,7 +1576,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
 
 
-class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
+class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin):
     """
     The QEFFAutoModelForSpeechSeq2Seq class is designed for transformers models with a sequence-to-sequence speech-to-text modeling head, including Whisper and other Encoder-Decoder speech models.
     Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
