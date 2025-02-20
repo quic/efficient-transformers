@@ -96,7 +96,7 @@ class QEFFTransformersBase(QEFFBaseModel):
             mname = mname[4:]
         return mname
 
-    
+
 class MultimodalUtilityMixin:
     def auto_correct_inputs(self, inputs):
         checked = True
@@ -231,7 +231,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
         ``Optional`` Args:
-            :export_dir (str, optional): The directory path to store ONNX-graph.
+           :export_dir (str, optional): The directory path to store ONNX-graph
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
@@ -342,7 +342,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
 
         Returns:
-            np.ndarray: A list of dictionaries containing the generated output features.
+           np.ndarray: A list of dictionaries containing the generated output features.
         """
 
         if self.qpc_session is None:
