@@ -112,7 +112,7 @@ def train(
                     f"Not proceeding with epoch {epoch + 1} since loss value has been <= {train_config.convergence_loss}  for last {loss_0_counter.item()} steps."
                 )
                 break
-     
+
         if train_config.use_peft and train_config.from_peft_checkpoint:
             intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
             if epoch < intermediate_epoch:
@@ -268,13 +268,17 @@ def train(
         epoch_end_time = time.perf_counter() - epoch_start_time
         epoch_times.append(epoch_end_time)
 
-        if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
-            train_epoch_loss = total_loss / (len(train_dataloader) - intermediate_step)
-
         if loss_0_counter.item() == train_config.convergence_counter:
-            train_epoch_loss = total_loss / step
+            if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
+                train_epoch_loss = total_loss / (step - intermediate_step)
+            else:
+                train_epoch_loss = total_loss / step
         else:
-            train_epoch_loss = total_loss / len(train_dataloader)
+            if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
+                train_epoch_loss = total_loss / (len(train_dataloader) - intermediate_step)
+            else:
+                train_epoch_loss = total_loss / len(train_dataloader)
+
         train_perplexity = torch.exp(train_epoch_loss)
 
         train_prep.append(float(train_perplexity))
