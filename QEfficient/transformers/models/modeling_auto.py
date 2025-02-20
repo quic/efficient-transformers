@@ -229,7 +229,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
         ``Optional`` Args:
-        :export_dir (str, optional): The directory path to store ONNX-graph.
+            :export_dir (str, optional): The directory path to store ONNX-graph.
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
@@ -340,7 +340,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
 
         Returns:
-        np.ndarray: A list of dictionaries containing the generated output features.
+            np.ndarray: A list of dictionaries containing the generated output features.
         """
 
         if self.qpc_session is None:
@@ -1576,7 +1576,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
 class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
     """
-    The QEFFAutoModelForSpeechSeq2Seq class is designed for transformers models with a sequence-to-sequence speech-to-text modeing head, including Whisper and other Encoder-Decoder speech models.
+    The QEFFAutoModelForSpeechSeq2Seq class is designed for transformers models with a sequence-to-sequence speech-to-text modeling head, including Whisper and other Encoder-Decoder speech models.
     Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
 
     ``Mandatory`` Args:
@@ -1593,12 +1593,24 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         # Now you can directly compile the model for Cloud AI 100
         model.compile(num_cores=16, device_group=[0])  # Considering you have a Cloud AI 100 SKU
 
-        #prepare input
+        #prepare inputs
         processor = AutoProcessor.from_pretrained(model_name)
         input_audio, sample_rate = [...] # audio data loaded in via some external audio package, such as librosa or soundfile
+        input_features = (
+            processor(data, sampling_rate=sample_rate, return_tensors="pt").input_features.numpy().astype(np.float32)
+        )
+        decoder_input_ids = (
+            torch.ones((batch_size, 1), dtype=torch.int64) * model.model.config.decoder_start_token_id
+        ).numpy()
+        decoder_position_ids = torch.arange(1, dtype=torch.int64).view(1, 1).repeat(batch_size, 1).numpy()
+        inputs = dict(
+            input_features=input_features,
+            decoder_input_ids=decoder_input_ids,
+            decoder_position_ids=decoder_position_ids,
+        )
 
         # You can now execute the model
-        model.generate(processor, inputs, sample_rate=sample_rate)
+        model.generate(inputs, generation_len=150)
     """
 
     _hf_auto_class = AutoModelForSpeechSeq2Seq
@@ -1642,7 +1654,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
-        self._export(inputs, output_names, dynamic_axes, export_dir=export_dir, encoder_decoder=True)
+        self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
 
     def compile(
         self,
@@ -1744,9 +1756,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase):
         if streamer:
             streamer.put(next_token)
 
-        inputs["input_features"] = np.random.randn(self.batch_size, self.model.config.num_mel_bins, 1).astype(
-            np.float32
-        )
+        inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(np.float32)
 
         loop_start = perf_counter()
         for num_tokens in range(generation_len):
