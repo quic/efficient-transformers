@@ -231,7 +231,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
         ``Optional`` Args:
-           :export_dir (str, optional): The directory path to store ONNX-graph
+           :export_dir (str, optional): The directory path to store ONNX-graph.
 
         Returns:
             :str: Path of the generated ``ONNX`` graph.
