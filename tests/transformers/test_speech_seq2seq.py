@@ -119,31 +119,26 @@ def tmp_cache(tmp_path, monkeypatch):
 
 
 # disable compile testing, compile not validated
-# @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
-# @pytest.mark.parametrize("config", configs, ids=config_ids)
-# def test_causal_lm_compile(config, cb, tmp_cache):
-#     model = AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)
-#     qeff_model = QEFFAutoModelForSpeechSeq2Seq(model, cb)
-#     compile_params = {"prefill_seq_len": 8, "ctx_len": 16}
-#     if cb:
-#         compile_params["full_batch_size"] = 32
-#         compile_params["batch_size"] = 8
-#     qeff_model.compile(**compile_params)
-#     model_path = tmp_cache / (qeff_model.model_name + "-" + qeff_model.model_hash)
+@pytest.mark.parametrize("config", configs, ids=config_ids)
+def test_causal_lm_compile(config, tmp_cache):
+    model = AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)
+    qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
+    qeff_model.compile()
+    model_path = tmp_cache / (qeff_model.model_name + "-" + qeff_model.model_hash)
 
-#     # Check if ONNX is exported properly
-#     assert model_path.is_dir()
-#     assert qeff_model.onnx_path.is_file()
-#     assert qeff_model.onnx_path.relative_to(model_path).parts == (qeff_model.model_name + ".onnx",)
+    # Check if ONNX is exported properly
+    assert model_path.is_dir()
+    assert qeff_model.onnx_path.is_file()
+    assert qeff_model.onnx_path.relative_to(model_path).parts == (qeff_model.model_name + ".onnx",)
 
-#     # Check if QPC is compiled properly
-#     assert qeff_model.qpc_path.is_dir()
-#     assert (qeff_model.qpc_path / "programqpc.bin").is_file()
-#     assert qeff_model.qpc_path.relative_to(tmp_cache).parts[0] == qeff_model.model_name + "-" + qeff_model.model_hash
+    # Check if QPC is compiled properly
+    assert qeff_model.qpc_path.is_dir()
+    assert (qeff_model.qpc_path / "programqpc.bin").is_file()
+    assert qeff_model.qpc_path.relative_to(tmp_cache).parts[0] == qeff_model.model_name + "-" + qeff_model.model_hash
 
-#     # Check if there is no re-compilation
-#     start = perf_counter()
-#     qeff_model.compile(**compile_params)
-#     end = perf_counter()
-#     compile_time = end - start
-#     assert compile_time < 2.0
+    # Check if there is no re-compilation
+    start = perf_counter()
+    qeff_model.compile()
+    end = perf_counter()
+    compile_time = end - start
+    assert compile_time < 2.0
