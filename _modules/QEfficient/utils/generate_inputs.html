@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>QEfficient.utils.generate_inputs &mdash; efficient-transformers main documentation</title>
-      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=19f00094" />
       <link rel="stylesheet" type="text/css" href="../../../_static/my_theme.css?v=547657ed" />
 
@@ -68,9 +68,9 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.compile.compile_helper.compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.export.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.finetune.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul>
@@ -130,14 +130,14 @@
 <span class="c1">#</span>
 <span class="c1"># -----------------------------------------------------------------------------</span>
 
-<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
-<span class="kn">import</span> <span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 
-<span class="kn">from</span> <span class="nn">QEfficient.utils</span> <span class="kn">import</span> <span class="n">get_num_layers_from_config</span><span class="p">,</span> <span class="n">get_padding_shape_from_config</span><span class="p">,</span> <span class="n">padding_check_and_fix</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_num_layers_from_config</span><span class="p">,</span> <span class="n">get_padding_shape_from_config</span><span class="p">,</span> <span class="n">padding_check_and_fix</span>
 
 
-<div class="viewcode-block" id="InputHandler"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler">[docs]</a><span class="k">class</span> <span class="nc">InputHandler</span><span class="p">:</span>
-    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">prompt_len</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="p">):</span>
+<div class="viewcode-block" id="InputHandler"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler">[docs]</a><span class="k">class</span><span class="w"> </span><span class="nc">InputHandler</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">prompt_len</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Initialization</span>
 
@@ -162,7 +162,7 @@
             <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="n">full_batch_size</span> <span class="k">if</span> <span class="n">full_batch_size</span> <span class="k">else</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">seq_len</span><span class="o">=</span><span class="n">ctx_len</span>
         <span class="p">)</span>
 
-<div class="viewcode-block" id="InputHandler.prepare_pytorch_inputs"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs">[docs]</a>    <span class="k">def</span> <span class="nf">prepare_pytorch_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<div class="viewcode-block" id="InputHandler.prepare_pytorch_inputs"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">prepare_pytorch_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for creating Prefill stage tensor inputs for PyTorch model.</span>
 
@@ -211,7 +211,7 @@
 
         <span class="k">return</span> <span class="n">inputs</span></div>
 
-<div class="viewcode-block" id="InputHandler.update_pytorch_inputs"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler.update_pytorch_inputs">[docs]</a>    <span class="k">def</span> <span class="nf">update_pytorch_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inputs</span><span class="p">,</span> <span class="n">pt_outputs</span><span class="p">):</span>
+<div class="viewcode-block" id="InputHandler.update_pytorch_inputs"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler.update_pytorch_inputs">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">update_pytorch_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inputs</span><span class="p">,</span> <span class="n">pt_outputs</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for updating Prefill stage inputs to create decode stage inputs for PyTorch model.</span>
 
@@ -246,7 +246,7 @@
 
         <span class="k">return</span> <span class="n">updated_inputs</span></div>
 
-<div class="viewcode-block" id="InputHandler.prepare_ort_inputs"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs">[docs]</a>    <span class="k">def</span> <span class="nf">prepare_ort_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<div class="viewcode-block" id="InputHandler.prepare_ort_inputs"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">prepare_ort_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for creating Prefill stage numpy inputs for ONNX model to be run on ONNXRT.</span>
 
@@ -279,7 +279,7 @@
 
         <span class="k">return</span> <span class="n">inputs</span></div>
 
-<div class="viewcode-block" id="InputHandler.update_ort_inputs"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs">[docs]</a>    <span class="k">def</span> <span class="nf">update_ort_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inputs</span><span class="p">,</span> <span class="n">ort_outputs</span><span class="p">):</span>
+<div class="viewcode-block" id="InputHandler.update_ort_inputs"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">update_ort_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inputs</span><span class="p">,</span> <span class="n">ort_outputs</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.</span>
 
@@ -300,7 +300,7 @@
 
         <span class="k">return</span> <span class="n">updated_inputs</span></div>
 
-<div class="viewcode-block" id="InputHandler.update_ort_outputs"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler.update_ort_outputs">[docs]</a>    <span class="k">def</span> <span class="nf">update_ort_outputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ort_outputs</span><span class="p">):</span>
+<div class="viewcode-block" id="InputHandler.update_ort_outputs"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.generate_inputs.InputHandler.update_ort_outputs">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">update_ort_outputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ort_outputs</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for updating ONNXRT session outputs.</span>
 

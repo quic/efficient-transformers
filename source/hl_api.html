@@ -5,7 +5,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>High Level API &mdash; efficient-transformers main documentation</title>
-      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
       <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=547657ed" />
 
@@ -71,9 +71,9 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.compile.compile_helper.compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.cloud.export.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.cloud.finetune.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul class="current">
@@ -133,6 +133,7 @@
 </li>
 <li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.generation.text_generation_inference"><code class="docutils literal notranslate"><span class="pre">Execute</span></code></a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.CloudAI100ExecInfo"><code class="docutils literal notranslate"><span class="pre">CloudAI100ExecInfo</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.CloudAI100ExecInfoNew"><code class="docutils literal notranslate"><span class="pre">CloudAI100ExecInfoNew</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.PerfMetrics"><code class="docutils literal notranslate"><span class="pre">PerfMetrics</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.calculate_latency"><code class="docutils literal notranslate"><span class="pre">calculate_latency()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv"><code class="docutils literal notranslate"><span class="pre">cloud_ai_100_exec_kv()</span></code></a></li>
@@ -213,8 +214,8 @@ Although it is possible to initialize the class directly, we highly recommend us
 </dl>
 </dd>
 </dl>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">QEfficient</span> <span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span>
-<span class="kn">from</span> <span class="nn">transformers</span> <span class="kn">import</span> <span class="n">AutoTokenizer</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoTokenizer</span>
 
 <span class="n">model_name</span> <span class="o">=</span> <span class="s2">&quot;gpt2&quot;</span>
 <span class="n">model</span> <span class="o">=</span> <span class="n">QEFFAutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">num_hidden_layers</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
@@ -229,8 +230,10 @@ Although it is possible to initialize the class directly, we highly recommend us
 <em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_pretrained</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">pretrained_model_name_or_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">continuous_batching</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_tlm</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForCausalLM.from_pretrained"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.from_pretrained" title="Permalink to this definition"></a></dt>
 <dd><p>This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
 Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.</p>
-<dl class="simple">
-<dt>Args:</dt><dd><dl class="field-list simple">
+<p>This API can also be used as exception for VLM model since transformers support loading InternChatVL models via AutoModel API we support it via AutoModelForCausalLM API
+Args:</p>
+<blockquote>
+<div><dl class="field-list simple">
 <dt class="field-odd">pretrained_name_or_path (str)<span class="colon">:</span></dt>
 <dd class="field-odd"><p>Model card name from HuggingFace or local path to model directory.</p>
 </dd>
@@ -244,10 +247,9 @@ Once the model is initialized, you can use other methods such as export, compile
 <dd class="field-even"><p>Additional arguments to pass to transformers.AutoModelForCausalLM.</p>
 </dd>
 </dl>
-</dd>
-</dl>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">QEfficient</span> <span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span>
-<span class="kn">from</span> <span class="nn">transformers</span> <span class="kn">import</span> <span class="n">AutoTokenizer</span>
+</div></blockquote>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoTokenizer</span>
 
 <span class="c1"># Initialize the model using from_pretrained similar to transformers.AutoModelForCausalLM</span>
 <span class="n">model_name</span> <span class="o">=</span> <span class="s2">&quot;gpt2&quot;</span>
@@ -393,8 +395,8 @@ Although it is possible to initialize the class directly, we highly recommend us
 </dl>
 </dd>
 </dl>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">QEfficient</span> <span class="kn">import</span> <span class="n">QEFFAutoModel</span>
-<span class="kn">from</span> <span class="nn">transformers</span> <span class="kn">import</span> <span class="n">AutoTokenizer</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEFFAutoModel</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoTokenizer</span>
 
 <span class="c1"># Initialize the model using from_pretrained similar to transformers.AutoModel.</span>
 <span class="n">model</span> <span class="o">=</span> <span class="n">QEFFAutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;model_name&quot;</span><span class="p">)</span>
@@ -562,7 +564,7 @@ Once exported and compiled for an adapter, the same can be utilized for another 
 </dl>
 </dd>
 </dl>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">QEfficient</span> <span class="kn">import</span> <span class="n">QEffAutoPeftModelForCausalLM</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEffAutoPeftModelForCausalLM</span>
 
 <span class="n">m</span> <span class="o">=</span> <span class="n">QEffAutoPeftModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;predibase/magicoder&quot;</span><span class="p">,</span> <span class="s2">&quot;magicoder&quot;</span><span class="p">)</span>
 <span class="n">m</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
@@ -751,7 +753,7 @@ Once exported and compiled, the qpc can perform mixed batch inference with provi
 </dl>
 </dd>
 </dl>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">QEfficient.peft.lora</span> <span class="kn">import</span> <span class="n">QEffAutoLoraModelForCausalLM</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.peft.lora</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEffAutoLoraModelForCausalLM</span>
 
 <span class="n">m</span> <span class="o">=</span> <span class="n">QEffAutoPeftModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;mistralai/Mistral-7B-v0.1&quot;</span><span class="p">)</span>
 <span class="n">m</span><span class="o">.</span><span class="n">load_adapter</span><span class="p">(</span><span class="s2">&quot;predibase/gsm8k&quot;</span><span class="p">,</span> <span class="s2">&quot;gsm8k&quot;</span><span class="p">)</span>
@@ -933,7 +935,7 @@ This will download the model from <code class="docutils literal notranslate"><sp
 </dl>
 </dd>
 </dl>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">QEfficient</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">QEfficient</span>
 <span class="n">base_path</span><span class="p">,</span> <span class="n">onnx_model_path</span> <span class="o">=</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;gpt2&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
@@ -1015,7 +1017,7 @@ Generates tensor-slicing configuration if multiple devices are passed in <code c
 </dl>
 </dd></dl>
 
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">QEfficient</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">QEfficient</span>
 <span class="n">base_path</span><span class="p">,</span> <span class="n">onnx_model_path</span> <span class="o">=</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;gpt2&quot;</span><span class="p">)</span>
 <span class="n">qpc_path</span> <span class="o">=</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">onnx_path</span><span class="o">=</span><span class="n">onnx_model_path</span><span class="p">,</span> <span class="n">qpc_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">base_path</span><span class="p">,</span> <span class="s2">&quot;qpc&quot;</span><span class="p">),</span> <span class="n">num_cores</span><span class="o">=</span><span class="mi">14</span><span class="p">,</span> <span class="n">device_group</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
 </pre></div>
@@ -1048,6 +1050,12 @@ Generates tensor-slicing configuration if multiple devices are passed in <code c
 </dl>
 </dd>
 </dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.generation.text_generation_inference.CloudAI100ExecInfoNew">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.generation.text_generation_inference.</span></span><span class="sig-name descname"><span class="pre">CloudAI100ExecInfoNew</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generated_ids</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">numpy.ndarray</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">numpy.ndarray</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">perf_metrics</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.PerfMetrics" title="QEfficient.generation.text_generation_inference.PerfMetrics"><span class="pre">QEfficient.generation.text_generation_inference.PerfMetrics</span></a></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/generation/text_generation_inference.html#CloudAI100ExecInfoNew"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.generation.text_generation_inference.CloudAI100ExecInfoNew" title="Permalink to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
 </dd></dl>
 
 <dl class="py class">
@@ -1155,8 +1163,8 @@ If the number of prompts cannot be divided by the <code class="docutils literal 
 </dl>
 </dd>
 </dl>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">transformers</span>
-<span class="kn">import</span> <span class="nn">QEfficient</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">transformers</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">QEfficient</span>
 <span class="n">base_path</span><span class="p">,</span> <span class="n">onnx_model_path</span> <span class="o">=</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;gpt2&quot;</span><span class="p">)</span>
 <span class="n">qpc_path</span> <span class="o">=</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">onnx_path</span><span class="o">=</span><span class="n">onnx_model_path</span><span class="p">,</span> <span class="n">qpc_path</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">base_path</span><span class="p">,</span> <span class="s2">&quot;qpc&quot;</span><span class="p">),</span> <span class="n">num_cores</span><span class="o">=</span><span class="mi">14</span><span class="p">,</span> <span class="n">device_group</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
 <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">transformers</span><span class="o">.</span><span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;gpt2&quot;</span><span class="p">)</span>
