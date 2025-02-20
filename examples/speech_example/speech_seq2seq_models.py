@@ -13,7 +13,7 @@ from transformers import AutoProcessor
 from QEfficient import QEFFAutoModelForSpeechSeq2Seq
 
 base_model_name = "openai/whisper-tiny"
-ctx_len = 150
+ctx_len = 25
 
 ## STEP 1 -- load audio sample, using a standard english dataset, can load specific files if longer audio needs to be tested; also load initial processor
 ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
@@ -49,4 +49,4 @@ inputs = dict(
 exec_info = qeff_model.generate(inputs=inputs, generation_len=ctx_len)
 
 ## STEP 6 (optional) -- use processor to decode output
-print(processor.batch_decode(exec_info.generated_ids))
+print(processor.batch_decode(exec_info.generated_ids)[0])
