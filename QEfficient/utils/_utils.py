@@ -506,4 +506,3 @@ def create_and_dump_qconfigs(
         qconfigs["qpc_config"]["aic_compiler_config"] = aic_compiler_config
 
     create_json(qconfig_file_path, qconfigs)
-    
