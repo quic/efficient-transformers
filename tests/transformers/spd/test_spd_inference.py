@@ -259,19 +259,13 @@ def test_spec_decode_inference(
         all_accept[valid_batch_indices] = num_tokens_selected[valid_batch_indices] == num_speculative_tokens + 1
         mean_num_accepted_tokens += num_tokens_selected[valid_batch_indices].mean().item()
         # append selected tokens to the generated_ids
-        tlm_precode_position_ids = tlm_precode_inputs["position_ids"] + num_tokens_selected.reshape(
-            decode_batch_size, 1
-        )
-        # tlm_precode_position_ids = tlm_precode_inputs["position_ids"] + num_tokens_selected.reshape(decode_batch_size,1)+1
         for bi, valid in enumerate(valid_batch_indices):
             if not valid:
                 continue
             accepted_tokens = num_tokens_selected[bi]
             num_tokens_to_append = min(accepted_tokens, max_gen_len[bi] - len(generated_ids[bi]))
             generated_ids[bi].extend(target_tokens[bi, :num_tokens_to_append].tolist())
-            # position_ids > ctx_len-1 result in erronous output for logits at each seq_len of TLM
-            # (e.g., ctx_len=128 -> position_ids=[127,128,129] will give erronous output at each predicted token)
-            if len(generated_ids[bi]) >= max_gen_len[bi] or (tlm_precode_position_ids[bi] > ctx_len - 1).any():
+            if len(generated_ids[bi]) >= max_gen_len[bi]:
                 valid_batch_indices[bi] = False
         # check if all generations are done
         if not valid_batch_indices.any():
