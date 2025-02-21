@@ -420,7 +420,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
 
     def __init__(self, model):
         super().__init__(model)
-        # self.model.config.text_config.use_cache=True
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -533,7 +532,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     def compile(
         self,
-        img_size: int,
+        img_size: Optional[int] = None,
         vision_onnx_path: Optional[str] = None,
         lang_onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
@@ -567,7 +566,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         output_names = self.model.get_output_names(kv_offload=True)
 
-        specializations = self.model.get_specializations(
+        specializations, compiler_options = self.model.get_specializations(
             batch_size=batch_size,
             prefill_seq_len=prefill_seq_len,
             ctx_len=ctx_len,
@@ -892,7 +891,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase):
 
         # Get specializations from modelling file
         # TODO: expose this via the auto class as well
-        specializations = self.model.get_specializations(
+        specializations, compiler_options = self.model.get_specializations(
             batch_size=batch_size,
             prefill_seq_len=prefill_seq_len,
             ctx_len=ctx_len,
