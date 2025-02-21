@@ -338,6 +338,7 @@ def compile(
     full_batch_size=None,
     qnn_config: Optional[str] = None,
     qnn_binary_dir: Optional[str] = None,
+    kv_cache_batch_size: Optional[int] = None,
     **kwargs,
 ) -> str:
     """
@@ -362,6 +363,7 @@ def compile(
         :mxint8 (bool): Compress Present/Past KV to ``MXINT8`` using ``CustomIO`` config. ``Defaults to False.``
         :qnn_config (str): Path to ``qnn_config.json`` file (formatted as a string). ``Defaults to None.``
         :qnn_binary_dir (str): Path for saving qnn binaries.
+        :kv_cache_batch_size (int): kv_cache_batch_size for Prefix Caching. ``Defaults to None.``
 
     Returns:
         :str: Path to compiled ``qpc`` package.
@@ -386,6 +388,7 @@ def compile(
         file_path=custom_io_file_path,
         full_batch_size=full_batch_size,
         kv_precision=kv_precision,
+        kv_cache_batch_size=kv_cache_batch_size,
     )
 
     if not os.path.isfile(custom_io_file_path):
