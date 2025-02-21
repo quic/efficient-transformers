@@ -49,7 +49,7 @@ class QEffInternVLModel(nn.Module):
                 "num_patches": num_patches,
                 "img_size": img_size,
             },
-        ]
+        ], compiler_options
 
     def get_onnx_dynamic_axes(
         self,

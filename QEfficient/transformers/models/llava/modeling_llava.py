@@ -102,7 +102,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
                 "max_num_images": max_num_images,
                 "img_size": img_size,
             },
-        ]
+        ], compiler_options
 
     def get_onnx_dynamic_axes(
         self,

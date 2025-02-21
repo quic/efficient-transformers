@@ -1228,9 +1228,9 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         if kv_offload:
             specializations["vision"] = vision
             specializations["lang"] = lang
-            return specializations
+            return specializations, compiler_options
         else:
-            return lang
+            return lang, compiler_options
 
     def get_onnx_dynamic_axes(self, kv_offload: bool = False):
         txt_cfg = self.config.get_text_config()
