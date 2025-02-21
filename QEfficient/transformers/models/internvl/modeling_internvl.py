@@ -34,7 +34,7 @@ class QEffInternVLModel(nn.Module):
             img_size = 448
             logger.warning("Setting img_size to be 448, as it was neither passed nor found in vision_config")
 
-        return [
+        specializations = [
             {
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
@@ -49,7 +49,8 @@ class QEffInternVLModel(nn.Module):
                 "num_patches": num_patches,
                 "img_size": img_size,
             },
-        ], compiler_options
+        ]
+        return specializations, compiler_options
 
     def get_onnx_dynamic_axes(
         self,
