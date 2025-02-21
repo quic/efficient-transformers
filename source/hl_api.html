@@ -71,16 +71,15 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.compile.compile_helper.compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.cloud.export.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="cli_api.html#module-QEfficient.cloud.finetune.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="cli_api.html#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Python API</span></p>
 <ul class="current">
 <li class="toctree-l1 current"><a class="current reference internal" href="#">High Level API</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="#qeffautomodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM</span></code></a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.from_pretrained"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM.from_pretrained()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.export"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM.export()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.compile"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM.compile()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.generate"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM.generate()</span></code></a></li>
@@ -137,6 +136,7 @@
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.PerfMetrics"><code class="docutils literal notranslate"><span class="pre">PerfMetrics</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.calculate_latency"><code class="docutils literal notranslate"><span class="pre">calculate_latency()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv"><code class="docutils literal notranslate"><span class="pre">cloud_ai_100_exec_kv()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.fix_prompt_to_lora_id_mapping"><code class="docutils literal notranslate"><span class="pre">fix_prompt_to_lora_id_mapping()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.fix_prompts"><code class="docutils literal notranslate"><span class="pre">fix_prompts()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#QEfficient.generation.text_generation_inference.get_compilation_dims"><code class="docutils literal notranslate"><span class="pre">get_compilation_dims()</span></code></a></li>
 </ul>
@@ -225,46 +225,6 @@ Although it is possible to initialize the class directly, we highly recommend us
 <span class="n">model</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompts</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Hi there!!&quot;</span><span class="p">],</span> <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">)</span>
 </pre></div>
 </div>
-<dl class="py method">
-<dt class="sig sig-object py" id="QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.from_pretrained">
-<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_pretrained</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">pretrained_model_name_or_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">continuous_batching</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_tlm</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForCausalLM.from_pretrained"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.from_pretrained" title="Permalink to this definition"></a></dt>
-<dd><p>This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
-Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.</p>
-<p>This API can also be used as exception for VLM model since transformers support loading InternChatVL models via AutoModel API we support it via AutoModelForCausalLM API
-Args:</p>
-<blockquote>
-<div><dl class="field-list simple">
-<dt class="field-odd">pretrained_name_or_path (str)<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Model card name from HuggingFace or local path to model directory.</p>
-</dd>
-<dt class="field-even">continuous_batching (bool)<span class="colon">:</span></dt>
-<dd class="field-even"><p>Whether this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.</p>
-</dd>
-<dt class="field-odd">is_tlm (bool)<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Whether this is a Speculative Decoding Target Language Model. If set to True, <cite>num_logits_to_keep</cite> input array will have to be fed to control the number of returned logits during prefill/decode.</p>
-</dd>
-<dt class="field-even">args, kwargs<span class="colon">:</span></dt>
-<dd class="field-even"><p>Additional arguments to pass to transformers.AutoModelForCausalLM.</p>
-</dd>
-</dl>
-</div></blockquote>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEFFAutoModelForCausalLM</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoTokenizer</span>
-
-<span class="c1"># Initialize the model using from_pretrained similar to transformers.AutoModelForCausalLM</span>
-<span class="n">model_name</span> <span class="o">=</span> <span class="s2">&quot;gpt2&quot;</span>
-<span class="n">model</span> <span class="o">=</span> <span class="n">QEFFAutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
-
-<span class="c1"># Now you can directly compile the model for Cloud AI 100</span>
-<span class="n">model</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">num_cores</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span> <span class="c1"># Considering you have a Cloud AI 100 Standard SKU</span>
-
-<span class="c1"># You can now execute the model</span>
-<span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
-<span class="n">model</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompts</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Hi there!!&quot;</span><span class="p">],</span> <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">)</span>
-</pre></div>
-</div>
-</dd></dl>
-
 <dl class="py method">
 <dt class="sig sig-object py" id="QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.export">
 <span class="sig-name descname"><span class="pre">export</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">export_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForCausalLM.export"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.export" title="Permalink to this definition"></a></dt>
@@ -1174,6 +1134,21 @@ If the number of prompts cannot be divided by the <code class="docutils literal 
 </dd></dl>
 
 <dl class="py function">
+<dt class="sig sig-object py" id="QEfficient.generation.text_generation_inference.fix_prompt_to_lora_id_mapping">
+<span class="sig-prename descclassname"><span class="pre">QEfficient.generation.text_generation_inference.</span></span><span class="sig-name descname"><span class="pre">fix_prompt_to_lora_id_mapping</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">prompt_to_lora_id_mapping</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">full_batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/generation/text_generation_inference.html#fix_prompt_to_lora_id_mapping"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.generation.text_generation_inference.fix_prompt_to_lora_id_mapping" title="Permalink to this definition"></a></dt>
+<dd><p>Adjusts the list of prompt_to_lora_id_mapping to match the required batch size.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><p>prompt_to_lora_id_mapping (Optional[List[int]]): Mapping to associate prompts with their respective LoRA adapter.
+batch_size (int): The batch size to process at a time.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><p>full_batch_size (Optional[int]): The full batch size if different from batch_size.</p>
+</dd>
+<dt>Returns:</dt><dd><p>List[int]: Adjusted list of prompt_to_lora_id_mapping.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
 <dt class="sig sig-object py" id="QEfficient.generation.text_generation_inference.fix_prompts">
 <span class="sig-prename descclassname"><span class="pre">QEfficient.generation.text_generation_inference.</span></span><span class="sig-name descname"><span class="pre">fix_prompts</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">prompt</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">full_batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/generation/text_generation_inference.html#fix_prompts"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.generation.text_generation_inference.fix_prompts" title="Permalink to this definition"></a></dt>
 <dd><p>Adjusts the list of prompts to match the required batch size.</p>
@@ -1238,6 +1213,7 @@ Uses qpc path to compute path to specializations.json.</p>
       <dl>
         <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
+        <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
       </dl>
     </div>
 </div><script>
