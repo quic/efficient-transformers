@@ -102,7 +102,7 @@ class MultimodalUtilityMixin:
         if cls is MultimodalUtilityMixin:
             raise TypeError(f"only children of '{cls.__name__}' may be instantiated")
         return object.__new__(cls)
-    
+
     def auto_correct_inputs(self, inputs):
         checked = True
         inputs_info = self.model.get_inputs_info()
