@@ -532,7 +532,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     def compile(
         self,
-        img_size: int,
+        img_size: Optional[int] = None,
         vision_onnx_path: Optional[str] = None,
         lang_onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
@@ -891,7 +891,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase):
 
         # Get specializations from modelling file
         # TODO: expose this via the auto class as well
-        specializations = self.model.get_specializations(
+        specializations, compiler_options = self.model.get_specializations(
             batch_size=batch_size,
             prefill_seq_len=prefill_seq_len,
             ctx_len=ctx_len,
