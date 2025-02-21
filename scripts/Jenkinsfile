@@ -23,7 +23,7 @@ pipeline {
                    pip install --upgrade pip setuptools &&
                    pip install .[test] &&
                    pip install junitparser pytest-xdist &&
-                   pip install librosa==0.10.2 soundfile==0.13.1 &&
+                   pip install librosa==0.10.2 soundfile==0.13.1 && #packages needed to load example for whisper testing
                    rm -rf QEfficient"
                '''
            }

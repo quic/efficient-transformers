@@ -1,5 +1,5 @@
 # Speech Seq2Seq
-This directory contains an example script of how to use the AutoModelForSpeechSeq2Seq class. 
+This directory contains an example script of how to use the AutoModelForSpeechSeq2Seq class. (for now, Whisper models on audio <30 seconds only has been validated)
 
 ## Required packages:
 - `librosa==0.10.2`
