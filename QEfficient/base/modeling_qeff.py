@@ -150,14 +150,12 @@ class QEFFBaseModel(ABC):
             if param in example_inputs:
                 if param == "past_key_values":
                     for i in range(len(example_inputs["past_key_values"])):
-                        if len((example_inputs["past_key_values"][0])) == 2:
-                            input_names.append(f"past_key.{i}")
-                            input_names.append(f"past_value.{i}")
+                        if len(example_inputs["past_key_values"][0]) == 2:
+                            input_names.extend([f"past_key.{i}", f"past_value.{i}"])
+                        elif len(example_inputs["past_key_values"][0]) == 4:
+                            input_names.extend([f"past_key_self.{i}", f"past_value_self.{i}", f"past_key_cross.{i}", f"past_value_cross.{i}"])
                         else:
-                            for self_cross in ["self", "cross"]:
-                                input_names.append(f"past_key_{self_cross}.{i}")
-                                input_names.append(f"past_value_{self_cross}.{i}")
-
+                            raise ValueError(f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(example_inputs['past_key_values'][0])}")
                 else:
                     input_names.append(param)
 
