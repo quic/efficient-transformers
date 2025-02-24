@@ -7,6 +7,7 @@
 
 import os
 from typing import List
+from importlib import reload
 
 import numpy as np
 import onnx
@@ -14,6 +15,7 @@ import onnxruntime
 import pytest
 import torch
 from datasets import load_dataset
+import transformers
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForSpeechSeq2Seq
@@ -83,6 +85,8 @@ def run_seq2seq_pytorch_hf(
         decoder_position_ids=decoder_position_ids,
     )
 
+    # TODO: temporary hack to nullify effect of KVCacheTransform add this as setup_module in pytest
+    reload(transformers.cache_utils)
     # encoder run
     outputs = model(**model_inputs)
 
