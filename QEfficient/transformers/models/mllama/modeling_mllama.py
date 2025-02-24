@@ -1021,7 +1021,7 @@ class QEffMllamaVisionEncoder(nn.Module):
 class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
     def get_qeff_vision_encoder(self):
         return QEffMllamaVisionEncoder(self)
-    
+
     def get_qeff_language_decoder(self):
         return self
 
