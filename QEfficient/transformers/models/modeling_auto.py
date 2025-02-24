@@ -46,8 +46,6 @@ from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
 
-MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6 = ["MllamaForConditionalGeneration"]
-
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
@@ -905,11 +903,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase):
             if output_name.endswith("_RetainedState"):
                 custom_io[output_name] = kv_cache_dtype
 
-        if self.model_name in MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6 and mxfp6_matmul:
-            logger.warning(
-                f"It is advised to use fp16 precision during compilation for {self.model.__class__.__name__} to avoid accuracy issues, got mxfp6_matmul=True"
-            )
-
         self._compile(
             onnx_path,
             compile_dir,
@@ -1130,15 +1123,6 @@ class QEFFAutoModelForImageTextToText:
     _hf_auto_class = AutoModelForImageTextToText
 
     def __new__(self, model: nn.Module, kv_offload: Optional[bool] = None, **kwargs):
-        if model.config.architectures[0] in MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6 and not kv_offload:
-            # For models with mxfp6 accuracy issue, we will use kv_offload=True by default
-            if kv_offload is None:
-                kv_offload = True
-            else:
-                logger.warning(f"Advised to use kv_offload=True for {model.__class__.__name__}")
-        elif kv_offload is None:
-            kv_offload = False
-
         if kv_offload:
             return _QEffAutoModelForImageTextToTextDualQPC(model, **kwargs)
         else:
