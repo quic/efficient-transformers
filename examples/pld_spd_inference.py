@@ -30,6 +30,11 @@ class SpDPerfMetrics:
         :mean_num_accepted_tokens (float): Average number of accepted tokens.
         :max_gen_len (int): Max generation length.
         :generated_tokens_per_prompt (List[int]): Total generated tokens per prompt.
+        :e2e_time (float): Total end-to-end time.
+        :decode_time (float): Total decode time.
+        :decode_draft_time (float): Total draft time.
+        :decode_target_time (float): Total target time.
+        :decode_iterations (int): Total decode iterations.
     """
 
     mean_ttft: float
@@ -39,6 +44,11 @@ class SpDPerfMetrics:
     mean_num_accepted_tokens: float
     max_gen_len: int
     generated_tokens_per_prompt: List[int]
+    e2e_time: float
+    decode_time: float
+    decode_draft_time: float
+    decode_target_time: float
+    decode_iterations: int
 
 
 @dataclass
@@ -319,8 +329,11 @@ def pld_spec_decode_inference(
     all_accept = np.full(decode_batch_size, False, dtype=bool)
     tlm_position_ids = np.arange(num_speculative_tokens + 1).reshape(1, -1).repeat(decode_batch_size, axis=0)
     empty_indices = np.zeros(decode_batch_size, dtype=bool)
+    decode_draft_time = 0.0
+    decode_target_time = 0.0
     while True:
         it += 1
+        draft_start = perf_counter()
         for bi, valid in enumerate(valid_batch_indices):
             if not valid:
                 continue
@@ -341,11 +354,16 @@ def pld_spec_decode_inference(
                 tlm_precode_inputs["position_ids"][bi, 1:] = -1
             else:
                 tlm_precode_inputs["input_ids"][bi, 1:] = spec_tokens
+        draft_end = perf_counter() - draft_start
+        decode_draft_time += draft_end
         # run precode on TLM to score the proposed tokens
+        target_start = perf_counter()
         tlm_outputs = target_model_session.run(tlm_precode_inputs)
         target_logits = tlm_outputs["logits"]
         # greedy sampling from target model
         target_tokens = target_logits.argmax(-1)
+        target_end = perf_counter() - target_start
+        decode_target_time += target_end
         # exact matching between draft and target tokens
         num_tokens_selected = np.ones(decode_batch_size, dtype=np.int64)
         tlm_precode_position_ids = np.full((decode_batch_size, num_speculative_tokens + 1), -1, dtype=np.int64)
@@ -406,6 +424,11 @@ def pld_spec_decode_inference(
         mean_num_accepted_tokens,
         max_gen_len,
         generated_tokens_per_prompt,
+        e2e_end,
+        decode_end,
+        decode_draft_time,
+        decode_target_time,
+        it
     )
     draft_model_name = "PLD"
     exec_info = SpDCloudAI100ExecInfo(
