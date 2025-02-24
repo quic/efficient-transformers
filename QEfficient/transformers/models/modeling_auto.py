@@ -572,7 +572,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             ctx_len=ctx_len,
             img_size=img_size,
             kv_offload=True,
-            kv_offlaod=True,
             **compiler_options,
         )
 
@@ -592,17 +591,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ):
             self.export()
 
-        if mxfp6_matmul and self.model_name in MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6:
-            logger.warning(
-                "Due to accuracy issues of vision model fixing it's precision to fp16, while language model will be compiled for mxfp6"
-            )
-
         self.vision_model._compile(
             compile_dir,
             compile_only=True,
             specializations=specializations["vision"],
             convert_to_fp16=True,
-            mxfp6_matmul=False,
+            mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             custom_io=custom_io_vision,
