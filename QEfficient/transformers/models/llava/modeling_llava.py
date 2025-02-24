@@ -52,7 +52,7 @@ class QEFFLlavaVisionEncoder(nn.Module):
 class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
     def get_qeff_vision_encoder(self):
         return QEFFLlavaVisionEncoder(self)
-    
+
     def get_qeff_language_decoder(self):
         return self.language_model
 
