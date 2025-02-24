@@ -22,7 +22,7 @@ def main(
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
-    mos: Optional[int] = None,
+    mos: Optional[int] = 1,
     batch_size: int = 1,
     full_batch_size: Optional[int] = None,
     prompt_len: int = 32,
@@ -51,7 +51,7 @@ def main(
         :prompt (str): Sample prompt for the model text generation. ``Defaults to None.``
         :prompts_txt_file_path (str): Path to txt file for multiple input prompts. ``Defaults to None.``
         :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
-        :mos (int): Effort level to reduce the on-chip memory. ``Defaults to -1.``
+        :mos (int): Effort level to reduce the on-chip memory. ``Defaults to 1.``
         :batch_size (int): Batch size to compile the model for. ``Defaults to 1.``
         :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Default to None``
         :prompt_len (int): Prompt length for the model to compile. ``Defaults to 32.``
@@ -193,7 +193,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mos",
         type=int,
-        default=None,
+        default=1,
         help="Effort level to reduce the on-chip memory",
     )
     # FIXME: Add verbose feature
