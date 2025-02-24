@@ -6,11 +6,12 @@
 # -----------------------------------------------------------------------------
 
 import torch
+import torch.nn as nn
 import torch.utils.checkpoint
 from transformers.models.llava.modeling_llava import (
     LlavaForConditionalGeneration,
 )
-import torch.nn as nn
+
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.logging_utils import logger
 
@@ -21,11 +22,10 @@ CTX_LEN = 1024
 
 
 class QEFFLlavaVisionEncoder(nn.Module):
-
     def __init__(self, model):
         super().__init__()
         self.model = model
-    
+
     def forward(self, input_ids, pixel_values):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         # Image features
@@ -49,9 +49,7 @@ class QEFFLlavaVisionEncoder(nn.Module):
         return image_inputs_embeds
 
 
-
 class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
-
     def get_qeff_vision_encoder(self):
         return QEFFLlavaVisionEncoder(self)
 
@@ -92,9 +90,12 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             img_size = getattr(vis_cfg, "image_size", 336)
         else:
             img_size = 336
-        vision_inputs = {"input_ids": torch.ones((BS, SEQ_LEN), dtype=torch.int64), "pixel_values": torch.zeros((BS, NUM_CHANNEL, img_size, img_size), dtype=torch.float32)}
+        vision_inputs = {
+            "input_ids": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
+            "pixel_values": torch.zeros((BS, NUM_CHANNEL, img_size, img_size), dtype=torch.float32),
+        }
         lang_inputs = {
-            "inputs_embeds": torch.ones((BS, SEQ_LEN, self.language_model.config.hidden_size), dtype=torch.float32), 
+            "inputs_embeds": torch.ones((BS, SEQ_LEN, self.language_model.config.hidden_size), dtype=torch.float32),
             "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
         }
         lang_inputs["position_ids"] = lang_inputs.pop("attention_mask").cumsum(1)
@@ -118,8 +119,13 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         return inputs
 
     def get_specializations(
-        self, batch_size: int, prefill_seq_len: int, ctx_len: int, img_size: int, 
-        kv_offload: bool = False, **compiler_options
+        self,
+        batch_size: int,
+        prefill_seq_len: int,
+        ctx_len: int,
+        img_size: int,
+        kv_offload: bool = False,
+        **compiler_options,
     ):
         max_num_images = compiler_options.pop("max_num_images", 1)
         prefill_seq_len = prefill_seq_len if prefill_seq_len else SEQ_LEN
@@ -130,8 +136,15 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             img_size = 336
             logger.warning("Setting img_size to be 336, as it was neither passed nor found in vision_config")
 
-        vision = [{"batch_size": batch_size, "max_num_images": max_num_images, "img_size": img_size, "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len}]
+        vision = [
+            {
+                "batch_size": batch_size,
+                "max_num_images": max_num_images,
+                "img_size": img_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+            }
+        ]
         lang = [
             {
                 "batch_size": batch_size,
@@ -157,9 +170,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(
-        self, kv_offload: bool = False
-    ):
+    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
 
@@ -186,15 +197,13 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
 
-    def get_output_names(
-        self, kv_offload: bool = False
-    ):
+    def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["inputs_embeds"]
         lang_output_names = ["logits", "pixel_values_RetainedState"]
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
-        
+
         output_names = {}
         if kv_offload:
             lang_output_names.pop(1)

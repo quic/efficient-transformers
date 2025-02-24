@@ -14,9 +14,7 @@ from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.logging_utils import logger
 
 
-
 class QEffInternVisionEncoder2QPC(nn.Module):
-
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -39,12 +37,17 @@ class QEffInternVisionEncoder2QPC(nn.Module):
 
 
 class QEffInternVLModel(nn.Module):
-
     def get_qeff_vision_encoder(self):
         return QEffInternVisionEncoder2QPC(self)
-    
+
     def get_specializations(
-        self, batch_size: int, prefill_seq_len: int, ctx_len: int, img_size: int, kv_offload: bool = False, **compiler_options
+        self,
+        batch_size: int,
+        prefill_seq_len: int,
+        ctx_len: int,
+        img_size: int,
+        kv_offload: bool = False,
+        **compiler_options,
     ):
         # TODO: check if this should be named num_patches or something else
         num_patches = compiler_options.pop("num_patches", None)
@@ -62,7 +65,15 @@ class QEffInternVLModel(nn.Module):
             img_size = 448
             logger.warning("Setting img_size to be 448, as it was neither passed nor found in vision_config")
 
-        vision = [{"batch_size": batch_size, "num_patches": num_patches, "img_size": img_size, "seq_len": prefill_seq_len, "ctx_len": ctx_len,}]
+        vision = [
+            {
+                "batch_size": batch_size,
+                "num_patches": num_patches,
+                "img_size": img_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+            }
+        ]
         lang = [
             {
                 "batch_size": batch_size,
@@ -88,11 +99,8 @@ class QEffInternVLModel(nn.Module):
             return specializations, compiler_options
         else:
             return lang, compiler_options
-        
 
-    def get_onnx_dynamic_axes(
-        self, kv_offload: bool = False
-    ):
+    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
         # Define dynamic axes
         vision_dynamic_axes = {}
         lang_dynamic_axes = {}
@@ -116,12 +124,8 @@ class QEffInternVLModel(nn.Module):
             lang_dynamic_axes.pop("inputs_embeds")
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
-    
 
-    def get_output_names(
-        self, kv_offload: bool = False
-    ):
-        
+    def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["inputs_embeds"]
         lang_output_names = ["logits", "pixel_values_RetainedState"]
         for i in range(self.language_model.config.num_hidden_layers):
@@ -138,7 +142,6 @@ class QEffInternVLModel(nn.Module):
         return output_names
 
     def get_dummy_inputs(self, kv_offload: bool = False):
-
         num_patches = 13
         C = 3
         if vis_cfg := getattr(self.config, "vision_config", None):
@@ -149,7 +152,11 @@ class QEffInternVLModel(nn.Module):
         # Define shapes
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-        inputs_shapes["inputs_embeds"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, self.language_model.config.hidden_size)
+        inputs_shapes["inputs_embeds"] = (
+            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            self.language_model.config.hidden_size,
+        )
         inputs_shapes["position_ids"] = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
