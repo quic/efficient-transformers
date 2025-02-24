@@ -572,7 +572,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             ctx_len=ctx_len,
             img_size=img_size,
             kv_offload=True,
-            kv_offlaod=True,
             **compiler_options,
         )
 
