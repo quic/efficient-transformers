@@ -6,16 +6,16 @@
 # -----------------------------------------------------------------------------
 
 import os
-from typing import List
 from importlib import reload
+from typing import List
 
 import numpy as np
 import onnx
 import onnxruntime
 import pytest
 import torch
-from datasets import load_dataset
 import transformers
+from datasets import load_dataset
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForSpeechSeq2Seq
