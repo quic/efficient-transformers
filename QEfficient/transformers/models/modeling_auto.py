@@ -392,7 +392,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
 
 class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
-    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
+    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform, KVCacheModuleMethodMapperTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.modules):
@@ -453,9 +453,12 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         VlmKVOffloadTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    MODELS_WITH_LANGUAGE_MODEL_AS_SECOND_QPC = ["LlavaForConditionalGeneration", "InternVLChatModel"]
 
     def __init__(self, model):
         super().__init__(model)
+        if self.model_name in self.MODELS_WITH_LANGUAGE_MODEL_AS_SECOND_QPC:
+            self.model = self.model.language_model
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -504,7 +507,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
 
 class _QEffAutoModelForImageTextToTextDualQPC:
     _hf_auto_class = AutoModelForImageTextToText
-    UNSUPPORTED_MODELS = ["LlavaForConditionalGeneration", "InternVLChatModel"]
+    EARLYFUSION_MODELS = ["LlavaForConditionalGeneration", "InternVLChatModel"]
 
     def __init__(
         self,
@@ -515,8 +518,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         self.model = model
         self.config = model.config
-        if self.model_name in self.UNSUPPORTED_MODELS:
-            raise NotImplementedError(f"kv_offload is not yet supported for {self.model.__class__.__name__}")
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model)
 
@@ -713,16 +714,23 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             [x for x in lang_session.input_names + lang_session.output_names if x.startswith("past_")]
         )
 
+        if self.model_name in self.EARLYFUSION_MODELS:
+            input_ids = "inputs_embeds"
+        else:
+            input_ids = "input_ids"
+
         # Read prompt and ctx len from session
         batch_size = max(
-            [x[lang_session.binding_index_map["input_ids"]][1][0] for x in lang_session.allowed_shapes]
-            + [lang_session.bindings[lang_session.binding_index_map["input_ids"]].dims[0]]
+            [x[lang_session.binding_index_map[input_ids]][1][0] for x in lang_session.allowed_shapes]
+            + [lang_session.bindings[lang_session.binding_index_map[input_ids]].dims[0]]
         )
 
         prefill_seq_len = max(
-            [x[lang_session.binding_index_map["input_ids"]][1][1] for x in lang_session.allowed_shapes]
-            + [lang_session.bindings[lang_session.binding_index_map["input_ids"]].dims[1]]
+            [x[lang_session.binding_index_map[input_ids]][1][1] for x in lang_session.allowed_shapes]
+            + [lang_session.bindings[lang_session.binding_index_map[input_ids]].dims[1]]
         )
+        embeds = self.model.language_model.get_input_embeddings()
+
 
         input_len = inputs["attention_mask"].sum(1, keepdims=True)
         input_ids_length = inputs["input_ids"].shape[1]
@@ -757,11 +765,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         vision_inputs = {
             k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
-
+        
+        if input_ids == "inputs_embeds":
+            vision_inputs["input_ids"] = inputs["input_ids"]
         vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
         vision_outputs = vision_session.run(vision_inputs)
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
+        if input_ids == "inputs_embeds":
+            lang_inputs["inputs_embeds"] = vision_outputs["inputs_embeds"].astype("float32")
         lang_inputs["position_ids"] = np.where(
             lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
         )  # Need to use -1 as position_ids for invalid tokens
@@ -774,7 +786,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Run prefill
         for i in range(num_chunks):
             chunk_inputs = lang_inputs.copy()
-            chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            chunk_inputs[input_ids] = lang_inputs[input_ids][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][
                 :, i * prefill_seq_len : (i + 1) * prefill_seq_len
             ]
@@ -796,6 +808,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         if streamer:
             streamer.put(lang_inputs["input_ids"][0])
+        if input_ids == "inputs_embeds":
+                lang_inputs["inputs_embeds"] = embeds(torch.tensor(lang_inputs.pop('input_ids'))).detach().numpy()
 
         # Decode loop
         decode_start = perf_counter()
@@ -806,9 +820,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             lang_inputs["input_ids"] = outputs["logits"].argmax(2)
             lang_inputs["position_ids"] += 1
             generated_ids[:, num_token] = lang_inputs["input_ids"].squeeze(1)
-
             if streamer:
                 streamer.put(lang_inputs["input_ids"][0])
+            if input_ids == "inputs_embeds":
+                lang_inputs["inputs_embeds"] = embeds(torch.tensor(lang_inputs.pop('input_ids'))).detach().numpy()
 
         decode_end = perf_counter()
         if streamer:
