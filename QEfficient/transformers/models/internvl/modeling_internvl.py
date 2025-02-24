@@ -39,6 +39,9 @@ class QEffInternVisionEncoder2QPC(nn.Module):
 class QEffInternVLModel(nn.Module):
     def get_qeff_vision_encoder(self):
         return QEffInternVisionEncoder2QPC(self)
+    
+    def get_qeff_language_decoder(self):
+        return self.language_model
 
     def get_specializations(
         self,
