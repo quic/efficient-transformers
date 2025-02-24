@@ -392,7 +392,13 @@ class QEFFAutoModel(QEFFTransformersBase):
 
 
 class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
-    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform, KVCacheModuleMethodMapperTransform]
+    _pytorch_transforms = [
+        AwqToMatmulNbitsTransform,
+        GPTQToMatmulNbitsTransform,
+        CustomOpsTransform,
+        KVCacheTransform,
+        KVCacheModuleMethodMapperTransform,
+    ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.modules):
@@ -731,7 +737,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
         embeds = self.model.language_model.get_input_embeddings()
 
-
         input_len = inputs["attention_mask"].sum(1, keepdims=True)
         input_ids_length = inputs["input_ids"].shape[1]
         num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
@@ -765,7 +770,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         vision_inputs = {
             k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
-        
+
         if input_ids == "inputs_embeds":
             vision_inputs["input_ids"] = inputs["input_ids"]
         vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
@@ -809,7 +814,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if streamer:
             streamer.put(lang_inputs["input_ids"][0])
         if input_ids == "inputs_embeds":
-                lang_inputs["inputs_embeds"] = embeds(torch.tensor(lang_inputs.pop('input_ids'))).detach().numpy()
+            lang_inputs["inputs_embeds"] = embeds(torch.tensor(lang_inputs.pop("input_ids"))).detach().numpy()
 
         # Decode loop
         decode_start = perf_counter()
@@ -823,7 +828,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             if streamer:
                 streamer.put(lang_inputs["input_ids"][0])
             if input_ids == "inputs_embeds":
-                lang_inputs["inputs_embeds"] = embeds(torch.tensor(lang_inputs.pop('input_ids'))).detach().numpy()
+                lang_inputs["inputs_embeds"] = embeds(torch.tensor(lang_inputs.pop("input_ids"))).detach().numpy()
 
         decode_end = perf_counter()
         if streamer:
