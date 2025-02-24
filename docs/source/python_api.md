@@ -11,6 +11,8 @@
    :member-order: bysource
    :members:
 ``` 
+
+(QEFFAutoModel)=
 ### `QEFFAutoModel`
 
 ```{eval-rst}
@@ -18,6 +20,8 @@
    :member-order: bysource
    :members:
 ``` 
+
+(QEffAutoPeftModelForCausalLM)=
 ### `QEffAutoPeftModelForCausalLM`
 
 ```{eval-rst}
@@ -26,6 +30,7 @@
    :members:
 ```
 
+(QEffAutoLoraModelForCausalLM)=
 ### `QEffAutoLoraModelForCausalLM`
 
 ```{eval-rst}
@@ -59,6 +64,7 @@
 .. deprecated::
    This function will be deprecated in version 1.19, please use QEFFAutoModelForCausalLM.compile instead
 ```
+
 ### `Execute`
 
 ```{eval-rst}
