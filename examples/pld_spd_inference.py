@@ -18,7 +18,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 
 @dataclass
-class PerfMetrics:
+class SpDPerfMetrics:
     """
     Holds all performance metrics
 
@@ -42,7 +42,7 @@ class PerfMetrics:
 
 
 @dataclass
-class CloudAI100ExecInfo:
+class SpDCloudAI100ExecInfo:
     """
     Holds all the information about Cloud AI 100 execution
 
@@ -51,7 +51,7 @@ class CloudAI100ExecInfo:
         :batch_size (int): Batch size of the QPC compilation.
         :generated_texts (Union[List[List[str]], List[str]]): Generated text(s).
         :generated_ids (Union[List[np.ndarray], np.ndarray]): Generated IDs.
-        :perf_metrics (PerfMetrics): Performance metrics.
+        :perf_metrics (SpDPerfMetrics): Performance metrics.
         :num_speculative_tokens (int): Number of speculative tokens.
         :prefill_seq_len (int): Prefill sequence length.
         :ctx_len (int): Context length.
@@ -65,7 +65,7 @@ class CloudAI100ExecInfo:
     batch_size: int
     generated_texts: Union[List[str], List[List[str]]]
     generated_ids: Union[List[np.ndarray], np.ndarray]
-    perf_metrics: PerfMetrics
+    perf_metrics: SpDPerfMetrics
     num_speculative_tokens: int
     prefill_seq_len: int
     ctx_len: int
@@ -196,7 +196,7 @@ def pld_spec_decode_inference(
     full_batch_size: Optional[int],
     device_group: List[int],
     max_ngram_size: int,
-) -> CloudAI100ExecInfo:
+) -> SpDCloudAI100ExecInfo:
     """
     Perform draft speculative decode inference on the given prompts.
 
@@ -212,7 +212,7 @@ def pld_spec_decode_inference(
         max_ngram_size (int): Max ngram size.
 
     Returns:
-        CloudAI100ExecInfo: Execution information, including performance metrics and generated text.
+        SpDCloudAI100ExecInfo: Execution information, including performance metrics and generated text.
     """
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
@@ -398,7 +398,7 @@ def pld_spec_decode_inference(
     e2e_throughput = (sum(generated_tokens_per_prompt) + decode_batch_size) / e2e_end
     batch_decode = tokenizer.batch_decode(generated_ids)
     mean_num_accepted_tokens /= it
-    perf_metrics = PerfMetrics(
+    perf_metrics = SpDPerfMetrics(
         mean_ttft,
         batch_ttft,
         decode_throughput,
@@ -408,7 +408,7 @@ def pld_spec_decode_inference(
         generated_tokens_per_prompt,
     )
     draft_model_name = "PLD"
-    exec_info = CloudAI100ExecInfo(
+    exec_info = SpDCloudAI100ExecInfo(
         prompts,
         decode_batch_size,
         batch_decode,
