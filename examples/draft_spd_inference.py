@@ -410,7 +410,7 @@ def draft_spec_decode_inference(
         decode_end,
         decode_draft_time,
         decode_target_time,
-        it
+        it,
     )
     exec_info = SpDCloudAI100ExecInfo(
         prompts,

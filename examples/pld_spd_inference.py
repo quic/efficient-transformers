@@ -428,7 +428,7 @@ def pld_spec_decode_inference(
         decode_end,
         decode_draft_time,
         decode_target_time,
-        it
+        it,
     )
     draft_model_name = "PLD"
     exec_info = SpDCloudAI100ExecInfo(
