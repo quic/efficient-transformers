@@ -52,6 +52,9 @@ class QEFFLlavaVisionEncoder(nn.Module):
 class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
     def get_qeff_vision_encoder(self):
         return QEFFLlavaVisionEncoder(self)
+    
+    def get_qeff_language_decoder(self):
+        return self.language_model
 
     def forward(self, input_ids, position_ids, pixel_values, past_key_values):
         inputs_embeds = self.get_input_embeddings()(input_ids)

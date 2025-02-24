@@ -459,12 +459,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         VlmKVOffloadTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
-    MODELS_WITH_LANGUAGE_MODEL_AS_SECOND_QPC = ["LlavaForConditionalGeneration", "InternVLChatModel"]
 
     def __init__(self, model):
         super().__init__(model)
-        if self.model_name in self.MODELS_WITH_LANGUAGE_MODEL_AS_SECOND_QPC:
-            self.model = self.model.language_model
+        self.model = model.get_qeff_language_decoder()
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
