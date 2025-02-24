@@ -22,7 +22,7 @@ def main(
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
-    mos: int = -1,
+    mos: Optional[int] = None,
     batch_size: int = 1,
     full_batch_size: Optional[int] = None,
     prompt_len: int = 32,
@@ -193,7 +193,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mos",
         type=int,
-        default=-1,
+        default=None,
         help="Effort level to reduce the on-chip memory",
     )
     # FIXME: Add verbose feature

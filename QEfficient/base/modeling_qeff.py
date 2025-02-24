@@ -238,6 +238,8 @@ class QEFFBaseModel(ABC):
                 if value:
                     command.append(option)
                 continue
+            if option == "-mos" and value is None:
+                continue
             command.append(f"{option}={value}")
         compile_hash = hashlib.sha256(to_hashable(command))
 
