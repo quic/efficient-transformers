@@ -144,13 +144,27 @@ class QEFFBaseModel(ABC):
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
 
         # Create input_names from example_inputs
+
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
                 if param == "past_key_values":
                     for i in range(len(example_inputs["past_key_values"])):
-                        input_names.append(f"past_key.{i}")
-                        input_names.append(f"past_value.{i}")
+                        if len(example_inputs["past_key_values"][0]) == 2:
+                            input_names.extend([f"past_key.{i}", f"past_value.{i}"])
+                        elif len(example_inputs["past_key_values"][0]) == 4:
+                            input_names.extend(
+                                [
+                                    f"past_key_self.{i}",
+                                    f"past_value_self.{i}",
+                                    f"past_key_cross.{i}",
+                                    f"past_value_cross.{i}",
+                                ]
+                            )
+                        else:
+                            raise ValueError(
+                                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(example_inputs['past_key_values'][0])}"
+                            )
                 else:
                     input_names.append(param)
 
@@ -339,6 +353,7 @@ class QEFFBaseModel(ABC):
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         qnn_config: Optional[str] = None,
+        kv_cache_batch_size: Optional[int] = None,
     ) -> str:
         """
         Interface for QNN compiler
@@ -356,6 +371,7 @@ class QEFFBaseModel(ABC):
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to True``.
             :mxint8_kv_cache (bool, optional): Whether to use ``mxint8`` compression for KV cache. ``Defaults to False``.
             :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
+            :kv_cache_batch_size (int): kv_cache_batch_size for Prefix Caching. ``Defaults to None.``
         """
         if onnx_path is None and self.onnx_path is None:
             self.export()
@@ -415,6 +431,7 @@ class QEFFBaseModel(ABC):
             full_batch_size=full_batch_size,
             qnn_config=qnn_config,
             qnn_binary_dir=qpc_path,
+            kv_cache_batch_size=kv_cache_batch_size,
         )
 
         self.qpc_path = qpc_path

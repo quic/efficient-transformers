@@ -30,6 +30,7 @@ if check_qaic_sdk():
         QEFFAutoModel,
         QEFFAutoModelForCausalLM,
         QEFFAutoModelForImageTextToText,
+        QEFFAutoModelForSpeechSeq2Seq,
         QEFFCommonLoader,
     )
     from QEfficient.compile.compile_helper import compile
@@ -50,6 +51,7 @@ if check_qaic_sdk():
         "QEFFAutoModelForCausalLM",
         "QEffAutoPeftModelForCausalLM",
         "QEFFAutoModelForImageTextToText",
+        "QEFFAutoModelForSpeechSeq2Seq",
         "QEFFCommonLoader",
     ]
 
