@@ -57,10 +57,23 @@ class CloudAI100ExecInfo:
     perf_metrics: PerfMetrics
 
     def __repr__(self):
-        return f"Average Prefill time a.k.a TTFT is= {round(self.perf_metrics.prefill_time, 2)}\
-        \nDecode token/sec is= {round(self.perf_metrics.decode_perf * self.batch_size, 2)}\
-        \nTotal token/sec is= {round(self.perf_metrics.total_perf * self.batch_size, 2)}\
-        \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)}"
+        return f"Average Prefill time a.k.a TTFT is= {round(self.perf_metrics.prefill_time, 2)} sec\
+        \nDecode is= {round(self.perf_metrics.decode_perf * self.batch_size, 2)} tokens/sec\
+        \nTotal is= {round(self.perf_metrics.total_perf * self.batch_size, 2)} tokens/sec\
+        \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)} tokens/sec"
+
+
+@dataclass
+class CloudAI100ExecInfoNew:
+    batch_size: int
+    generated_ids: Union[List[np.ndarray], np.ndarray]
+    perf_metrics: PerfMetrics
+
+    def __repr__(self):
+        return f"Average Prefill time a.k.a TTFT is= {round(self.perf_metrics.prefill_time, 2)} sec\
+        \nDecode is= {round(self.perf_metrics.decode_perf * self.batch_size, 2)} token/sec\
+        \nTotal is= {round(self.perf_metrics.total_perf * self.batch_size, 2)} token/sec\
+        \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)} sec"
 
 
 io_files = []
@@ -220,6 +233,40 @@ def fix_prompts(prompt: List[str], batch_size: int, full_batch_size: int = None)
     return prompt
 
 
+def fix_prompt_to_lora_id_mapping(prompt_to_lora_id_mapping: List[int], batch_size: int, full_batch_size: int = None):
+    """
+    Adjusts the list of prompt_to_lora_id_mapping to match the required batch size.
+
+    ``Mandatory`` Args:
+        prompt_to_lora_id_mapping (Optional[List[int]]): Mapping to associate prompts with their respective LoRA adapter.
+        batch_size (int): The batch size to process at a time.
+
+    ``Optional`` Args:
+        full_batch_size (Optional[int]): The full batch size if different from batch_size.
+
+    Returns:
+        List[int]: Adjusted list of prompt_to_lora_id_mapping.
+    """
+    exec_batch_size = full_batch_size if full_batch_size is not None else batch_size
+
+    if len(prompt_to_lora_id_mapping) < exec_batch_size:
+        logger.warning(
+            "Prompt_to_lora_id_mapping are less than batch size/full batch size, repeating to required batch size"
+        )
+        prompt_to_lora_id_mapping = (
+            prompt_to_lora_id_mapping * (exec_batch_size // len(prompt_to_lora_id_mapping) + 1)
+        )[:exec_batch_size]
+    elif full_batch_size is None and len(prompt_to_lora_id_mapping) % batch_size != 0:
+        logger.warning(
+            "prompt_to_lora_id_mapping are not multiple of batch size, dropping last incomplete batch from given input prompts"
+        )
+        prompt_to_lora_id_mapping = prompt_to_lora_id_mapping[
+            : batch_size * (len(prompt_to_lora_id_mapping) // batch_size)
+        ]
+
+    return prompt_to_lora_id_mapping
+
+
 def read_prompts_txt_file(prompts_txt_file_path: str):
     prompt = []
     with open(prompts_txt_file_path, "r") as file:
@@ -312,6 +359,10 @@ def cloud_ai_100_exec_kv(
     batch_size, ctx_len, full_batch_size = get_compilation_dims(qpc_path)
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
     prompt = fix_prompts(prompt, batch_size, full_batch_size)
+    if prompt_to_lora_id_mapping is not None:
+        prompt_to_lora_id_mapping = fix_prompt_to_lora_id_mapping(
+            prompt_to_lora_id_mapping, batch_size, full_batch_size
+        )
     generate_text = TextGeneration(
         tokenizer=tokenizer,
         qpc_path=qpc_path,

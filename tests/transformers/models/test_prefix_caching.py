@@ -5,12 +5,15 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
+
 import numpy as np
 import pytest
 from transformers import AutoTokenizer
 
 from QEfficient.generation.text_generation_inference import TextGeneration
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.utils._utils import create_json
 
 test_models = ["gpt2"]
 
@@ -27,14 +30,48 @@ def test_simple_prefix_caching(model_name):
         kv_cache_batch_size=4,
         num_cores=14,
     )
+    prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
 
+
+@pytest.mark.on_qaic
+@pytest.mark.qnn
+@pytest.mark.parametrize("model_name", test_models)
+def test_simple_prefix_caching_qnn(model_name):
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True)
+    qnn_config = {
+        "convertor_args_extension": "",
+        "context_binary_generator_args_extension": "--log_level debug",
+        "qnn_compilation_backend": {
+            "compiler_enable_depth_first": True,
+            "compiler_printDDRStats": False,
+            "compiler_printPerfMetrics": False,
+        },
+        "SKIP_QNN_CONVERTOR_STEP": False,
+    }
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, qnn_config)
+
+    qeff_model.compile(
+        prefill_seq_len=128,
+        ctx_len=256,
+        full_batch_size=2,
+        kv_cache_batch_size=4,
+        num_cores=14,
+        enable_qnn=True,
+        qnn_config=qnn_config_json_path,
+    )
+    prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
+    os.remove(qnn_config_json_path)
+
+
+def prefix_caching_inference(model_name, qpc_path):
     prefixes = ["Once upon a time ", "Once upon a time "]
     suffixes1 = ["in a land far away", "there was a small village"]
     suffixes2 = ["a little girl", "in a bustling city"]
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    generator = TextGeneration(tokenizer=tokenizer, qpc_path=qeff_model.qpc_path, full_batch_size=2, ctx_len=256)
+    generator = TextGeneration(tokenizer=tokenizer, qpc_path=qpc_path, full_batch_size=2, ctx_len=256)
 
     prompts = [pref + suff for pref, suff in zip(prefixes, suffixes1)]
 

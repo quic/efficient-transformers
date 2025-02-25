@@ -44,12 +44,20 @@ from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeModel,
 )
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
+from transformers.models.granite.modeling_granite import (
+    GraniteAttention,
+    GraniteForCausalLM,
+    GraniteModel,
+)
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
     LlamaForCausalLM,
     LlamaModel,
     LlamaRMSNorm,
+)
+from transformers.models.llava.modeling_llava import (
+    LlavaForConditionalGeneration,
 )
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
@@ -69,11 +77,14 @@ from transformers.models.mixtral.modeling_mixtral import (
 from transformers.models.mllama.modeling_mllama import (
     MllamaCrossAttentionDecoderLayer,
     MllamaForCausalLM,
+    MllamaForConditionalGeneration,
+    MllamaRotaryEmbedding,
     MllamaSelfAttentionDecoderLayer,
     MllamaTextCrossAttention,
     MllamaTextModel,
     MllamaTextRMSNorm,
     MllamaTextSelfAttention,
+    MllamaVisionModel,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 from transformers.models.phi.modeling_phi import PhiAttention, PhiDecoderLayer, PhiForCausalLM, PhiModel
@@ -97,8 +108,17 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2ForCausalLM,
     Starcoder2Model,
 )
+from transformers.models.whisper.modeling_whisper import (
+    WhisperAttention,
+    WhisperDecoder,
+    WhisperDecoderLayer,
+    WhisperEncoder,
+    WhisperForConditionalGeneration,
+    WhisperModel,
+    WhisperPositionalEmbedding,
+)
 
-from QEfficient.base.pytorch_transforms import ModuleMappingTransform
+from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.codegen.modeling_codegen import (
@@ -143,11 +163,23 @@ from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJForCausalLM,
     QEffGPTJModel,
 )
+from QEfficient.transformers.models.granite.modeling_granite import (
+    QEffGraniteAttention,
+    QEffGraniteForCausalLM,
+    QEffGraniteModel,
+)
+from QEfficient.transformers.models.internvl.modeling_internvl import (
+    QEffInternVisionEmbeddings,
+    QEffInternVLModel,
+)
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
+)
+from QEfficient.transformers.models.llava.modeling_llava import (
+    QEffLlavaForConditionalGeneration,
 )
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
@@ -165,10 +197,14 @@ from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
 from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaCrossAttentionDecoderLayer,
     QEffMllamaForCausalLM,
+    QEffMllamaForConditionalGeneration,
+    QEffMllamaRotaryEmbedding,
     QEffMllamaSelfAttentionDecoderLayer,
-    QEffMllamaTextCrossAttention,
+    QEffMllamaTextCrossAttentionSingleQPC,
+    QEffMllamaTextCrossAttentionTwoQPC,
     QEffMllamaTextModel,
     QEffMllamaTextSelfAttention,
+    QEffMllamaVisionModel,
 )
 from QEfficient.transformers.models.mpt.modeling_mpt import (
     QEffMptAttention,
@@ -199,6 +235,15 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEFFStarcoder2DecoderLayer,
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
+)
+from QEfficient.transformers.models.whisper.modeling_whisper import (
+    QEffWhisperAttention,
+    QEffWhisperDecoder,
+    QEffWhisperDecoderLayer,
+    QEffWhisperEncoder,
+    QEffWhisperForConditionalGeneration,
+    QEffWhisperModel,
+    QEffWhisperPositionalEmbedding,
 )
 from QEfficient.transformers.spd.causal_lm_forward import tlm_forward
 
@@ -243,6 +288,8 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaDecoderLayer: QEffLlamaDecoderLayer,
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
+        # Llava
+        LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
         # Gemma
         GemmaAttention: QEffGemmaAttention,
         GemmaDecoderLayer: QEffGemmaDecoderLayer,
@@ -253,13 +300,20 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
         Gemma2Model: QEffGemma2Model,
         Gemma2ForCausalLM: QEffGemma2ForCausalLM,
+        # Granite
+        GraniteModel: QEffGraniteModel,
+        GraniteForCausalLM: QEffGraniteForCausalLM,
+        GraniteAttention: QEffGraniteAttention,
         # mllama
-        MllamaForCausalLM: QEffMllamaForCausalLM,
-        MllamaTextModel: QEffMllamaTextModel,
+        MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
-        MllamaTextCrossAttention: QEffMllamaTextCrossAttention,
-        MllamaCrossAttentionDecoderLayer: QEffMllamaCrossAttentionDecoderLayer,
         MllamaSelfAttentionDecoderLayer: QEffMllamaSelfAttentionDecoderLayer,
+        MllamaCrossAttentionDecoderLayer: QEffMllamaCrossAttentionDecoderLayer,
+        MllamaRotaryEmbedding: QEffMllamaRotaryEmbedding,
+        MllamaVisionModel: QEffMllamaVisionModel,
+        MllamaTextModel: QEffMllamaTextModel,
+        MllamaForCausalLM: QEffMllamaForCausalLM,
+        MllamaForConditionalGeneration: QEffMllamaForConditionalGeneration,
         # Mistral
         MistralAttention: QEffMistralAttention,
         MistralDecoderLayer: QEffMistralDecoderLayer,
@@ -301,6 +355,14 @@ class KVCacheTransform(ModuleMappingTransform):
         GPTBigCodeBlock: QEffGPTBigCodeBlock,
         GPTBigCodeModel: QEffGPTBigCodeModel,
         GPTBigCodeForCausalLM: QEffGPTBigCodeForCausalLM,
+        # Whisper encoder and decoder layers
+        WhisperPositionalEmbedding: QEffWhisperPositionalEmbedding,
+        WhisperAttention: QEffWhisperAttention,
+        WhisperDecoderLayer: QEffWhisperDecoderLayer,
+        WhisperEncoder: QEffWhisperEncoder,
+        WhisperDecoder: QEffWhisperDecoder,
+        WhisperModel: QEffWhisperModel,
+        WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
     }
 
     @classmethod
@@ -344,3 +406,34 @@ class SpDTransform:
             )
 
         return model, transformed
+
+
+class VlmKVOffloadTransform(ModuleMappingTransform):
+    # supported architectures
+    _module_mapping = {
+        # Llama
+        MllamaTextCrossAttention: QEffMllamaTextCrossAttentionTwoQPC,
+    }
+
+
+class VlmNoKVOffloadTransform(ModuleMappingTransform):
+    # supported architectures
+    _module_mapping = {
+        # Llama
+        MllamaTextCrossAttention: QEffMllamaTextCrossAttentionSingleQPC,
+    }
+
+
+class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
+    _match_string_replace_method = {
+        "InternVLChatModel": {
+            "forward": QEffInternVLModel.forward,
+            "get_dummy_inputs": QEffInternVLModel.get_dummy_inputs,
+            "get_specializations": QEffInternVLModel.get_specializations,
+            "get_onnx_dynamic_axes": QEffInternVLModel.get_onnx_dynamic_axes,
+            "get_output_names": QEffInternVLModel.get_output_names,
+            "get_inputs_info": QEffInternVLModel.get_inputs_info,
+        },
+        "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
+    }
+    _match_class_replace_method = {}

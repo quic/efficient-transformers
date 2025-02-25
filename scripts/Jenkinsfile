@@ -24,6 +24,7 @@ pipeline {
                    pip install .[test] &&
                    pip install junitparser pytest-xdist &&
                    pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl &&
+                   pip install librosa==0.10.2 soundfile==0.13.1 && #packages needed to load example for whisper testing
                    rm -rf QEfficient"
                '''
            }
@@ -70,6 +71,8 @@ pipeline {
                        timeout(time: 15, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
+                    	   source /qnn_sdk/bin/envsetup.sh &&
+                      	   source /qnn_sdk/bin/envcheck -c &&
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/cli &&

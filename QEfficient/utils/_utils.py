@@ -8,12 +8,14 @@
 import json
 import os
 import subprocess
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
+import torch
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
-from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers import AutoProcessor, AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
@@ -184,6 +186,30 @@ def load_hf_tokenizer(
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
 
     return tokenizer
+
+
+def load_hf_processor(
+    pretrained_model_name_or_path: str,
+    cache_dir: Optional[str] = None,
+    hf_token: Optional[str] = None,
+    **kwargs,
+) -> Union[PreTrainedTokenizerFast, PreTrainedTokenizer]:
+    logger.info("Loading Processor")
+    if hf_token is not None:
+        login(hf_token)
+    # Download tokenizer along with model if it doesn't exist
+    model_hf_path = (
+        pretrained_model_name_or_path
+        if os.path.isdir(pretrained_model_name_or_path)
+        else hf_download(
+            repo_id=pretrained_model_name_or_path,
+            cache_dir=cache_dir,
+            allow_patterns=["*.json", "*.py", "*token*", "*.txt"],
+        )
+    )
+    processor = AutoProcessor.from_pretrained(model_hf_path, trust_remote_code=True, **kwargs)
+
+    return processor
 
 
 def get_qpc_dir_path(
@@ -394,3 +420,25 @@ def create_json(file_path: str, json_data: object):
             json.dump(json_data, file, indent=4)
     except Exception as e:
         print(f"Failed to create JSON File {file_path}: {e}")
+
+
+def model_swap(func):
+    def wrapper(*args, **kwargs):
+        if "model" in kwargs and kwargs["model"] is not None:
+            original_model = args[0].model
+            args[0].model = kwargs["model"]
+            onnx_path = func(*args, **kwargs)
+            args[0].model = original_model
+            return onnx_path
+
+    return wrapper
+
+
+@dataclass
+class IOInfo:
+    name: str
+    datatype: torch.dtype
+    shape: Tuple[Union[int, str], ...]
+
+    def __repr__(self):
+        return f"input_name:{self.name}\tdatatype:{self.datatype}\tshape:{self.shape}"

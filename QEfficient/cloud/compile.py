@@ -89,7 +89,7 @@ if __name__ == "__main__":
         default=False,
         help="Enables QNN. Optionally, a configuration file can be provided with [--enable_qnn CONFIG_FILE].\
              If not provided, the default configuration will be used.\
-             Sample Config: QEfficient/cloud/compile/qnn_config.json",
+             Sample Config: QEfficient/compile/qnn_config.json",
     )
     parser.add_argument(
         "qnn_config",

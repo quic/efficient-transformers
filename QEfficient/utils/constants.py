@@ -13,6 +13,18 @@ QEFF_DIR = os.path.dirname(UTILS_DIR)
 ROOT_DIR = os.path.dirname(QEFF_DIR)
 QEFF_CACHE_DIR_NAME = "qeff_cache"
 
+ONNX_EXPORT_EXAMPLE_BATCH_SIZE = 1
+ONNX_EXPORT_EXAMPLE_SEQ_LEN = 32
+ONNX_EXPORT_EXAMPLE_FBS = 4
+ONNX_EXPORT_EXAMPLE_NLK = 2  # Number of Logits to Keep
+ONNX_EXPORT_OPSET = 13
+ONNX_EXPORT_MAX_NUM_IMAGES = 1
+ONNX_EXPORT_MAX_IMAGE_TILES = 4
+ONNX_EXPORT_IMAGE_WIDTH = 560
+ONNX_EXPORT_IMAGE_LENGHT = 560
+ONNX_EXPORT_IMAGE_DEPTH = 3
+ONNX_EXPORT_CTX_LEN = 1024
+
 
 # Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
 def get_models_dir():
@@ -124,6 +136,7 @@ class QnnConstants:
         "--float_bitwidth ",
         "--preserve_io_datatype",
         "--onnx_skip_simplification",
+        "--onnx_defer_loading",
     ]
 
     IMMUTABLE_CONTEXT_BIN_GEN_ARGS = [

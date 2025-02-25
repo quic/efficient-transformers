@@ -11,12 +11,14 @@ import math
 from typing import List, Optional, Tuple, Union
 
 import torch
+import torch.nn.functional as F
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import (
+    BaseModelOutput,
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
@@ -25,93 +27,28 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaConfig,
     MllamaCrossAttentionDecoderLayer,
     MllamaForCausalLM,
+    MllamaForConditionalGeneration,
     MllamaRotaryEmbedding,
     MllamaSelfAttentionDecoderLayer,
     MllamaTextCrossAttention,
     MllamaTextModel,
     MllamaTextSelfAttention,
+    MllamaVisionModel,
     logger,
     repeat_kv,
     rotate_half,
 )
 
-from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.modeling_utils import (
+    _create_causal_mask,
+    _prepare_aspect_ratio_attention_mask,
+    _prepare_cross_attention_mask,
+)
+from QEfficient.utils import constants
+from QEfficient.utils._utils import IOInfo
 
-
-class QEffMllamaRotaryEmbedding(MllamaRotaryEmbedding):
-    """
-    Copied from MllamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mllama/modeling_mllama.py
-    The only differences are:
-    - Add static sin/cos computations.
-    """
-
-    def __init__(
-        self,
-        dim=None,
-        max_position_embeddings=2048,
-        base=10000,
-        device=None,
-        scaling_factor=1.0,
-        rope_type="default",
-        config: Optional[MllamaConfig] = None,
-    ):
-        super(MllamaRotaryEmbedding, self).__init__()  # Initialize nn.Module
-        # TODO (joao): remove the `if` below, only used for BC
-        self.rope_kwargs = {}
-        if config is None:
-            logger.warning_once(
-                "`LlamaRotaryEmbedding` can now be fully parameterized by passing the model config through the "
-                "`config` argument. All other arguments will be removed in v4.45"
-            )
-            self.rope_kwargs = {
-                "rope_type": rope_type,
-                "factor": scaling_factor,
-                "dim": dim,
-                "base": base,
-                "max_position_embeddings": max_position_embeddings,
-            }
-            self.rope_type = rope_type
-            self.max_seq_len_cached = max_position_embeddings
-            self.original_max_seq_len = max_position_embeddings
-        else:
-            # BC: "rope_type" was originally "type"
-            if config.rope_scaling is not None:
-                self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
-            else:
-                self.rope_type = "default"
-            self.max_seq_len_cached = config.max_position_embeddings
-            self.original_max_seq_len = config.max_position_embeddings
-
-        self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device, **self.rope_kwargs)
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-
-        # Build here to make `torch.jit.trace` work.
-        self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
-        )
-
-    def _set_cos_sin_cache(self, seq_len, device, dtype):
-        self.max_seq_len_cached = seq_len
-        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
-
-        freqs = torch.outer(t, self.inv_freq)
-
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
-        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-        )
+MAX_NUM_IMG = 1
+NUM_CHANNEL = 3
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
@@ -143,6 +80,85 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     k_embed = (k * cos) + (rotate_half(k) * sin)
     # Cast back to original dtype
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
+
+
+class QEffMllamaTextCrossAttentionSingleQPC(MllamaTextCrossAttention):
+    """
+    Copied from MllamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mllama/modeling_mllama.py
+    The only differences are:
+        - add new args cache idx for the kv retention
+    """
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        cross_attention_states: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = False,
+        use_cache: bool = None,
+        cache_position: Optional[torch.LongTensor] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        """Input shape: Batch x Time x Channel"""
+        bsz, q_len, _ = hidden_states.size()
+        query_states = self.q_proj(hidden_states)
+        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        query_states = self.q_norm(query_states)
+
+        # elif past_key_value is not None:
+        # Fetch old cache
+        key_states_old = past_key_value.key_cache[self.layer_idx]
+        value_states_old = past_key_value.value_cache[self.layer_idx]
+
+        # if cross_attention_states is not None:
+        # Compute new KV states
+        key_states = self.k_proj(cross_attention_states)
+        value_states = self.v_proj(cross_attention_states)
+        key_states = key_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+
+        # Out-of-place Scatter new into old
+        # out-of-place is important so the original tensor is not affected,
+        # otherwise leads to same operations in both graphs
+        indices = (torch.arange(bsz),)
+        key_states_new = torch.index_put(key_states_old, indices, key_states)
+        value_states_new = torch.index_put(value_states_old, indices, value_states)
+
+        # Select old or new image KV states based on q_len
+        key_states = torch.where(q_len == 1, key_states_old, key_states_new)
+        value_states = torch.where(q_len == 1, value_states_old, value_states_new)
+
+        # Update the image cache
+        past_key_value.key_cache[self.layer_idx] = key_states
+        past_key_value.value_cache[self.layer_idx] = value_states
+
+        key_states = repeat_kv(key_states, self.num_key_value_groups)
+        value_states = repeat_kv(value_states, self.num_key_value_groups)
+
+        key_states = self.k_norm(key_states)
+
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+
+        if attention_mask is not None:  # no matter the length, we just slice it
+            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+            attn_weights = attn_weights + causal_mask
+            # attn_weights = torch.where(
+            #     attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights
+            # )
+
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_weights = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
+        attn_output = torch.matmul(attn_weights, value_states)
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.reshape(bsz, q_len, -1)
+        attn_output = self.o_proj(attn_output)
+
+        if not output_attentions:
+            attn_weights = None
+
+        return attn_output, attn_weights, past_key_value
 
 
 class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
@@ -200,7 +216,12 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+            }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -219,74 +240,6 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.view(bsz, q_len, -1)
 
-        attn_output = self.o_proj(attn_output)
-
-        if not output_attentions:
-            attn_weights = None
-
-        return attn_output, attn_weights, past_key_value
-
-
-class QEffMllamaTextCrossAttention(MllamaTextCrossAttention):
-    """
-    Copied from MllamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mllama/modeling_mllama.py
-    The only differences are:
-        - add new args cache idx for the kv retention
-    """
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        cross_attention_states: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        output_attentions: bool = False,
-        use_cache: bool = None,
-        cache_position: Optional[torch.LongTensor] = None,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        """Input shape: Batch x Time x Channel"""
-        bsz, q_len, _ = hidden_states.size()
-        query_states = self.q_proj(hidden_states)
-        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-        query_states = self.q_norm(query_states)
-
-        if cross_attention_states is not None:
-            key_states = self.k_proj(cross_attention_states)
-            value_states = self.v_proj(cross_attention_states)
-            key_states = key_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-            value_states = value_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-            key_states = repeat_kv(key_states, self.num_key_value_groups)
-            value_states = repeat_kv(value_states, self.num_key_value_groups)
-
-            key_states = self.k_norm(key_states)
-            if past_key_value is not None:
-                # if we have a new image + new tokens, we only computed key_states on that new image
-                # we still update the cross key states, past_image, new_image. And use it!
-                key_states, value_states = past_key_value.update(
-                    key_states, value_states, self.layer_idx, {"batch_index": batch_index, "position_ids": position_ids}
-                )
-        elif cache_position[0] != 0:
-            key_states, value_states = (
-                past_key_value.key_cache[self.layer_idx],
-                past_key_value.value_cache[self.layer_idx],
-            )
-        else:
-            raise ValueError(
-                "Cross attention layer can't find neither `cross_attn_states` nor cached values for key/values!"
-            )
-
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
-
-        if attention_mask is not None:  # no matter the length, we just slice it
-            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
-
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_weights = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
-        attn_output = torch.matmul(attn_weights, value_states)
-        attn_output = attn_output.transpose(1, 2).contiguous()
-        attn_output = attn_output.reshape(bsz, q_len, -1)
         attn_output = self.o_proj(attn_output)
 
         if not output_attentions:
@@ -374,6 +327,79 @@ class QEffMllamaSelfAttentionDecoderLayer(MllamaSelfAttentionDecoderLayer):
         return outputs
 
 
+class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
+    """
+    Copied from MllamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mllama/modeling_mllama.py
+    The only differences are:
+        - add new args cache idx for the kv retention
+    """
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        cross_attention_states: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = False,
+        use_cache: bool = None,
+        cache_position: Optional[torch.LongTensor] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        """Input shape: Batch x Time x Channel"""
+        bsz, q_len, _ = hidden_states.size()
+        query_states = self.q_proj(hidden_states)
+        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        query_states = self.q_norm(query_states)
+
+        if cross_attention_states is not None:
+            key_states = self.k_proj(cross_attention_states)
+            value_states = self.v_proj(cross_attention_states)
+            key_states = key_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+            value_states = value_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+            if past_key_value is not None:
+                # if we have a new image + new tokens, we only computed key_states on that new image
+                # we still update the cross key states, past_image, new_image. And use it!
+                key_states, value_states = past_key_value.update(
+                    key_states,
+                    value_states,
+                    self.layer_idx,
+                    {"batch_index": batch_index, "position_ids": position_ids},
+                )
+        elif past_key_value is not None:
+            key_states, value_states = (
+                past_key_value.key_cache[self.layer_idx],
+                past_key_value.value_cache[self.layer_idx],
+            )
+        else:
+            raise ValueError(
+                "Cross attention layer can't find neither `cross_attn_states` nor cached values for key/values!"
+            )
+
+        key_states = repeat_kv(key_states, self.num_key_value_groups)
+        value_states = repeat_kv(value_states, self.num_key_value_groups)
+
+        key_states = self.k_norm(key_states)
+
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+
+        if attention_mask is not None:  # no matter the length, we just slice it
+            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+            attn_weights = attn_weights + causal_mask
+
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_weights = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
+        attn_output = torch.matmul(attn_weights, value_states)
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.reshape(bsz, q_len, -1)
+        attn_output = self.o_proj(attn_output)
+
+        if not output_attentions:
+            attn_weights = None
+
+        return attn_output, attn_weights, past_key_value
+
+
 class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
     """
     Copied from MllamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mllama/modeling_mllama.py
@@ -428,22 +454,227 @@ class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
         return outputs
 
 
+class QEffMllamaRotaryEmbedding(MllamaRotaryEmbedding):
+    """
+    Copied from MllamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mllama/modeling_mllama.py
+    The only differences are:
+    - Add static sin/cos computations.
+    """
+
+    def __init__(
+        self,
+        dim=None,
+        max_position_embeddings=2048,
+        base=10000,
+        device=None,
+        scaling_factor=1.0,
+        rope_type="default",
+        config: Optional[MllamaConfig] = None,
+    ):
+        super(MllamaRotaryEmbedding, self).__init__()  # Initialize nn.Module
+        # TODO (joao): remove the `if` below, only used for BC
+        self.rope_kwargs = {}
+        if config is None:
+            logger.warning_once(
+                "`LlamaRotaryEmbedding` can now be fully parameterized by passing the model config through the "
+                "`config` argument. All other arguments will be removed in v4.45"
+            )
+            self.rope_kwargs = {
+                "rope_type": rope_type,
+                "factor": scaling_factor,
+                "dim": dim,
+                "base": base,
+                "max_position_embeddings": max_position_embeddings,
+            }
+            self.rope_type = rope_type
+            self.max_seq_len_cached = max_position_embeddings
+            self.original_max_seq_len = max_position_embeddings
+        else:
+            # BC: "rope_type" was originally "type"
+            if config.rope_scaling is not None:
+                self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
+            else:
+                self.rope_type = "default"
+            self.max_seq_len_cached = config.max_position_embeddings
+            self.original_max_seq_len = config.max_position_embeddings
+
+        self.config = config
+        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+
+        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device, **self.rope_kwargs)
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+
+        # Build here to make `torch.jit.trace` work.
+        self._set_cos_sin_cache(
+            seq_len=self.original_max_seq_len,
+            device=self.inv_freq.device,
+            dtype=torch.get_default_dtype(),
+        )
+
+    def _set_cos_sin_cache(self, seq_len, device, dtype):
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
+
+        freqs = torch.outer(t, self.inv_freq)
+
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def forward(self, x, seq_len=None):
+        # x: [bs, num_attention_heads, seq_len, head_size]
+        if seq_len > self.max_seq_len_cached:
+            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
+
+        return (
+            self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
+            self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
+        )
+
+
+class QEffMllamaVisionModel(MllamaVisionModel):
+    def forward(
+        self,
+        pixel_values: torch.Tensor,
+        aspect_ratio_ids: torch.Tensor,
+        aspect_ratio_mask: torch.Tensor,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[BaseModelOutput, Tuple[torch.Tensor, ...]]:
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        batch_size, num_concurrent_media, num_tiles, num_channels, height, width = pixel_values.shape
+
+        pixel_values = pixel_values.reshape(batch_size * num_concurrent_media * num_tiles, num_channels, height, width)
+        aspect_ratio_ids = aspect_ratio_ids.reshape(batch_size * num_concurrent_media, -1)
+
+        # Patch embedding
+        patch_embeds = self.patch_embedding(pixel_values.to(self.dtype).to(self.device))
+        hidden_state = patch_embeds.flatten(2).transpose(1, 2)
+
+        # Tile embeddings
+        _, num_patches, dim = hidden_state.shape
+        hidden_state = hidden_state.reshape(batch_size * num_concurrent_media, num_tiles, -1, dim)
+        hidden_state = self.pre_tile_positional_embedding(hidden_state, aspect_ratio_ids)
+
+        # Add cls token
+        hidden_state = hidden_state.reshape(batch_size * num_concurrent_media * num_tiles, num_patches, dim)
+        hidden_state = self.apply_class_embedding(hidden_state)
+        num_patches += 1
+
+        # Position embeddings
+        hidden_state = hidden_state.reshape(batch_size * num_concurrent_media, num_tiles, num_patches, dim)
+        hidden_state = self.gated_positional_embedding(hidden_state, aspect_ratio_ids)
+
+        hidden_state = self.layernorm_pre(hidden_state)
+
+        # Compute the number of tokens to pad
+        num_padding_patches = (8 - (hidden_state.shape[-2] % 8)) % 8
+        # Compute padding tuple for pad function
+        padding = (
+            0,
+            0,
+            0,
+            num_padding_patches,
+        )  # (pad_left, pad_right, pad_left for dim -2, pad_right for dim -2)
+        # Pad the tensor
+        hidden_state = F.pad(hidden_state, padding, mode="constant", value=0)
+        slice_index = -num_padding_patches if num_padding_patches > 0 else None
+
+        # Prepare attention mask
+        attention_mask = aspect_ratio_mask.reshape(batch_size * num_concurrent_media, -1)
+        attention_mask = _prepare_aspect_ratio_attention_mask(
+            aspect_ratio_mask=attention_mask,
+            num_patches=self.num_patches,
+            target_length=hidden_state.shape[2],
+            dtype=self.dtype,
+        )
+
+        # Apply encoder
+        hidden_state = hidden_state.view(batch_size * num_concurrent_media, -1, dim)
+        output = self.transformer(
+            hidden_state,
+            attention_mask=attention_mask,
+            output_hidden_states=True,
+            output_attentions=output_attentions,
+        )
+        hidden_state = output[0]
+
+        hidden_state = self.layernorm_post(hidden_state)
+
+        # Apply global encoder
+        hidden_state = hidden_state.reshape(
+            batch_size * num_concurrent_media, num_tiles, num_patches + num_padding_patches, dim
+        )
+        hidden_state = self.post_tile_positional_embedding(hidden_state, aspect_ratio_ids)
+        hidden_state = hidden_state.reshape(
+            batch_size * num_concurrent_media, num_tiles * (num_patches + num_padding_patches), dim
+        )
+        global_output = self.global_transformer(
+            hidden_state,
+            attention_mask=attention_mask,
+            output_hidden_states=output_hidden_states,
+            output_attentions=output_attentions,
+        )
+        hidden_state = global_output[0]
+
+        # Remove padding form hidden state
+        hidden_state = hidden_state.reshape(
+            batch_size * num_concurrent_media, num_tiles, num_patches + num_padding_patches, dim
+        )
+        hidden_state = hidden_state[:, :, :slice_index]
+        hidden_state = hidden_state.reshape(batch_size, num_concurrent_media, num_tiles, num_patches, dim)
+
+        # Collect intermediate layer outputs from encoder output
+        all_intermediate_hidden_states = output[1]
+        intermediate_hidden_states = torch.stack(all_intermediate_hidden_states, dim=-1)
+        intermediate_hidden_states = intermediate_hidden_states[..., self.intermediate_layers_indices]
+
+        # Remove padding from intermediate hidden states
+        intermediate_hidden_states = intermediate_hidden_states.reshape(
+            batch_size * num_concurrent_media, num_tiles, num_patches + num_padding_patches, -1
+        )
+        intermediate_hidden_states = intermediate_hidden_states[:, :, :slice_index]
+        intermediate_hidden_states = intermediate_hidden_states.reshape(
+            batch_size, num_concurrent_media, num_tiles, num_patches, -1
+        )
+
+        # Concatenate final hidden state and intermediate hidden states
+        hidden_state = torch.cat([hidden_state, intermediate_hidden_states], dim=-1)
+
+        if output_hidden_states:
+            hidden_states = tuple(all_intermediate_hidden_states) + tuple(global_output[1])
+        else:
+            hidden_states = None
+
+        if output_attentions:
+            # global transformer in contrast to `self.transformer` doesn't always return hidden states so we might go index out-of-range
+            global_attn = tuple(global_output[2]) if output_hidden_states else tuple(global_output[1])
+            attentions = tuple(output[2]) + global_attn
+        else:
+            attentions = None
+
+        if not return_dict:
+            return tuple(v for v in [hidden_state, hidden_states, attentions] if v is not None)
+
+        return BaseModelOutput(
+            last_hidden_state=hidden_state,
+            hidden_states=hidden_states,
+            attentions=attentions,
+        )
+
+
 class QEffMllamaTextModel(MllamaTextModel):
     """
     Copied from MllamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mllama/modeling_mllama.py
     The only differences are:
         - add new args cache idx for the kv retention
     """
-
-    # def __init__(self, config: MllamaTextConfig):
-    #     super().__init__(config)
-    #     self.config = config
-    #     self.__qeff_init__()
-
-    # def __qeff_init__(self):
-    #     self.layers = nn.ModuleList(
-    #         [MllamaSelfAttentionDecoderLayer(self.config, layer_idx) for layer_idx in range(self.config.num_hidden_layers)]
-    #     )
 
     def forward(
         self,
@@ -462,28 +693,6 @@ class QEffMllamaTextModel(MllamaTextModel):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-        """
-
-        Returns:
-
-        Example:
-
-        ```python
-        >>> from transformers import AutoProcessor, MllamaTextModel
-
-        >>> checkpoint = "meta-llama/Llama-3.2-11B-Vision"
-        >>> model = MllamaTextModel.from_pretrained(checkpoint)
-        >>> processor = AutoProcessor.from_pretrained(checkpoint)
-
-        >>> text = "<|image|>If I had to write a haiku for this one"
-        >>> inputs = processor(text=text, return_tensors="pt")
-
-        >>> output = model(**inputs)
-
-        >>> print(output.last_hidden_state.shape)
-        torch.Size([1, 13, 4096])
-        ```
-        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -513,20 +722,28 @@ class QEffMllamaTextModel(MllamaTextModel):
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+                past_seen_tokens,
+                past_seen_tokens + inputs_embeds.shape[1],
+                device=inputs_embeds.device,
             )
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, position_ids, past_key_values, output_attentions
+            attention_mask,
+            inputs_embeds,
+            cache_position,
+            position_ids,
+            past_key_values,
+            output_attentions,
         )
 
         # embed positions
         hidden_states = inputs_embeds
 
         # create position embeddings to be shared across the decoder layers
-        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        # position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        position_embeddings = None
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
@@ -552,7 +769,6 @@ class QEffMllamaTextModel(MllamaTextModel):
             # TODO: vbaddi: since past_key_values are retained from previous states, the condition for is_cross_attention_cache_empty is False
             # so explicitly making it true in order to skip the cross attention for language model
             # comment once there is vision and cross attention support
-            is_cross_attention_cache_empty = True
             if is_cross_attention_layer and cross_attention_states is None and is_cross_attention_cache_empty:
                 continue
 
@@ -710,39 +926,6 @@ class QEffMllamaForCausalLM(MllamaForCausalLM):
         cache_position: Optional[torch.LongTensor] = None,
         num_logits_to_keep: int = 0,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-        r"""
-        Args:
-            labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-                Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
-                config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
-                (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
-
-            num_logits_to_keep (`int`, *optional*):
-                Calculate logits for the last `num_logits_to_keep` tokens. If `0`, calculate logits for all
-                `input_ids` (special case). Only last token logits are needed for generation, and calculating them only for that
-                token can save memory, which becomes pretty significant for long sequences or large vocabulary size.
-
-        Returns:
-
-        Example:
-
-        ```python
-        >>> from transformers import AutoTokenizer, MllamaForCausalLM
-
-        >>> model = MllamaForCausalLM.from_pretrained("Llama-3.2-11B-Vision")
-        >>> tokenizer = AutoTokenizer.from_pretrained("Llama-3.2-11B-Vision")
-
-        >>> prompt = "If I had to write a haiku, it would be:"
-        >>> inputs = tokenizer(prompt, return_tensors="pt")
-
-        >>> # Generate
-        >>> generate_ids = model.generate(inputs.input_ids, max_length=40, do_sample=True, temperature=0.6)
-        >>> result = tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-        >>> print(result)
-        If I had to write a haiku, it would be: "Snowflakes gently fall" - simple, yet peaceful.
-        I love the idea of snowflakes gently falling, each one
-        ```
-        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -797,3 +980,325 @@ class QEffMllamaForCausalLM(MllamaForCausalLM):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+
+class QEffMllamaVisionEncoder(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.cross_attention_layers = self.model.config.get_text_config().cross_attention_layers
+
+    def forward(
+        self,
+        pixel_values: Optional[torch.FloatTensor] = None,
+        aspect_ratio_mask: Optional[torch.Tensor] = None,
+        aspect_ratio_ids: Optional[torch.Tensor] = None,
+    ) -> List[Tuple[torch.Tensor]]:
+        vision_outputs = self.model.vision_model(
+            pixel_values=pixel_values,
+            aspect_ratio_ids=aspect_ratio_ids,
+            aspect_ratio_mask=aspect_ratio_mask,
+        )
+        cross_attention_states = vision_outputs[0]
+        cross_attention_states = self.model.multi_modal_projector(cross_attention_states).reshape(
+            -1, cross_attention_states.shape[-2], self.model.hidden_size
+        )
+
+        bsz = pixel_values.shape[0]
+        outputs = []
+        for i in self.cross_attention_layers:
+            cross_attn = self.model.language_model.model.layers[i].cross_attn
+            key_states = cross_attn.k_proj(cross_attention_states)
+            value_states = cross_attn.v_proj(cross_attention_states)
+            key_states = key_states.view(bsz, -1, cross_attn.num_key_value_heads, cross_attn.head_dim).transpose(1, 2)
+            value_states = value_states.view(bsz, -1, cross_attn.num_key_value_heads, cross_attn.head_dim).transpose(
+                1, 2
+            )
+            outputs.append((key_states, value_states))
+        return outputs
+
+
+class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
+    def get_qeff_vision_encoder(self):
+        return QEffMllamaVisionEncoder(self)
+
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        pixel_values: Optional[torch.FloatTensor] = None,
+        aspect_ratio_mask: Optional[torch.Tensor] = None,
+        aspect_ratio_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        cross_attention_mask: Optional[torch.Tensor] = None,
+        cross_attention_states: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        num_logits_to_keep: int = 0,
+    ) -> Union[Tuple, CausalLMOutputWithPast]:
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        if (input_ids is None) ^ (inputs_embeds is not None):
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time, and must specify either one"
+            )
+
+        if pixel_values is not None and inputs_embeds is not None:
+            raise ValueError(
+                "You cannot specify both pixel_values and inputs_embeds at the same time, and must specify either one"
+            )
+
+        if pixel_values is not None and cross_attention_states is not None:
+            raise ValueError("`pixel_values` and `cross_attention_states` cannot be provided simultaneously")
+
+        if pixel_values is not None:
+            if aspect_ratio_ids is None:
+                raise ValueError("`aspect_ratio_ids` must be provided if `pixel_values` is provided")
+            # get vision tokens from vision model
+            vision_outputs = self.vision_model(
+                pixel_values=pixel_values,
+                aspect_ratio_ids=aspect_ratio_ids,
+                aspect_ratio_mask=aspect_ratio_mask,
+                output_hidden_states=output_hidden_states,
+                output_attentions=output_attentions,
+                return_dict=return_dict,
+            )
+            cross_attention_states = vision_outputs[0]
+            cross_attention_states = self.multi_modal_projector(cross_attention_states).reshape(
+                -1, cross_attention_states.shape[-2], self.hidden_size
+            )
+
+        if cross_attention_mask is not None:
+            cross_attention_mask, full_text_row_masked_out_mask = _prepare_cross_attention_mask(
+                cross_attention_mask,
+                num_vision_tokens=self.vision_model.num_patches,
+                dtype=self.dtype,
+            )
+        else:
+            full_text_row_masked_out_mask = None
+
+        if cross_attention_mask is not None and cache_position is not None:
+            cross_attention_mask = cross_attention_mask[:, :, cache_position]
+            full_text_row_masked_out_mask = full_text_row_masked_out_mask[:, :, cache_position]
+
+        outputs = self.language_model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            cross_attention_states=cross_attention_states,
+            cross_attention_mask=cross_attention_mask,
+            full_text_row_masked_out_mask=full_text_row_masked_out_mask,
+            past_key_values=past_key_values,
+            batch_index=batch_index,
+            use_cache=use_cache,
+            inputs_embeds=inputs_embeds,
+            labels=labels,
+            output_hidden_states=output_hidden_states,
+            output_attentions=output_attentions,
+            return_dict=return_dict,
+            cache_position=cache_position,
+            num_logits_to_keep=num_logits_to_keep,
+        )
+
+        return outputs
+
+    def get_dummy_inputs(self, kv_offload: bool = False):
+        BS = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        SEQ_LEN = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        CTX_LEN = constants.ONNX_EXPORT_CTX_LEN
+
+        txt_cfg = self.config.get_text_config()
+        num_hidden_layers = txt_cfg.num_hidden_layers
+        cross_attention_layers = txt_cfg.cross_attention_layers
+        num_key_value_heads = txt_cfg.num_key_value_heads
+        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
+
+        vis_cfg = self.config.vision_config
+        num_patches = (vis_cfg.image_size // vis_cfg.patch_size) ** 2 + 1
+        image_tokens_len = vis_cfg.max_num_tiles * num_patches
+
+        if vis_cfg := getattr(self.config, "vision_config", None):
+            img_size = getattr(vis_cfg, "image_size", 448)
+            max_num_img_tiles = getattr(vis_cfg, "max_num_tiles", 4)
+        else:
+            img_size = 448
+            max_num_img_tiles = 4
+
+        # vision inputs
+        vision_inputs = {
+            "pixel_values": torch.zeros(
+                (BS, MAX_NUM_IMG, max_num_img_tiles, NUM_CHANNEL, img_size, img_size), dtype=torch.float32
+            ),
+            "aspect_ratio_ids": torch.ones((BS, MAX_NUM_IMG), dtype=torch.int64),
+            "aspect_ratio_mask": torch.ones((BS, MAX_NUM_IMG, max_num_img_tiles), dtype=torch.int64),
+        }
+
+        # lang_inputs
+        lang_inputs = {
+            "input_ids": torch.zeros((BS, SEQ_LEN), dtype=torch.int64),
+            "cross_attention_mask": torch.zeros((BS, SEQ_LEN, MAX_NUM_IMG, max_num_img_tiles), dtype=torch.int64),
+            "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
+        }
+
+        lang_inputs["position_ids"] = torch.where(
+            lang_inputs.pop("attention_mask") == 1,
+            torch.arange(lang_inputs["input_ids"].shape[1]).view(1, -1),
+            -1,
+        )
+
+        lang_inputs["past_key_values"] = DynamicCache(num_hidden_layers)
+        lang_inputs["past_key_values"].key_cache = [0] * num_hidden_layers
+        lang_inputs["past_key_values"].value_cache = [0] * num_hidden_layers
+
+        for i in range(num_hidden_layers):
+            if i in cross_attention_layers:
+                idx = cross_attention_layers.index(i)
+                assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
+                lang_inputs["past_key_values"].key_cache[i] = torch.zeros(
+                    1, num_key_value_heads, image_tokens_len, head_dim
+                )
+                lang_inputs["past_key_values"].value_cache[i] = torch.zeros(
+                    1, num_key_value_heads, image_tokens_len, head_dim
+                )
+            else:
+                lang_inputs["past_key_values"].key_cache[i] = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim)
+                lang_inputs["past_key_values"].value_cache[i] = torch.zeros(1, num_key_value_heads, CTX_LEN, head_dim)
+
+        lang_inputs["past_key_values"] = lang_inputs["past_key_values"].to_legacy_cache()
+        lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
+        inputs = {}
+
+        if kv_offload:
+            inputs["vision"] = vision_inputs
+            inputs["lang"] = lang_inputs
+        else:
+            inputs = {**vision_inputs, **lang_inputs}
+
+        return inputs
+
+    def get_specializations(
+        self,
+        batch_size: int,
+        prefill_seq_len: int,
+        ctx_len: int,
+        img_size: int,
+        kv_offload: bool = False,
+        **compiler_options,
+    ):
+        vis_cfg = self.config.vision_config
+        max_num_images = compiler_options.pop("max_num_images", 1)
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
+        ctx_len = ctx_len if ctx_len else 128
+        if img_size is None and hasattr(vis_cfg, "image_size"):
+            img_size = getattr(vis_cfg, "image_size")
+        elif img_size is None:
+            img_size = 448
+            logger.warning("Setting `img_size=448` as it was neither passed nor found in vision_config")
+
+        vision = [{"batch_size": batch_size, "max_num_images": max_num_images, "img_size": img_size}]
+        lang = [
+            {
+                "batch_size": batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "max_num_images": max_num_images,
+                "img_size": img_size,
+            },
+            {
+                "batch_size": batch_size,
+                "seq_len": "1",
+                "ctx_len": ctx_len,
+                "max_num_images": max_num_images,
+                "img_size": img_size,
+            },
+        ]
+        specializations = {}
+
+        if kv_offload:
+            specializations["vision"] = vision
+            specializations["lang"] = lang
+            return specializations, compiler_options
+        else:
+            return lang, compiler_options
+
+    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+        txt_cfg = self.config.get_text_config()
+        num_hidden_layers = txt_cfg.num_hidden_layers
+        cross_attention_layers = txt_cfg.cross_attention_layers
+
+        vision_dynamic_axes = {
+            "pixel_values": {0: "batch_size", 1: "max_num_images", 4: "img_size", 5: "img_size"},
+            "aspect_ratio_ids": {0: "batch_size", 1: "max_num_images"},
+            "aspect_ratio_mask": {0: "batch_size", 1: "max_num_images"},
+        }
+
+        lang_dynamic_axes = {
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
+            "cross_attention_mask": {0: "batch_size", 1: "seq_len", 2: "max_num_images"},
+        }
+
+        for i in range(num_hidden_layers):
+            if i in cross_attention_layers:
+                lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size"}
+                lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size"}
+            else:
+                lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
+                lang_dynamic_axes[f"past_value.{i}"] = {0: "batch_size", 2: "ctx_len"}
+
+        dynamic_axes = {}
+        if kv_offload:
+            dynamic_axes["vision"] = vision_dynamic_axes
+            dynamic_axes["lang"] = lang_dynamic_axes
+        else:
+            dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
+        return dynamic_axes
+
+    def get_output_names(self, kv_offload: bool = False):
+        txt_cfg = self.config.get_text_config()
+        num_hidden_layers = txt_cfg.num_hidden_layers
+
+        vision_output_names = []
+        for i in self.config.text_config.cross_attention_layers:
+            vision_output_names.append(f"past_key.{i}")
+            vision_output_names.append(f"past_value.{i}")
+
+        lang_output_names = [
+            "logits",
+            *[f"past_{kv}.{i}_RetainedState" for i in range(num_hidden_layers) for kv in ["key", "value"]],
+        ]
+
+        output_names = {}
+        if kv_offload:
+            output_names["vision"] = vision_output_names
+            output_names["lang"] = lang_output_names
+        else:
+            return lang_output_names
+        return output_names
+
+    def get_inputs_info(self):
+        return [
+            IOInfo(
+                name="pixel_values",
+                datatype=torch.float32,
+                shape=("batch_size", "max_num_images", 4, 3, "img_size", "img_size"),
+            ),
+            IOInfo(name="aspect_ratio_ids", datatype=torch.int64, shape=("batch_size", "max_num_images")),
+            IOInfo(name="aspect_ratio_mask", datatype=torch.int64, shape=("batch_size", "max_num_images", 4)),
+            IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
+            IOInfo(
+                name="cross_attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len", "max_num_images", 4)
+            ),
+            IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
+        ]
