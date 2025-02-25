@@ -276,6 +276,7 @@ def test_pld_spec_decode_inference(
         prompts_exp = prompts * decode_batch_size
         prompts = prompts_exp[:decode_batch_size]
     # tokenize the prompts
+    prefill_nltk = np.zeros((1,1), dtype=np.int64)
     prompts_tokenized: List[dict] = []
     for p in prompts:
         input_len: int = tokenizer(p, return_tensors="np", padding=True).input_ids.shape[1]
@@ -283,6 +284,7 @@ def test_pld_spec_decode_inference(
         p_tok: dict = tokenizer(p, return_tensors="np", padding="max_length", max_length=input_len_padded)
         position_ids = np.where(p_tok.pop("attention_mask"), np.arange(input_len_padded), -1)
         p_tok["position_ids"] = position_ids
+        p_tok["num_logits_to_keep"] = prefill_nltk
         prompts_tokenized.append(p_tok)
     # create caches to hold generated ids and input prompt lengths
     generated_ids = [[] for i in range(decode_batch_size)]
@@ -293,6 +295,7 @@ def test_pld_spec_decode_inference(
         input_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
         position_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
         batch_index=np.arange(decode_batch_size, dtype=np.int64).reshape(-1, 1),
+        num_logits_to_keep=np.zeros((num_speculative_tokens+1, 1), dtype=np.int64)
     )
     num_logits_to_keep = num_speculative_tokens + 1
     max_gen_len = [ctx_len] * decode_batch_size
