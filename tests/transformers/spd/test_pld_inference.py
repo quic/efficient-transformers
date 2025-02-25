@@ -276,7 +276,7 @@ def test_pld_spec_decode_inference(
         prompts_exp = prompts * decode_batch_size
         prompts = prompts_exp[:decode_batch_size]
     # tokenize the prompts
-    prefill_nltk = np.zeros((1,1), dtype=np.int64)
+    prefill_nltk = np.zeros((1, 1), dtype=np.int64)
     prompts_tokenized: List[dict] = []
     for p in prompts:
         input_len: int = tokenizer(p, return_tensors="np", padding=True).input_ids.shape[1]
@@ -295,7 +295,7 @@ def test_pld_spec_decode_inference(
         input_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
         position_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
         batch_index=np.arange(decode_batch_size, dtype=np.int64).reshape(-1, 1),
-        num_logits_to_keep=np.zeros((num_speculative_tokens+1, 1), dtype=np.int64)
+        num_logits_to_keep=np.zeros((num_speculative_tokens + 1, 1), dtype=np.int64),
     )
     num_logits_to_keep = num_speculative_tokens + 1
     max_gen_len = [ctx_len] * decode_batch_size
