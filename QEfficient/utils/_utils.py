@@ -453,10 +453,10 @@ def create_and_dump_qconfigs(
     pytorch_transforms,
     onnx_transforms,
     specializations,
-    mdp_ts_num_devices, 
+    mdp_ts_num_devices,
     num_speculative_tokens,
-    enable_qnn = False,
-    qnn_config = None,
+    enable_qnn=False,
+    qnn_config=None,
     **compiler_options,
 ):
     """
@@ -493,11 +493,11 @@ def create_and_dump_qconfigs(
             return [make_serializable(item) for item in obj]
         elif isinstance(obj, dict):
             return {key: make_serializable(value) for key, value in obj.items()}
-        elif hasattr(obj, '__dict__'):
+        elif hasattr(obj, "__dict__"):
             return make_serializable(obj.__dict__)
         else:
             return str(obj)
-            
+
     qconfigs = {
         "huggingface_config": make_serializable(huggingface_config),
         "qpc_config": {
@@ -516,7 +516,7 @@ def create_and_dump_qconfigs(
         "specializations": make_serializable(specializations),
         "mdp_ts_num_devices": mdp_ts_num_devices,
         "num_speculative_tokens": num_speculative_tokens,
-        **compiler_options
+        **compiler_options,
     }
     qnn_config = {
         "enable_qnn": enable_qnn,

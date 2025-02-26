@@ -345,8 +345,8 @@ class QEFFBaseModel(ABC):
         elif hasattr(self.model, "config"):
             model_config = self.model.config.__dict__
         else:
-            pass  
-        
+            pass
+
         create_and_dump_qconfigs(
             self.qpc_path,
             self.onnx_path,
@@ -354,7 +354,7 @@ class QEFFBaseModel(ABC):
             [cls.__name__ for cls in self._pytorch_transforms],
             [cls.__name__ for cls in self._onnx_transforms],
             specializations,
-            mdp_ts_num_devices, 
+            mdp_ts_num_devices,
             num_speculative_tokens,
             **compiler_options,
         )
@@ -467,9 +467,9 @@ class QEFFBaseModel(ABC):
             [cls.__name__ for cls in self._onnx_transforms],
             specializations,
             mdp_ts_num_devices,
-            num_speculative_tokens = None,
-            enable_qnn = True,
-            qnn_config = qnn_config,
+            num_speculative_tokens=None,
+            enable_qnn=True,
+            qnn_config=qnn_config,
             num_cores=num_cores,
             batch_size=batch_size,
             prompt_len=prefill_seq_len,
