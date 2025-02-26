@@ -19,12 +19,22 @@ class QEffInternVisionEncoder2QPC(nn.Module):
         super().__init__()
         self.model = model
 
-    def forward(self, input_ids, pixel_values):
+    def forward(self, pixel_values):
+        vit_embeds = self.model.extract_feature(pixel_values)
+        return vit_embeds
+
+
+class QEffInternLanguageDecoder2QPC(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.config = self.model.language_model.config
+
+    def forward(self, input_ids, vit_embeds, position_ids, past_key_values):
         # TODO: Check if Hardcoding this is okay, i.e. check if this value is common for all intern models
         IMG_CONTEXT_TOKEN = 151667
 
         input_embeds = self.model.language_model.get_input_embeddings()(input_ids)
-        vit_embeds = self.model.extract_feature(pixel_values)
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
         image_input_ids = input_ids.reshape(B * N)
@@ -33,7 +43,11 @@ class QEffInternVisionEncoder2QPC(nn.Module):
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
         image_features_expanded = vit_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(0).unsqueeze(-1), image_features_expanded, input_embeds)
-        return image_input_embeds
+        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), input_embeds, image_input_embeds)
+        outputs = self.model.language_model(
+            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
+        )
+        return outputs.logits, vit_embeds, outputs.past_key_values
 
 
 class QEffInternVLModel(nn.Module):
@@ -41,7 +55,7 @@ class QEffInternVLModel(nn.Module):
         return QEffInternVisionEncoder2QPC(self)
 
     def get_qeff_language_decoder(self):
-        return self.language_model
+        return QEffInternLanguageDecoder2QPC(self)
 
     def get_specializations(
         self,
@@ -107,10 +121,8 @@ class QEffInternVLModel(nn.Module):
         # Define dynamic axes
         vision_dynamic_axes = {}
         lang_dynamic_axes = {}
-        vision_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
-        vision_dynamic_axes["inputs_embeds"] = {0: "batch_size", 1: "seq_len"}
+        lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
-        lang_dynamic_axes["inputs_embeds"] = {0: "batch_size", 1: "seq_len"}
         vision_dynamic_axes["pixel_values"] = {0: "num_patches", 2: "img_size", 3: "img_size"}
 
         pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
@@ -123,14 +135,12 @@ class QEffInternVLModel(nn.Module):
             dynamic_axes["vision"] = vision_dynamic_axes
             dynamic_axes["lang"] = lang_dynamic_axes
         else:
-            vision_dynamic_axes.pop("inputs_embeds")
-            lang_dynamic_axes.pop("inputs_embeds")
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
 
     def get_output_names(self, kv_offload: bool = False):
-        vision_output_names = ["inputs_embeds"]
-        lang_output_names = ["logits", "pixel_values_RetainedState"]
+        vision_output_names = ["vit_embeds"]
+        lang_output_names = ["logits", "pixel_values_RetainedState", "vit_embeds_RetainedState"]
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
@@ -141,6 +151,7 @@ class QEffInternVLModel(nn.Module):
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
+            lang_output_names.pop(2)
             return lang_output_names
         return output_names
 
@@ -151,13 +162,14 @@ class QEffInternVLModel(nn.Module):
             img_size = getattr(vis_cfg, "image_size", 448)
         else:
             img_size = 448
+        feature_size = int((((self.config.vision_config.hidden_size**0.5) * self.config.downsample_ratio) ** 2))
 
         # Define shapes
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-        inputs_shapes["inputs_embeds"] = (
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
-            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+        inputs_shapes["vit_embeds"] = (
+            num_patches,
+            feature_size,
             self.language_model.config.hidden_size,
         )
         inputs_shapes["position_ids"] = (
@@ -169,14 +181,14 @@ class QEffInternVLModel(nn.Module):
         # Define inputs
         vision_inputs = {}
         lang_inputs = {}
-        vision_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["inputs_embeds"] = torch.zeros((inputs_shapes["inputs_embeds"]), dtype=torch.float32)
+        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
+        lang_inputs["vit_embeds"] = torch.zeros((inputs_shapes["vit_embeds"]), dtype=torch.float32)
         lang_inputs["position_ids"] = (
             torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
             .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
-        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
 
         # Add data for KV
         kv_cache_shape = get_padding_shape_from_config(
@@ -195,7 +207,7 @@ class QEffInternVLModel(nn.Module):
             inputs["vision"] = vision_inputs
             inputs["lang"] = lang_inputs
         else:
-            lang_inputs.pop("inputs_embeds")
+            lang_inputs.pop("vit_embeds")
             inputs = {**vision_inputs, **lang_inputs}
 
         return inputs

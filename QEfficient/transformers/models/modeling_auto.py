@@ -511,7 +511,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
 
 class _QEffAutoModelForImageTextToTextDualQPC:
     _hf_auto_class = AutoModelForImageTextToText
-    EARLYFUSION_MODELS = ["LlavaForConditionalGeneration", "InternVLChatModel"]
 
     def __init__(
         self,
@@ -652,12 +651,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         custom_io_lang = {}
         # Inputs
         for output_name in output_names["lang"]:
-            if output_name.startswith("past_"):
+            if output_name.endswith("_RetainedState"):
                 custom_io_lang[output_name[: -len("_RetainedState")]] = kv_cache_dtype
 
         # outputs
         for output_name in output_names["lang"]:
-            if output_name.startswith("past_"):
+            if output_name.endswith("_RetainedState"):
                 custom_io_lang[output_name] = kv_cache_dtype
 
         self.lang_model._compile(
@@ -718,22 +717,16 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             [x for x in lang_session.input_names + lang_session.output_names if x.startswith("past_")]
         )
 
-        if self.model_name in self.EARLYFUSION_MODELS:
-            input_ids = "inputs_embeds"
-        else:
-            input_ids = "input_ids"
-
         # Read prompt and ctx len from session
         batch_size = max(
-            [x[lang_session.binding_index_map[input_ids]][1][0] for x in lang_session.allowed_shapes]
-            + [lang_session.bindings[lang_session.binding_index_map[input_ids]].dims[0]]
+            [x[lang_session.binding_index_map["input_ids"]][1][0] for x in lang_session.allowed_shapes]
+            + [lang_session.bindings[lang_session.binding_index_map["input_ids"]].dims[0]]
         )
 
         prefill_seq_len = max(
-            [x[lang_session.binding_index_map[input_ids]][1][1] for x in lang_session.allowed_shapes]
-            + [lang_session.bindings[lang_session.binding_index_map[input_ids]].dims[1]]
+            [x[lang_session.binding_index_map["input_ids"]][1][1] for x in lang_session.allowed_shapes]
+            + [lang_session.bindings[lang_session.binding_index_map["input_ids"]].dims[1]]
         )
-        embeds = self.model.language_model.get_input_embeddings()
 
         input_len = inputs["attention_mask"].sum(1, keepdims=True)
         input_ids_length = inputs["input_ids"].shape[1]
@@ -769,14 +762,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
 
-        if input_ids == "inputs_embeds":
-            vision_inputs["input_ids"] = inputs["input_ids"]
         vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
         vision_outputs = vision_session.run(vision_inputs)
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
-        if input_ids == "inputs_embeds":
-            lang_inputs["inputs_embeds"] = vision_outputs["inputs_embeds"].astype("float32")
         lang_inputs["position_ids"] = np.where(
             lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
         )  # Need to use -1 as position_ids for invalid tokens
@@ -789,7 +778,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Run prefill
         for i in range(num_chunks):
             chunk_inputs = lang_inputs.copy()
-            chunk_inputs[input_ids] = lang_inputs[input_ids][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
+            chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][
                 :, i * prefill_seq_len : (i + 1) * prefill_seq_len
             ]
@@ -811,8 +800,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         if streamer:
             streamer.put(lang_inputs["input_ids"][0])
-        if input_ids == "inputs_embeds":
-            lang_inputs["inputs_embeds"] = embeds(torch.tensor(lang_inputs.pop("input_ids"))).detach().numpy()
 
         # Decode loop
         decode_start = perf_counter()
@@ -825,8 +812,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             generated_ids[:, num_token] = lang_inputs["input_ids"].squeeze(1)
             if streamer:
                 streamer.put(lang_inputs["input_ids"][0])
-            if input_ids == "inputs_embeds":
-                lang_inputs["inputs_embeds"] = embeds(torch.tensor(lang_inputs.pop("input_ids"))).detach().numpy()
 
         decode_end = perf_counter()
         if streamer:
