@@ -7,10 +7,12 @@
 
 import os
 
-from QEfficient.utils.logging_utils import logger
-
-# For Faster downloads via hf_transfer
+# For faster downloads via hf_transfer
+# This code is put above import statements as this needs to be executed before
+# hf_transfer is imported (will happen on line 15 via leading imports)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
+from QEfficient.utils.logging_utils import logger
 
 
 def check_qaic_sdk():
