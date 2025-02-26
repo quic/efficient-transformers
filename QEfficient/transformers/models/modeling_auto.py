@@ -48,7 +48,7 @@ from QEfficient.transformers.quantizers.quant_transforms import (
     FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
 )
-from QEfficient.utils import constants, create_and_dump_qconfigs, get_padding_shape_from_config
+from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
 
