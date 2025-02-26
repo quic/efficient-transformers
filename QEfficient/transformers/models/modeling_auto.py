@@ -1541,25 +1541,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 **compiler_options,
             )
 
-        create_and_dump_qconfigs(
-            self.qpc_path,
-            self.onnx_path,
-            self.model.config.__dict__,
-            [cls.__name__ for cls in self._pytorch_transforms],
-            [cls.__name__ for cls in self._onnx_transforms],
-            prefill_seq_len,
-            ctx_len,
-            batch_size,
-            full_batch_size,
-            num_devices,
-            num_cores,
-            mxfp6_matmul,
-            mxint8_kv_cache,
-            num_speculative_tokens,
-            enable_qnn,
-            qnn_config,
-        )
-
         return qpc_path
 
     # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate

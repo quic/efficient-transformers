@@ -452,17 +452,12 @@ def create_and_dump_qconfigs(
     huggingface_config,
     pytorch_transforms,
     onnx_transforms,
-    prefill_seq_len,
-    ctx_len,
-    batch_size,
-    full_batch_size,
-    num_devices,
-    num_cores,
-    mxfp6_matmul,
-    mxint8_kv_cache,
+    specializations,
+    mdp_ts_num_devices, 
     num_speculative_tokens,
-    enable_qnn,
-    qnn_config,
+    enable_qnn = False,
+    qnn_config = None,
+    **compiler_options,
 ):
     """
     This Method creates a JSON file which contains all the configs for a model.
@@ -490,12 +485,25 @@ def create_and_dump_qconfigs(
         with open(qnn_sdk_yaml_path, "r") as file:
             qnn_sdk_details = yaml.safe_load(file)
 
+    # Ensure all objects in the configs dictionary are JSON serializable
+    def make_serializable(obj):
+        if isinstance(obj, (int, float, str, bool, type(None))):
+            return obj
+        elif isinstance(obj, (list, tuple)):
+            return [make_serializable(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {key: make_serializable(value) for key, value in obj.items()}
+        elif hasattr(obj, '__dict__'):
+            return make_serializable(obj.__dict__)
+        else:
+            return str(obj)
+            
     qconfigs = {
-        "huggingface_config": huggingface_config,
+        "huggingface_config": make_serializable(huggingface_config),
         "qpc_config": {
             "QEff_config": {
-                "pytorch_transforms": pytorch_transforms,
-                "onnx_transforms": onnx_transforms,
+                "pytorch_transforms": make_serializable(pytorch_transforms),
+                "onnx_transforms": make_serializable(onnx_transforms),
                 "onnx_path": onnx_path,
             },
         },
@@ -504,16 +512,11 @@ def create_and_dump_qconfigs(
     aic_compiler_config = {
         "apps_sdk_version": qaic_version,
         "compile_dir": compile_dir,
-        "specializtions_file_path": specializations_file_path,
-        "prefill_seq_len": prefill_seq_len,
-        "ctx_len": ctx_len,
-        "batch_size": batch_size,
-        "full_batch_size": full_batch_size,
-        "num_devices": num_devices,
-        "num_cores": num_cores,
-        "mxfp6_matmul": mxfp6_matmul,
-        "mxint8_kv_cache": mxint8_kv_cache,
+        "specializations_file_path": specializations_file_path,
+        "specializations": make_serializable(specializations),
+        "mdp_ts_num_devices": mdp_ts_num_devices,
         "num_speculative_tokens": num_speculative_tokens,
+        **compiler_options
     }
     qnn_config = {
         "enable_qnn": enable_qnn,
