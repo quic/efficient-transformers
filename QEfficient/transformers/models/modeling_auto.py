@@ -603,6 +603,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
 
         output_names = self.model.get_output_names(kv_offload=True)
+        vision_onnx_path = compiler_options.get("vision_onnx_path", None)
+        lang_onnx_path = compiler_options.get("lang_onnx_path", None)
 
         specializations, compiler_options = self.model.get_specializations(
             batch_size=batch_size,
@@ -814,13 +816,16 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         total_time = decode_end - prefill_start
         total_perf = num_token / total_time
 
-        return CloudAI100ExecInfoNew(
+        exec_info = CloudAI100ExecInfoNew(
             batch_size=batch_size,
             generated_ids=generated_ids,
             perf_metrics=PerfMetrics(
                 prefill_time=prefill_time, decode_perf=decode_perf, total_perf=total_perf, total_time=total_time
             ),
         )
+
+        print(exec_info)
+        return exec_info
 
 
 class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, MultimodalUtilityMixin):
@@ -1104,13 +1109,16 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         total_time = decode_end - prefill_start
         total_perf = num_token / total_time
 
-        return CloudAI100ExecInfoNew(
+        exec_info = CloudAI100ExecInfoNew(
             batch_size=batch_size,
             generated_ids=generated_ids,
             perf_metrics=PerfMetrics(
                 prefill_time=prefill_time, decode_perf=decode_perf, total_perf=total_perf, total_time=total_time
             ),
         )
+
+        print(exec_info)
+        return exec_info
 
     @property
     def model_hash(self) -> str:
@@ -1162,6 +1170,9 @@ class QEFFAutoModelForImageTextToText:
 
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
+
+        if kwargs.pop("continuous_batching", None):
+            NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
@@ -1479,6 +1490,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 decode_specialization.update({"batch_size": kv_cache_batch_size})
             decode_specialization.update({"num_logits_to_keep": num_speculative_tokens + 1}) if self.is_tlm else ...
             specializations.append(decode_specialization)
+
+        if compiler_options.pop("img_size", None):
+            logger.warning("img_size is not a valid argument for Text-to-Text Model.")
 
         if enable_qnn:
             if compiler_options:
