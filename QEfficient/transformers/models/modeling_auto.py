@@ -1540,7 +1540,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 aic_num_cores=num_cores,
                 **compiler_options,
             )
-
         return qpc_path
 
     # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate

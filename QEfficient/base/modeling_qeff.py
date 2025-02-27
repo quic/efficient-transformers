@@ -345,7 +345,7 @@ class QEFFBaseModel(ABC):
         elif hasattr(self.model, "config"):
             model_config = self.model.config.__dict__
         else:
-            pass
+            model_config = None
 
         create_and_dump_qconfigs(
             self.qpc_path,

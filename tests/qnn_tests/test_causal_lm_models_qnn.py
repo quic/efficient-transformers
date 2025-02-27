@@ -139,7 +139,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    _ = qeff_model.compile(
+    qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
         num_cores=14,
@@ -148,6 +148,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         full_batch_size=full_batch_size,
         enable_qnn=True,
     )
+    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
     assert all(
