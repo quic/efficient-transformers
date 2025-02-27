@@ -8,6 +8,8 @@
 import json
 import os
 import subprocess
+import sys
+import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -15,11 +17,21 @@ import requests
 import torch
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
-from transformers import AutoProcessor, AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers import (
+    AutoConfig,
+    AutoProcessor,
+    AutoTokenizer,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+)
 
+from QEfficient.transformers.modeling_utils import (
+    SwiftKVModelCardNameToSwiftKVModelTypeDict,
+    SwiftKVModelTypeToConfigClassAndModelArchClassDict,
+)
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
-from QEfficient.transformers.modeling_utils import SwiftKVModelCardNameToSwiftKVModelTypeDict, SwiftKVModelTypeToConfigClassAndModelArchClassDict
+
 
 class DownloadRetryLimitExceeded(Exception):
     """
@@ -442,3 +454,63 @@ class IOInfo:
 
     def __repr__(self):
         return f"input_name:{self.name}\tdatatype:{self.datatype}\tshape:{self.shape}"
+
+
+def convert_str_to_class(className):
+    """
+    Convert the string to class name
+    ---------
+    :className: `str`- Class name string.
+    Return:
+        Class Name
+    """
+    return getattr(sys.modules[__name__], className)
+
+
+def register_swiftKV_model(model_type, SwiftkvConfigCls, SwiftKVModelCls):
+    """
+    Register the SwiftKV Models
+    ---------------------------------------
+    : model_type: str: name of the swiftKVModel for example llama_swiftkv
+    : SwiftkVConfigCls: SwiftKV Config class for example LlamaSwiftKVConfig
+    : SwiftKVModelCls: SwiftKV model class name for example LlamaSwiftKVForCausalLM
+    """
+
+    # Register the SwiftKV Config class using AutoConfig
+    AutoConfig.register(model_type, SwiftkvConfigCls)
+
+    # Construct the AutoModel class name using SwiftKVModel Class name, this code is written to make things generic
+    swiftKvModelName = SwiftKVModelCls.__name__
+    start_index = swiftKvModelName.find("SwiftKVFor")
+
+    # Calculate the index after "SwiftKVFor"
+    substring_start = start_index + len("SwiftKVFor")
+
+    # Get the substring after "SwiftKVFor"
+    swiftKVModel = swiftKvModelName[substring_start:]
+
+    AutoModelName = "AutoModelFor" + swiftKVModel
+
+    # Convert the string to class name
+    AutoModelClassName = convert_str_to_class(AutoModelName)
+
+    # Register the SwiftKVModel Class and config class using AutoModelClass
+    AutoModelClassName.register(SwiftkvConfigCls, SwiftKVModelCls)
+
+
+def QEFFLoadSwiftKVModels(pretrained_model_name_or_path):
+    """
+    Load the SwiftKV Models
+    ---------------------------------------
+    : pretrained_model_name_or_path: str: name of the swiftKVModel for example Snowflake/Llama-3.1-SwiftKV-8B-Instruct
+    """
+    try:
+        modelType = SwiftKVModelCardNameToSwiftKVModelTypeDict[pretrained_model_name_or_path]
+
+        SwiftKVConfigCls = SwiftKVModelTypeToConfigClassAndModelArchClassDict[modelType][0]
+        SwiftKVModelArchCls = SwiftKVModelTypeToConfigClassAndModelArchClassDict[modelType][1]
+
+        register_swiftKV_model(modelType, SwiftKVConfigCls, SwiftKVModelArchCls)
+
+    except KeyError:
+        warnings.warn("Requested SwiftKVModel is currently not supported... stay tuned for future releases", Warning)
