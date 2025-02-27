@@ -5,8 +5,8 @@
 #
 # ----------------------------------------------------------------------------
 
-import os
 import copy
+import os
 from time import perf_counter
 
 import onnx
