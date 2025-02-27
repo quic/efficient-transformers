@@ -12,13 +12,21 @@ QEFF_MODEL_TYPE and the classes that implement the methods i.e.(compile, export 
 QEFFAutoModel provides a common interface for loading the HuggingFace models using either the HF card name of local path of downloaded model.
 """
 
+import importlib
+from collections import OrderedDict
 from typing import Any
 
+import transformers.models.auto.modeling_auto as mapping
 from transformers import AutoConfig
-from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
+MODEL_CLASS_MAPPING = OrderedDict(
+    [
+        (tuple(mapping.MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values()), "QEFFAutoModelForCausalLM"),
+        (tuple(mapping.MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values()), "QEFFAutoModelForImageTextToText"),
+    ]
+)
 
 
 class QEFFCommonLoader:
@@ -42,9 +50,13 @@ class QEFFCommonLoader:
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path)
         architecture = config.architectures[0] if config.architectures else None
 
-        if architecture in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
-            model_class = QEFFAutoModelForCausalLM
-        else:
+        model_class = None
+        for key_tuple, class_name in MODEL_CLASS_MAPPING.items():
+            if architecture in key_tuple:
+                module = importlib.import_module("QEfficient.transformers.models.modeling_auto")
+                model_class = getattr(module, class_name)
+                break
+        if model_class is None:
             raise NotImplementedError(
                 f"Unknown architecture={architecture}, either use specific auto model class for loading the model or raise an issue for support!"
             )

@@ -10,6 +10,11 @@ import logging
 import sys
 from typing import List, Optional
 
+import requests
+from PIL import Image
+from transformers import AutoConfig, AutoProcessor, TextStreamer
+from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
+
 from QEfficient.base.common import QEFFCommonLoader
 from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
@@ -36,6 +41,7 @@ def main(
     allow_mxint8_mdp_io: bool = False,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
+    img_size: Optional[int] = None,
     **kwargs,
 ) -> None:
     """
@@ -65,6 +71,9 @@ def main(
         :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
         :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
         :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
+        :kwargs: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+                -allocator_dealloc_delay=1 -> -allocator-dealloc-delay=1
+                -qpc_crc=True -> -qpc-crc
 
     .. code-block:: bash
 
@@ -72,11 +81,6 @@ def main(
 
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
-    tokenizer = load_hf_tokenizer(
-        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-        cache_dir=cache_dir,
-        hf_token=hf_token,
-    )
 
     if "--mxfp6" in sys.argv:
         if args.mxfp6:
@@ -84,6 +88,9 @@ def main(
     if "--mxint8" in sys.argv:
         if args.mxint8:
             logger.warning("mxint8 is going to be deprecated in a future release, use -mxint8_kv_cache instead.")
+
+    image_path = kwargs.pop("image_path", None)
+    image_url = kwargs.pop("image_url", None)
 
     qeff_model = QEFFCommonLoader.from_pretrained(
         pretrained_model_name_or_path=model_name,
@@ -110,20 +117,70 @@ def main(
         allow_mxint8_mdp_io=allow_mxint8_mdp_io,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
+        img_size=img_size,
         **kwargs,
+    )
+
+    tokenizer = load_hf_tokenizer(
+        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+        cache_dir=cache_dir,
+        hf_token=hf_token,
     )
 
     #########
     # Execute
     #########
-    _ = qeff_model.generate(
-        tokenizer,
-        prompts=prompt,
-        device_id=device_group,
-        prompt=prompt,
-        prompts_txt_file_path=prompts_txt_file_path,
-        generation_len=generation_len,
-    )
+    config = AutoConfig.from_pretrained(model_name)
+    architecture = config.architectures[0] if config.architectures else None
+
+    if architecture in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values():
+        processor = AutoProcessor.from_pretrained(model_name, use_fast=False)
+
+        raw_image = None
+        if image_url is not None:
+            raw_image = Image.open(requests.get(image_url, stream=True).raw)
+        elif image_path is not None:
+            raw_image = Image.open(image_path)
+        else:
+            raise FileNotFoundError(
+                'Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"'
+            )
+
+        conversation = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": prompt[0]},  # Currently accepting only 1 prompt
+                ],
+            },
+        ]
+
+        # Converts a list of dictionaries with `"role"` and `"content"` keys to a list of token ids.
+        input_text = processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
+
+        split_inputs = processor(
+            text=input_text,
+            images=raw_image,
+            return_tensors="pt",
+            add_special_tokens=False,
+        )
+        streamer = TextStreamer(processor.tokenizer)
+        _ = qeff_model.generate(
+            inputs=split_inputs,
+            streamer=streamer,
+            device_ids=device_group,
+            generation_len=generation_len,
+        )
+    else:
+        _ = qeff_model.generate(
+            tokenizer,
+            prompts=prompt,
+            device_id=device_group,
+            prompt=prompt,
+            prompts_txt_file_path=prompts_txt_file_path,
+            generation_len=generation_len,
+        )
 
 
 if __name__ == "__main__":
@@ -226,10 +283,11 @@ if __name__ == "__main__":
              Sample Config: QEfficient/compile/qnn_config.json",
     )
     parser.add_argument(
-        "qnn_config",
+        "--qnn_config",
         nargs="?",
         type=str,
     )
+    parser.add_argument("--img-size", "--img_size", default=None, type=int, required=False, help="Size of Image")
 
     args, compiler_options = parser.parse_known_args()
     compiler_options_dict = {}
