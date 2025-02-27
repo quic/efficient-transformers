@@ -18,7 +18,7 @@ import torchmetrics
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from QEfficient.finetune.configs.training import train_config as TRAIN_CONFIG
+from QEfficient.finetune.configs.training import TrainConfig
 
 try:
     import torch_qaic  # noqa: F401
@@ -40,7 +40,7 @@ def train(
     optimizer,
     lr_scheduler,
     gradient_accumulation_steps,
-    train_config: TRAIN_CONFIG,
+    train_config: TrainConfig,
     device,
     local_rank=None,
     rank=None,
