@@ -93,7 +93,6 @@ pipeline {
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Qnn_cli &&
-                    pip install rich &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Qnn_cli &&
                     pytest tests -m '(cli and qnn)' --junitxml=tests/tests_log4.xml &&
@@ -111,7 +110,6 @@ pipeline {
                     source /qnn_sdk/bin/envcheck -c &&
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
-                    pip install rich &&
                     mkdir -p $PWD/Qnn_non_cli &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Qnn_non_cli &&
