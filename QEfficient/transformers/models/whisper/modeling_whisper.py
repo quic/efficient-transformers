@@ -8,7 +8,6 @@
 import random
 from typing import Optional, Tuple
 
-import numpy as np
 import torch
 from torch import nn
 from transformers.cache_utils import Cache, EncoderDecoderCache, StaticCache
@@ -838,7 +837,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
 
         specializations = [encoder_specializations, decoder_specializations]
 
-        return specializations
+        return specializations, compiler_options
 
     def get_onnx_dynamic_axes(
         self,
@@ -879,7 +878,5 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
 
     def get_inputs_info(self):
         return [
-            IOInfo(name="input_features", datatype=np.float32, shape=("batch_size", "num_mel_bins", "feature_len")),
-            IOInfo(name="decoder_input_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="decoder_position_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
+            IOInfo(name="input_features", datatype=torch.float32, shape=("batch_size", "num_mel_bins", "feature_len")),
         ]

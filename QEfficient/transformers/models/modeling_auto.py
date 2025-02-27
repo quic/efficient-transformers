@@ -565,6 +565,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
         self.lang_model.export(inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir)
+        return self.onnx_path
 
     def compile(
         self,
@@ -667,6 +668,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             custom_io=custom_io_lang,
             **compiler_options,
         )
+        return self.qpc_path
 
     def generate(
         self,
@@ -887,7 +889,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
-        self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
+        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
 
     def compile(
         self,
@@ -1695,7 +1697,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-        specializations = self.model.get_specializations(
+        specializations, compiler_options = self.model.get_specializations(
             batch_size,
             encoder_ctx_len,
             ctx_len,
@@ -1738,12 +1740,11 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
 
+        inputs = self.auto_correct_inputs(inputs)
+
         if self.qpc_session is None:
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids, enable_debug_logs=enable_debug_logs)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
-
-        if "input_features" not in inputs:
-            TypeError("missing required input: 'input_features'")
 
         inputs["input_features"] = inputs["input_features"].numpy().astype(np.float32)
 
@@ -1755,8 +1756,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         inputs["decoder_position_ids"] = (
             torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1).numpy()
         )
-
-        inputs = self.auto_correct_inputs(inputs)
 
         self.qpc_session.skip_buffers(
             [x for x in self.qpc_session.input_names + self.qpc_session.output_names if x.startswith("past_")]
