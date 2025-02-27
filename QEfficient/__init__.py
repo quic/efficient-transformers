@@ -1,12 +1,28 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
 
 from QEfficient.utils.logging_utils import logger
+from transformers import AutoConfig
+from QEfficient.transformers.modeling_utils import (
+    get_model_class_type_from_model_type,
+    get_auto_model_class,
+    MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS
+)
 
+# loop over all the models which are not present in transformers and register them
+for key, value in MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS.items():
+    # Register the config class based on model type
+    AutoConfig.register(key, value[0])
+
+    model_class_type = get_model_class_type_from_model_type(key)
+    AutoModelClassName = get_auto_model_class(model_class_type, value[1])
+
+    # Register the non transformer library Class and config class using AutoModelClass
+    AutoModelClassName.register(value[0], value[1])
 
 def check_qaic_sdk():
     """Check if QAIC SDK is installed"""
