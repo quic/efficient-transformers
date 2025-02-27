@@ -812,12 +812,10 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
 
         return inputs
 
-    def get_specializations(
-        self, batch_size: int, encoder_ctx_len, ctx_len, **compiler_options
-    ):
+    def get_specializations(self, batch_size: int, encoder_ctx_len, ctx_len, **compiler_options):
         if encoder_ctx_len is None and hasattr(self.config, "max_source_positions"):
             encoder_ctx_len = self.config.max_source_positions
-        elif encoder_ctx_len is None: 
+        elif encoder_ctx_len is None:
             encoder_ctx_len = 1500
             logger.warning("Setting `encoder_ctx_len=1500` as it was neither passed nor found in config")
         feature_len = encoder_ctx_len * 2

@@ -340,7 +340,9 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
         batch_size=batch_size,
     )
 
-    exec_info = qeff_model.generate(inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=ctx_len)
+    exec_info = qeff_model.generate(
+        inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=ctx_len
+    )
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
     assert (pytorch_kv_tokens == cloud_ai_100_tokens).all(), (
         "Tokens don't match for pytorch output and Cloud AI 100 output."

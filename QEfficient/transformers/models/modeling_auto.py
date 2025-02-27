@@ -1695,7 +1695,12 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-        specializations = self.model.get_specializations(batch_size, encoder_ctx_len, ctx_len, **compiler_options,)
+        specializations = self.model.get_specializations(
+            batch_size,
+            encoder_ctx_len,
+            ctx_len,
+            **compiler_options,
+        )
 
         return self._compile(
             onnx_path,
@@ -1737,9 +1742,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids, enable_debug_logs=enable_debug_logs)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
-        if not "input_features" in inputs:
+        if "input_features" not in inputs:
             TypeError("missing required input: 'input_features'")
-        
+
         inputs["input_features"] = inputs["input_features"].numpy().astype(np.float32)
 
         # add start token id and initial position ids to inputs
@@ -1747,7 +1752,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         inputs["decoder_input_ids"] = (
             torch.ones((self.batch_size, seq_len), dtype=torch.int64) * self.model.config.decoder_start_token_id
         ).numpy()
-        inputs["decoder_position_ids"] = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1).numpy()
+        inputs["decoder_position_ids"] = (
+            torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1).numpy()
+        )
 
         inputs = self.auto_correct_inputs(inputs)
 
