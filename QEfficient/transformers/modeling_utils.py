@@ -378,6 +378,5 @@ SwiftKVModelCardNameToSwiftKVModelTypeDict: Dict[Type[str], Type[str]] = {
 # While onboarding new models make sure to add the new SwiftKV model card names to this dictionary.
 SwiftKVModelTypeToConfigClassAndModelArchClassDict = {
     # LlamaSwiftKV Model
-    "llama_swiftkv" : [LlamaSwiftKVConfig, LlamaSwiftKVForCausalLM]
+    "llama_swiftkv": [LlamaSwiftKVConfig, LlamaSwiftKVForCausalLM]
 }
-
