@@ -18,6 +18,7 @@ from torch import nn
 from transformers.cache_utils import Cache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.models.llama.modeling_llama import LlamaMLP, LlamaRMSNorm, logger, repeat_kv
+from transformers.modeling_utils import PreTrainedModel
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -26,10 +27,10 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaRotaryEmbedding,
     qeff_apply_rotary_pos_emb,
 )
-
+from QEfficient.transformers.models.llama_swiftkv.config_llama_swiftkv import LlamaSwiftKVConfig
 
 class LlamaSwiftKVAttention(nn.Module):
-    def __init__(self, config, layer_idx) -> None:
+    def __init__(self, config: LlamaSwiftKVConfig, layer_idx) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
         self.attention_dropout = config.attention_dropout
@@ -112,7 +113,7 @@ class LlamaSwiftKVAttention(nn.Module):
 
 
 class LlamaSwiftKVDecoderLayer(nn.Module):
-    def __init__(self, config, layer_idx) -> None:
+    def __init__(self, config: LlamaSwiftKVConfig, layer_idx) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
         self.num_key_value_heads = config.num_key_value_heads
@@ -147,7 +148,9 @@ class LlamaSwiftKVDecoderLayer(nn.Module):
 
 
 class LlamaSwiftKVModel(nn.Module):
-    def __init__(self, config):
+    config_class = LlamaSwiftKVConfig
+
+    def __init__(self, config: LlamaSwiftKVConfig):
         super().__init__()
         self.vocab_size = config.vocab_size
         self.config = config
@@ -344,8 +347,10 @@ class LlamaSwiftKVModel(nn.Module):
         return orig_hidden_states, next_cache
 
 
-class LlamaSwiftKVForCausalLM(nn.Module):
-    def __init__(self, *, config):
+class LlamaSwiftKVForCausalLM(PreTrainedModel):
+    config_class = LlamaSwiftKVConfig
+
+    def __init__(self, *, config: LlamaSwiftKVConfig):
         super().__init__()
 
         self.model = LlamaSwiftKVModel(
