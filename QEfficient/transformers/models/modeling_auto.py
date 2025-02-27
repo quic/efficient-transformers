@@ -52,7 +52,6 @@ from QEfficient.transformers.quantizers.quant_transforms import (
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
-from QEfficient.utils._utils import QEFFLoadSwiftKVModels
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -78,8 +77,6 @@ class QEFFTransformersBase(QEFFBaseModel):
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
-        # Load the SwiftKV model if supported
-        QEFFLoadSwiftKVModels(pretrained_model_name_or_path)
 
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')

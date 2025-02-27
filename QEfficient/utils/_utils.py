@@ -8,12 +8,7 @@
 import json
 import os
 import subprocess
-<<<<<<< HEAD
 import xml.etree.ElementTree as ET
-=======
-import sys
-import warnings
->>>>>>> b280225 (rebased)
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -23,22 +18,13 @@ import yaml
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import (
-    AutoConfig,
     AutoProcessor,
     AutoTokenizer,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
 
-<<<<<<< HEAD
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants, QnnConstants
-=======
-from QEfficient.transformers.modeling_utils import (
-    SwiftKVModelCardNameToSwiftKVModelTypeDict,
-    SwiftKVModelTypeToConfigClassAndModelArchClassDict,
-)
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
->>>>>>> b280225 (rebased)
 from QEfficient.utils.logging_utils import logger
 
 
