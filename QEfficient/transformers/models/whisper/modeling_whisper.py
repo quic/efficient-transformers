@@ -813,13 +813,20 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         return inputs
 
     def get_specializations(
-        self, batch_size: int, encoder_ctx_len: int, decoder_ctx_len: int, feature_len: int, **compiler_options
+        self, batch_size: int, encoder_ctx_len, ctx_len, **compiler_options
     ):
+        if encoder_ctx_len is None and hasattr(self.config, "max_source_positions"):
+            encoder_ctx_len = self.config.max_source_positions
+        elif encoder_ctx_len is None: 
+            encoder_ctx_len = 1500
+            logger.warning("Setting `encoder_ctx_len=1500` as it was neither passed nor found in config")
+        feature_len = encoder_ctx_len * 2
+
         encoder_specializations = {
             "batch_size": batch_size,
             "seq_len": 1,
             "encoder_ctx_len": encoder_ctx_len,
-            "decoder_ctx_len": decoder_ctx_len,
+            "decoder_ctx_len": ctx_len,
             "feature_len": feature_len,
         }
 
@@ -827,7 +834,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
             "batch_size": batch_size,
             "seq_len": 1,
             "encoder_ctx_len": encoder_ctx_len,
-            "decoder_ctx_len": decoder_ctx_len,
+            "decoder_ctx_len": ctx_len,
             "feature_len": 1,  # important dummy feature so that torch.where knows whether to run cross attention or not
         }
 
