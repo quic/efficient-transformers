@@ -21,7 +21,7 @@ SEQ_LEN = 592
 CTX_LEN = 1024
 
 
-class QEFFLlavaVisionEncoder(nn.Module):
+class QEFFLlavaEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -42,7 +42,7 @@ class QEFFLlavaVisionEncoder(nn.Module):
         return image_features
 
 
-class QEFFLlavaLanguageDecoder(nn.Module):
+class QEFFLlavaDecoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -67,10 +67,10 @@ class QEFFLlavaLanguageDecoder(nn.Module):
 
 class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
     def get_qeff_vision_encoder(self):
-        return QEFFLlavaVisionEncoder(self)
+        return QEFFLlavaEncoderWrapper(self)
 
     def get_qeff_language_decoder(self):
-        return QEFFLlavaLanguageDecoder(self)
+        return QEFFLlavaDecoderWrapper(self)
 
     def forward(self, input_ids, position_ids, pixel_values, past_key_values):
         inputs_embeds = self.get_input_embeddings()(input_ids)
@@ -214,18 +214,18 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["image_features"]
-        lang_output_names = ["logits", "pixel_values_RetainedState", "image_features_RetainedState"]
+        lang_output_names = ["logits"]
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
 
         output_names = {}
         if kv_offload:
-            lang_output_names.pop(1)
+            lang_output_names.insert(1, "image_features_RetainedState")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
-            lang_output_names.pop(2)
+            lang_output_names.insert(1, "pixel_values_RetainedState")
             return lang_output_names
         return output_names
 

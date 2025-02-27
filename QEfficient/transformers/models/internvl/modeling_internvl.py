@@ -14,7 +14,7 @@ from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.logging_utils import logger
 
 
-class QEffInternVisionEncoder2QPC(nn.Module):
+class QEffInternEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -24,7 +24,7 @@ class QEffInternVisionEncoder2QPC(nn.Module):
         return vit_embeds
 
 
-class QEffInternLanguageDecoder2QPC(nn.Module):
+class QEffInternDecoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -52,10 +52,10 @@ class QEffInternLanguageDecoder2QPC(nn.Module):
 
 class QEffInternVLModel(nn.Module):
     def get_qeff_vision_encoder(self):
-        return QEffInternVisionEncoder2QPC(self)
+        return QEffInternEncoderWrapper(self)
 
     def get_qeff_language_decoder(self):
-        return QEffInternLanguageDecoder2QPC(self)
+        return QEffInternDecoderWrapper(self)
 
     def get_specializations(
         self,
@@ -140,18 +140,18 @@ class QEffInternVLModel(nn.Module):
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vit_embeds"]
-        lang_output_names = ["logits", "pixel_values_RetainedState", "vit_embeds_RetainedState"]
+        lang_output_names = ["logits"]
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
 
         output_names = {}
         if kv_offload:
-            lang_output_names.pop(1)
+            lang_output_names.insert(1, "vit_embeds_RetainedState")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
-            lang_output_names.pop(2)
+            lang_output_names.insert(1, "pixel_values_RetainedState")
             return lang_output_names
         return output_names
 
@@ -162,6 +162,8 @@ class QEffInternVLModel(nn.Module):
             img_size = getattr(vis_cfg, "image_size", 448)
         else:
             img_size = 448
+
+        # Taken from the modeling files of OpenGVLab/InternVL2_5-1B
         feature_size = int((((self.config.vision_config.hidden_size**0.5) * self.config.downsample_ratio) ** 2))
 
         # Define shapes
