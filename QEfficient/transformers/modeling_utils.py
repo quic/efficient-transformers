@@ -153,6 +153,9 @@ from .models.whisper.modeling_whisper import (
     QEffWhisperPositionalEmbedding,
 )
 
+from QEfficient.transformers.models.llama_swiftkv.config_llama_swiftkv import LlamaSwiftKVConfig
+from QEfficient.transformers.models.llama_swiftkv.modeling_llama_swiftkv import LlamaSwiftKVForCausalLM
+
 # Define a named tuple for ModelArchitectures
 # Required for the Automation tool
 ModelArchitectures = namedtuple("ModelArchitectures", ["architectures"])
@@ -362,3 +365,19 @@ def _create_causal_mask(
         attention_mask = attention_mask.unsqueeze(1)
 
     return attention_mask
+
+
+# Define a SwiftKV Model card name to Model type dictionary
+# While onboarding new models make sure to add the new SwiftKV model card names to this dictionary.
+SwiftKVModelCardNameToSwiftKVModelTypeDict: Dict[Type[str], Type[str]] = {
+    # LlamaSwiftKV Model
+    "Snowflake/Llama-3.1-SwiftKV-8B-Instruct": "llama_swiftkv"
+}
+
+# Define a SwiftKV Model type to ConfigClass and ModelArchitecture class dictionary
+# While onboarding new models make sure to add the new SwiftKV model card names to this dictionary.
+SwiftKVModelTypeToConfigClassAndModelArchClassDict = {
+    # LlamaSwiftKV Model
+    "llama_swiftkv" : [LlamaSwiftKVConfig, LlamaSwiftKVForCausalLM]
+}
+
