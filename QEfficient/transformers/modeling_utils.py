@@ -159,6 +159,9 @@ from .models.whisper.modeling_whisper import (
     QEffWhisperPositionalEmbedding,
 )
 
+from QEfficient.transformers.models.llama_swiftkv.config_llama_swiftkv import LlamaSwiftKVConfig
+from QEfficient.transformers.models.llama_swiftkv.modeling_llama_swiftkv import LlamaSwiftKVForCausalLM
+
 # Define a named tuple for ModelArchitectures
 # Required for the Automation tool
 ModelArchitectures = namedtuple("ModelArchitectures", ["architectures"])

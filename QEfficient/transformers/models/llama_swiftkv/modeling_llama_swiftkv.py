@@ -21,6 +21,7 @@ from transformers.cache_utils import Cache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_utils import PreTrainedModel
 from transformers.models.llama.modeling_llama import LlamaMLP, LlamaRMSNorm, logger, repeat_kv
+from transformers.modeling_utils import PreTrainedModel
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -29,7 +30,7 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaRotaryEmbedding,
     qeff_apply_rotary_pos_emb,
 )
-
+from QEfficient.transformers.models.llama_swiftkv.config_llama_swiftkv import LlamaSwiftKVConfig
 
 class LlamaSwiftKVConfig(LlamaConfig):
     """
