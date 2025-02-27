@@ -494,7 +494,7 @@ def create_and_dump_qconfigs(
         elif isinstance(obj, dict):
             return {key: make_serializable(value) for key, value in obj.items()}
         elif hasattr(obj, "__dict__"):
-            return make_serializable(obj.__dict__)
+            return make_serializable(vars(obj))
         else:
             return str(obj)
 
