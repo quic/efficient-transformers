@@ -1670,12 +1670,19 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
         *,
+        prefill_seq_len: Optional[int] = 1,
         encoder_ctx_len: Optional[int] = None,
         ctx_len: int = 150,
+        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: Optional[int] = None,
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
+        mxint8_kv_cache: bool = False,
+        num_speculative_tokens: Optional[int] = None,
+        enable_qnn: bool = False,
+        qnn_config: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -1693,7 +1700,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             :num_cores (int): Number of cores used to compile the model.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
-            :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+
+            Other args are not yet implemented for AutoModelForSpeechSeq2Seq
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
@@ -1703,6 +1711,21 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             ctx_len,
             **compiler_options,
         )
+
+        if full_batch_size:
+            logger.warning("Continuous batching is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        if kv_cache_batch_size:
+            logger.warning("Prefix caching is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        if mxint8_kv_cache:
+            logger.warning("mxint8 cache is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        if num_speculative_tokens:
+            logger.warning("Speculative decoding is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        if enable_qnn or qnn_config:
+            logger.warning("QNN compile is not yet enabled for AutoModelForSpeechSeq2Seq")
 
         return self._compile(
             onnx_path,
@@ -1722,7 +1745,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         inputs: torch.Tensor,
         generation_len: int,
         streamer: Optional[TextStreamer] = None,
-        enable_debug_logs: bool = False,
         device_ids: List[int] = None,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
@@ -1743,7 +1765,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         inputs = self.auto_correct_inputs(inputs)
 
         if self.qpc_session is None:
-            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids, enable_debug_logs=enable_debug_logs)
+            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
         inputs["input_features"] = inputs["input_features"].numpy().astype(np.float32)
