@@ -337,20 +337,11 @@ class QEFFBaseModel(ABC):
 
         self.qpc_path = qpc_path
 
-        # qconfig dump code after compilation stage
-        if self.__class__.__name__ == "QEffVisionEncoderForTextImageToTextModel":
-            model_config = self.model.model.vision_model.config.__dict__
-        elif self.__class__.__name__ == "QEffCausalLMForTextImageToTextModel":
-            model_config = self.model.language_model.config.__dict__
-        elif hasattr(self.model, "config"):
-            model_config = self.model.config.__dict__
-        else:
-            model_config = None
-
+        # dump the compiler params and model configs into qconfig.json
         create_and_dump_qconfigs(
             self.qpc_path,
             self.onnx_path,
-            model_config,
+            self.get_model_config,
             [cls.__name__ for cls in self._pytorch_transforms],
             [cls.__name__ for cls in self._onnx_transforms],
             specializations,
@@ -459,10 +450,11 @@ class QEFFBaseModel(ABC):
 
         self.qpc_path = qpc_path
 
+        # dump the compiler params and model configs into qconfig.json
         create_and_dump_qconfigs(
             self.qpc_path,
             self.onnx_path,
-            self.model.config.__dict__,
+            self.get_model_config,
             [cls.__name__ for cls in self._pytorch_transforms],
             [cls.__name__ for cls in self._onnx_transforms],
             specializations,

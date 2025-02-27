@@ -231,6 +231,10 @@ class QEFFAutoModel(QEFFTransformersBase):
         mhash = mhash.hexdigest()[:16]
         return mhash
 
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.config.__dict__
+
     def export(self, export_dir: Optional[str] = None) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
@@ -443,6 +447,10 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             mname = mname[4:]
         return mname
 
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.model.vision_model.config.__dict__
+
 
 class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     _pytorch_transforms = [
@@ -500,6 +508,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         if mname.startswith("QEff") or mname.startswith("QEFF"):
             mname = mname[4:]
         return mname
+
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.language_model.config.__dict__
 
 
 class _QEffAutoModelForImageTextToTextDualQPC:
@@ -1137,6 +1149,10 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             mname = mname[4:]
         return mname
 
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.config.__dict__
+
 
 class QEFFAutoModelForImageTextToText:
     """
@@ -1337,6 +1353,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
+
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.config.__dict__
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
@@ -1647,6 +1667,10 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
+
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.config.__dict__
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
