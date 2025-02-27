@@ -21,7 +21,7 @@ from transformers import AutoProcessor, AutoTokenizer, PreTrainedTokenizer, PreT
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants, QnnConstants
 from QEfficient.utils.logging_utils import logger
-
+from QEfficient.transformers.modeling_utils import SwiftKVModelCardNameToSwiftKVModelTypeDict, SwiftKVModelTypeToConfigClassAndModelArchClassDict
 
 class DownloadRetryLimitExceeded(Exception):
     """
