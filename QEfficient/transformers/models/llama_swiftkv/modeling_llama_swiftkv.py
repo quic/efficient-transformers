@@ -29,6 +29,7 @@ from QEfficient.transformers.models.llama.modeling_llama import (
 )
 from QEfficient.transformers.models.llama_swiftkv.config_llama_swiftkv import LlamaSwiftKVConfig
 
+
 class LlamaSwiftKVAttention(nn.Module):
     def __init__(self, config: LlamaSwiftKVConfig, layer_idx) -> None:
         super().__init__()

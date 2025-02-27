@@ -78,7 +78,6 @@ class QEFFTransformersBase(QEFFBaseModel):
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
-
         # Load the SwiftKV model if supported
         QEFFLoadSwiftKVModels(pretrained_model_name_or_path)
 
