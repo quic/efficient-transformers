@@ -21,6 +21,9 @@ from QEfficient.finetune.dataset.gsm8k_dataset import get_gsm8k_dataset
 from QEfficient.finetune.dataset.samsum_dataset import (
     get_preprocessed_samsum as get_samsum_dataset,
 )
+from QEfficient.finetune.dataset.samsum_dataset import (
+    get_samsum_collate_fn,
+)
 
 DATASET_PREPROC = {
     "alpaca_dataset": partial(get_alpaca_dataset),
@@ -29,4 +32,7 @@ DATASET_PREPROC = {
     "gsm8k_dataset": get_gsm8k_dataset,
     "custom_dataset": get_custom_dataset,
 }
-DATALOADER_COLLATE_FUNC = {"custom_dataset": get_data_collator}
+DATALOADER_COLLATE_FUNC = {
+    "custom_dataset": get_data_collator,
+    "samsum_dataset": get_samsum_collate_fn,
+}
