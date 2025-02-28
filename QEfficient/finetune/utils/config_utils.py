@@ -16,7 +16,7 @@ from peft import (
     PrefixTuningConfig,
 )
 from transformers import default_data_collator
-from transformers.data import DataCollatorForSeq2Seq
+from transformers.data import DataCollatorForSeq2Seq, DefaultDataCollator
 
 import QEfficient.finetune.configs.dataset_config as datasets
 from QEfficient.finetune.configs.peft_config import lora_config, prefix_config
@@ -88,7 +88,10 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, mode):
                     num_replicas=dist.get_world_size(),
                     shuffle=False,
                 )
-                kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
+                if train_config.task_type == "seq_classification":
+                    kwargs["collate_fn"] = DefaultDataCollator(dataset_processer)
+                else:
+                    kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
         else:
             kwargs["sampler"] = data_utils.DistributedSampler(
                 dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True

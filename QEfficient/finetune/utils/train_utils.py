@@ -14,6 +14,7 @@ from typing import Dict, List, Tuple
 
 import torch
 import torch.distributed as dist
+import torchmetrics
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
@@ -103,6 +104,14 @@ def train(
     if train_config.enable_ddp:
         dist.broadcast(loss_0_counter, src=0)
 
+    acc_helper = None
+    if train_config.task_type == "seq_classification":
+        if local_rank is None:
+            num_classes = model.classifier.out_features
+        else:
+            num_classes = model.module.classifier.out_features
+        acc_helper = torchmetrics.classification.Accuracy(task="multiclass", num_classes=num_classes).to(device)
+
     # Start the training loop
     for epoch in range(train_config.num_epochs):
         if loss_0_counter.item() == train_config.convergence_counter:
@@ -181,10 +190,20 @@ def train(
                         filter_config=qaic_debug.DispatchFilterConfig.default(device),
                         dump_root_dir=train_config.dump_root_dir + str(step),
                     ) as verifier:
-                        loss = model(**batch).loss  # Forward call
+                        model_outputs = model(**batch)
+                        loss = model_outputs.loss  # Forward call
+                        if train_config.task_type == "seq_classification":
+                            logits = model_outputs.logits
+                            labels = batch["labels"]
+                            acc_helper.forward(logits, labels)
                     print("Mismatches detected:", verifier.get_perop_mismatch_count())
                 else:
-                    loss = model(**batch).loss  # Forward call
+                    model_outputs = model(**batch)
+                    loss = model_outputs.loss  # Forward call
+                    if train_config.task_type == "seq_classification":
+                        logits = model_outputs.logits
+                        labels = batch["labels"]
+                        acc_helper.forward(logits, labels)
 
             total_loss += loss.detach().float()
             # Accumalate graidents
@@ -280,7 +299,10 @@ def train(
             else:
                 train_epoch_loss = total_loss / len(train_dataloader)
 
-        train_perplexity = torch.exp(train_epoch_loss)
+        if train_config.task_type == "seq_classification":
+            train_perplexity = acc_helper.compute()
+        else:
+            train_perplexity = torch.exp(train_epoch_loss)
 
         train_prep.append(float(train_perplexity))
         train_loss.append(float(train_epoch_loss))
@@ -291,14 +313,14 @@ def train(
         if train_config.run_validation:
             if train_config.enable_ddp:
                 dist.barrier()
-                eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity = evaluation(
+                eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity = evaluation_helper(
                     model, train_config, eval_dataloader, local_rank, tokenizer, device
                 )
                 if local_rank == 0:
                     tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
 
             else:
-                eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity = evaluation(
+                eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity = evaluation_helper(
                     model, train_config, eval_dataloader, local_rank, tokenizer, device
                 )
                 tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
@@ -321,9 +343,14 @@ def train(
                 print(f"best eval loss on epoch {epoch + 1} is {best_val_loss}")
             val_loss.append(float(eval_epoch_loss))
             val_prep.append(float(eval_ppl))
-        print(
-            f"Epoch {epoch + 1}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
-        )
+        if train_config.task_type == "seq_classification":
+            print(
+                f"Epoch {epoch + 1}: train_acc={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
+            )
+        else:
+            print(
+                f"Epoch {epoch + 1}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
+            )
 
         # Saving the results every epoch to plot later
         if train_config.save_metrics:
@@ -346,10 +373,16 @@ def train(
         avg_eval_prep = sum(val_prep) / len(val_prep)
         avg_eval_loss = sum(val_loss) / len(val_loss)
 
-    results["avg_train_prep"] = avg_train_prep
+    if train_config.task_type == "seq_classification":
+        results["avg_train_acc"] = avg_train_prep
+    else:
+        results["avg_train_prep"] = avg_train_prep
     results["avg_train_loss"] = avg_train_loss
     if train_config.run_validation:
-        results["avg_eval_prep"] = avg_eval_prep
+        if train_config.task_type == "seq_classification":
+            results["avg_eval_acc"] = avg_eval_prep
+        else:
+            results["avg_eval_prep"] = avg_eval_prep
         results["avg_eval_loss"] = avg_eval_loss
     results["avg_epoch_time"] = avg_epoch_time
     results["avg_checkpoint_time"] = avg_checkpoint_time
@@ -359,7 +392,7 @@ def train(
     return results
 
 
-def evaluation(model, train_config, eval_dataloader, local_rank, tokenizer, device):
+def evaluation_ppl(model, train_config, eval_dataloader, local_rank, tokenizer, device):
     """
     Evaluates the model on the given dataloader
 
@@ -418,6 +451,82 @@ def evaluation(model, train_config, eval_dataloader, local_rank, tokenizer, devi
     print(f" {eval_ppl.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
 
     return eval_ppl, eval_epoch_loss, val_step_loss, val_step_perplexity
+
+
+def evaluation_acc(model, train_config, eval_dataloader, local_rank, tokenizer, device):
+    """
+    Evaluates the model on the given dataloader
+
+    Args:
+        model: The model to evaluate
+        eval_dataloader: The dataloader containing the evaluation data
+        local_rank: The rank of the current node in a distributed setting
+        tokenizer: The tokenizer used to decode predictions
+
+    Returns: eval_acc, eval_epoch_loss
+    """
+    model.eval()
+    if local_rank is None:
+        num_classes = model.classifier.out_features
+    else:
+        num_classes = model.module.classifier.out_features
+
+    acc_helper = torchmetrics.classification.Accuracy(task="multiclass", num_classes=num_classes).to(device)
+
+    # special handling for qaic device and dtype
+    # model.to(device)
+
+    # eval_preds = []
+    val_step_loss = []
+    val_step_acc = []
+
+    eval_loss = 0.0  # Initialize evaluation loss
+    total_eval_steps = 0
+    # max_steps_reached = False  # Flag to indicate max eval steps reached
+
+    for step, batch in enumerate(tqdm(eval_dataloader, colour="green", desc="evaluating Epoch", dynamic_ncols=True)):
+        total_eval_steps += 1
+        #  stop when the maximum number of eval steps is reached
+        if train_config.max_eval_step > 0 and total_eval_steps > train_config.max_eval_step:
+            # max_steps_reached = True
+            break
+        for key in batch.keys():
+            batch[key] = batch[key].to(device)
+        # Ensure no gradients are computed for this scope to save memory
+        with torch.no_grad():
+            # Forward pass and compute loss
+            with (
+                torch.autocast(device_type=device, dtype=torch.float16) if train_config.use_autocast else nullcontext()
+            ):
+                outputs = model(**batch)
+            loss = outputs.loss
+            logits = outputs.logits
+            labels = batch["labels"]
+            if train_config.save_metrics:
+                val_step_loss.append(loss.detach().float().item())
+                val_acc = acc_helper.forward(logits, labels)
+                val_step_acc.append(val_acc.detach().float().item())
+
+            eval_loss += loss.detach().float()
+        # Decode predictions and add to evaluation predictions list
+        # preds = torch.argmax(outputs.logits, -1)
+        # eval_preds.extend(tokenizer.batch_decode(preds.detach().cpu().numpy(), skip_special_tokens=True))
+
+    # Compute average loss and perplexity
+    eval_epoch_loss = eval_loss / len(eval_dataloader)
+    eval_acc = acc_helper.compute()
+
+    # Print evaluation metrics
+    print(f" {eval_acc.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
+
+    return eval_acc, eval_epoch_loss, val_step_loss, val_step_acc
+
+
+def evaluation_helper(model, train_config, eval_dataloader, local_rank, tokenizer, device):
+    if train_config.task_type == "seq_classification":
+        return evaluation_acc(model, train_config, eval_dataloader, local_rank, tokenizer, device)
+    else:
+        return evaluation_ppl(model, train_config, eval_dataloader, local_rank, tokenizer, device)
 
 
 def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
