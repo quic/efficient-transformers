@@ -13,7 +13,6 @@ QEFFAutoModel provides a common interface for loading the HuggingFace models usi
 """
 
 import importlib
-from collections import OrderedDict
 from typing import Any
 
 import transformers.models.auto.modeling_auto as mapping
@@ -21,12 +20,12 @@ from transformers import AutoConfig
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 
-MODEL_CLASS_MAPPING = OrderedDict(
-    [
-        (tuple(mapping.MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values()), "QEFFAutoModelForCausalLM"),
-        (tuple(mapping.MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values()), "QEFFAutoModelForImageTextToText"),
-    ]
-)
+MODEL_CLASS_MAPPING = {}
+for architecture in mapping.MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
+    MODEL_CLASS_MAPPING[architecture] = "QEFFAutoModelForCausalLM"
+
+for architecture in mapping.MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values():
+    MODEL_CLASS_MAPPING[architecture] = "QEFFAutoModelForImageTextToText"
 
 
 class QEFFCommonLoader:
@@ -50,13 +49,11 @@ class QEFFCommonLoader:
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path)
         architecture = config.architectures[0] if config.architectures else None
 
-        model_class = None
-        for key_tuple, class_name in MODEL_CLASS_MAPPING.items():
-            if architecture in key_tuple:
-                module = importlib.import_module("QEfficient.transformers.models.modeling_auto")
-                model_class = getattr(module, class_name)
-                break
-        if model_class is None:
+        class_name = MODEL_CLASS_MAPPING.get(architecture)
+        if class_name:
+            module = importlib.import_module("QEfficient.transformers.models.modeling_auto")
+            model_class = getattr(module, class_name)
+        else:
             raise NotImplementedError(
                 f"Unknown architecture={architecture}, either use specific auto model class for loading the model or raise an issue for support!"
             )
