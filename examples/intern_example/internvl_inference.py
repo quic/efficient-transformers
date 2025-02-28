@@ -177,11 +177,11 @@ def run_intern_on_aic(
 ):
     ## STEP 1 -- LOAD THE MODEL
 
+    # The original Intern-VL model, despite being multimodal, is loaded using `AutoModelForCausalLM` in Huggingface.
+    # To maintain compatibility, we load this model using `QEFFAutoModelForCausalLM`.
+
     model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=kv_offload, trust_remote_code=True)
-    """
-    The original Intern-VL model, despite being multimodal, is loaded using `AutoModelForCausalLM` in Huggingface.
-    To maintain compatibility, we load this model using `QEFFAutoModelForCausalLM`.
-    """
+
     ## STEP 2 -- EXPORT & COMPILE THE MODEL
 
     model.compile(
@@ -231,21 +231,17 @@ if __name__ == "__main__":
     prompt = "Please describe the image in detail."
     image_url = "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg"
 
-    # Compilation parameters
+    ## Compilation parameters
 
-    """
-    `kv_offload` is used to compile the model in a Single QPC or 2 QPCs.
-    The Dual QPC approach splits the model to perform Image Encoding and Output generation in 2 different QPCs.
-    The outputs of the Vision Encoder are then passed to the Language model via host in this case.
-    """
+    # `kv_offload` is used to compile the model in a Single QPC or 2 QPCs.
+    # The Dual QPC approach splits the model to perform Image Encoding and Output generation in 2 different QPCs.
+    # The outputs of the Vision Encoder are then passed to the Language model via host in this case.
 
     kv_offload = False
 
-    """
-    InternVL is an Early-Fusion model that uses placeholder tokens within the input_ids to interleave text_embeddings with
-    Image embeddings and generate final input_embeds for outout generation. Hence we need very large prefill_seq_len (3840 in this case) to
-    incorporate the memory for the merged embeddings.
-    """
+    # InternVL is an Early-Fusion model that uses placeholder tokens within the input_ids to interleave text_embeddings with
+    # Image embeddings and generate final input_embeds for outout generation. Hence we need very large prefill_seq_len (3840 in this case) to
+    # incorporate the memory for the merged embeddings.
 
     prefill_seq_len = 3840
     num_devices = 4
