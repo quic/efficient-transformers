@@ -1,59 +1,72 @@
 (validated_models)=
 # Validated Models
-``Note- All validated models support Continuous Batching functionality.``
-| Model Name | Model Support |
-| --- | --- |
-| [CodeGemma-2b](https://huggingface.co/google/codegemma-2b) |✔️ |
-| [CodeGemma-7b](https://huggingface.co/google/codegemma-7b) |✔️ |
-| [CodeLlama-7b-hf](https://huggingface.co/codellama/CodeLlama-7b-hf) |✔️ |
-| [CodeLlama-13b-hf](https://huggingface.co/codellama/CodeLlama-13b-hf) |✔️ |
-| [CodeLlama-34b-hf](https://huggingface.co/codellama/CodeLlama-34b-hf) |✔️ |
-| [Codestral-22B-v0.1](https://huggingface.co/mistralai/Codestral-22B-v0.1) |✔️ |
-| [DeepSeek-R1-Distill-Llama-70B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-70B)|✔️ |
-| [DeepSeek-R1-Distill-Qwen-32B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B)|✔️ |
-| [Falcon-40b](https://huggingface.co/tiiuae/falcon-40b) |✔️ |
-| [GPT-J-6B](https://huggingface.co/EleutherAI/gpt-j-6b) |✔️ |
-| [GPT2](https://huggingface.co/openai-community/gpt2) |✔️ |
-| [Gemma-2b](https://huggingface.co/google/gemma-2b) |✔️ |
-| [Gemma-7b](https://huggingface.co/google/gemma-7b) |✔️ |
-| [Gemma-2-2b](https://huggingface.co/google/gemma-2-2b) |✔️ |
-| [Gemma-2-9b](https://huggingface.co/google/gemma-2-9b) |✔️ |
-| [Gemma-2-27b](https://huggingface.co/google/gemma-2-27b) |✔️ |
-| [Granite-3.1-8b-instruct](https://huggingface.co/ibm-granite/granite-3.1-8b-instruct) |✔️ |
-| [Granite-guardian-3.1-8b](https://huggingface.co/ibm-granite/granite-guardian-3.1-8b) |✔️ |
-| [Granite-20b-code-base](https://huggingface.co/ibm-granite/granite-20b-code-base-8k) | ✔️ |
-| [Granite-20b-code-instruct-8k](https://huggingface.co/ibm-granite/granite-20b-code-instruct-8k) | ✔️ |
-| [Jais-adapted-7b](https://huggingface.co/inceptionai/jais-adapted-7b) |✔️ |
-| [Jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat) |✔️ |
-| [Jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b) |✔️ |
-| [Llama-2-7b-chat-hf](https://huggingface.co/meta-llama/Llama-2-7b-chat-hf) |✔️ |
-| [Llama-2-13b-chat-hf](https://huggingface.co/meta-llama/Llama-2-13b-chat-hf) |✔️ |
-| [Llama-2-70b](https://huggingface.co/meta-llama/Llama-2-70b-chat-hf) |✔️ |
-| [Llama-3-8b](https://huggingface.co/meta-llama/Meta-Llama-3-8B) |✔️ |
-| [Llama-3-70b](https://huggingface.co/meta-llama/Meta-Llama-3-70B) |✔️ |
-| [Llama-3.1-8B](https://huggingface.co/meta-llama/Llama-3.1-8B) |✔️ |
-| [Llama-3.1-70B](https://huggingface.co/meta-llama/Llama-3.1-70B) |✔️ |
-| [Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) |✔️ |
-| [Llama-3.2-3B](https://huggingface.co/meta-llama/Llama-3.2-3B) |✔️ |
-| [Llama-3.3-70B-Instruct](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct) |✔️ |
-| [MPT-7b](https://huggingface.co/mosaicml/mpt-7b) |✔️ |
-| [Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1) |✔️ |
-| [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) |✔️ |
-| [Phi3-Mini-4K-Instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct) |✔️ |
-| [Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct) |✔️ |
-| [Starcoder1-15B](https://huggingface.co/bigcode/starcoder) |✔️ |
-| [Starcoder2-15B](https://huggingface.co/bigcode/starcoder2-15b) |✔️ |
-| [Vicuna-v0](https://huggingface.co/lmsys/vicuna-13b-delta-v0) |✔️ |
-| [Vicuna-v1.3](https://huggingface.co/lmsys/vicuna-13b-v1.3) |✔️ |
-| [Vicuna-v1.5](https://huggingface.co/lmsys/vicuna-13b-v1.5) |✔️ |
+
+## Text-only Language Models
+
+### Text Generation Task
+**QEff Auto Class:** `QEFFAutoModelForCausalLM`
+
+| Architecture            | Model Family       | Representative Models                                                                 | CB Support |
+|-------------------------|--------------------|--------------------------------------------------------------------------------------|------------|
+| **FalconForCausalLM**   | Falcon             | tiiuae/falcon-40b                                                                    | ✔️          |
+| **GemmaForCausalLM**    | CodeGemma          | google/codegemma-2b<br>google/codegemma-7b                                           | ✔️          |
+|                         | Gemma              | google/gemma-2b<br>google/gemma-7b<br>google/gemma-2-9b<br>google/gemma-2-27b        | ✔️          |
+| **GPTBigCodeForCausalLM** | Starcoder1.5      | bigcode/starcoder                                                                   | ✔️          |
+|                         | Starcoder2         | bigcode/starcoder2-15b                                                              | ✔️          |
+| **GPTJForCausalLM**     | GPT-J              | EleutherAI/gpt-j-6b                                                                 | ✔️          |
+| **GPT2LMHeadModel**     | GPT-2              | openai-community/gpt2                                                               | ✔️          |
+| **GraniteForCausalLM**  | Granite 3.1        | ibm-granite/granite-3.1-8b-instruct<br>ibm-granite/granite-guardian-3.1-8b          | ✔️          |
+|                         | Granite 20B        | ibm-granite/granite-20b-code-base-8k<br>ibm-granite/granite-20b-code-instruct-8k    | ✔️          |
+| **InternVLChatModel**   | Intern-VL          | OpenGVLab/InternVL2_5-1B                                                            |            |
+| **LlamaForCausalLM**    | CodeLlama          | codellama/CodeLlama-7b-hf<br>codellama/CodeLlama-13b-hf<br>codellama/CodeLlama-34b-hf | ✔️          |
+|                         | DeepSeek-R1-Distill-Llama | deepseek-ai/DeepSeek-R1-Distill-Llama-70B                                      | ✔️          |
+|                         | InceptionAI-Adapted | inceptionai/jais-adapted-7b<br>inceptionai/jais-adapted-13b-chat<br>inceptionai/jais-adapted-70b | ✔️          |
+|                         | Llama 3.3          | meta-llama/Llama-3.3-70B-Instruct                                                   | ✔️          |
+|                         | Llama 3.2          | meta-llama/Llama-3.2-1B<br>meta-llama/Llama-3.2-3B                                  | ✔️          |
+|                         | Llama 3.1          | meta-llama/Llama-3.1-8B<br>meta-llama/Llama-3.1-70B                                 | ✔️          |
+|                         | Llama 3            | meta-llama/Meta-Llama-3-8B<br>meta-llama/Meta-Llama-3-70B                           | ✔️          |
+|                         | Llama 2            | meta-llama/Llama-2-7b-chat-hf<br>meta-llama/Llama-2-13b-chat-hf<br>meta-llama/Llama-2-70b-chat-hf | ✔️          |
+|                         | Vicuna             | lmsys/vicuna-13b-delta-v0<br>lmsys/vicuna-13b-v1.3<br>lmsys/vicuna-13b-v1.5         | ✔️          |
+| **MistralForCausalLM**  | Mistral            | mistralai/Mistral-7B-Instruct-v0.1                                                  | ✔️          |
+| **MixtralForCausalLM**  | Codestral<br>Mixtral | mistralai/Codestral-22B-v0.1<br>mistralai/Mixtral-8x7B-v0.1                        | ✔️          |
+| **MPTForCausalLM**      | MPT                | mosaicml/mpt-7b                                                                     | ✔️          |
+| **Phi3ForCausalLM**     | Phi-3, Phi-3.5     | microsoft/Phi-3-mini-4k-instruct                                                    | ✔️          |
+| **QwenForCausalLM**     | DeepSeek-R1-Distill-Qwen | DeepSeek-R1-Distill-Qwen-32B                                                   | ✔️          |
+|                         | Qwen2, Qwen2.5     | Qwen/Qwen2-1.5B-Instruct                                                            | ✔️          |
+
+## Embedding Models
+
+### Text Embedding Task
+**QEff Auto Class:** `QEFFAutoModel`
+
+| Architecture | Model Family | Representative Models          |
+|--------------|--------------|---------------------------------|
+| **BertModel** | BERT-based   | BAAI/bge-base-en-v1.5           |
+| **LlamaModel** | Llama-based  | intfloat/e5-mistral-7b-instruct |
+
+## Multimodal Language Models
+
+### Vision-Language Models (Text + Image Generation)
+**QEff Auto Class:** `QEFFAutoModelImageTextToText`
+
+| Architecture                | Model Family | Representative Models                  |
+|-----------------------------|--------------|----------------------------------------|
+| **LlavaForConditionalGeneration** | LLaVA-1.5   | llava-hf/llava-1.5-7b-hf               |
+| **MllamaForConditionalGeneration** | Llama 3.2   | meta-llama/Llama-3.2-11B-Vision Instruct<br>meta-llama/Llama-3.2-90B-Vision |
+
+### Audio Models
+(Automatic Speech Recognition) - Transcription Task
+**QEff Auto Class:** `QEFFAutoModelForSpeechSeq2Seq`
+
+| Architecture | Model Family | Representative Models                                                                 |
+|--------------|--------------|----------------------------------------------------------------------------------------|
+| **Whisper**  | Whisper      | openai/whisper-tiny<br>openai/whisper-base<br>openai/whisper-small<br>openai/whisper-medium<br>openai/whisper-large<br>openai/whisper-large-v3-turbo |
 
 (models_coming_soon)=
 # Models Coming Soon
 
-* [Baichuan2-7B-Base](https://huggingface.co/baichuan-inc/Baichuan2-7B-Base)
-* [CohereForAI/c4ai-command-r-v01](https://huggingface.co/CohereForAI/c4ai-command-r-v01)
-* [Chatglm2-6b](https://huggingface.co/THUDM/chatglm2-6b)
-* [databricks/dbrx-base](https://huggingface.co/databricks/dbrx-base)
-* [Llama-3.1-405B](https://huggingface.co/meta-llama/Llama-3.1-405B)
-* [Llama-3.2-11B-Vision](https://huggingface.co/meta-llama/Llama-3.2-11B-Vision)
-* [Llama-3.2-90B-Vision](https://huggingface.co/meta-llama/Llama-3.2-90B-Vision)
+| Architecture            | Model Family | Representative Models                      |
+|-------------------------|--------------|--------------------------------------------|
+| **BaichuanForCausalLM** | Baichuan2    | baichuan-inc/Baichuan2-7B-Base             |
+| **CohereForCausalLM**   | Command-R    | CohereForAI/c4ai-command-r-v01             |
+| **DbrxForCausalLM**     | DBRX         | databricks/dbrx-base                       |
