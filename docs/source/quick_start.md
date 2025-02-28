@@ -16,8 +16,8 @@ To achieve this, we have 2 levels of APIs, with different levels of abstraction.
 | Context Length Specializations (upcoming) | Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text. |
 | Swift KV (upcoming) | Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. |
 | Block Attention (in progress) | Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG. |
-| Vision Language Model | Provides support for the AutoModelForImageTextToText class from the transformers library, enabling advanced vision-language tasks. |
-| Speech Sequence to Sequence Model | Provides support for the QEFFAutoModelForSpeechSeq2Seq Facilitates speech-to-text sequence models. |
+| Vision Language Model | Provides support for the AutoModelForImageTextToText class from the transformers library, enabling advanced vision-language tasks. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text_inference.py) for more **details**. |
+| Speech Sequence to Sequence Model | Provides support for the QEFFAutoModelForSpeechSeq2Seq Facilitates speech-to-text sequence models. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/speech_to_text/run_whisper_speech_to_text.py) for more **details**. |
 | Support for FP8 Execution | Enables execution with FP8 precision, significantly improving performance and reducing memory usage for computational tasks. |
 | Prefill caching  | Enhances inference speed by caching key-value pairs for shared prefixes, reducing redundant computations and improving efficiency. |
 | [PEFT LoRA support](QEffAutoPeftModelForCausalLM) | Enables parameter-efficient fine-tuning using low-rank adaptation techniques, reducing the computational and memory requirements for fine-tuning large models. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/peft_models.py) for more **details**. |
