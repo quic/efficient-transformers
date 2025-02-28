@@ -23,6 +23,7 @@ def run_model(
     kv_offload=False,
     prefill_seq_len=32,
     ctx_len=512,
+    generation_len=128,
     img_size=560,
     num_cores=16,
     num_devices=1,
@@ -76,7 +77,7 @@ def run_model(
     ## STEP - 4 Run Inference on the compiled model
 
     streamer = TextStreamer(processor.tokenizer)
-    model.generate(inputs=inputs, streamer=streamer, generation_len=128)
+    model.generate(inputs=inputs, streamer=streamer, generation_len=generation_len)
 
 
 if __name__ == "__main__":
@@ -89,6 +90,7 @@ if __name__ == "__main__":
     kv_offload = False
     prefill_seq_len = 32
     ctx_len = 512
+    generation_len = 128
     img_size = 560
     num_cores = 16
     num_devices = 1
@@ -101,6 +103,7 @@ if __name__ == "__main__":
         image_url=image_url,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
+        generation_len=generation_len,
         img_size=img_size,
         num_cores=num_cores,
         num_devices=num_devices,
