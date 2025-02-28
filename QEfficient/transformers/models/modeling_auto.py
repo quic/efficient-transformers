@@ -823,8 +823,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_time=prefill_time, decode_perf=decode_perf, total_perf=total_perf, total_time=total_time
             ),
         )
-
-        print(exec_info)
         return exec_info
 
 
@@ -1116,8 +1114,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 prefill_time=prefill_time, decode_perf=decode_perf, total_perf=total_perf, total_time=total_time
             ),
         )
-
-        print(exec_info)
         return exec_info
 
     @property
@@ -1492,7 +1488,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             specializations.append(decode_specialization)
 
         if compiler_options.pop("img_size", None):
-            logger.warning("img_size is not a valid argument for Text-to-Text Model.")
+            logger.warning(f"Skipping img_size as it is not a valid argument for {self.model.config.architectures[0]}.")
 
         if enable_qnn:
             if compiler_options:
