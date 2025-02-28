@@ -1135,7 +1135,7 @@ class QEFFAutoModelForImageTextToText:
 
     _hf_auto_class = AutoModelForImageTextToText
 
-    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = False, **kwargs):
+    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = True, **kwargs):
         if kv_offload:
             return _QEffAutoModelForImageTextToTextDualQPC(model, **kwargs)
         else:
