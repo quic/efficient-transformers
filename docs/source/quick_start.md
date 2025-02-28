@@ -1,4 +1,4 @@
-# Quic Start
+# Quick Start
 
 QEfficient Library was designed with one goal:
 
@@ -20,6 +20,7 @@ To achieve this, we have 2 levels of APIs, with different levels of abstraction.
 | [Speech Sequence to Sequence Model] (QEFFAutoModelForSpeechSeq2Seq) | Provides support for the QEFFAutoModelForSpeechSeq2Seq Facilitates speech-to-text sequence models. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/speech_to_text/run_whisper_speech_to_text.py) for more **details**. |
 | Support for FP8 Execution | Enables execution with FP8 precision, significantly improving performance and reducing memory usage for computational tasks. |
 | Prefill caching  | Enhances inference speed by caching key-value pairs for shared prefixes, reducing redundant computations and improving efficiency. |
+|Prompt-Lookup Decoding | Speeds up text generation by using overlapping parts of the input prompt and the generated text, making the process faster without losing quality. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/pld_spd_inference.py) for more **details**.|
 | [PEFT LoRA support](QEffAutoPeftModelForCausalLM) | Enables parameter-efficient fine-tuning using low-rank adaptation techniques, reducing the computational and memory requirements for fine-tuning large models. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/peft_models.py) for more **details**. |
 | [QNN support](#qnn-compilation) | Enables compilation using QNN SDK, making Qeff adaptable for various backends in the future. |
 | [Embedding model support](QEFFAutoModel) | Facilitates the generation of vector embeddings for retrieval tasks. |
