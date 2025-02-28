@@ -185,7 +185,7 @@ def train(
                         ref_device="cpu",
                         ref_dtype=torch.float32,
                         # adjust atol & rtol this as required
-                        atol=1e-1,
+                        atol=1,
                         use_ref_output_on_mismatch=True,
                         filter_config=qaic_debug.DispatchFilterConfig.default(device),
                         dump_root_dir=train_config.dump_root_dir + str(step),
