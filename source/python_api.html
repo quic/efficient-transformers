@@ -63,7 +63,7 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
 <ul class="current">
-<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quic Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
 <li class="toctree-l1"><a class="reference internal" href="cli_api.html">Command Line Interface Use (CLI)</a></li>
 <li class="toctree-l1 current"><a class="current reference internal" href="#">Python API</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="#high-level-api">High Level API</a><ul>
@@ -81,6 +81,14 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="#qeffautoloramodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#qeffautomodelforimagetexttotext"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForImageTextToText</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForImageTextToText</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#qeffautomodelforspeechseq2seq"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">export</span></code></a><ul>
@@ -813,6 +821,161 @@ If the number of prompts cannot be divided by the <code class="docutils literal 
 </dd>
 <dt class="field-even">runtime (str, optional)<span class="colon">:</span></dt>
 <dd class="field-even"><p>Only <code class="docutils literal notranslate"><span class="pre">AI_100</span></code> runtime is supported as of now; <code class="docutils literal notranslate"><span class="pre">ONNXRT</span></code> and <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> coming soon. Defaults to “AI_100”.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="qeffautomodelforimagetexttotext">
+<span id="id4"></span><h3><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForImageTextToText</span></code><a class="headerlink" href="#qeffautomodelforimagetexttotext" title="Permalink to this heading"></a></h3>
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.transformers.models.modeling_auto.</span></span><span class="sig-name descname"><span class="pre">QEFFAutoModelForImageTextToText</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Module</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kv_offload</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForImageTextToText"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText" title="Permalink to this definition"></a></dt>
+<dd><p>A factory class for creating QEFFAutoModelForImageTextToText instances with for single and Dual QPC approach
+Attributes:</p>
+<blockquote>
+<div><p>_hf_auto_class (class): The Hugging Face AutoModel class for ImageTextToText models.</p>
+</div></blockquote>
+</dd></dl>
+
+</section>
+<section id="qeffautomodelforspeechseq2seq">
+<span id="id5"></span><h3><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq</span></code><a class="headerlink" href="#qeffautomodelforspeechseq2seq" title="Permalink to this heading"></a></h3>
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.transformers.models.modeling_auto.</span></span><span class="sig-name descname"><span class="pre">QEFFAutoModelForSpeechSeq2Seq</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForSpeechSeq2Seq"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq" title="Permalink to this definition"></a></dt>
+<dd><p>The QEFFAutoModelForSpeechSeq2Seq class is designed for transformers models with a sequence-to-sequence speech-to-text modeling head, including Whisper and other Encoder-Decoder speech models.
+Although it is possible to initialize the class directly, we highly recommend using the <code class="docutils literal notranslate"><span class="pre">from_pretrained</span></code> method for initialization.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">model (nn.Module)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>PyTorch model</p>
+</dd>
+</dl>
+</dd>
+</dl>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEFFAutoModelForSpeechSeq2Seq</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">processors</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoProcessor</span>
+
+<span class="c1"># Initialize the model using from_pretrained similar to transformers.AutoModelForSpeechSeq2Seq.</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">QEFFAutoModelForSpeechSeq2Seq</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;model_name&quot;</span><span class="p">)</span>
+
+<span class="c1"># Now you can directly compile the model for Cloud AI 100</span>
+<span class="n">model</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">num_cores</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">device_group</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>  <span class="c1"># Considering you have a Cloud AI 100 SKU</span>
+
+<span class="c1">#prepare inputs</span>
+<span class="n">processor</span> <span class="o">=</span> <span class="n">AutoProcessor</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
+<span class="n">input_audio</span><span class="p">,</span> <span class="n">sample_rate</span> <span class="o">=</span> <span class="p">[</span><span class="o">...</span><span class="p">]</span> <span class="c1"># audio data loaded in via some external audio package, such as librosa or soundfile</span>
+<span class="n">input_features</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">processor</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">sampling_rate</span><span class="o">=</span><span class="n">sample_rate</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">input_features</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">decoder_input_ids</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="n">batch_size</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span> <span class="o">*</span> <span class="n">model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">decoder_start_token_id</span>
+<span class="p">)</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+<span class="n">decoder_position_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="n">batch_size</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+<span class="n">inputs</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span>
+    <span class="n">input_features</span><span class="o">=</span><span class="n">input_features</span><span class="p">,</span>
+    <span class="n">decoder_input_ids</span><span class="o">=</span><span class="n">decoder_input_ids</span><span class="p">,</span>
+    <span class="n">decoder_position_ids</span><span class="o">=</span><span class="n">decoder_position_ids</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># You can now execute the model</span>
+<span class="n">model</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">generation_len</span><span class="o">=</span><span class="mi">150</span><span class="p">)</span>
+</pre></div>
+</div>
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.export">
+<span class="sig-name descname"><span class="pre">export</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">export_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForSpeechSeq2Seq.export"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.export" title="Permalink to this definition"></a></dt>
+<dd><p>Exports the model to <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> format using <code class="docutils literal notranslate"><span class="pre">torch.onnx.export</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:
+:export_dir (str, optional): The directory path to store ONNX-graph.</p>
+<dl class="simple">
+<dt>Returns:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">str<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path of the generated <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> graph.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile">
+<span class="sig-name descname"><span class="pre">compile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">onnx_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compile_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">encoder_ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1500</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">decoder_ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">150</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">feature_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">3000</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_devices</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_cores</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">16</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxfp6_matmul</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">compiler_options</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForSpeechSeq2Seq.compile"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile" title="Permalink to this definition"></a></dt>
+<dd><p>This method compiles the exported <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model using the Cloud AI 100 Platform SDK compiler binary found at <code class="docutils literal notranslate"><span class="pre">/opt/qti-aic/exec/qaic-exec</span></code> and generates a <code class="docutils literal notranslate"><span class="pre">qpc</span></code> package.
+If the model has not been exported yet, this method will handle the export process.
+You can pass any other arguments that the <cite>qaic-exec</cite> takes as extra kwargs.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">onnx_path (str, optional)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path to pre-exported onnx model.</p>
+</dd>
+<dt class="field-even">compile_dir (str, optional)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path for saving the qpc generated.</p>
+</dd>
+<dt class="field-odd">seq_len (int, optional)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The length of the prompt should be less that <code class="docutils literal notranslate"><span class="pre">seq_len</span></code>. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">32</span></code>.</p>
+</dd>
+<dt class="field-even">batch_size (int, optional)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Batch size. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">1</span></code>.</p>
+</dd>
+<dt class="field-odd">num_devices (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Number of devices the model needs to be compiled for. Defaults to 1.</p>
+</dd>
+<dt class="field-even">num_cores (int)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Number of cores used to compile the model.</p>
+</dd>
+<dt class="field-odd">mxfp6_matmul (bool, optional)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Whether to use <code class="docutils literal notranslate"><span class="pre">mxfp6</span></code> compression for weights. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False</span></code>.</p>
+</dd>
+<dt class="field-even">aic_enable_depth_first (bool, optional)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Enables DFS with default memory size. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False</span></code>.</p>
+</dd>
+<dt class="field-odd">allow_mxint8_mdp_io (bool, optional)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Allows MXINT8 compression of MDP IO traffic. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+</dl>
+</dd>
+<dt>Returns:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">str<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path of the compiled <code class="docutils literal notranslate"><span class="pre">qpc</span></code> package.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.generate">
+<span class="sig-name descname"><span class="pre">generate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Tensor</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generation_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">streamer</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">TextStreamer</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_debug_logs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_ids</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">int</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Tensor</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">ndarray</span></span></span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForSpeechSeq2Seq.generate"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.generate" title="Permalink to this definition"></a></dt>
+<dd><p>This method generates output until <code class="docutils literal notranslate"><span class="pre">endoftranscript</span></code> or <code class="docutils literal notranslate"><span class="pre">generation_len</span></code> by executing the compiled <code class="docutils literal notranslate"><span class="pre">qpc</span></code> on <code class="docutils literal notranslate"><span class="pre">Cloud</span> <span class="pre">AI</span> <span class="pre">100</span></code> Hardware cards.
+This is a sequential execution based on the <code class="docutils literal notranslate"><span class="pre">batch_size</span></code> of the compiled model and the number of audio tensor passed.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">processor<span class="colon">:</span></dt>
+<dd class="field-odd"><p>autoprocessor to process inputs and decode logits</p>
+</dd>
+<dt class="field-even">inputs (np.ndarray)<span class="colon">:</span></dt>
+<dd class="field-even"><p>inputs to run the execution.</p>
+</dd>
+<dt class="field-odd">generation_len (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>length upto which to generate</p>
+</dd>
+<dt class="field-even">sample_rate (int)<span class="colon">:</span></dt>
+<dd class="field-even"><p>sampling rate at which input audio is stored in inputs (needed for processor)</p>
+</dd>
+<dt class="field-odd">device_id (List[int])<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model</p>
+</dd>
+</dl>
+</dd>
+<dt>Returns:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">dict<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Output from the <code class="docutils literal notranslate"><span class="pre">AI_100</span></code> or <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> runtime.</p>
 </dd>
 </dl>
 </dd>

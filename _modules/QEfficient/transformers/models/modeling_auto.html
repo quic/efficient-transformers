@@ -60,7 +60,7 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../../source/quick_start.html">Quic Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../source/quick_start.html">Quick Start</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/cli_api.html">Command Line Interface Use (CLI)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../source/python_api.html">Python API</a></li>
 </ul>
@@ -1250,7 +1250,7 @@
         <span class="k">return</span> <span class="n">mname</span>
 
 
-<span class="k">class</span><span class="w"> </span><span class="nc">QEFFAutoModelForImageTextToText</span><span class="p">:</span>
+<div class="viewcode-block" id="QEFFAutoModelForImageTextToText"><a class="viewcode-back" href="../../../../source/python_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText">[docs]</a><span class="k">class</span><span class="w"> </span><span class="nc">QEFFAutoModelForImageTextToText</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A factory class for creating QEFFAutoModelForImageTextToText instances with for single and Dual QPC approach</span>
 <span class="sd">    Attributes:</span>
@@ -1295,7 +1295,7 @@
 
         <span class="n">kwargs</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;attn_implementation&quot;</span><span class="p">:</span> <span class="s2">&quot;eager&quot;</span><span class="p">,</span> <span class="s2">&quot;low_cpu_mem_usage&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">})</span>
         <span class="n">model</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_hf_auto_class</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">pretrained_model_name_or_path</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">kv_offload</span><span class="o">=</span><span class="n">kv_offload</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">kv_offload</span><span class="o">=</span><span class="n">kv_offload</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></div>
 
 
 <span class="n">MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;InternVLChatModel&quot;</span><span class="p">:</span> <span class="n">QEFFAutoModelForImageTextToText</span><span class="p">}</span>
@@ -1693,7 +1693,7 @@
             <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Only AI_100 runtime is supported right now via generate API&quot;</span><span class="p">)</span></div></div>
 
 
-<span class="k">class</span><span class="w"> </span><span class="nc">QEFFAutoModelForSpeechSeq2Seq</span><span class="p">(</span><span class="n">QEFFTransformersBase</span><span class="p">,</span> <span class="n">MultimodalUtilityMixin</span><span class="p">):</span>
+<div class="viewcode-block" id="QEFFAutoModelForSpeechSeq2Seq"><a class="viewcode-back" href="../../../../source/python_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq">[docs]</a><span class="k">class</span><span class="w"> </span><span class="nc">QEFFAutoModelForSpeechSeq2Seq</span><span class="p">(</span><span class="n">QEFFTransformersBase</span><span class="p">,</span> <span class="n">MultimodalUtilityMixin</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    The QEFFAutoModelForSpeechSeq2Seq class is designed for transformers models with a sequence-to-sequence speech-to-text modeling head, including Whisper and other Encoder-Decoder speech models.</span>
 <span class="sd">    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.</span>
@@ -1760,7 +1760,7 @@
         <span class="n">mhash</span> <span class="o">=</span> <span class="n">mhash</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()[:</span><span class="mi">16</span><span class="p">]</span>
         <span class="k">return</span> <span class="n">mhash</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">export_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<div class="viewcode-block" id="QEFFAutoModelForSpeechSeq2Seq.export"><a class="viewcode-back" href="../../../../source/python_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.export">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">export_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Exports the model to ``ONNX`` format using ``torch.onnx.export``.</span>
 
@@ -1773,9 +1773,9 @@
         <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">get_dummy_inputs</span><span class="p">()</span>
         <span class="n">dynamic_axes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">get_onnx_dynamic_axes</span><span class="p">()</span>
         <span class="n">output_names</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">get_output_names</span><span class="p">()</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_export</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">output_names</span><span class="p">,</span> <span class="n">dynamic_axes</span><span class="p">,</span> <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_export</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">output_names</span><span class="p">,</span> <span class="n">dynamic_axes</span><span class="p">,</span> <span class="n">export_dir</span><span class="o">=</span><span class="n">export_dir</span><span class="p">)</span></div>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">compile</span><span class="p">(</span>
+<div class="viewcode-block" id="QEFFAutoModelForSpeechSeq2Seq.compile"><a class="viewcode-back" href="../../../../source/python_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">compile</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">onnx_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">compile_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -1820,9 +1820,9 @@
             <span class="n">mdp_ts_num_devices</span><span class="o">=</span><span class="n">num_devices</span><span class="p">,</span>
             <span class="n">aic_num_cores</span><span class="o">=</span><span class="n">num_cores</span><span class="p">,</span>
             <span class="o">**</span><span class="n">compiler_options</span><span class="p">,</span>
-        <span class="p">)</span>
+        <span class="p">)</span></div>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span>
+<div class="viewcode-block" id="QEFFAutoModelForSpeechSeq2Seq.generate"><a class="viewcode-back" href="../../../../source/python_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.generate">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">inputs</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
         <span class="n">generation_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
@@ -1900,7 +1900,7 @@
             <span class="n">batch_size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">batch_size</span><span class="p">,</span>
             <span class="n">generated_ids</span><span class="o">=</span><span class="n">generated_ids</span><span class="p">,</span>
             <span class="n">perf_metrics</span><span class="o">=</span><span class="n">PerfMetrics</span><span class="p">(</span><span class="n">prefill_time</span><span class="p">,</span> <span class="n">decode_perf</span><span class="p">,</span> <span class="n">total_perf</span><span class="p">,</span> <span class="n">total_time</span><span class="p">),</span>
-        <span class="p">)</span>
+        <span class="p">)</span></div></div>
 </pre></div>
 
            </div>
