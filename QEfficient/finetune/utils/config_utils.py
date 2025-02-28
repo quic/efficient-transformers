@@ -89,7 +89,7 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, mode):
                     shuffle=False,
                 )
                 if train_config.task_type == "seq_classification":
-                    kwargs["collate_fn"] = DefaultDataCollator(dataset_processer)
+                    kwargs["collate_fn"] = default_data_collator
                 else:
                     kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
         else:

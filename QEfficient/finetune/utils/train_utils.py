@@ -106,7 +106,7 @@ def train(
             num_classes = model.classifier.out_features
         else:
             num_classes = model.module.classifier.out_features
-        acc_helper = torchmetrics.classification.Accuracy(task="multiclass", num_classes=num_classes).to(device)
+        acc_helper = torchmetrics.classification.MulticlassAccuracy(num_classes=num_classes).to(device)
 
     # Start the training loop
     for epoch in range(train_config.num_epochs):
@@ -170,7 +170,8 @@ def train(
                         if train_config.task_type == "seq_classification":
                             logits = model_outputs.logits
                             labels = batch["labels"]
-                            acc_helper.forward(logits, labels)
+                            preds = torch.nn.functional.softmax(logits, dim=-1)
+                            acc_helper.forward(preds, labels)
                     print("Mismatches detected:", verifier.get_perop_mismatch_count())
                 else:
                     model_outputs = model(**batch)
@@ -178,7 +179,8 @@ def train(
                     if train_config.task_type == "seq_classification":
                         logits = model_outputs.logits
                         labels = batch["labels"]
-                        acc_helper.forward(logits, labels)
+                        preds = torch.nn.functional.softmax(logits, dim=-1)
+                        acc_helper.forward(preds, labels)
 
             total_loss += loss.detach().float()
             # Accumalate graidents
@@ -442,7 +444,7 @@ def evaluation_acc(model, train_config, eval_dataloader, local_rank, tokenizer, 
     else:
         num_classes = model.module.classifier.out_features
 
-    acc_helper = torchmetrics.classification.Accuracy(task="multiclass", num_classes=num_classes).to(device)
+    acc_helper = torchmetrics.classification.MulticlassAccuracy(num_classes=num_classes).to(device)
 
     # special handling for qaic device and dtype
     # model.to(device)
@@ -475,7 +477,8 @@ def evaluation_acc(model, train_config, eval_dataloader, local_rank, tokenizer, 
             labels = batch["labels"]
             if train_config.save_metrics:
                 val_step_loss.append(loss.detach().float().item())
-                val_acc = acc_helper.forward(logits, labels)
+                preds = torch.nn.functional.softmax(logits, dim=-1)
+                val_acc = acc_helper.forward(preds, labels)
                 val_step_acc.append(val_acc.detach().float().item())
 
             eval_loss += loss.detach().float()
