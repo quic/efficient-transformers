@@ -5,18 +5,21 @@
 #
 # -----------------------------------------------------------------------------
 
+
 import datasets
+from itertools import chain
 
 
 def get_preprocessed_imdb(dataset_config, tokenizer, split, context_length=None):
     dataset = datasets.load_dataset("stanfordnlp/imdb", split=split, trust_remote_code=True)
 
-    # Need to shuffle dataset as all the 0 labeled data is organized first and then all the 1 labeled data.
-    dataset = dataset.shuffle(seed=42)
-
     if split == "test":
         # Test set contains 15000 samples. Not all are required.
-        dataset = dataset.select(range(0, 1000))
+        # 0-12499 are 0 labeled samples, 12500-24999 are 1 labeled samples.
+        dataset = dataset.select(chain(range(0, 500), range(12500, 13000)))
+
+    # Need to shuffle dataset as all the 0 labeled data is organized first and then all the 1 labeled data.
+    dataset = dataset.shuffle(seed=42)
 
     if tokenizer.pad_token is None:
         tokenizer.add_special_tokens({"pad_token": "[PAD]"})
