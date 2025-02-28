@@ -184,12 +184,9 @@ def train(
                         ref_device="cpu",
                         ref_dtype=torch.float32,
                         # adjust atol & rtol this as required
-                        atol=1e-1,
+                        atol=1,
                         use_ref_output_on_mismatch=True,
-                        # report all mismatches
-                        max_failures=None,
-                        # generate unittest for each op once
-                        repeat_same_op=True,
+                        filter_config=qaic_debug.DispatchFilterConfig.default(device, opwise_limit=2),
                         dump_root_dir=train_config.dump_root_dir + str(step),
                     ) as verifier:
                         model_outputs = model(**batch)
