@@ -39,6 +39,24 @@
    :members:
 ```
 
+(QEFFAutoModelForImageTextToText)=
+### `QEFFAutoModelForImageTextToText`
+
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText
+   :member-order: bysource
+   :members:
+```
+
+(QEFFAutoModelForSpeechSeq2Seq)=
+### `QEFFAutoModelForSpeechSeq2Seq`
+
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq
+   :member-order: bysource
+   :members:
+```
+
 ### `export`
 
 ```{eval-rst}
