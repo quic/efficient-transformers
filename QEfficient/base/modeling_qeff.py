@@ -23,7 +23,7 @@ from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils import constants, create_and_dump_qconfigs
+from QEfficient.utils import constants, dump_qconfig
 from QEfficient.utils._utils import load_json
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
@@ -211,6 +211,7 @@ class QEFFBaseModel(ABC):
         self.onnx_path = onnx_path
         return onnx_path
 
+    @dump_qconfig
     def _compile(
         self,
         onnx_path: Optional[str] = None,
@@ -337,21 +338,9 @@ class QEFFBaseModel(ABC):
 
         self.qpc_path = qpc_path
 
-        # dump the compiler params and model configs into qconfig.json
-        create_and_dump_qconfigs(
-            self.qpc_path,
-            self.onnx_path,
-            self.get_model_config,
-            [cls.__name__ for cls in self._pytorch_transforms],
-            [cls.__name__ for cls in self._onnx_transforms],
-            specializations,
-            mdp_ts_num_devices,
-            num_speculative_tokens,
-            **compiler_options,
-        )
-
         return qpc_path
 
+    @dump_qconfig
     def _qnn_compile(
         self,
         onnx_path: Optional[str] = None,
@@ -449,27 +438,5 @@ class QEFFBaseModel(ABC):
         )
 
         self.qpc_path = qpc_path
-
-        # dump the compiler params and model configs into qconfig.json
-        create_and_dump_qconfigs(
-            self.qpc_path,
-            self.onnx_path,
-            self.get_model_config,
-            [cls.__name__ for cls in self._pytorch_transforms],
-            [cls.__name__ for cls in self._onnx_transforms],
-            specializations,
-            mdp_ts_num_devices,
-            num_speculative_tokens=None,
-            enable_qnn=True,
-            qnn_config=qnn_config,
-            num_cores=num_cores,
-            batch_size=batch_size,
-            prompt_len=prefill_seq_len,
-            ctx_len=ctx_len,
-            mxfp6=mxfp6_matmul,
-            mxint8=mxint8_kv_cache,
-            full_batch_size=full_batch_size,
-            kv_cache_batch_size=kv_cache_batch_size,
-        )
 
         return qpc_path

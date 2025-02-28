@@ -446,6 +446,29 @@ class IOInfo:
         return f"input_name:{self.name}\tdatatype:{self.datatype}\tshape:{self.shape}"
 
 
+def dump_qconfig(func):
+    def wrapper(self, *args, **kwargs):
+        result = func(self, *args, **kwargs)
+        create_and_dump_qconfigs(
+            self.qpc_path,
+            self.onnx_path,
+            self.get_model_config,
+            [cls.__name__ for cls in self._pytorch_transforms],
+            [cls.__name__ for cls in self._onnx_transforms],
+            kwargs.get("specializations"),
+            kwargs.get("mdp_ts_num_devices", 1),
+            kwargs.get("num_speculative_tokens"),
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k not in ["specializations", "mdp_ts_num_devices", "num_speculative_tokens", "custom_io"]
+            },
+        )
+        return result
+
+    return wrapper
+
+
 def create_and_dump_qconfigs(
     qpc_path,
     onnx_path,
@@ -455,8 +478,6 @@ def create_and_dump_qconfigs(
     specializations,
     mdp_ts_num_devices,
     num_speculative_tokens,
-    enable_qnn=False,
-    qnn_config=None,
     **compiler_options,
 ):
     """
@@ -464,6 +485,9 @@ def create_and_dump_qconfigs(
     Such as huggingface configs, QEff transforms, QAIC sdk version, QNN sdk, compilation dir, qpc dir and
     many other compilation options.
     """
+    qnn_config = compiler_options["qnn_config"] if "qnn_config" in compiler_options else None
+    enable_qnn = True if "qnn_config" in compiler_options else None
+
     qconfig_file_path = os.path.join(os.path.dirname(qpc_path), "qconfig.json")
     onnx_path = str(onnx_path)
     specializations_file_path = str(os.path.join(os.path.dirname(qpc_path), "specializations.json"))
@@ -495,8 +519,7 @@ def create_and_dump_qconfigs(
             return {key: make_serializable(value) for key, value in obj.items()}
         elif hasattr(obj, "__dict__"):
             return make_serializable(vars(obj))
-        else:
-            return str(obj)
+        return str(obj)
 
     qconfigs = {
         "huggingface_config": make_serializable(huggingface_config),
