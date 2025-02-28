@@ -178,7 +178,10 @@ def run_intern_on_aic(
     ## STEP 1 -- LOAD THE MODEL
 
     model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=kv_offload, trust_remote_code=True)
-
+    """
+    The original Intern-VL model, despite being multimodal, is loaded using `AutoModelForCausalLM` in Huggingface.
+    To maintain compatibility, we load this model using `QEFFAutoModelForCausalLM`.
+    """
     ## STEP 2 -- EXPORT & COMPILE THE MODEL
 
     model.compile(
@@ -199,8 +202,7 @@ def run_intern_on_aic(
     img = requests.get(image_url, stream=True)
     image = Image.open(BytesIO(img.content)).convert("RGB")
 
-    # Resizing the image to have num_patches=13
-    # We can fix a different size and the compile the model with appropriate `num_patches`
+    # Images are resized to (1000, 747) for inference
     image = image.resize((1000, 747))
 
     # preprocess the resized image
