@@ -461,7 +461,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model):
-        super().__init__(model.get_qeff_language_decoder())
+        super().__init__(model)
+        self.model = model.get_qeff_language_decoder()
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)

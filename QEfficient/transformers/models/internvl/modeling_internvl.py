@@ -81,7 +81,8 @@ class QEffInternVLModel(nn.Module):
         elif img_size is None:
             img_size = 448
             logger.warning("Setting img_size to be 448, as it was neither passed nor found in vision_config")
-
+        if img_size != 448 and kv_offload:
+            raise NotImplementedError("Image Size other than 448 is not supported for Intern models yet.")
         vision = [
             {
                 "batch_size": batch_size,
@@ -162,6 +163,8 @@ class QEffInternVLModel(nn.Module):
             img_size = getattr(vis_cfg, "image_size", 448)
         else:
             img_size = 448
+        if img_size != 448 and kv_offload:
+            raise NotImplementedError("Image Size other than 448 is not supported for Intern models yet.")
 
         # Taken from the modeling files of OpenGVLab/InternVL2_5-1B
         feature_size = int((((self.config.vision_config.hidden_size**0.5) * self.config.downsample_ratio) ** 2))

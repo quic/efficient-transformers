@@ -109,6 +109,8 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             img_size = getattr(vis_cfg, "image_size", 336)
         else:
             img_size = 336
+        if img_size != 336 and kv_offload:
+            raise NotImplementedError("Image Size other than 336 is not supported for Llava models yet.")
         vision_inputs = {
             "pixel_values": torch.zeros((BS, NUM_CHANNEL, img_size, img_size), dtype=torch.float32),
         }
@@ -154,7 +156,8 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         elif img_size is None:
             img_size = 336
             logger.warning("Setting img_size to be 336, as it was neither passed nor found in vision_config")
-
+        if img_size != 336 and kv_offload:
+            raise NotImplementedError("Image Size other than 336 is not supported for Llava models yet.")
         vision = [
             {
                 "batch_size": batch_size,
