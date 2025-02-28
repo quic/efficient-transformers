@@ -17,6 +17,7 @@ from torchvision.transforms.functional import InterpolationMode
 from transformers import AutoTokenizer, TextStreamer
 
 from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient.utils.logging_utils import logger
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
@@ -46,7 +47,6 @@ class InternProcessor:
     InternVL model only has an AutoTokenizer so this class performs the processing tasks similar to an AutoProcessor.
     The methods used here are borrowed from the original InternVL modelling files.
     "https://huggingface.co/OpenGVLab/InternVL2_5-1B/"
-
     """
 
     def __init__(self, model: nn.Module, tokenizer):
@@ -156,21 +156,37 @@ class InternProcessor:
         query = get_prompt(messages)
         if verbose and pixel_values is not None:
             image_bs = pixel_values.shape[0]
-            print(f"dynamic ViT batch size: {image_bs}")
+            logger.info(f"dynamic ViT batch size: {image_bs}")
+
         for num_patches in num_patches_list:
             image_tokens = IMG_START_TOKEN + IMG_CONTEXT_TOKEN * self.num_image_token * num_patches + IMG_END_TOKEN
             query = query.replace("<image>", image_tokens, 1)
         return query
 
 
-def run_intern_on_aic(model_name, prompt, image_url, messages, roles, prefill_seq_len):
+def run_intern_on_aic(
+    model_name,
+    prompt,
+    image_url,
+    messages,
+    roles,
+    kv_offload=False,
+    prefill_seq_len=3840,
+    num_devices=1,
+    num_cores=16,
+):
     ## STEP 1 -- LOAD THE MODEL
 
-    model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=False, trust_remote_code=True)
+    model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=kv_offload, trust_remote_code=True)
 
     ## STEP 2 -- EXPORT & COMPILE THE MODEL
 
-    model.compile(num_cores=16, num_devices=4, prefill_seq_len=prefill_seq_len, mxfp6_matmul=True)
+    model.compile(
+        num_cores=num_cores,
+        num_devices=num_devices,
+        prefill_seq_len=prefill_seq_len,
+        mxfp6_matmul=False,
+    )
 
     ## STEP 3 -- SETUP THE PROCESSOR
 
@@ -183,15 +199,14 @@ def run_intern_on_aic(model_name, prompt, image_url, messages, roles, prefill_se
     img = requests.get(image_url, stream=True)
     image = Image.open(BytesIO(img.content)).convert("RGB")
 
-    # Resizing the image to have num_crops=13
-    # We can fix a different size and the compile the model with appropriate `num_crops`
+    # Resizing the image to have num_patches=13
+    # We can fix a different size and the compile the model with appropriate `num_patches`
     image = image.resize((1000, 747))
 
     # preprocess the resized image
     pixel_values = internProcessor.load_image(image, max_num=12)
     question = "<image>\n" + prompt
     query = internProcessor(pixel_values, question, messages, roles)
-    # inputs = tokenizer(query, return_tensors="pt", padding="max_length", padding_side="right")
     inputs = tokenizer(
         query, return_tensors="pt", padding="max_length", max_length=prefill_seq_len, padding_side="right"
     )
@@ -213,7 +228,26 @@ if __name__ == "__main__":
     # Inputs for the model
     prompt = "Please describe the image in detail."
     image_url = "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg"
+
+    # Compilation parameters
+
+    """
+    `kv_offload` is used to compile the model in a Single QPC or 2 QPCs.
+    The Dual QPC approach splits the model to perform Image Encoding and Output generation in 2 different QPCs.
+    The outputs of the Vision Encoder are then passed to the Language model via host in this case.
+    """
+
+    kv_offload = False
+
+    """
+    InternVL is an Early-Fusion model that uses placeholder tokens within the input_ids to interleave text_embeddings with
+    Image embeddings and generate final input_embeds for outout generation. Hence we need very large prefill_seq_len (3840 in this case) to
+    incorporate the memory for the merged embeddings.
+    """
+
     prefill_seq_len = 3840
+    num_devices = 4
+    num_cores = 16
 
     run_intern_on_aic(
         model_name=model_name,
@@ -221,7 +255,10 @@ if __name__ == "__main__":
         image_url=image_url,
         messages=messages,
         roles=roles,
+        kv_offload=kv_offload,
         prefill_seq_len=prefill_seq_len,
+        num_devices=num_devices,
+        num_cores=num_cores,
     )
 
 
