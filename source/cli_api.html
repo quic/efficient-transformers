@@ -4,7 +4,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>QEfficient.cloud.infer &mdash; efficient-transformers main documentation</title>
+  <title>Command Line Interface Use (CLI) &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
       <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=547657ed" />
@@ -22,8 +22,8 @@
     <script src="../_static/js/theme.js"></script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="High Level API" href="hl_api.html" />
-    <link rel="prev" title="Transformed models and QPC storage" href="quick_start.html" /> 
+    <link rel="next" title="Python API" href="python_api.html" />
+    <link rel="prev" title="Quick Start" href="quick_start.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -61,24 +61,18 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="upgrade.html">Using GitHub Repository</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Transformed models and QPC storage</a></li>
-<li class="toctree-l1"><a class="reference internal" href="quick_start.html#command-line-interface">Command Line Interface</a></li>
-<li class="toctree-l1"><a class="reference internal" href="quick_start.html#python-api">Python API</a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
+<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
 <ul class="current">
-<li class="toctree-l1 current"><a class="current reference internal" href="#"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Command Line Interface Use (CLI)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.cloud.infer.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="hl_api.html">High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="ll_api.html">Low Level API</a></li>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="python_api.html">Python API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
@@ -115,7 +109,7 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></li>
+      <li class="breadcrumb-item active">Command Line Interface Use (CLI)</li>
       <li class="wy-breadcrumbs-aside">
             <a href="../_sources/source/cli_api.md.txt" rel="nofollow"> View page source</a>
       </li>
@@ -125,12 +119,14 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <div class="admonition note">
+  <section id="command-line-interface-use-cli">
+<h1>Command Line Interface Use (CLI)<a class="headerlink" href="#command-line-interface-use-cli" title="Permalink to this heading"></a></h1>
+<div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>Use <code class="docutils literal notranslate"><span class="pre">bash</span> <span class="pre">terminal</span></code>, else if using <code class="docutils literal notranslate"><span class="pre">ZSH</span> <span class="pre">terminal</span></code> then <code class="docutils literal notranslate"><span class="pre">device_group</span></code>should be in single quotes e.g.  <code class="docutils literal notranslate"><span class="pre">'--device_group</span> <span class="pre">[0]'</span></code></p>
 </div>
 <section id="module-QEfficient.cloud.infer.main">
-<span id="qefficient-cloud-infer"></span><span id="infer-api"></span><h1><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code><a class="headerlink" href="#module-QEfficient.cloud.infer.main" title="Permalink to this heading"></a></h1>
+<span id="qefficient-cloud-infer"></span><span id="infer-api"></span><h2><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code><a class="headerlink" href="#module-QEfficient.cloud.infer.main" title="Permalink to this heading"></a></h2>
 <ol class="arabic simple">
 <li><p>Check if compiled qpc for given config already exists, if it does jump to execute, else</p></li>
 <li><p>Check if exported ONNX file already exists, if true, jump to compilation -&gt; execution, else</p></li>
@@ -163,7 +159,7 @@
 <dd class="field-even"><p>Enables <code class="docutils literal notranslate"><span class="pre">DFS</span></code> with default memory size. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
 </dd>
 <dt class="field-odd">mos (int)<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Effort level to reduce the on-chip memory. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">-1.</span></code></p>
+<dd class="field-odd"><p>Effort level to reduce the on-chip memory. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">1.</span></code></p>
 </dd>
 <dt class="field-even">batch_size (int)<span class="colon">:</span></dt>
 <dd class="field-even"><p>Batch size to compile the model for. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">1.</span></code></p>
@@ -212,7 +208,7 @@
 </div>
 </section>
 <section id="module-QEfficient.cloud.execute.main">
-<span id="qefficient-cloud-execute"></span><h1><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code><a class="headerlink" href="#module-QEfficient.cloud.execute.main" title="Permalink to this heading"></a></h1>
+<span id="qefficient-cloud-execute"></span><h2><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code><a class="headerlink" href="#module-QEfficient.cloud.execute.main" title="Permalink to this heading"></a></h2>
 <p>Helper function used by execute CLI app to run the Model on <code class="docutils literal notranslate"><span class="pre">Cloud</span> <span class="pre">AI</span> <span class="pre">100</span></code> Platform.</p>
 <dl class="simple">
 <dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
@@ -257,7 +253,7 @@
 </div>
 </section>
 <section id="qefficient-cloud-compile">
-<h1><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code><a class="headerlink" href="#qefficient-cloud-compile" title="Permalink to this heading"></a></h1>
+<h2><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code><a class="headerlink" href="#qefficient-cloud-compile" title="Permalink to this heading"></a></h2>
 <blockquote>
 <div><span class="target" id="module-QEfficient.compile.compile_helper.compile"></span><p>Compiles the given <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model using Cloud AI 100 platform SDK compiler and saves the compiled <code class="docutils literal notranslate"><span class="pre">qpc</span></code> package at <code class="docutils literal notranslate"><span class="pre">qpc_path</span></code>.
 Generates tensor-slicing configuration if multiple devices are passed in <code class="docutils literal notranslate"><span class="pre">device_group</span></code>.</p>
@@ -330,7 +326,7 @@ Generates tensor-slicing configuration if multiple devices are passed in <code c
 </div></blockquote>
 </section>
 <section id="qefficient-cloud-export">
-<h1><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code><a class="headerlink" href="#qefficient-cloud-export" title="Permalink to this heading"></a></h1>
+<h2><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code><a class="headerlink" href="#qefficient-cloud-export" title="Permalink to this heading"></a></h2>
 <blockquote>
 <div><span class="target" id="module-QEfficient.cloud.export.main"></span><p>Helper function used by export CLI app for exporting to ONNX Model.</p>
 <dl class="simple">
@@ -362,7 +358,7 @@ Generates tensor-slicing configuration if multiple devices are passed in <code c
 </div></blockquote>
 </section>
 <section id="qefficient-cloud-finetune">
-<h1><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code><a class="headerlink" href="#qefficient-cloud-finetune" title="Permalink to this heading"></a></h1>
+<h2><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code><a class="headerlink" href="#qefficient-cloud-finetune" title="Permalink to this heading"></a></h2>
 <blockquote>
 <div><span class="target" id="module-QEfficient.cloud.finetune.main"></span><p>Helper function to finetune the model on QAic.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.finetune<span class="w"> </span>OPTIONS
@@ -370,13 +366,14 @@ Generates tensor-slicing configuration if multiple devices are passed in <code c
 </div>
 </div></blockquote>
 </section>
+</section>
 
 
            </div>
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="quick_start.html" class="btn btn-neutral float-left" title="Transformed models and QPC storage" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="hl_api.html" class="btn btn-neutral float-right" title="High Level API" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="quick_start.html" class="btn btn-neutral float-left" title="Quick Start" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="python_api.html" class="btn btn-neutral float-right" title="Python API" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>

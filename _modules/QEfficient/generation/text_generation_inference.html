@@ -58,24 +58,11 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/upgrade.html">Using GitHub Repository</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Transformed models and QPC storage</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#command-line-interface">Command Line Interface</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#python-api">Python API</a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.compile.compile_helper.compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.export.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.finetune.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/hl_api.html">High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/ll_api.html">Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html">Command Line Interface Use (CLI)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/python_api.html">Python API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
@@ -146,7 +133,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils.logging_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
 
 
-<div class="viewcode-block" id="PerfMetrics"><a class="viewcode-back" href="../../../source/hl_api.html#QEfficient.generation.text_generation_inference.PerfMetrics">[docs]</a><span class="nd">@dataclass</span>
+<div class="viewcode-block" id="PerfMetrics"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.generation.text_generation_inference.PerfMetrics">[docs]</a><span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">PerfMetrics</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Holds all performance metrics</span>
@@ -164,7 +151,7 @@
     <span class="n">total_time</span><span class="p">:</span> <span class="nb">float</span></div>
 
 
-<div class="viewcode-block" id="CloudAI100ExecInfo"><a class="viewcode-back" href="../../../source/hl_api.html#QEfficient.generation.text_generation_inference.CloudAI100ExecInfo">[docs]</a><span class="nd">@dataclass</span>
+<div class="viewcode-block" id="CloudAI100ExecInfo"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.generation.text_generation_inference.CloudAI100ExecInfo">[docs]</a><span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">CloudAI100ExecInfo</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Holds all the information about Cloud AI 100 execution</span>
@@ -188,7 +175,7 @@
 <span class="s2">        </span><span class="se">\n</span><span class="s2">Total (E2E) inference time is= </span><span class="si">{</span><span class="nb">round</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">perf_metrics</span><span class="o">.</span><span class="n">total_time</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="si">}</span><span class="s2"> tokens/sec&quot;</span></div>
 
 
-<div class="viewcode-block" id="CloudAI100ExecInfoNew"><a class="viewcode-back" href="../../../source/hl_api.html#QEfficient.generation.text_generation_inference.CloudAI100ExecInfoNew">[docs]</a><span class="nd">@dataclass</span>
+<div class="viewcode-block" id="CloudAI100ExecInfoNew"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.generation.text_generation_inference.CloudAI100ExecInfoNew">[docs]</a><span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">CloudAI100ExecInfoNew</span><span class="p">:</span>
     <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span>
     <span class="n">generated_ids</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span>
@@ -290,7 +277,7 @@
     <span class="nb">print</span><span class="p">(</span><span class="nb">round</span><span class="p">((</span><span class="n">cur_len</span> <span class="o">-</span> <span class="n">init_len</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">end</span> <span class="o">-</span> <span class="n">start</span><span class="p">),</span> <span class="mi">2</span><span class="p">),</span> <span class="s2">&quot;tok/s&quot;</span><span class="p">)</span>
 
 
-<div class="viewcode-block" id="get_compilation_dims"><a class="viewcode-back" href="../../../source/hl_api.html#QEfficient.generation.text_generation_inference.get_compilation_dims">[docs]</a><span class="k">def</span><span class="w"> </span><span class="nf">get_compilation_dims</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]]:</span>
+<div class="viewcode-block" id="get_compilation_dims"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.generation.text_generation_inference.get_compilation_dims">[docs]</a><span class="k">def</span><span class="w"> </span><span class="nf">get_compilation_dims</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Function to fetch compilation dimensions from specializations.json.</span>
 <span class="sd">    Uses qpc path to compute path to specializations.json.</span>
@@ -330,7 +317,7 @@
     <span class="k">return</span> <span class="n">prompt</span>
 
 
-<div class="viewcode-block" id="fix_prompts"><a class="viewcode-back" href="../../../source/hl_api.html#QEfficient.generation.text_generation_inference.fix_prompts">[docs]</a><span class="k">def</span><span class="w"> </span><span class="nf">fix_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+<div class="viewcode-block" id="fix_prompts"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.generation.text_generation_inference.fix_prompts">[docs]</a><span class="k">def</span><span class="w"> </span><span class="nf">fix_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Adjusts the list of prompts to match the required batch size.</span>
 
@@ -358,6 +345,40 @@
     <span class="k">return</span> <span class="n">prompt</span></div>
 
 
+<div class="viewcode-block" id="fix_prompt_to_lora_id_mapping"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.generation.text_generation_inference.fix_prompt_to_lora_id_mapping">[docs]</a><span class="k">def</span><span class="w"> </span><span class="nf">fix_prompt_to_lora_id_mapping</span><span class="p">(</span><span class="n">prompt_to_lora_id_mapping</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Adjusts the list of prompt_to_lora_id_mapping to match the required batch size.</span>
+
+<span class="sd">    ``Mandatory`` Args:</span>
+<span class="sd">        prompt_to_lora_id_mapping (Optional[List[int]]): Mapping to associate prompts with their respective LoRA adapter.</span>
+<span class="sd">        batch_size (int): The batch size to process at a time.</span>
+
+<span class="sd">    ``Optional`` Args:</span>
+<span class="sd">        full_batch_size (Optional[int]): The full batch size if different from batch_size.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        List[int]: Adjusted list of prompt_to_lora_id_mapping.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">exec_batch_size</span> <span class="o">=</span> <span class="n">full_batch_size</span> <span class="k">if</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">batch_size</span>
+
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt_to_lora_id_mapping</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">exec_batch_size</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+            <span class="s2">&quot;Prompt_to_lora_id_mapping are less than batch size/full batch size, repeating to required batch size&quot;</span>
+        <span class="p">)</span>
+        <span class="n">prompt_to_lora_id_mapping</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">prompt_to_lora_id_mapping</span> <span class="o">*</span> <span class="p">(</span><span class="n">exec_batch_size</span> <span class="o">//</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt_to_lora_id_mapping</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="p">)[:</span><span class="n">exec_batch_size</span><span class="p">]</span>
+    <span class="k">elif</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">prompt_to_lora_id_mapping</span><span class="p">)</span> <span class="o">%</span> <span class="n">batch_size</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+            <span class="s2">&quot;prompt_to_lora_id_mapping are not multiple of batch size, dropping last incomplete batch from given input prompts&quot;</span>
+        <span class="p">)</span>
+        <span class="n">prompt_to_lora_id_mapping</span> <span class="o">=</span> <span class="n">prompt_to_lora_id_mapping</span><span class="p">[</span>
+            <span class="p">:</span> <span class="n">batch_size</span> <span class="o">*</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">prompt_to_lora_id_mapping</span><span class="p">)</span> <span class="o">//</span> <span class="n">batch_size</span><span class="p">)</span>
+        <span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">prompt_to_lora_id_mapping</span></div>
+
+
 <span class="k">def</span><span class="w"> </span><span class="nf">read_prompts_txt_file</span><span class="p">(</span><span class="n">prompts_txt_file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
     <span class="n">prompt</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">prompts_txt_file_path</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
@@ -379,7 +400,7 @@
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=====================================================================&quot;</span><span class="p">)</span>
 
 
-<div class="viewcode-block" id="calculate_latency"><a class="viewcode-back" href="../../../source/hl_api.html#QEfficient.generation.text_generation_inference.calculate_latency">[docs]</a><span class="k">def</span><span class="w"> </span><span class="nf">calculate_latency</span><span class="p">(</span><span class="n">total_decoded_tokens</span><span class="p">,</span> <span class="n">loop_start</span><span class="p">,</span> <span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">,</span> <span class="n">decode_pause_time</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+<div class="viewcode-block" id="calculate_latency"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.generation.text_generation_inference.calculate_latency">[docs]</a><span class="k">def</span><span class="w"> </span><span class="nf">calculate_latency</span><span class="p">(</span><span class="n">total_decoded_tokens</span><span class="p">,</span> <span class="n">loop_start</span><span class="p">,</span> <span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">,</span> <span class="n">decode_pause_time</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Method will calculate the latency metrics using the time loops and based on the total decoded token count.</span>
 
@@ -400,7 +421,7 @@
     <span class="k">return</span> <span class="n">prefill_time</span><span class="p">,</span> <span class="n">decode_perf</span><span class="p">,</span> <span class="n">total_perf</span><span class="p">,</span> <span class="n">total_time</span></div>
 
 
-<div class="viewcode-block" id="cloud_ai_100_exec_kv"><a class="viewcode-back" href="../../../source/hl_api.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv">[docs]</a><span class="k">def</span><span class="w"> </span><span class="nf">cloud_ai_100_exec_kv</span><span class="p">(</span>
+<div class="viewcode-block" id="cloud_ai_100_exec_kv"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv">[docs]</a><span class="k">def</span><span class="w"> </span><span class="nf">cloud_ai_100_exec_kv</span><span class="p">(</span>
     <span class="n">tokenizer</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">PreTrainedTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizerFast</span><span class="p">],</span>
     <span class="n">qpc_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">prompt</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -450,6 +471,10 @@
     <span class="n">batch_size</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">,</span> <span class="n">full_batch_size</span> <span class="o">=</span> <span class="n">get_compilation_dims</span><span class="p">(</span><span class="n">qpc_path</span><span class="p">)</span>
     <span class="n">prompt</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">get_input_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">prompts_txt_file_path</span><span class="p">)</span>
     <span class="n">prompt</span> <span class="o">=</span> <span class="n">fix_prompts</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">prompt_to_lora_id_mapping</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">prompt_to_lora_id_mapping</span> <span class="o">=</span> <span class="n">fix_prompt_to_lora_id_mapping</span><span class="p">(</span>
+            <span class="n">prompt_to_lora_id_mapping</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">full_batch_size</span>
+        <span class="p">)</span>
     <span class="n">generate_text</span> <span class="o">=</span> <span class="n">TextGeneration</span><span class="p">(</span>
         <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
         <span class="n">qpc_path</span><span class="o">=</span><span class="n">qpc_path</span><span class="p">,</span>
