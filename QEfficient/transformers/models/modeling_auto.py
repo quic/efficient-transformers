@@ -390,7 +390,13 @@ class QEFFAutoModel(QEFFTransformersBase):
 
 
 class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
-    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
+    _pytorch_transforms = [
+        AwqToMatmulNbitsTransform,
+        GPTQToMatmulNbitsTransform,
+        CustomOpsTransform,
+        KVCacheTransform,
+        KVCacheModuleMethodMapperTransform,
+    ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.modules):
@@ -454,6 +460,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
 
     def __init__(self, model):
         super().__init__(model)
+        self.model = model.get_qeff_language_decoder()
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -502,7 +509,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
 
 class _QEffAutoModelForImageTextToTextDualQPC:
     _hf_auto_class = AutoModelForImageTextToText
-    UNSUPPORTED_MODELS = ["LlavaForConditionalGeneration", "InternVLChatModel"]
 
     def __init__(
         self,
@@ -513,8 +519,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         self.model = model
         self.config = model.config
-        if self.model_name in self.UNSUPPORTED_MODELS:
-            raise NotImplementedError(f"kv_offload is not yet supported for {self.model.__class__.__name__}")
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model)
 
@@ -640,12 +644,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         custom_io_lang = {}
         # Inputs
         for output_name in output_names["lang"]:
-            if output_name.startswith("past_"):
+            if output_name.endswith("_RetainedState"):
                 custom_io_lang[output_name[: -len("_RetainedState")]] = kv_cache_dtype
 
         # outputs
         for output_name in output_names["lang"]:
-            if output_name.startswith("past_"):
+            if output_name.endswith("_RetainedState"):
                 custom_io_lang[output_name] = kv_cache_dtype
 
         self.lang_model._compile(
@@ -799,7 +803,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             lang_inputs["input_ids"] = outputs["logits"].argmax(2)
             lang_inputs["position_ids"] += 1
             generated_ids[:, num_token] = lang_inputs["input_ids"].squeeze(1)
-
             if streamer:
                 streamer.put(lang_inputs["input_ids"][0])
 
