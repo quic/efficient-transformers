@@ -1,3 +1,4 @@
+# Quick Start
 
 QEfficient Library was designed with one goal:
 
@@ -7,6 +8,30 @@ To achieve this, we have 2 levels of APIs, with different levels of abstraction.
 1. Command line interface abstracts away complex details, offering a simpler interface. They're ideal for quick development and prototyping. If you're new to a technology or want to minimize coding effort.
 
 2. Python high level APIs offer more granular control, ideal for when customization is necessary.
+
+## Supported Features
+
+| Feature | Impact |
+| --- | --- |
+| Context Length Specializations (upcoming) | Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text. |
+| Swift KV (upcoming) | Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. |
+| Block Attention (in progress) | Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG. |
+| [Vision Language Model](QEFFAutoModelForImageTextToText) | Provides support for the AutoModelForImageTextToText class from the transformers library, enabling advanced vision-language tasks. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text_inference.py) for more **details**. |
+| [Speech Sequence to Sequence Model](QEFFAutoModelForSpeechSeq2Seq) | Provides support for the QEFFAutoModelForSpeechSeq2Seq Facilitates speech-to-text sequence models. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/speech_to_text/run_whisper_speech_to_text.py) for more **details**. |
+| Support for FP8 Execution | Enables execution with FP8 precision, significantly improving performance and reducing memory usage for computational tasks. |
+| Prefill caching  | Enhances inference speed by caching key-value pairs for shared prefixes, reducing redundant computations and improving efficiency. |
+|Prompt-Lookup Decoding | Speeds up text generation by using overlapping parts of the input prompt and the generated text, making the process faster without losing quality. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/pld_spd_inference.py) for more **details**.|
+| [PEFT LoRA support](QEffAutoPeftModelForCausalLM) | Enables parameter-efficient fine-tuning using low-rank adaptation techniques, reducing the computational and memory requirements for fine-tuning large models. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/peft_models.py) for more **details**. |
+| [QNN support](#qnn-compilation) | Enables compilation using QNN SDK, making Qeff adaptable for various backends in the future. |
+| [Embedding model support](QEFFAutoModel) | Facilitates the generation of vector embeddings for retrieval tasks. |
+| [Speculative Decoding](#draft-based-speculative-decoding) | Accelerates text generation by using a draft model to generate preliminary predictions, which are then verified by the target model, reducing latency and improving efficiency. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/draft_spd_inference.py) for more **details**. |
+| [Finite lorax](QEffAutoLoraModelForCausalLM) | Users can activate multiple LoRA adapters and compile them with the base model. At runtime, they can specify which prompt should use which adapter, enabling mixed adapter usage within the same batch. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/lora_models.py) for more **details**. |
+| Python and CPP Inferencing API support | Provides flexibility while running inference with Qeff and enabling integration with various applications and improving accessibility for developers. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/cpp_execution/text_inference_using_cpp.py) for more **details**.|
+| [Continuous batching](#continuous-batching) | Optimizes throughput and latency by dynamically batching requests, ensuring efficient use of computational resources. |
+| AWQ and GPTQ support | Supports advanced quantization techniques, improving model efficiency and performance on AI 100. |
+| Support serving successive requests in same session | An API that yields tokens as they are generated, facilitating seamless integration with various applications and enhancing accessibility for developers. |
+| Perplexity calculation | A script for computing the perplexity of a model, allowing for the evaluation of model performance and comparison across different models and datasets. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/scripts/perplexity_computation/calculate_perplexity.py) for more **details**. |
+| KV Heads Replication Script| A sample script for replicating key-value (KV) heads for the Llama-3-8B-Instruct model, running inference with the original model, replicating KV heads, validating changes, and exporting the modified model to ONNX format. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/scripts/replicate_kv_head/replicate_kv_heads.py) for more **details**.|
 
 ## Transformed models and QPC storage
 
