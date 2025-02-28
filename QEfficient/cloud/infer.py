@@ -12,7 +12,7 @@ from typing import List, Optional
 
 import requests
 from PIL import Image
-from transformers import AutoConfig, AutoProcessor, TextStreamer
+from transformers import AutoProcessor, TextStreamer
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
 from QEfficient.base.common import QEFFCommonLoader
@@ -121,16 +121,10 @@ def main(
         **kwargs,
     )
 
-    tokenizer = load_hf_tokenizer(
-        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-        cache_dir=cache_dir,
-        hf_token=hf_token,
-    )
-
     #########
     # Execute
     #########
-    config = AutoConfig.from_pretrained(model_name)
+    config = qeff_model.model.config
     architecture = config.architectures[0] if config.architectures else None
 
     if architecture in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values():
@@ -166,13 +160,19 @@ def main(
             add_special_tokens=False,
         )
         streamer = TextStreamer(processor.tokenizer)
-        _ = qeff_model.generate(
+        output = qeff_model.generate(
             inputs=split_inputs,
             streamer=streamer,
             device_ids=device_group,
             generation_len=generation_len,
         )
+        print(output)
     else:
+        tokenizer = load_hf_tokenizer(
+            pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+            cache_dir=cache_dir,
+            hf_token=hf_token,
+        )
         _ = qeff_model.generate(
             tokenizer,
             prompts=prompt,
