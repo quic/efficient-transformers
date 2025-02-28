@@ -1198,6 +1198,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         :model (nn.Module):  PyTorch model
         :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
         :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
+        :enable_qnn (bool): Enables QNN Compilation path for the model.
 
 
     .. code-block:: python
@@ -1228,6 +1229,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model: nn.Module,
         continuous_batching: bool = False,
         is_tlm: bool = False,
+        enable_qnn: bool = False,
         **kwargs,
     ):
         model_class_name = model.__class__.__name__
@@ -1259,6 +1261,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model, transformed = SpDTransform.apply(self.model)
         self.is_tlm = is_tlm
 
+        self.enable_qnn = enable_qnn
+
     @property
     def model_name(self) -> str:
         mname = self.model.__class__.__name__
@@ -1272,7 +1276,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(
-        cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, *args, **kwargs
+        cls,
+        pretrained_model_name_or_path,
+        continuous_batching: bool = False,
+        is_tlm: bool = False,
+        enable_qnn: bool = False,
+        *args,
+        **kwargs,
     ):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
@@ -1283,6 +1293,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
             :continuous_batching (bool): Whether this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
             :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
+            :enable_qnn (bool): Enables QNN Compilation path for the model.
             :args, kwargs: Additional arguments to pass to transformers.AutoModelForCausalLM.
 
         .. code-block:: python
@@ -1316,6 +1327,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_offload = kwargs.pop("kv_offload", None)
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
@@ -1325,7 +1337,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 model, kv_offload=kv_offload
             )
 
-        return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching)
+        return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching, enable_qnn=enable_qnn)
 
     @property
     def model_hash(self) -> str:

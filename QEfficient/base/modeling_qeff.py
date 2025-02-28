@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 import onnx
 import torch
 
-from QEfficient.base.onnx_transforms import OnnxTransform
+from QEfficient.base.onnx_transforms import OnnxTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -191,7 +191,8 @@ class QEFFBaseModel(ABC):
                 transform_kwargs.update(onnx_transform_kwargs)
 
             for transform in self._onnx_transforms:
-                model, transformed = transform.apply(model, **transform_kwargs)
+                if not (self.enable_qnn and transform == SplitTensorsTransform):
+                    model, transformed = transform.apply(model, **transform_kwargs)
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )

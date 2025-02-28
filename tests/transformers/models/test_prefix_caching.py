@@ -37,7 +37,7 @@ def test_simple_prefix_caching(model_name):
 @pytest.mark.qnn
 @pytest.mark.parametrize("model_name", test_models)
 def test_simple_prefix_caching_qnn(model_name):
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True)
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True, enable_qnn=True)
     qnn_config = {
         "convertor_args_extension": "",
         "context_binary_generator_args_extension": "--log_level debug",

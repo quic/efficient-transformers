@@ -82,7 +82,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
-    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, enable_qnn=True)
 
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
@@ -130,7 +130,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
     pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
 
-    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=True)
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=True, enable_qnn=True)
     onnx_model_path = qeff_model.export()
 
     if not get_available_device_id():
