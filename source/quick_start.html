@@ -156,43 +156,52 @@
 <tr class="row-odd"><td><p>Swift KV (upcoming)</p></td>
 <td><p>Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput.</p></td>
 </tr>
-<tr class="row-even"><td><p>Prefill caching (upcoming)</p></td>
-<td><p>Enhances inference speed by caching key-value pairs for shared prefixes, reducing redundant computations and improving efficiency.</p></td>
-</tr>
-<tr class="row-odd"><td><p>Block Attention (in progress)</p></td>
+<tr class="row-even"><td><p>Block Attention (in progress)</p></td>
 <td><p>Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="python_api.html#qeffautopeftmodelforcausallm"><span class="std std-ref">PEFT LoRA support</span></a></p></td>
+<tr class="row-odd"><td><p>Vision Language Model</p></td>
+<td><p>Provides support for the AutoModelForImageTextToText class from the transformers library, enabling advanced vision-language tasks. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
+</tr>
+<tr class="row-even"><td><p>Speech Sequence to Sequence Model</p></td>
+<td><p>Provides support for the QEFFAutoModelForSpeechSeq2Seq Facilitates speech-to-text sequence models. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/speech_to_text/run_whisper_speech_to_text.py">sample script</a> for more <strong>details</strong>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Support for FP8 Execution</p></td>
+<td><p>Enables execution with FP8 precision, significantly improving performance and reducing memory usage for computational tasks.</p></td>
+</tr>
+<tr class="row-even"><td><p>Prefill caching</p></td>
+<td><p>Enhances inference speed by caching key-value pairs for shared prefixes, reducing redundant computations and improving efficiency.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="python_api.html#qeffautopeftmodelforcausallm"><span class="std std-ref">PEFT LoRA support</span></a></p></td>
 <td><p>Enables parameter-efficient fine-tuning using low-rank adaptation techniques, reducing the computational and memory requirements for fine-tuning large models. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/peft_models.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="#qnn-compilation"><span class="xref myst">QNN support</span></a></p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="#qnn-compilation"><span class="xref myst">QNN support</span></a></p></td>
 <td><p>Enables compilation using QNN SDK, making Qeff adaptable for various backends in the future.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="python_api.html#qeffautomodel"><span class="std std-ref">Embedding model support</span></a></p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="python_api.html#qeffautomodel"><span class="std std-ref">Embedding model support</span></a></p></td>
 <td><p>Facilitates the generation of vector embeddings for retrieval tasks.</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="#draft-based-speculative-decoding"><span class="xref myst">Speculative Decoding</span></a></p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="#draft-based-speculative-decoding"><span class="xref myst">Speculative Decoding</span></a></p></td>
 <td><p>Accelerates text generation by using a draft model to generate preliminary predictions, which are then verified by the target model, reducing latency and improving efficiency. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/draft_spd_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="python_api.html#qeffautoloramodelforcausallm"><span class="std std-ref">Finite lorax</span></a></p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="python_api.html#qeffautoloramodelforcausallm"><span class="std std-ref">Finite lorax</span></a></p></td>
 <td><p>Users can activate multiple LoRA adapters and compile them with the base model. At runtime, they can specify which prompt should use which adapter, enabling mixed adapter usage within the same batch. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/lora_models.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Python and CPP Inferencing API support</p></td>
+<tr class="row-even"><td><p>Python and CPP Inferencing API support</p></td>
 <td><p>Provides flexibility while running inference with Qeff and enabling integration with various applications and improving accessibility for developers. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/cpp_execution/text_inference_using_cpp.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="#continuous-batching"><span class="xref myst">Continuous batching</span></a></p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="#continuous-batching"><span class="xref myst">Continuous batching</span></a></p></td>
 <td><p>Optimizes throughput and latency by dynamically batching requests, ensuring efficient use of computational resources.</p></td>
 </tr>
-<tr class="row-odd"><td><p>AWQ and GPTQ support</p></td>
+<tr class="row-even"><td><p>AWQ and GPTQ support</p></td>
 <td><p>Supports advanced quantization techniques, improving model efficiency and performance on AI 100.</p></td>
 </tr>
-<tr class="row-even"><td><p>Support serving successive requests in same session</p></td>
+<tr class="row-odd"><td><p>Support serving successive requests in same session</p></td>
 <td><p>An API that yields tokens as they are generated, facilitating seamless integration with various applications and enhancing accessibility for developers.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Perplexity calculation</p></td>
+<tr class="row-even"><td><p>Perplexity calculation</p></td>
 <td><p>A script for computing the perplexity of a model, allowing for the evaluation of model performance and comparison across different models and datasets. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/scripts/perplexity_computation/calculate_perplexity.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-even"><td><p>KV Heads Replication Script</p></td>
+<tr class="row-odd"><td><p>KV Heads Replication Script</p></td>
 <td><p>A sample script for replicating key-value (KV) heads for the Llama-3-8B-Instruct model, running inference with the original model, replicating KV heads, validating changes, and exporting the modified model to ONNX format. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/scripts/replicate_kv_head/replicate_kv_heads.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
 </tbody>
