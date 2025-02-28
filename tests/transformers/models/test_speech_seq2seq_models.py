@@ -334,8 +334,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
         pytest.skip("No available devices to run model on Cloud AI 100")
 
     qeff_model.compile(
-        encoder_ctx_len=qeff_model.model.config.max_source_positions,
-        decoder_ctx_len=ctx_len,
+        ctx_len=ctx_len,
         num_cores=16,
         batch_size=batch_size,
     )
