@@ -58,24 +58,11 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/upgrade.html">Using GitHub Repository</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Transformed models and QPC storage</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#command-line-interface">Command Line Interface</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html#python-api">Python API</a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.compile.compile_helper.compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.export.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html#module-QEfficient.cloud.finetune.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/hl_api.html">High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/ll_api.html">Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Quic Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html">Command Line Interface Use (CLI)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/python_api.html">Python API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
@@ -142,7 +129,7 @@
 
 
 <span class="c1"># TODO: Deprecate this class and encourage the use of `QeffAutoModel...` classes</span>
-<div class="viewcode-block" id="ApiRunner"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.run_utils.ApiRunner">[docs]</a><span class="k">class</span><span class="w"> </span><span class="nc">ApiRunner</span><span class="p">:</span>
+<div class="viewcode-block" id="ApiRunner"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner">[docs]</a><span class="k">class</span><span class="w"> </span><span class="nc">ApiRunner</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    ApiRunner class is responsible for running:</span>
 <span class="sd">    ---------</span>
@@ -177,7 +164,7 @@
 
         <span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">ctx_len</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt_len</span>
 
-<div class="viewcode-block" id="ApiRunner.run_hf_model_on_pytorch_CB"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch_CB">[docs]</a>    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<div class="viewcode-block" id="ApiRunner.run_hf_model_on_pytorch_CB"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch_CB">[docs]</a>    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">run_hf_model_on_pytorch_CB</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_hf</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running HuggingFace ``PyTorch`` model and return the output tokens</span>
@@ -215,7 +202,7 @@
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Completion:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">generated_texts</span><span class="p">))</span>
         <span class="k">return</span> <span class="n">generated_ids</span></div>
 
-<div class="viewcode-block" id="ApiRunner.run_hf_model_on_pytorch"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch">[docs]</a>    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<div class="viewcode-block" id="ApiRunner.run_hf_model_on_pytorch"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch">[docs]</a>    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">run_hf_model_on_pytorch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_hf</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running HuggingFace ``PyTorch`` model and return the output tokens</span>
@@ -243,7 +230,7 @@
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Completion:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">generated_text</span><span class="p">))</span>
         <span class="k">return</span> <span class="n">generated_ids</span></div>
 
-<div class="viewcode-block" id="ApiRunner.run_kv_model_on_pytorch"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_kv_model_on_pytorch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">):</span>
+<div class="viewcode-block" id="ApiRunner.run_kv_model_on_pytorch"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_kv_model_on_pytorch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running KV ``PyTorch`` model and return the output tokens</span>
 
@@ -271,7 +258,7 @@
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Completion:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">predicted_string</span><span class="p">))</span>
         <span class="k">return</span> <span class="n">generated_ids</span></div>
 
-<div class="viewcode-block" id="ApiRunner.run_ort_session"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.run_utils.ApiRunner.run_ort_session">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_ort_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inputs</span><span class="p">,</span> <span class="n">session</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<div class="viewcode-block" id="ApiRunner.run_ort_session"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_ort_session">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_ort_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inputs</span><span class="p">,</span> <span class="n">session</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs</span>
 
@@ -292,7 +279,7 @@
         <span class="n">ort_outputs</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">output_names</span><span class="p">,</span> <span class="n">outputs_data</span><span class="p">))</span>
         <span class="k">return</span> <span class="n">ort_outputs</span></div>
 
-<div class="viewcode-block" id="ApiRunner.run_kv_model_on_ort"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_kv_model_on_ort</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_path</span><span class="p">,</span> <span class="n">is_tlm</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<div class="viewcode-block" id="ApiRunner.run_kv_model_on_ort"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_kv_model_on_ort</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_path</span><span class="p">,</span> <span class="n">is_tlm</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running ``ONNX`` model on onnxruntime and return the output tokens</span>
 
@@ -344,7 +331,7 @@
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Completion:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">predicted_string</span><span class="p">))</span>
         <span class="k">return</span> <span class="n">generated_ids</span></div>
 
-<div class="viewcode-block" id="ApiRunner.run_kv_model_on_cloud_ai_100"><a class="viewcode-back" href="../../../source/ll_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_kv_model_on_cloud_ai_100</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">qpc_path</span><span class="p">,</span> <span class="n">device_group</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<div class="viewcode-block" id="ApiRunner.run_kv_model_on_cloud_ai_100"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_kv_model_on_cloud_ai_100</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">qpc_path</span><span class="p">,</span> <span class="n">device_group</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Function responsible for running ``ONNX`` model on Cloud AI 100 and return the output tokens</span>
 

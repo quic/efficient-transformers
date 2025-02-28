@@ -60,24 +60,11 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/upgrade.html">Using GitHub Repository</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html">Transformed models and QPC storage</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#command-line-interface">Command Line Interface</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#python-api">Python API</a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
-</ul>
-<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="source/hl_api.html">High Level API</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/ll_api.html">Low Level API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html">Quic Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html">Command Line Interface Use (CLI)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/python_api.html">Python API</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
@@ -133,7 +120,22 @@
 <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/validate.html">Validated Models</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="source/validate.html#text-only-language-models">Text-only Language Models</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/validate.html#text-generation-task">Text Generation Task</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="source/validate.html#embedding-models">Embedding Models</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/validate.html#text-embedding-task">Text Embedding Task</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="source/validate.html#multimodal-language-models">Multimodal Language Models</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/validate.html#vision-language-models-text-image-generation">Vision-Language Models (Text + Image Generation)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="source/validate.html#audio-models">Audio Models</a></li>
+</ul>
+</li>
+</ul>
+</li>
 <li class="toctree-l1"><a class="reference internal" href="source/validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
 </div>
@@ -156,54 +158,93 @@
 </ul>
 </div>
 <div class="toctree-wrapper compound">
-<p class="caption" role="heading"><span class="caption-text">Quick start</span></p>
+<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html">Transformed models and QPC storage</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#command-line-interface">Command Line Interface</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#qefficient-cloud-infer">QEfficient.cloud.infer</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#qefficient-cloud-execute">QEfficient.cloud.execute</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#qefficient-cloud-finetune">QEfficient.cloud.finetune</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#multi-qranium-inference">Multi-Qranium Inference</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#continuous-batching">Continuous Batching</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#qnn-compilation">QNN Compilation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html">Quic Start</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#supported-features">Supported Features</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#transformed-models-and-qpc-storage">Transformed models and QPC storage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#command-line-interface">Command Line Interface</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/quick_start.html#qefficient-cloud-infer">QEfficient.cloud.infer</a></li>
+<li class="toctree-l3"><a class="reference internal" href="source/quick_start.html#qefficient-cloud-execute">QEfficient.cloud.execute</a></li>
+<li class="toctree-l3"><a class="reference internal" href="source/quick_start.html#qefficient-cloud-finetune">QEfficient.cloud.finetune</a></li>
+<li class="toctree-l3"><a class="reference internal" href="source/quick_start.html#multi-qranium-inference">Multi-Qranium Inference</a></li>
+<li class="toctree-l3"><a class="reference internal" href="source/quick_start.html#continuous-batching">Continuous Batching</a></li>
+<li class="toctree-l3"><a class="reference internal" href="source/quick_start.html#qnn-compilation">QNN Compilation</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="source/quick_start.html#python-api">Python API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#model-download-and-optimize-for-cloud-ai-100">1.  Model download and Optimize for Cloud AI 100</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#export-and-compile-with-one-api">2. Export and Compile with one API</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#execute">3. Execute</a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#draft-based-speculative-decoding">Draft-Based Speculative Decoding</a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/quick_start.html#python-api">Python API</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/quick_start.html#model-download-and-optimize-for-cloud-ai-100">1.  Model download and Optimize for Cloud AI 100</a></li>
+<li class="toctree-l3"><a class="reference internal" href="source/quick_start.html#export-and-compile-with-one-api">2. Export and Compile with one API</a></li>
+<li class="toctree-l3"><a class="reference internal" href="source/quick_start.html#execute">3. Execute</a></li>
+<li class="toctree-l3"><a class="reference internal" href="source/quick_start.html#draft-based-speculative-decoding">Draft-Based Speculative Decoding</a></li>
 </ul>
 </li>
 </ul>
-</div>
-<div class="toctree-wrapper compound">
-<p class="caption" role="heading"><span class="caption-text">Command Line Interface Use (CLI)</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
-</ul>
-</div>
-<div class="toctree-wrapper compound">
-<p class="caption" role="heading"><span class="caption-text">Python API</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="source/hl_api.html">High Level API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#qeffautomodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#qeffautomodel"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModel</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#qeffautopeftmodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#qeffautoloramodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">export</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#module-QEfficient.compile.compile_helper"><code class="docutils literal notranslate"><span class="pre">compile</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/hl_api.html#module-QEfficient.generation.text_generation_inference"><code class="docutils literal notranslate"><span class="pre">Execute</span></code></a></li>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="source/cli_api.html">Command Line Interface Use (CLI)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="source/cli_api.html#module-QEfficient.cloud.infer.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/cli_api.html#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="source/cli_api.html#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="source/ll_api.html">Low Level API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="source/ll_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_kvstyle</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/ll_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_bertstyle</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="source/ll_api.html#module-QEfficient.utils.device_utils"><code class="docutils literal notranslate"><span class="pre">utils</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="source/python_api.html">Python API</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="source/python_api.html#high-level-api">High Level API</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/python_api.html#qeffautomodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="source/python_api.html#qeffautomodel"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModel</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModel"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModel</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="source/python_api.html#qeffautopeftmodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="source/python_api.html#qeffautoloramodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="source/python_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">export</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.exporter.export_hf_to_cloud_ai_100.qualcomm_efficient_converter"><code class="docutils literal notranslate"><span class="pre">qualcomm_efficient_converter()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="source/python_api.html#module-QEfficient.compile.compile_helper"><code class="docutils literal notranslate"><span class="pre">compile</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.compile.compile_helper.compile"><code class="docutils literal notranslate"><span class="pre">compile()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="source/python_api.html#module-QEfficient.generation.text_generation_inference"><code class="docutils literal notranslate"><span class="pre">Execute</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.generation.text_generation_inference.CloudAI100ExecInfo"><code class="docutils literal notranslate"><span class="pre">CloudAI100ExecInfo</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.generation.text_generation_inference.CloudAI100ExecInfoNew"><code class="docutils literal notranslate"><span class="pre">CloudAI100ExecInfoNew</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.generation.text_generation_inference.PerfMetrics"><code class="docutils literal notranslate"><span class="pre">PerfMetrics</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.generation.text_generation_inference.calculate_latency"><code class="docutils literal notranslate"><span class="pre">calculate_latency()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.generation.text_generation_inference.cloud_ai_100_exec_kv"><code class="docutils literal notranslate"><span class="pre">cloud_ai_100_exec_kv()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.generation.text_generation_inference.fix_prompt_to_lora_id_mapping"><code class="docutils literal notranslate"><span class="pre">fix_prompt_to_lora_id_mapping()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.generation.text_generation_inference.fix_prompts"><code class="docutils literal notranslate"><span class="pre">fix_prompts()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.generation.text_generation_inference.get_compilation_dims"><code class="docutils literal notranslate"><span class="pre">get_compilation_dims()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="source/python_api.html#low-level-api">Low Level API</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/python_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_kvstyle</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_kvstyle"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_kvstyle()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="source/python_api.html#module-QEfficient.exporter.export_hf_to_cloud_ai_100"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_bertstyle</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.exporter.export_hf_to_cloud_ai_100.convert_to_cloud_bertstyle"><code class="docutils literal notranslate"><span class="pre">convert_to_cloud_bertstyle()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="source/python_api.html#module-QEfficient.utils.device_utils"><code class="docutils literal notranslate"><span class="pre">utils</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.utils.device_utils.get_available_device_id"><code class="docutils literal notranslate"><span class="pre">get_available_device_id()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandler"><code class="docutils literal notranslate"><span class="pre">InputHandler</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/python_api.html#QEfficient.utils.run_utils.ApiRunner"><code class="docutils literal notranslate"><span class="pre">ApiRunner</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 </li>
 </ul>
