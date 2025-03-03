@@ -136,7 +136,6 @@ class QnnConstants:
         "--float_bitwidth ",
         "--preserve_io_datatype",
         "--onnx_skip_simplification",
-        "--onnx_defer_loading",
     ]
 
     IMMUTABLE_CONTEXT_BIN_GEN_ARGS = [
