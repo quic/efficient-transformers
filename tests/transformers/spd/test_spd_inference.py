@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 from time import perf_counter
 from typing import List, Optional
 
@@ -331,3 +332,5 @@ def test_spec_decode_inference(
     ]  # Because we always run for single input and single batch size
     all_matching = np.array_equal(cloud_ai_100_tokens, generated_ids)
     assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
+    assert os.path.isfile(os.path.join(os.path.dirname(target_model_qpc_path), "qconfig.json"))
+    assert os.path.isfile(os.path.join(os.path.dirname(draft_model_qpc_path), "qconfig.json"))

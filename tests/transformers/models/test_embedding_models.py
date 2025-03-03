@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 
 import numpy as np
 import onnxruntime as ort
@@ -77,6 +78,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     mad = np.mean(np.abs(ai100_output - onnx_outputs[0]))
     print("Mad for onnx and AI 100 output is ", mad)
     assert mad <= 10**-3, f"MAD is too high for onnx and Pytorch: {mad}"
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
 
 @pytest.mark.on_qaic
