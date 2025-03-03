@@ -90,6 +90,10 @@ class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
         mhash = mhash.hexdigest()[:16]
         return mhash
 
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.model.config.__dict__
+
     def download_adapter(
         self,
         adapter_model_id: str,
