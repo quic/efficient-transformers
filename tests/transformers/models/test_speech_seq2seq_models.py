@@ -360,6 +360,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     assert (pytorch_kv_tokens == cloud_ai_100_tokens).all(), (
         "Tokens don't match for pytorch output and Cloud AI 100 output."
     )
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
 
 @pytest.mark.on_qaic

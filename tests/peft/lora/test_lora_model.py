@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
+import os
 from pathlib import Path
 from time import perf_counter
 
@@ -225,6 +227,7 @@ def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
     # test compile
     qeff_model.compile(prefill_seq_len=32, ctx_len=64)
     assert Path(qeff_model.qpc_path).is_dir()
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
     # test generate
     prompts = ["hello!", "hi", "hello, my name is", "hey"]
@@ -249,6 +252,7 @@ def test_auto_lora_model_for_causal_lm_cb_compile_generate(base_model_name, adap
     # test compile
     qeff_model.compile(prefill_seq_len=32, ctx_len=64, full_batch_size=2)
     assert Path(qeff_model.qpc_path).is_dir()
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
     # test generate
     prompts = ["hello!", "hi", "hello, my name is", "hey"]

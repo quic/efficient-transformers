@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
+
 import numpy as np
 import pytest
 from transformers import AutoModelForCausalLM
@@ -98,7 +100,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    _ = qeff_model.compile(
+    qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
         num_cores=14,
@@ -106,6 +108,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         aic_enable_depth_first=False,
         enable_qnn=True,
     )
+    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
     gen_len = ort_tokens.shape[-1]
@@ -136,7 +139,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    _ = qeff_model.compile(
+    qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
         num_cores=14,
@@ -145,6 +148,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         full_batch_size=full_batch_size,
         enable_qnn=True,
     )
+    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
     assert all(

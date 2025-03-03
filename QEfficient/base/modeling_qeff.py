@@ -23,7 +23,7 @@ from QEfficient.base.onnx_transforms import OnnxTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils import constants
+from QEfficient.utils import constants, dump_qconfig
 from QEfficient.utils._utils import load_json
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
@@ -212,6 +212,7 @@ class QEFFBaseModel(ABC):
         self.onnx_path = onnx_path
         return onnx_path
 
+    @dump_qconfig
     def _compile(
         self,
         onnx_path: Optional[str] = None,
@@ -337,8 +338,10 @@ class QEFFBaseModel(ABC):
             )
 
         self.qpc_path = qpc_path
+
         return qpc_path
 
+    @dump_qconfig
     def _qnn_compile(
         self,
         onnx_path: Optional[str] = None,
@@ -436,4 +439,5 @@ class QEFFBaseModel(ABC):
         )
 
         self.qpc_path = qpc_path
+
         return qpc_path

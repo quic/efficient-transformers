@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 from time import perf_counter
 
 import numpy as np
@@ -187,3 +188,4 @@ def test_auto_peft_model_for_causal_lm_compile_generate(base_config, adapter_con
     end = perf_counter()
     compile_time_1 = end - start
     assert compile_time_1 < 0.01 * compile_time_0
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))

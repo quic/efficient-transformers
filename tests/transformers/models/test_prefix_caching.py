@@ -31,6 +31,7 @@ def test_simple_prefix_caching(model_name):
         num_cores=14,
     )
     prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
 
 @pytest.mark.on_qaic
@@ -61,6 +62,7 @@ def test_simple_prefix_caching_qnn(model_name):
         qnn_config=qnn_config_json_path,
     )
     prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
     os.remove(qnn_config_json_path)
 
 
