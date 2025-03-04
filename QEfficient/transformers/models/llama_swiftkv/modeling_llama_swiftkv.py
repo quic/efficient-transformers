@@ -15,11 +15,11 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 from torch import nn
+from transformers import LlamaConfig
 from transformers.cache_utils import Cache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
-from transformers.models.llama.modeling_llama import LlamaMLP, LlamaRMSNorm, logger, repeat_kv
 from transformers.modeling_utils import PreTrainedModel
-from transformers import LlamaConfig
+from transformers.models.llama.modeling_llama import LlamaMLP, LlamaRMSNorm, logger, repeat_kv
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -28,6 +28,7 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaRotaryEmbedding,
     qeff_apply_rotary_pos_emb,
 )
+
 
 class LlamaSwiftKVConfig(LlamaConfig):
     """
@@ -55,6 +56,7 @@ class LlamaSwiftKVConfig(LlamaConfig):
         self.num_key_value_layers = num_key_value_layers or self.num_hidden_layers
         self.key_value_group_size = key_value_group_size or 1
         assert (self.num_hidden_layers - self.num_key_value_layers) % self.key_value_group_size == 0
+
 
 class LlamaSwiftKVAttention(nn.Module):
     def __init__(self, config: LlamaSwiftKVConfig, layer_idx) -> None:
