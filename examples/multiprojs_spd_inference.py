@@ -11,7 +11,9 @@ from time import perf_counter
 from typing import List, Optional, Union
 
 import numpy as np
-from transformers import AutoTokenizer
+import torch
+from torch import nn
+from transformers import AutoTokenizer, AutoConfig
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -150,10 +152,9 @@ def multiprojs_spec_decode_inference(
     prefill_seq_len: int,
     ctx_len: int,
     prefill_bsz: int,
-    model_name: str,
+    pretrained_model_name_or_path: str,
     full_batch_size: Optional[int],
-    device_group: List[int],
-    session: Optional[QAICInferenceSession] = None,
+    session: QAICInferenceSession,
 ) -> CloudAI100ExecInfo:
     """
     Perform draft speculative decode inference on the given prompts.
@@ -164,8 +165,7 @@ def multiprojs_spec_decode_inference(
         prefill_seq_len (int): Prefill sequence length.
         ctx_len (int): Context length.
         prefill_bsz (int): Prefill batch size.
-        draft_model_name (str): Name of the draft model.
-        target_model_name (str): Name of the target model.
+        pretrained_model_name_or_path (str): Name of multiprojection model
         full_batch_size (Optional[int]): Full batch size.
         device_group (List[int]): List of device IDs.
 
@@ -174,31 +174,10 @@ def multiprojs_spec_decode_inference(
     """
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
-    tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="right")
+    tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path, padding_side="right")
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
     vocab_size = len(tokenizer)
-
-    # export_and_compile tlm and dlm
-    if session is None:
-        continuous_batching = full_batch_size is not None
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name, continuous_batching=continuous_batching, is_tlm=True
-        )
-
-        num_devices = len(device_group)
-        model_qpc_path: str = model.compile(
-            num_cores=16,
-            num_devices=num_devices,
-            prefill_seq_len=prefill_seq_len,
-            ctx_len=ctx_len,
-            aic_enable_depth_first=True,
-            full_batch_size=full_batch_size,
-            num_speculative_tokens=num_speculative_tokens,
-        )
-        # init qaic session
-        session = QAICInferenceSession(model_qpc_path, device_ids=device_group)
-
     # skip inputs/outputs buffers
     session.skip_buffers(set([x for x in session.input_names if x.startswith("past_")]))
     session.skip_buffers(
@@ -295,7 +274,7 @@ def multiprojs_spec_decode_inference(
             break
         # prepare decode inputs for next decode iteration
         next_input_ids = target_logits[seq_batch_indices, num_tokens_selected-1].argmax(-1).astype(np.int64) # shape: [decode_batch_size, num_logits_to_keep]
-        next_position_ids = precode_inputs["position_ids"] + num_tokens_selected
+        next_position_ids = precode_inputs["position_ids"] + num_tokens_selected[:, np.newaxis]
         next_position_ids[~valid_batch_indices] = -1
         precode_inputs["input_ids"] = next_input_ids
         precode_inputs["position_ids"] = next_position_ids
@@ -328,7 +307,7 @@ def multiprojs_spec_decode_inference(
         prefill_seq_len,
         ctx_len,
         prefill_bsz,
-        model_name,
+        pretrained_model_name_or_path,
         full_batch_size,
     )
     return exec_info
@@ -345,21 +324,20 @@ def comma_separated_ints(x: str):
 def arg_parse():
     parser = ArgumentParser(description="Draft-based SpD Inference")
     parser.add_argument("--prompts", action="append", default=None, help="Input prompt(s)")
-    parser.add_argument("--num-speculative-tokens", type=int, default=4, help="Number of speculative tokens")
+    parser.add_argument("--num-speculative-tokens", type=int, default=3, help="Number of speculative tokens (defines number of hidden size projections)")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
     parser.add_argument("--prefill-bsz", type=int, default=1, help="Prefill batch size")
+    parser.add_argument("--proj-num-layers", type=int, default=1, help="Hidden size projection number of layers.")
+    parser.add_argument("--proj-checkpoint", type=str, default=None, help="Hidden size projection checkpoint.")
     parser.add_argument(
-        "--model-name", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0", help="Target model name"
+        "--pretrained-model-name-or-path", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0", help="Target model name"
     )
     parser.add_argument("--full-batch-size", type=optional_int, default=None, help="Full batch size")
     parser.add_argument("--device-group", type=comma_separated_ints, default="0", help="device QIDs")
     args = parser.parse_args()
     return args
 
-from transformers.models.llama.modeling_llama import LlamaForCausalLM
-import torch
-from torch import nn
 class ResBlock(nn.Module): # Res block for Turbo LoRA projection heads
     """
     A Residual Block module.
@@ -391,29 +369,38 @@ class ResBlock(nn.Module): # Res block for Turbo LoRA projection heads
         """
         return x + self.act(self.linear(x))
 
-base_init = LlamaForCausalLM.__init__
-def proj_init(self, *args, **kwargs):
-    base_init(self, *args, **kwargs)
-    self.turbo_num_heads = 3
-    self.turbo_num_layers = 1
-    self.projections = nn.ModuleList( # Turbo LoRA projection heads
+
+def get_session(pretrained_model_name_or_path, 
+                device_group, 
+                prefill_seq_len, 
+                ctx_len, 
+                full_batch_size = None,
+                num_speculative_tokens = 3, 
+                proj_num_layers = 1,
+                proj_checkpoint = None):
+    #mpath = "/local/mnt/p_drive/users/rpodila/hf_home/hub/models--PredibaseShareQualcomm--private-llama-3-1-8b-instruct-merged-qualcomm-conllpp/snapshots/b6f4dd92bed981126d9787522381615d664201c5/"
+    # define post-attention hidden size projections
+    #hidden_size = AutoConfig.from_pretrained(pretrained_model_name_or_path).hidden_size
+    hidden_size = 4096
+    projs = nn.ModuleList( 
         [
             nn.Sequential(
-                *([ResBlock(self.config.hidden_size)] * self.turbo_num_layers),
+                *([ResBlock(hidden_size)] * proj_num_layers),
             )
-            for _ in range(self.turbo_num_heads)
+            for _ in range(num_speculative_tokens)
         ],
     )
-
-LlamaForCausalLM.__init__ = proj_init
-
-
-def get_session(device_group, prefill_seq_len, ctx_len, full_batch_size, num_speculative_tokens):
-    mpath = "/local/mnt/p_drive/users/rpodila/hf_home/hub/models--PredibaseShareQualcomm--private-llama-3-1-8b-instruct-merged-qualcomm-conllpp/snapshots/b6f4dd92bed981126d9787522381615d664201c5/"
-    #model = TurboLlamaForCausalLM.from_pretrained(mpath)
-    model = LlamaForCausalLM.from_pretrained(mpath, attn_implementation="eager", low_cpu_mem_usage=False)
+    if proj_checkpoint is not None:
+        assert isinstance(proj_checkpoint, str)
+        hidden_size_projections = (projs, proj_checkpoint)
+    else:
+        hidden_size_projections = projs
     is_cb = full_batch_size is not None
-    qeff_model = AutoModelForCausalLM(model, continuous_batching=is_cb, is_tlm=True)
+    qeff_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path, 
+                                                      continuous_batching=is_cb, 
+                                                      is_tlm=True,
+                                                      hidden_size_projections=hidden_size_projections,
+                                                      )
     num_devices = len(device_group)
     model_qpc_path: str = qeff_model.compile(
         num_cores=16,
@@ -434,9 +421,23 @@ def main():
     args = arg_parse()
     if args.prompts is None:
         args.prompts = Constants.INPUT_STR
-    session = get_session(args.device_group, args.prefill_seq_len, args.ctx_len, args.full_batch_size, args.num_speculative_tokens)
+    session = get_session(pretrained_model_name_or_path=args.pretrained_model_name_or_path,
+                          device_group=args.device_group, 
+                          prefill_seq_len=args.prefill_seq_len, 
+                          ctx_len=args.ctx_len, 
+                          full_batch_size=args.full_batch_size, 
+                          proj_num_layers=args.proj_num_layers,
+                          num_speculative_tokens=args.num_speculative_tokens,
+                          proj_checkpoint=args.proj_checkpoint)
     args.session = session
-    exec_info = multiprojs_spec_decode_inference(**vars(args))
+    exec_info = multiprojs_spec_decode_inference(args.prompts,
+                                                 args.num_speculative_tokens,
+                                                 args.prefill_seq_len,
+                                                 args.ctx_len,
+                                                 args.prefill_bsz,
+                                                 args.pretrained_model_name_or_path,
+                                                 args.full_batch_size,
+                                                 args.session)
     print(exec_info)
     prompts = exec_info.prompts
     generated_texts = exec_info.generated_texts

@@ -9,12 +9,13 @@ import hashlib
 import logging
 import warnings
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
-from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast
+from accelerate import load_checkpoint_and_dispatch
+from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast, AutoConfig
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
@@ -49,7 +50,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, hidden_size_projections: Optional[Tuple[nn.ModuleList, str]] = None, *args, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -59,6 +60,17 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        if hidden_size_projections is not None:
+            if isinstance(hidden_size_projections, tuple):
+                projs, checkpoint = hidden_size_projections
+                assert isinstance(projs, nn.ModuleList)
+                assert isinstance(checkpoint, str)
+                model.hidden_size_projections = load_checkpoint_and_dispatch(projs, checkpoint=checkpoint, device_map="auto")
+            elif isinstance(hidden_size_projections, nn.ModuleList):
+                model.hidden_size_projections = hidden_size_projections
+            else:
+                raise ValueError(f"`hidden_size_projections` of type {type(hidden_size_projections)} is not supported.")
+
         return cls(model, is_tlm=is_tlm)
 
     @property
@@ -129,7 +141,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
     @classmethod
     def from_pretrained(
-        cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, *args, **kwargs
+        cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, hidden_size_projections: Optional[Tuple[nn.ModuleList, str]] = None, *args, **kwargs
     ):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
@@ -164,7 +176,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
 
-        self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, *args, **kwargs)
+        self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, hidden_size_projections=hidden_size_projections, *args, **kwargs)
         self.continuous_batching = continuous_batching
         return self
 

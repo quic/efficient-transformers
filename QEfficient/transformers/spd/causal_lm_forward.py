@@ -113,20 +113,19 @@ def tlm_forward(
     )
 
     hidden_states = filter_hidden_states(outputs[0], position_ids, num_logits_to_keep)
+    if hasattr(self, "hidden_size_projections"):
+        proj_hidden_states = [hidden_states]
+        num_heads = len(self.hidden_size_projections)
+        for i in range(num_heads):
+            hidden_states_i = self.hidden_size_projections[i](hidden_states)
+            proj_hidden_states.append(hidden_states_i)
+        hidden_states = torch.stack(proj_hidden_states, dim=2)  # shape: [bsz, seq_len, num_projs, d_model]
     if self.config.pretraining_tp > 1:
         lm_head_slices = self.lm_head.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
         logits = [F.linear(hidden_states, lm_head_slices[i]) for i in range(self.config.pretraining_tp)]
         logits = torch.cat(logits, dim=-1)
     else:
         logits = self.lm_head(hidden_states)
-    if hasattr(self, "turbo_num_heads"):
-        proj_logits = [logits]
-        for i in range(self.turbo_num_heads):
-            hidden_states_i = self.projections[i](hidden_states)
-            logits_i = self.lm_head(hidden_states_i)
-            logits_i = logits_i.float()
-            proj_logits.append(logits_i)
-        logits = torch.stack(proj_logits, dim=2)  # shape: [bsz, seq_len, num_projs, vocab_size]
     logits = logits.float()
 
     return CausalLMOutputWithPast(
