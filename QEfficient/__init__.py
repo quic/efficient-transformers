@@ -6,12 +6,19 @@
 # -----------------------------------------------------------------------------
 
 from transformers import AutoConfig
-
+import os
 from QEfficient.transformers.modeling_utils import (
     MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS,
     get_auto_model_class,
     get_model_class_type_from_model_type,
 )
+
+# For faster downloads via hf_transfer
+# This code is put above import statements as this needs to be executed before
+# hf_transfer is imported (will happen on line 15 via leading imports)
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
+
 from QEfficient.utils.logging_utils import logger
 
 # loop over all the models which are not present in transformers and register them

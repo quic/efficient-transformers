@@ -6,6 +6,7 @@
 # ----------------------------------------------------------------------------
 
 import copy
+import os
 from time import perf_counter
 
 import onnx
@@ -142,3 +143,4 @@ def test_causal_lm_compile(config, tmp_cache):
     end = perf_counter()
     compile_time = end - start
     assert compile_time < 2.0
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))

@@ -52,8 +52,6 @@ from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
 
-MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6 = ["MllamaForConditionalGeneration"]
-
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
@@ -231,6 +229,10 @@ class QEFFAutoModel(QEFFTransformersBase):
         mhash = mhash.hexdigest()[:16]
         return mhash
 
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.config.__dict__
+
     def export(self, export_dir: Optional[str] = None) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
@@ -392,7 +394,13 @@ class QEFFAutoModel(QEFFTransformersBase):
 
 
 class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
-    _pytorch_transforms = [AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, CustomOpsTransform, KVCacheTransform]
+    _pytorch_transforms = [
+        AwqToMatmulNbitsTransform,
+        GPTQToMatmulNbitsTransform,
+        CustomOpsTransform,
+        KVCacheTransform,
+        KVCacheModuleMethodMapperTransform,
+    ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.modules):
@@ -443,6 +451,10 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             mname = mname[4:]
         return mname
 
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.model.vision_model.config.__dict__
+
 
 class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     _pytorch_transforms = [
@@ -456,6 +468,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
 
     def __init__(self, model):
         super().__init__(model)
+        self.model = model.get_qeff_language_decoder()
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -501,10 +514,13 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             mname = mname[4:]
         return mname
 
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.language_model.config.__dict__
+
 
 class _QEffAutoModelForImageTextToTextDualQPC:
     _hf_auto_class = AutoModelForImageTextToText
-    UNSUPPORTED_MODELS = ["LlavaForConditionalGeneration", "InternVLChatModel"]
 
     def __init__(
         self,
@@ -515,8 +531,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         self.model = model
         self.config = model.config
-        if self.model_name in self.UNSUPPORTED_MODELS:
-            raise NotImplementedError(f"kv_offload is not yet supported for {self.model.__class__.__name__}")
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model)
 
@@ -627,17 +641,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ):
             self.export()
 
-        if mxfp6_matmul and self.model_name in MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6:
-            logger.warning(
-                "Due to accuracy issues of vision model fixing it's precision to fp16, while language model will be compiled for mxfp6"
-            )
-
         self.vision_model._compile(
             compile_dir,
             compile_only=True,
             specializations=specializations["vision"],
             convert_to_fp16=True,
-            mxfp6_matmul=False,
+            mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
             custom_io=custom_io_vision,
@@ -647,12 +656,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         custom_io_lang = {}
         # Inputs
         for output_name in output_names["lang"]:
-            if output_name.startswith("past_"):
+            if output_name.endswith("_RetainedState"):
                 custom_io_lang[output_name[: -len("_RetainedState")]] = kv_cache_dtype
 
         # outputs
         for output_name in output_names["lang"]:
-            if output_name.startswith("past_"):
+            if output_name.endswith("_RetainedState"):
                 custom_io_lang[output_name] = kv_cache_dtype
 
         self.lang_model._compile(
@@ -806,7 +815,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             lang_inputs["input_ids"] = outputs["logits"].argmax(2)
             lang_inputs["position_ids"] += 1
             generated_ids[:, num_token] = lang_inputs["input_ids"].squeeze(1)
-
             if streamer:
                 streamer.put(lang_inputs["input_ids"][0])
 
@@ -945,11 +953,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         for output_name in output_names:
             if output_name.endswith("_RetainedState"):
                 custom_io[output_name] = kv_cache_dtype
-
-        if self.model_name in MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6 and mxfp6_matmul:
-            logger.warning(
-                f"It is advised to use fp16 precision during compilation for {self.model.__class__.__name__} to avoid accuracy issues, got mxfp6_matmul=True"
-            )
 
         self._compile(
             onnx_path,
@@ -1137,6 +1140,10 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             mname = mname[4:]
         return mname
 
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.config.__dict__
+
 
 class QEFFAutoModelForImageTextToText:
     """
@@ -1147,16 +1154,7 @@ class QEFFAutoModelForImageTextToText:
 
     _hf_auto_class = AutoModelForImageTextToText
 
-    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = None, **kwargs):
-        if model.config.architectures[0] in MODELS_WITH_ACCURACY_ISSUE_FOR_MXFP6 and not kv_offload:
-            # For models with mxfp6 accuracy issue, we will use kv_offload=True by default
-            if kv_offload is None:
-                kv_offload = True
-            else:
-                logger.warning(f"Advised to use kv_offload=True for {model.__class__.__name__}")
-        elif kv_offload is None:
-            kv_offload = False
-
+    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = True, **kwargs):
         if kv_offload:
             return _QEffAutoModelForImageTextToTextDualQPC(model, **kwargs)
         else:
@@ -1337,6 +1335,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
+
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.config.__dict__
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
@@ -1647,6 +1649,10 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
+
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.config.__dict__
 
     def export(self, export_dir: Optional[str] = None) -> str:
         """
