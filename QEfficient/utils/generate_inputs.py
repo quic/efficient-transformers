@@ -36,6 +36,8 @@ class InputHandler:
         self.padding_shape = get_padding_shape_from_config(
             config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
         )
+        self.k_shape = (batch_size, config.num_key_value_heads, ctx_len, config.qk_nope_head_dim + config.qk_rope_head_dim)
+        self.v_shape = (batch_size, config.num_key_value_heads, ctx_len, config.v_head_dim)
 
     def prepare_pytorch_inputs(self):
         """
@@ -78,8 +80,10 @@ class InputHandler:
 
         past_key_values = []
         for i in range(self.n_layer):
-            past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
-            past_value = torch.zeros((self.padding_shape), dtype=torch.float32)
+            # past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
+            # past_value = torch.zeros((self.padding_shape), dtype=torch.float32)
+            past_key = torch.zeros((self.k_shape), dtype=torch.float32)
+            past_value = torch.zeros((self.v_shape), dtype=torch.float32)
             pkv = (past_key, past_value)
             past_key_values.append(pkv)
         inputs["past_key_values"] = tuple(past_key_values)
