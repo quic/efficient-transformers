@@ -170,9 +170,9 @@ class QEffDeepseekV3Attention(DeepseekV3Attention):
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
-        if attention_mask is not None:
-            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-            attn_weights = attn_weights + causal_mask
+
+        if attention_mask is not None:  # no matter the length, we just slice it
+            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
 
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = F.dropout(attn_weights, p=self.attention_dropout, training=self.training)
@@ -212,14 +212,14 @@ class QEffDeepseekV3MoE(DeepseekV3MoE):
                 # expert_weights = topk_weights[token_indices, weight_indices]
                 # expert_input = hidden_states[token_indices]
                 # expert_output = expert(expert_input)
-                expert_output = expert(hidden_states) * (((topk_weights * mask).sum(1))[:,None])
+                expert_output = expert(hidden_states) * (((topk_weights * mask).sum(1))[:, None])
                 # weighted_output = expert_output * expert_weights.unsqueeze(-1)
                 # final_hidden_states.index_add_(0, token_indices, weighted_output)
                 expert_output = torch.where(
-                (topk_weights * mask).sum(1).to(torch.bool)[:, None],
-                expert_output,
-                torch.tensor(0.0),
-            )
+                    (topk_weights * mask).sum(1).to(torch.bool)[:, None],
+                    expert_output,
+                    torch.tensor(0.0),
+                )
                 final_hidden_states = final_hidden_states + expert_output
         return final_hidden_states.type(hidden_states.dtype)
 
@@ -428,11 +428,7 @@ class QEffDeepseekV3Model(DeepseekV3Model):
         if using_static_cache:
             target_length = past_key_values.get_max_cache_shape()
         else:
-            target_length = (
-                attention_mask.shape[-1]
-                if isinstance(attention_mask, torch.Tensor)
-                else past_seen_tokens + sequence_length + 1
-            )
+            target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
 
         # In case the provided `attention` mask is 2D, we generate a causal mask here (4D).
         # causal_mask = self._prepare_4d_causal_attention_mask_with_cache_position(
