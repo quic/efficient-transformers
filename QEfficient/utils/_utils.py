@@ -16,7 +16,6 @@ import torch
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import (
-    AutoConfig,
     AutoProcessor,
     AutoTokenizer,
     PreTrainedTokenizer,
@@ -25,6 +24,7 @@ from transformers import (
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
 from QEfficient.utils.logging_utils import logger
+
 
 class DownloadRetryLimitExceeded(Exception):
     """
@@ -447,4 +447,3 @@ class IOInfo:
 
     def __repr__(self):
         return f"input_name:{self.name}\tdatatype:{self.datatype}\tshape:{self.shape}"
-

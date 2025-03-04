@@ -5,9 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
+import sys
 from collections import namedtuple
 from typing import Dict, Optional, Tuple, Type
-import sys
 
 import torch
 import torch.nn as nn
@@ -87,8 +87,13 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperPositionalEmbedding,
 )
 
-from transformers import AutoModelForCausalLM
 from QEfficient.customop import CustomRMSNormAIC
+
+# Placeholder for all non-transformer models
+from QEfficient.transformers.models.llama_swiftkv.modeling_llama_swiftkv import (
+    LlamaSwiftKVConfig,
+    LlamaSwiftKVForCausalLM,
+)
 
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
@@ -153,12 +158,6 @@ from .models.whisper.modeling_whisper import (
     QEffWhisperForConditionalGeneration,
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
-)
-
-# Placeholder for all non-transformer models
-from QEfficient.transformers.models.llama_swiftkv.modeling_llama_swiftkv import (
-    LlamaSwiftKVForCausalLM,
-    LlamaSwiftKVConfig
 )
 
 # Define a named tuple for ModelArchitectures
@@ -281,17 +280,14 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
 
 # Map of model type to config class and Model architecture class
 # While onboarding new models make sure to add the new model card names to this dictionary.
-MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS = {
-    "llama_swiftkv": [LlamaSwiftKVConfig, LlamaSwiftKVForCausalLM]
-}
+MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS = {"llama_swiftkv": [LlamaSwiftKVConfig, LlamaSwiftKVForCausalLM]}
 
 # list of sub-strings representing the model type, this is typically taken from llama-swiftkv
 LIST_OF_MODEL_TYPES = {"swiftkv"}
 
 # list of sub-strings used for representing the model Architecture class name, for example LlamaSwiftKVForCausalLM
-MODEL_TYPE_TO_MODEL_CLASS_TYPE = {
-    "swiftkv": "SwiftKVFor"
-}
+MODEL_TYPE_TO_MODEL_CLASS_TYPE = {"swiftkv": "SwiftKVFor"}
+
 
 def _prepare_cross_attention_mask(
     cross_attention_mask: torch.Tensor,
@@ -384,6 +380,7 @@ def _create_causal_mask(
 
     return attention_mask
 
+
 def convert_str_to_class(className):
     """
     Convert the string to class name
@@ -420,9 +417,10 @@ def get_auto_model_class(model_type, NonTransformerModelCls):
 
     return autoModelClassName
 
+
 def get_model_class_type_from_model_type(model_type):
     for substring in LIST_OF_MODEL_TYPES:
-        if (substring in model_type):
+        if substring in model_type:
             model_class_type = substring
             break
 
