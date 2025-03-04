@@ -895,7 +895,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
-        self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
+        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
 
     def compile(
         self,
