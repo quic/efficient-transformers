@@ -8,8 +8,7 @@
 import json
 import os
 import subprocess
-import sys
-import warnings
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -18,20 +17,11 @@ import torch
 import yaml
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
-from transformers import (
-    AutoConfig,
-    AutoProcessor,
-    AutoTokenizer,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-)
+from transformers import AutoProcessor, AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.transformers.modeling_utils import (
-    SwiftKVModelCardNameToSwiftKVModelTypeDict,
-    SwiftKVModelTypeToConfigClassAndModelArchClassDict,
-)
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants
+from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants, QnnConstants
 from QEfficient.utils.logging_utils import logger
+
 
 class DownloadRetryLimitExceeded(Exception):
     """
@@ -456,61 +446,111 @@ class IOInfo:
         return f"input_name:{self.name}\tdatatype:{self.datatype}\tshape:{self.shape}"
 
 
-def convert_str_to_class(className):
+def dump_qconfig(func):
+    def wrapper(self, *args, **kwargs):
+        result = func(self, *args, **kwargs)
+        create_and_dump_qconfigs(
+            self.qpc_path,
+            self.onnx_path,
+            self.get_model_config,
+            [cls.__name__ for cls in self._pytorch_transforms],
+            [cls.__name__ for cls in self._onnx_transforms],
+            kwargs.get("specializations"),
+            kwargs.get("mdp_ts_num_devices", 1),
+            kwargs.get("num_speculative_tokens"),
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k not in ["specializations", "mdp_ts_num_devices", "num_speculative_tokens", "custom_io"]
+            },
+        )
+        return result
+
+    return wrapper
+
+
+def create_and_dump_qconfigs(
+    qpc_path,
+    onnx_path,
+    huggingface_config,
+    pytorch_transforms,
+    onnx_transforms,
+    specializations,
+    mdp_ts_num_devices,
+    num_speculative_tokens,
+    **compiler_options,
+):
     """
-    Convert the string to class name
-    ---------
-    :className: `str`- Class name string.
-    Return:
-        Class Name
+    This Method creates a JSON file which contains all the configs for a model.
+    Such as huggingface configs, QEff transforms, QAIC sdk version, QNN sdk, compilation dir, qpc dir and
+    many other compilation options.
     """
-    return getattr(sys.modules[__name__], className)
+    qnn_config = compiler_options["qnn_config"] if "qnn_config" in compiler_options else None
+    enable_qnn = True if "qnn_config" in compiler_options else None
 
+    qconfig_file_path = os.path.join(os.path.dirname(qpc_path), "qconfig.json")
+    onnx_path = str(onnx_path)
+    specializations_file_path = str(os.path.join(os.path.dirname(qpc_path), "specializations.json"))
+    compile_dir = str(os.path.dirname(qpc_path))
+    qnn_config_path = (
+        (qnn_config if qnn_config is not None else "QEfficient/compile/qnn_config.json") if enable_qnn else None
+    )
 
-def register_swiftKV_model(model_type, SwiftkvConfigCls, SwiftKVModelCls):
-    """
-    Register the SwiftKV Models
-    ---------------------------------------
-    : model_type: str: name of the swiftKVModel for example llama_swiftkv
-    : SwiftkVConfigCls: SwiftKV Config class for example LlamaSwiftKVConfig
-    : SwiftKVModelCls: SwiftKV model class name for example LlamaSwiftKVForCausalLM
-    """
+    # Extract QAIC SDK Apps Version from SDK XML file
+    tree = ET.parse(Constants.SDK_APPS_XML)
+    root = tree.getroot()
+    qaic_version = root.find(".//base_version").text
 
-    # Register the SwiftKV Config class using AutoConfig
-    AutoConfig.register(model_type, SwiftkvConfigCls)
+    # Extract QNN SDK details from YAML file if the environment variable is set
+    qnn_sdk_details = None
+    qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
+    if qnn_sdk_path:
+        qnn_sdk_yaml_path = os.path.join(qnn_sdk_path, QnnConstants.QNN_SDK_YAML)
+        with open(qnn_sdk_yaml_path, "r") as file:
+            qnn_sdk_details = yaml.safe_load(file)
 
-    # Construct the AutoModel class name using SwiftKVModel Class name, this code is written to make things generic
-    swiftKvModelName = SwiftKVModelCls.__name__
-    start_index = swiftKvModelName.find("SwiftKVFor")
+    # Ensure all objects in the configs dictionary are JSON serializable
+    def make_serializable(obj):
+        if isinstance(obj, (int, float, str, bool, type(None))):
+            return obj
+        elif isinstance(obj, (list, tuple)):
+            return [make_serializable(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {key: make_serializable(value) for key, value in obj.items()}
+        elif hasattr(obj, "__dict__"):
+            return make_serializable(vars(obj))
+        return str(obj)
 
-    # Calculate the index after "SwiftKVFor"
-    substring_start = start_index + len("SwiftKVFor")
+    qconfigs = {
+        "huggingface_config": make_serializable(huggingface_config),
+        "qpc_config": {
+            "QEff_config": {
+                "pytorch_transforms": make_serializable(pytorch_transforms),
+                "onnx_transforms": make_serializable(onnx_transforms),
+                "onnx_path": onnx_path,
+            },
+        },
+    }
 
-    # Get the substring after "SwiftKVFor"
-    swiftKVModel = swiftKvModelName[substring_start:]
+    aic_compiler_config = {
+        "apps_sdk_version": qaic_version,
+        "compile_dir": compile_dir,
+        "specializations_file_path": specializations_file_path,
+        "specializations": make_serializable(specializations),
+        "mdp_ts_num_devices": mdp_ts_num_devices,
+        "num_speculative_tokens": num_speculative_tokens,
+        **compiler_options,
+    }
+    qnn_config = {
+        "enable_qnn": enable_qnn,
+        "qnn_config_path": qnn_config_path,
+    }
+    # Put AIC or qnn details.
+    if enable_qnn:
+        qconfigs["qpc_config"]["qnn_config"] = qnn_config
+        if qnn_sdk_details:
+            qconfigs["qpc_config"]["qnn_config"].update(qnn_sdk_details)
+    else:
+        qconfigs["qpc_config"]["aic_compiler_config"] = aic_compiler_config
 
-    AutoModelName = "AutoModelFor" + swiftKVModel
-
-    # Convert the string to class name
-    AutoModelClassName = convert_str_to_class(AutoModelName)
-
-    # Register the SwiftKVModel Class and config class using AutoModelClass
-    AutoModelClassName.register(SwiftkvConfigCls, SwiftKVModelCls)
-
-
-def QEFFLoadSwiftKVModels(pretrained_model_name_or_path):
-    """
-    Load the SwiftKV Models
-    ---------------------------------------
-    : pretrained_model_name_or_path: str: name of the swiftKVModel for example Snowflake/Llama-3.1-SwiftKV-8B-Instruct
-    """
-    try:
-        modelType = SwiftKVModelCardNameToSwiftKVModelTypeDict[pretrained_model_name_or_path]
-
-        SwiftKVConfigCls = SwiftKVModelTypeToConfigClassAndModelArchClassDict[modelType][0]
-        SwiftKVModelArchCls = SwiftKVModelTypeToConfigClassAndModelArchClassDict[modelType][1]
-
-        register_swiftKV_model(modelType, SwiftKVConfigCls, SwiftKVModelArchCls)
-
-    except KeyError:
-        warnings.warn("Requested SwiftKVModel is currently not supported... stay tuned for future releases", Warning)
+    create_json(qconfig_file_path, qconfigs)
