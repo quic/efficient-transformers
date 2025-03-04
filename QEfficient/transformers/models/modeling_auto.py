@@ -1353,9 +1353,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
-        kv_cache_shape = get_padding_shape_from_config(
-            self.model.config, fbs if self.continuous_batching else bs, seq_len
-        )
+        output_names = ["logits"]
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
@@ -1365,23 +1363,49 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
-        if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
-            pkv_dynamic_axes = {
-                0: "full_batch_size" if self.continuous_batching else "batch_size",
-                1: "ctx_len",
-            }
-        else:  # pkv is 4d
+
+        # TODO: move all these to a different method possibly and get rid of if condition, this is quick-hack for now!!
+        if self.model.config.architectures[0] == "DeepseekV3ForCausalLM":
+            k_states_shape = (
+                bs,
+                self.model.config.num_key_value_heads,
+                seq_len,
+                self.model.config.qk_nope_head_dim + self.model.config.qk_rope_head_dim,
+            )
+            v_states_shape = (bs, self.model.config.num_key_value_heads, seq_len, self.model.config.v_head_dim)
             pkv_dynamic_axes = {
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
                 2: "ctx_len",
             }
-        output_names = ["logits"]
 
-        for i in range(self.num_layers):
-            for kv in ["key", "value"]:
-                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
-                output_names.append(f"past_{kv}.{i}_RetainedState")
+            for i in range(self.num_layers):
+                example_inputs["past_key_values"][i].append(torch.zeros(k_states_shape, dtype=torch.float32))
+                example_inputs["past_key_values"][i].append(torch.zeros(v_states_shape, dtype=torch.float32))
+                dynamic_axes[f"past_key.{i}"] = pkv_dynamic_axes
+                dynamic_axes[f"past_value.{i}"] = pkv_dynamic_axes
+                output_names.append(f"past_key.{i}_RetainedState")
+                output_names.append(f"past_value.{i}_RetainedState")
+        else:
+            # Prepare KV cache related params for ONNX export
+            kv_cache_shape = get_padding_shape_from_config(
+                self.model.config, fbs if self.continuous_batching else bs, seq_len
+            )
+            if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
+                pkv_dynamic_axes = {
+                    0: "full_batch_size" if self.continuous_batching else "batch_size",
+                    1: "ctx_len",
+                }
+            else:  # pkv is 4d
+                pkv_dynamic_axes = {
+                    0: "full_batch_size" if self.continuous_batching else "batch_size",
+                    2: "ctx_len",
+                }
+
+            for i in range(self.num_layers):
+                for kv in ["key", "value"]:
+                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                    output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
