@@ -127,6 +127,7 @@ pipeline {
             timeout(time: 660, unit: 'MINUTES') {
                     sh '''
                     sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     pytest --disable-warnings -s -v tests/vllm --junitxml=tests/tests_log4.xml &&
                     junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log3.xml tests/tests_log4.xml tests/tests_log.xml &&
