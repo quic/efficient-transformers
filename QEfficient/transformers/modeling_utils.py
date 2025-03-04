@@ -5,9 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
+import sys
 from collections import namedtuple
 from typing import Dict, Optional, Tuple, Type
-import sys
 
 import torch
 import torch.nn as nn
@@ -87,7 +87,6 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperPositionalEmbedding,
 )
 
-from transformers import AutoModelForCausalLM
 from QEfficient.customop import CustomRMSNormAIC
 
 # Placeholder for all non-transformer models
@@ -159,12 +158,6 @@ from .models.whisper.modeling_whisper import (
     QEffWhisperForConditionalGeneration,
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
-)
-
-# Placeholder for all non-transformer models
-from QEfficient.transformers.models.llama_swiftkv.modeling_llama_swiftkv import (
-    LlamaSwiftKVForCausalLM,
-    LlamaSwiftKVConfig
 )
 
 # Define a named tuple for ModelArchitectures
@@ -387,6 +380,7 @@ def _create_causal_mask(
         attention_mask = attention_mask.unsqueeze(1)
 
     return attention_mask
+
 
 def convert_str_to_class(className):
     """
