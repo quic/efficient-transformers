@@ -378,10 +378,8 @@ def get_session(pretrained_model_name_or_path,
                 num_speculative_tokens = 3, 
                 proj_num_layers = 1,
                 proj_checkpoint = None):
-    #mpath = "/local/mnt/p_drive/users/rpodila/hf_home/hub/models--PredibaseShareQualcomm--private-llama-3-1-8b-instruct-merged-qualcomm-conllpp/snapshots/b6f4dd92bed981126d9787522381615d664201c5/"
     # define post-attention hidden size projections
-    #hidden_size = AutoConfig.from_pretrained(pretrained_model_name_or_path).hidden_size
-    hidden_size = 4096
+    hidden_size = AutoConfig.from_pretrained(pretrained_model_name_or_path).hidden_size
     projs = nn.ModuleList( 
         [
             nn.Sequential(
