@@ -7,7 +7,6 @@
 
 import hashlib
 import warnings
-
 from pathlib import Path
 from time import perf_counter
 from typing import List, Optional, Union
@@ -77,7 +76,6 @@ class QEFFTransformersBase(QEFFBaseModel):
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
-
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
