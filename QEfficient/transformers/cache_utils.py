@@ -46,7 +46,7 @@ class QEffDynamicCache(DynamicCache):
             self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], position_ids, key_states)
             self.value_cache[layer_idx] = CtxScatterFunc.apply(self.value_cache[layer_idx], position_ids, value_states)
 
-    def read_only(self, layer_idx, cache_kwargs):
+    def read_only(self, layer_idx, **cache_kwargs):
         k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
         position_ids = cache_kwargs.get("position_ids")
         ctx_len = k_out.shape[2]
