@@ -156,8 +156,8 @@ class InputHandler:
         ).astype(np.int64)
 
         for i in range(self.n_layer):
-            inputs["past_key." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
-            inputs["past_value." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
+            inputs["past_key." + str(i)] = np.zeros((self.k_shape), dtype=np.float32)
+            inputs["past_value." + str(i)] = np.zeros((self.v_shape), dtype=np.float32)
 
         return inputs
 
