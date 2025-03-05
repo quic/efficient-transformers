@@ -5,14 +5,12 @@
 #
 # -----------------------------------------------------------------------------
 
-import sys
+import importlib
 from collections import namedtuple
 from typing import Dict, Optional, Tuple, Type
 
 import torch
 import torch.nn as nn
-import importlib
-
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,

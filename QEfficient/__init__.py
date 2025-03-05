@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import os
+
 from transformers import AutoConfig
 
 # For faster downloads via hf_transfer
@@ -18,7 +19,6 @@ from QEfficient.transformers.modeling_utils import (
     get_auto_model_class,
     get_model_class_type_from_model_type,
 )
-
 from QEfficient.utils.logging_utils import logger
 
 # loop over all the models which are not present in transformers and register them
