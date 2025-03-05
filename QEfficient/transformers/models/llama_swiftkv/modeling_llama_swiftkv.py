@@ -379,8 +379,8 @@ class LlamaSwiftKVModel(nn.Module):
 class LlamaSwiftKVForCausalLM(PreTrainedModel):
     config_class = LlamaSwiftKVConfig
 
-    def __init__(self, *, config: LlamaSwiftKVConfig):
-        super().__init__()
+    def __init__(self, config: LlamaSwiftKVConfig):
+        super().__init__(config=config)
 
         self.model = LlamaSwiftKVModel(
             config=config,
