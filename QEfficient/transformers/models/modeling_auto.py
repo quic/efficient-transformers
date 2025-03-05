@@ -1156,7 +1156,7 @@ class QEFFAutoModelForImageTextToText:
         :pretrained_model_name_or_path (str): Model card name from HuggingFace or local path to model directory.
 
     ``Optional`` Args:
-        :kv_offload (bool): Should the KV of vision encoder be offloaded to CPU and use Two QPC. Defaults to None.
+        :kv_offload (bool): Flag to toggle between single and dual QPC approaches. If set to False, the Single QPC approach will be used; otherwise, the dual QPC approach will be applied. Defaults to True.
 
     .. code-block:: python
         import requests
