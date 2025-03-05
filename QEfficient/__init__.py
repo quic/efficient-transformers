@@ -5,8 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
-from transformers import AutoConfig
 import os
+
+from transformers import AutoConfig
+
 from QEfficient.transformers.modeling_utils import (
     MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS,
     get_auto_model_class,

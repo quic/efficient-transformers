@@ -87,7 +87,6 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperPositionalEmbedding,
 )
 
-from transformers import AutoModelForCausalLM
 from QEfficient.customop import CustomRMSNormAIC
 
 # Placeholder for all non-transformer models
