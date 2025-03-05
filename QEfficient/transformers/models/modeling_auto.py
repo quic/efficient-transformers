@@ -1147,9 +1147,16 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
 class QEFFAutoModelForImageTextToText:
     """
-    A factory class for creating QEFFAutoModelForImageTextToText instances with for single and Dual QPC approach
+    The QEFFAutoModelForImageTextToText class is used to work with multimodal language models from the HuggingFace hub. 
+    While you can initialize the class directly, it's best to use the ``from_pretrained`` method for this purpose. This class supports both single and dual QPC approaches.
     Attributes:
         _hf_auto_class (class): The Hugging Face AutoModel class for ImageTextToText models.
+    
+    ``Mandatory`` Args:
+        :pretrained_model_name_or_path (str): Model card name from HuggingFace or local path to model directory.
+
+    ``Optional`` Args:
+        :kv_offload (bool): Should the KV of vision encoder be offloaded to CPU and use Two QPC. Defaults to None.
 
     .. code-block:: python
         import requests
