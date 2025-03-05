@@ -11,6 +11,8 @@ from typing import Dict, Optional, Tuple, Type
 
 import torch
 import torch.nn as nn
+import importlib
+
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,
@@ -389,7 +391,8 @@ def convert_str_to_class(className):
     Return:
         Class Name
     """
-    return getattr(sys.modules[__name__], className)
+    module = importlib.import_module("transformers")
+    return getattr(module, className)
 
 
 def get_auto_model_class(model_type, NonTransformerModelCls):
