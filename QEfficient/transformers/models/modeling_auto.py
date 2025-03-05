@@ -1147,11 +1147,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
 class QEFFAutoModelForImageTextToText:
     """
-    The QEFFAutoModelForImageTextToText class is used to work with multimodal language models from the HuggingFace hub. 
+    The QEFFAutoModelForImageTextToText class is used to work with multimodal language models from the HuggingFace hub.
     While you can initialize the class directly, it's best to use the ``from_pretrained`` method for this purpose. This class supports both single and dual QPC approaches.
     Attributes:
         _hf_auto_class (class): The Hugging Face AutoModel class for ImageTextToText models.
-    
+
     ``Mandatory`` Args:
         :pretrained_model_name_or_path (str): Model card name from HuggingFace or local path to model directory.
 
