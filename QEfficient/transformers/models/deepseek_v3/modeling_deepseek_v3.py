@@ -191,6 +191,7 @@ class QEffDeepseekV3MoE(DeepseekV3MoE):
     def forward(self, hidden_states):
         residuals = hidden_states
         orig_shape = hidden_states.shape
+        # breakpoint()
         topk_indices, topk_weights = self.gate(hidden_states)
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         hidden_states = self.moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
@@ -201,26 +202,25 @@ class QEffDeepseekV3MoE(DeepseekV3MoE):
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
         expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=len(self.experts))
         expert_mask = expert_mask.permute(2, 0, 1)
-        breakpoint()
+        # breakpoint()
         for expert_idx in range(len(self.experts)):
             expert = self.experts[expert_idx]
             mask = expert_mask[expert_idx]
             # token_indices, weight_indices = torch.where(mask)
-
             # if token_indices.numel() > 0:
-            if torch.sum(mask).item() > 0:
-                # expert_weights = topk_weights[token_indices, weight_indices]
-                # expert_input = hidden_states[token_indices]
-                # expert_output = expert(expert_input)
-                expert_output = expert(hidden_states) * (((topk_weights * mask).sum(1))[:, None])
-                # weighted_output = expert_output * expert_weights.unsqueeze(-1)
-                # final_hidden_states.index_add_(0, token_indices, weighted_output)
-                expert_output = torch.where(
-                    (topk_weights * mask).sum(1).to(torch.bool)[:, None],
-                    expert_output,
-                    torch.tensor(0.0),
-                )
-                final_hidden_states = final_hidden_states + expert_output
+            # if torch.sum(mask).item() > 0:
+            # expert_weights = topk_weights[token_indices, weight_indices]
+            # expert_input = hidden_states[token_indices]
+            # expert_output = expert(expert_input)
+            expert_output = expert(hidden_states) * (((topk_weights * mask).sum(1))[:, None])
+            # weighted_output = expert_output * expert_weights.unsqueeze(-1)
+            # final_hidden_states.index_add_(0, token_indices, weighted_output)
+            expert_output = torch.where(
+                (topk_weights * mask).sum(1).to(torch.bool)[:, None],
+                expert_output,
+                torch.tensor(0.0),
+            )
+            final_hidden_states = final_hidden_states + expert_output
         return final_hidden_states.type(hidden_states.dtype)
 
 
@@ -296,7 +296,7 @@ class QEffDeepseekV3Model(DeepseekV3Model):
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-        breakpoint()
+        # breakpoint()
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -482,7 +482,7 @@ class QEffDeepseekV3ForCausalLM(DeepseekV3ForCausalLM):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        breakpoint()
+        # breakpoint()
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,

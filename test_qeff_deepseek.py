@@ -47,10 +47,11 @@ def check_deepseek():
         64, #ctx_len
         
     )
-    pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+    # pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
     # qeff_model = QEFFAutoModelForCausalLM.from_pretrained(MODEL_ID, num_hidden_layers=4)
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
-    pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
+    # breakpoint()
+    # pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=False)
     qpc_path = qeff_model.compile(
