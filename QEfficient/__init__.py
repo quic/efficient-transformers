@@ -1,18 +1,36 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
 
 import os
 
+from transformers import AutoConfig
+
 # For faster downloads via hf_transfer
 # This code is put above import statements as this needs to be executed before
 # hf_transfer is imported (will happen on line 15 via leading imports)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
+from QEfficient.transformers.modeling_utils import (
+    MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS,
+    get_auto_model_class,
+    get_model_class_type_from_model_type,
+)
 from QEfficient.utils.logging_utils import logger
+
+# loop over all the models which are not present in transformers and register them
+for key, value in MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS.items():
+    # Register the config class based on model type
+    AutoConfig.register(key, value[0])
+
+    model_class_type = get_model_class_type_from_model_type(key)
+    AutoModelClassName = get_auto_model_class(model_class_type, value[1])
+
+    # Register the non transformer library Class and config class using AutoModelClass
+    AutoModelClassName.register(value[0], value[1])
 
 
 def check_qaic_sdk():
