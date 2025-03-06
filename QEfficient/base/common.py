@@ -12,7 +12,6 @@ QEFF_MODEL_TYPE and the classes that implement the methods i.e.(compile, export 
 QEFFAutoModel provides a common interface for loading the HuggingFace models using either the HF card name of local path of downloaded model.
 """
 
-import importlib
 from typing import Any
 
 import transformers.models.auto.modeling_auto as mapping
@@ -51,7 +50,7 @@ class QEFFCommonLoader:
 
         class_name = MODEL_CLASS_MAPPING.get(architecture)
         if class_name:
-            module = importlib.import_module("QEfficient.transformers.models.modeling_auto")
+            module = __import__("QEfficient.transformers.models.modeling_auto")
             model_class = getattr(module, class_name)
         else:
             raise NotImplementedError(
