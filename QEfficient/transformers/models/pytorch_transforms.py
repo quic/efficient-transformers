@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+from functools import partial
 from types import MethodType
 from typing import Tuple
 
@@ -84,6 +85,7 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaTextModel,
     MllamaTextRMSNorm,
     MllamaTextSelfAttention,
+    MllamaVisionAttention,
     MllamaVisionModel,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
@@ -204,6 +206,7 @@ from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaTextCrossAttentionTwoQPC,
     QEffMllamaTextModel,
     QEffMllamaTextSelfAttention,
+    QEffMllamaVisionAttention,
     QEffMllamaVisionModel,
 )
 from QEfficient.transformers.models.mpt.modeling_mpt import (
@@ -439,3 +442,21 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
     }
     _match_class_replace_method = {}
+
+class BlockAttentionTransorm(ModuleMappingTransform):
+    # supported architectures
+    _module_mapping = {
+        MllamaVisionAttention: QEffMllamaVisionAttention,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, block_size) -> Tuple[nn.Module, bool]:
+        transformed = False
+        for module in model.modules():
+            if repl_module := cls._module_mapping.get(type(module)):
+                module.__class__ = repl_module
+                # Bind the partial function to the instance
+                module.forward = MethodType(partial(repl_module.forward, block_size=block_size), module)
+                transformed = True
+                break
+        return model, transformed

@@ -35,6 +35,7 @@ from QEfficient.generation.text_generation_inference import (
     get_compilation_dims,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
+    BlockAttentionTransorm,
     CustomOpsTransform,
     KVCacheModuleMethodMapperTransform,
     KVCacheTransform,
@@ -525,6 +526,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     def __init__(
         self,
         model: nn.Module,
+        block_size : int = None,
         **kwargs,
     ):
         if kwargs.pop("full_batch_size", None):
@@ -535,6 +537,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.lang_model = QEffCausalLMForTextImageToTextModel(model)
 
         self.input_shapes, self.output_names = None, None
+        
+        if block_size:
+            BlockAttentionTransorm.apply(model, block_size=block_size)
 
     @property
     def model_name(self) -> str:
@@ -850,11 +855,15 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     def __init__(
         self,
         model: nn.Module,
+        block_size : int = None,
         **kwargs,
     ):
         if kwargs.pop("full_batch_size", None):
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         super().__init__(model)
+        
+        if block_size:
+            BlockAttentionTransorm.apply(model, block_size=block_size)
 
         # to handle internvl models
         if hasattr(self.model.config, "llm_config") and hasattr(self.model.config, "vision_config"):
@@ -1222,7 +1231,8 @@ class QEFFAutoModelForImageTextToText:
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, kv_offload: Optional[bool] = None, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, kv_offload: Optional[bool] = None,
+                        block_size : int=None, **kwargs):
         """Used to load models supported by transformers.AutoModelForImageTextToText for Cloud AI 100.
 
         Args:
@@ -1238,10 +1248,11 @@ class QEFFAutoModelForImageTextToText:
 
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
+            
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        return cls(model, kv_offload=kv_offload, **kwargs)
+        return cls(model, kv_offload=kv_offload, block_size=block_size, **kwargs)
 
 
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoModelForImageTextToText}
