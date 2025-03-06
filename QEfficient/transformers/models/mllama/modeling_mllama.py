@@ -33,6 +33,7 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaTextCrossAttention,
     MllamaTextModel,
     MllamaTextSelfAttention,
+    MllamaVisionAttention,
     MllamaVisionModel,
     logger,
     repeat_kv,
@@ -1305,3 +1306,64 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             ),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
         ]
+
+
+class QEffMllamaVisionAttention(MllamaVisionAttention):
+
+    def forward(
+        self,
+        hidden_state: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = None,
+        block_size: int = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        
+        query = self.q_proj(hidden_state)
+        key = self.k_proj(hidden_state)
+        value = self.v_proj(hidden_state)
+
+        batch_size, q_seq_len, _ = query.shape
+        _, kv_seq_len, _ = key.shape
+
+        query = query.view(batch_size, q_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        key = key.view(batch_size, kv_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        value = value.view(batch_size, kv_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        print("############################################################################################")
+        print("############################################################################################")
+        print("############################################################################################")
+        print("############################################################################################")
+        print(block_size)
+        print("############################################################################################")
+        print("############################################################################################")
+        print("############################################################################################")
+        print("############################################################################################")
+        if block_size:
+            # Apply block size to query and key
+            query_blocks = query.unfold(2, block_size, block_size)
+            key_blocks = key.unfold(2, block_size, block_size)
+            attn_weights_blocks = []
+            
+            for i in range(query_blocks.size(2)):
+                attn_weights_block = torch.matmul(query_blocks[:, :, i], key_blocks[:, :, i].transpose(2, 3)) / math.sqrt(self.head_dim)
+                attn_weights_blocks.append(attn_weights_block)
+            attn_weights = torch.cat(attn_weights_blocks, dim=2)
+        else:
+            attn_weights = torch.matmul(query, key.transpose(2, 3)) / math.sqrt(self.head_dim)
+
+        if attention_mask is not None:  # no matter the length, we just slice it
+            causal_mask = attention_mask[:, :, :, : key.shape[-2]]
+            attn_weights = attn_weights + causal_mask
+
+        # upcast attention to fp32
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+        attn_output = torch.matmul(attn_weights, value)
+
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.reshape(batch_size, q_seq_len, -1)
+
+        output = self.o_proj(attn_output)
+
+        if not output_attentions:
+            attn_weights = None
+
+        return output, attn_weights
