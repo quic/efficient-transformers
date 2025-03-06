@@ -239,7 +239,7 @@ Use the qualcomm_efficient_converter API to export the KV transformed Model to O
 
 generated_qpc_path = qeff_model.compile(
     num_cores=14,
-    mxfp6=True,
+    mxfp6_matmul=True,
 )
 ```
 
@@ -250,8 +250,8 @@ Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/s
 ```Python
 # post compilation, we can print the latency stats for the kv models, We provide API to print token and Latency stats on AI 100
 # We need the compiled prefill and decode qpc to compute the token generated, This is based on Greedy Sampling Approach
-
-qeff_model.generate(prompts=["My name is"])
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+qeff_model.generate(prompts=["My name is"],tokenizer=tokenizer)
 ```
 End to End demo examples for various models are available in **notebooks** directory. Please check them out.
 
