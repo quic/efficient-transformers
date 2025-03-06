@@ -43,7 +43,7 @@ def test_finetune(
     device,
     mocker,
 ):
-    train_config_spy = mocker.spy(QEfficient.cloud.finetune, "TRAIN_CONFIG")
+    train_config_spy = mocker.spy(QEfficient.cloud.finetune, "TrainConfig")
     generate_dataset_config_spy = mocker.spy(QEfficient.cloud.finetune, "generate_dataset_config")
     generate_peft_config_spy = mocker.spy(QEfficient.cloud.finetune, "generate_peft_config")
     get_dataloader_kwargs_spy = mocker.spy(QEfficient.cloud.finetune, "get_dataloader_kwargs")
