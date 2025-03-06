@@ -1210,7 +1210,14 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             img_size = 448
             logger.warning("Setting `img_size=448` as it was neither passed nor found in vision_config")
 
-        vision = [{"batch_size": batch_size, "max_num_images": max_num_images,"max_num_tiles": max_num_tiles, "img_size": img_size}]
+        vision = [
+            {
+                "batch_size": batch_size,
+                "max_num_images": max_num_images,
+                "max_num_tiles": max_num_tiles,
+                "img_size": img_size,
+            }
+        ]
         lang = [
             {
                 "batch_size": batch_size,
@@ -1244,7 +1251,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         cross_attention_layers = txt_cfg.cross_attention_layers
 
         vision_dynamic_axes = {
-            "pixel_values": {0: "batch_size", 1: "max_num_images",2: "max_num_tiles", 4: "img_size", 5: "img_size"},
+            "pixel_values": {0: "batch_size", 1: "max_num_images", 2: "max_num_tiles", 4: "img_size", 5: "img_size"},
             "aspect_ratio_ids": {0: "batch_size", 1: "max_num_images"},
             "aspect_ratio_mask": {0: "batch_size", 1: "max_num_images", 2: "max_num_tiles"},
         }
