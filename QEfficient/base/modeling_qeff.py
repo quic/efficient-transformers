@@ -191,8 +191,10 @@ class QEFFBaseModel(ABC):
                 transform_kwargs.update(onnx_transform_kwargs)
 
             for transform in self._onnx_transforms:
-                if not (self.enable_qnn and transform == SplitTensorsTransform):
-                    model, transformed = transform.apply(model, **transform_kwargs)
+                if hasattr(self, "enable_qnn") and self.enable_qnn and transform == SplitTensorsTransform:
+                    continue
+
+                model, transformed = transform.apply(model, **transform_kwargs)
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
