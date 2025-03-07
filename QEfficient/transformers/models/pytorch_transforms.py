@@ -443,7 +443,8 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
     }
     _match_class_replace_method = {}
 
-class BlockAttentionTransorm(ModuleMappingTransform):
+
+class BlockAttentionTransform(ModuleMappingTransform):  # Fixed typo in class name
     # supported architectures
     _module_mapping = {
         MllamaVisionAttention: QEffMllamaVisionAttention,
@@ -457,6 +458,5 @@ class BlockAttentionTransorm(ModuleMappingTransform):
                 module.__class__ = repl_module
                 # Bind the partial function to the instance
                 module.forward = MethodType(partial(repl_module.forward, block_size=block_size), module)
-                transformed = True
-                break
+                transformed = True  # Set to True if at least one transformation occurs
         return model, transformed
