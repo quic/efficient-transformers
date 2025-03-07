@@ -33,6 +33,7 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaTextCrossAttention,
     MllamaTextModel,
     MllamaTextSelfAttention,
+    MllamaVisionAttention,
     MllamaVisionModel,
     logger,
     repeat_kv,
@@ -1133,24 +1134,24 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
 
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", 448)
-            max_num_img_tiles = getattr(vis_cfg, "max_num_tiles", 4)
+            max_num_tiles = getattr(vis_cfg, "max_num_tiles", 4)
         else:
             img_size = 448
-            max_num_img_tiles = 4
+            max_num_tiles = 4
 
         # vision inputs
         vision_inputs = {
             "pixel_values": torch.zeros(
-                (BS, MAX_NUM_IMG, max_num_img_tiles, NUM_CHANNEL, img_size, img_size), dtype=torch.float32
+                (BS, MAX_NUM_IMG, max_num_tiles, NUM_CHANNEL, img_size, img_size), dtype=torch.float32
             ),
             "aspect_ratio_ids": torch.ones((BS, MAX_NUM_IMG), dtype=torch.int64),
-            "aspect_ratio_mask": torch.ones((BS, MAX_NUM_IMG, max_num_img_tiles), dtype=torch.int64),
+            "aspect_ratio_mask": torch.ones((BS, MAX_NUM_IMG, max_num_tiles), dtype=torch.int64),
         }
 
         # lang_inputs
         lang_inputs = {
             "input_ids": torch.zeros((BS, SEQ_LEN), dtype=torch.int64),
-            "cross_attention_mask": torch.zeros((BS, SEQ_LEN, MAX_NUM_IMG, max_num_img_tiles), dtype=torch.int64),
+            "cross_attention_mask": torch.zeros((BS, SEQ_LEN, MAX_NUM_IMG, max_num_tiles), dtype=torch.int64),
             "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
         }
 
@@ -1201,6 +1202,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
     ):
         vis_cfg = self.config.vision_config
         max_num_images = compiler_options.pop("max_num_images", 1)
+        max_num_tiles = compiler_options.pop("max_num_tiles", 4)
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else 128
         if img_size is None and hasattr(vis_cfg, "image_size"):
@@ -1209,13 +1211,21 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             img_size = 448
             logger.warning("Setting `img_size=448` as it was neither passed nor found in vision_config")
 
-        vision = [{"batch_size": batch_size, "max_num_images": max_num_images, "img_size": img_size}]
+        vision = [
+            {
+                "batch_size": batch_size,
+                "max_num_images": max_num_images,
+                "max_num_tiles": max_num_tiles,
+                "img_size": img_size,
+            }
+        ]
         lang = [
             {
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
                 "max_num_images": max_num_images,
+                "max_num_tiles": max_num_tiles,
                 "img_size": img_size,
             },
             {
@@ -1223,6 +1233,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
                 "seq_len": "1",
                 "ctx_len": ctx_len,
                 "max_num_images": max_num_images,
+                "max_num_tiles": max_num_tiles,
                 "img_size": img_size,
             },
         ]
@@ -1241,15 +1252,15 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         cross_attention_layers = txt_cfg.cross_attention_layers
 
         vision_dynamic_axes = {
-            "pixel_values": {0: "batch_size", 1: "max_num_images", 4: "img_size", 5: "img_size"},
+            "pixel_values": {0: "batch_size", 1: "max_num_images", 2: "max_num_tiles", 4: "img_size", 5: "img_size"},
             "aspect_ratio_ids": {0: "batch_size", 1: "max_num_images"},
-            "aspect_ratio_mask": {0: "batch_size", 1: "max_num_images"},
+            "aspect_ratio_mask": {0: "batch_size", 1: "max_num_images", 2: "max_num_tiles"},
         }
 
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
-            "cross_attention_mask": {0: "batch_size", 1: "seq_len", 2: "max_num_images"},
+            "cross_attention_mask": {0: "batch_size", 1: "seq_len", 2: "max_num_images", 3: "max_num_tiles"},
         }
 
         for i in range(num_hidden_layers):
@@ -1305,3 +1316,68 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             ),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
         ]
+
+
+class QEffMllamaVisionAttention(MllamaVisionAttention):
+
+    def forward(
+        self,
+        hidden_state: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = None,
+        block_size: int = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        
+        query = self.q_proj(hidden_state)
+        key = self.k_proj(hidden_state)
+        value = self.v_proj(hidden_state)
+
+        batch_size, q_seq_len, _ = query.shape
+        _, kv_seq_len, _ = key.shape
+
+        query = query.view(batch_size, q_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        key = key.view(batch_size, kv_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        value = value.view(batch_size, kv_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        if block_size is not None:
+            num_blocks = q_seq_len // block_size
+
+            attn_output_blocks = []
+            attn_weights_blocks = []
+
+            for i in range(num_blocks):
+                query_block = query[:, :, i * block_size:(i + 1) * block_size, :]
+                attn_weights_block = torch.matmul(query_block, key.transpose(2, 3)) / math.sqrt(self.head_dim)
+
+                if attention_mask is not None:
+                    # causal_mask_block = attention_mask[:, :, :, : key.shape[-2]]
+                    causal_mask_block = attention_mask[:, :, i * block_size:(i + 1) * block_size,:]
+                    attn_weights_block = attn_weights_block + causal_mask_block
+
+                attn_weights_block = nn.functional.softmax(attn_weights_block, dim=-1, dtype=torch.float32).to(query.dtype)
+                attn_output_block = torch.matmul(attn_weights_block, value)
+
+                attn_output_blocks.append(attn_output_block)
+                attn_weights_blocks.append(attn_weights_block)
+            
+            attn_output = torch.cat(attn_output_blocks, dim=2)
+            attn_weights = torch.cat(attn_weights_blocks, dim=2)
+        else:
+            # Regular attention
+            attn_weights = torch.matmul(query, key.transpose(2, 3)) / math.sqrt(self.head_dim)
+
+            if attention_mask is not None:
+                causal_mask = attention_mask[:, :, :, :key.shape[-2]]
+                attn_weights = attn_weights + causal_mask
+
+            attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+            attn_output = torch.matmul(attn_weights, value)
+
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.reshape(batch_size, q_seq_len, -1)
+
+        output = self.o_proj(attn_output)
+
+        if not output_attentions:
+            attn_weights = None
+
+        return output, attn_weights
