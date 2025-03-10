@@ -14,17 +14,10 @@ QEFFAutoModel provides a common interface for loading the HuggingFace models usi
 
 from typing import Any
 
-import transformers.models.auto.modeling_auto as mapping
+from QEfficient.transformers.modeling_utils import model_class_mapping
 from transformers import AutoConfig
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-
-MODEL_CLASS_MAPPING = {}
-for architecture in mapping.MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
-    MODEL_CLASS_MAPPING[architecture] = "QEFFAutoModelForCausalLM"
-
-for architecture in mapping.MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values():
-    MODEL_CLASS_MAPPING[architecture] = "QEFFAutoModelForImageTextToText"
 
 
 class QEFFCommonLoader:
@@ -48,7 +41,7 @@ class QEFFCommonLoader:
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path)
         architecture = config.architectures[0] if config.architectures else None
 
-        class_name = MODEL_CLASS_MAPPING.get(architecture)
+        class_name = model_class_mapping.get(architecture)
         if class_name:
             module = __import__("QEfficient.transformers.models.modeling_auto")
             model_class = getattr(module, class_name)

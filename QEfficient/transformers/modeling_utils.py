@@ -8,6 +8,8 @@
 from collections import namedtuple
 from typing import Dict, Optional, Tuple, Type
 
+import transformers.models.auto.modeling_auto as mapping
+
 import torch
 import torch.nn as nn
 from transformers.models.codegen.modeling_codegen import (
@@ -269,6 +271,15 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     WhisperPositionalEmbedding: QEffWhisperPositionalEmbedding,
     WhisperModel: QEffWhisperModel,
     WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
+}
+
+
+model_class_mapping = {
+    **{architecture: "QEFFAutoModelForCausalLM" for architecture in mapping.MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values()},
+    **{
+        architecture: "QEFFAutoModelForImageTextToText"
+        for architecture in mapping.MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values()
+    },
 }
 
 

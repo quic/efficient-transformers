@@ -16,7 +16,7 @@ from transformers import AutoProcessor, TextStreamer
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
 from QEfficient.base.common import QEFFCommonLoader
-from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
+from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer, constants
 from QEfficient.utils.logging_utils import logger
 
 
@@ -41,7 +41,6 @@ def main(
     allow_mxint8_mdp_io: bool = False,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
-    img_size: Optional[int] = None,
     **kwargs,
 ) -> None:
     """
@@ -89,9 +88,6 @@ def main(
         if args.mxint8:
             logger.warning("mxint8 is going to be deprecated in a future release, use -mxint8_kv_cache instead.")
 
-    image_path = kwargs.pop("image_path", None)
-    image_url = kwargs.pop("image_url", None)
-
     qeff_model = QEFFCommonLoader.from_pretrained(
         pretrained_model_name_or_path=model_name,
         cache_dir=cache_dir,
@@ -99,6 +95,16 @@ def main(
         full_batch_size=full_batch_size,
         local_model_dir=local_model_dir,
     )
+
+    image_path = kwargs.pop("image_path", None)
+    image_url = kwargs.pop("image_url", None)
+
+    config = qeff_model.model.config
+    architecture = config.architectures[0] if config.architectures else None
+    if architecture not in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values():
+        img_size = kwargs.pop("img_size", None)
+        if img_size or image_path or image_url:
+            logger.warning(f"Skipping image arguments as they are not valid for {architecture}")
 
     #########
     # Compile
@@ -117,38 +123,21 @@ def main(
         allow_mxint8_mdp_io=allow_mxint8_mdp_io,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
-        img_size=img_size,
         **kwargs,
     )
 
     #########
     # Execute
     #########
-    config = qeff_model.model.config
-    architecture = config.architectures[0] if config.architectures else None
-
     if architecture in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values():
         processor = AutoProcessor.from_pretrained(model_name, use_fast=False)
 
-        raw_image = None
-        if image_url is not None:
-            raw_image = Image.open(requests.get(image_url, stream=True).raw)
-        elif image_path is not None:
-            raw_image = Image.open(image_path)
-        else:
-            raise FileNotFoundError(
-                'Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"'
-            )
+        if not (image_url or image_path):
+            raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
+        raw_image = Image.open(requests.get(image_url, stream=True).raw) if image_url else Image.open(image_path)
 
-        conversation = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": prompt[0]},  # Currently accepting only 1 prompt
-                ],
-            },
-        ]
+        conversation = constants.Constants.conversation
+        conversation[0]["content"][1].update({"text": prompt[0]})  # Currently accepting only 1 prompt
 
         # Converts a list of dictionaries with `"role"` and `"content"` keys to a list of token ids.
         input_text = processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
@@ -277,19 +266,21 @@ if __name__ == "__main__":
         "--enable_qnn",
         "--enable-qnn",
         action="store_true",
+        nargs="?",
+        const=True,
+        type=str,
         default=False,
         help="Enables QNN. Optionally, a configuration file can be provided with [--enable_qnn CONFIG_FILE].\
              If not provided, the default configuration will be used.\
              Sample Config: QEfficient/compile/qnn_config.json",
     )
-    parser.add_argument(
-        "--qnn_config",
-        nargs="?",
-        type=str,
-    )
-    parser.add_argument("--img-size", "--img_size", default=None, type=int, required=False, help="Size of Image")
 
     args, compiler_options = parser.parse_known_args()
+
+    if isinstance(args.enable_qnn, str):
+        args.qnn_config = args.enable_qnn
+        args.enable_qnn = True
+
     compiler_options_dict = {}
     for i in range(0, len(compiler_options)):
         if compiler_options[i].startswith("--"):

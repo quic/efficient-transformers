@@ -615,8 +615,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
 
         output_names = self.model.get_output_names(kv_offload=True)
-        vision_onnx_path = compiler_options.get("vision_onnx_path", None)
-        lang_onnx_path = compiler_options.get("lang_onnx_path", None)
 
         specializations, compiler_options = self.model.get_specializations(
             batch_size=batch_size,
@@ -1566,9 +1564,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 decode_specialization.update({"batch_size": kv_cache_batch_size})
             decode_specialization.update({"num_logits_to_keep": num_speculative_tokens + 1}) if self.is_tlm else ...
             specializations.append(decode_specialization)
-
-        if compiler_options.pop("img_size", None):
-            logger.warning(f"Skipping img_size as it is not a valid argument for {self.model.config.architectures[0]}.")
 
         if enable_qnn:
             if compiler_options:
