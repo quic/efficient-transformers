@@ -14,10 +14,10 @@ QEFFAutoModel provides a common interface for loading the HuggingFace models usi
 
 from typing import Any
 
-from QEfficient.transformers.modeling_utils import model_class_mapping
 from transformers import AutoConfig
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
+from QEfficient.transformers.modeling_utils import model_class_mapping
 
 
 class QEFFCommonLoader:

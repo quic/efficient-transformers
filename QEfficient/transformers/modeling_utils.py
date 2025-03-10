@@ -8,10 +8,9 @@
 from collections import namedtuple
 from typing import Dict, Optional, Tuple, Type
 
-import transformers.models.auto.modeling_auto as mapping
-
 import torch
 import torch.nn as nn
+import transformers.models.auto.modeling_auto as mapping
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,
