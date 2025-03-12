@@ -22,16 +22,16 @@ from QEfficient.transformers.modeling_utils import (
 
 from QEfficient.utils.logging_utils import logger
 
-# loop over all the models which are not present in transformers and register them
-for key, value in MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS.items():
-    # Register the config class based on model type
-    AutoConfig.register(key, value[0])
+# loop over all the model types which are not present in transformers and register them
+for model_type, model_cls in MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS.items():
+    # Register the model config class based on the model type. This will be first element in the tuple
+    AutoConfig.register(model_type, model_cls[0])
 
-    model_class_type = get_model_class_type_from_model_type(key)
-    AutoModelClassName = get_auto_model_class(model_class_type, value[1])
+    model_class_type = get_model_class_type_from_model_type(model_type)
+    AutoModelClassName = get_auto_model_class(model_class_type, model_cls[1])
 
     # Register the non transformer library Class and config class using AutoModelClass
-    AutoModelClassName.register(value[0], value[1])
+    AutoModelClassName.register(model_cls[0], model_cls[1])
 
 
 def check_qaic_sdk():
