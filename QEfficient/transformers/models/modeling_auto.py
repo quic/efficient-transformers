@@ -8,12 +8,22 @@
 import hashlib
 import warnings
 from pathlib import Path
-from typing import List, Optional, Union, Tuple
+from time import perf_counter
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
-from transformers import AutoModel, AutoModelForCausalLM, PreTrainedTokenizer, PreTrainedTokenizerFast, TextStreamer
+from accelerator import load_checkpoint_and_dispatch
+from transformers import (
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoModelForImageTextToText,
+    AutoModelForSpeechSeq2Seq,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+    TextStreamer,
+)
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
