@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import importlib
 from collections import namedtuple
 from typing import Dict, Optional, Tuple, Type
 
@@ -280,6 +279,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
 
 # Map of model type to config class and Model architecture class
 # While onboarding new models make sure to add the new model card names to this dictionary.
+# Developers are expected to follow the naming conventions like ForCausalLM while defining the class names
 MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS = {"llama_swiftkv": [LlamaSwiftKVConfig, LlamaSwiftKVForCausalLM]}
 
 # list of sub-strings representing the model type, this is typically taken from llama-swiftkv
@@ -389,7 +389,7 @@ def convert_str_to_class(className):
     Return:
         Class Name
     """
-    module = importlib.import_module("transformers")
+    module = __import__("transformers")
     return getattr(module, className)
 
 
