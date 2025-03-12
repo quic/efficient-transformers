@@ -9,7 +9,7 @@ import hashlib
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import List, Optional, Union, Tuple
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
