@@ -22,4 +22,6 @@ from QEfficient.utils._utils import (  # noqa: F401
     onnx_exists,
     padding_check_and_fix,
     qpc_exists,
+    get_padding_shape_vlm,
+    get_num_layers_vlm,
 )
