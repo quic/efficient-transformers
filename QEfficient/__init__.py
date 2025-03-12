@@ -20,7 +20,6 @@ from QEfficient.transformers.modeling_utils import (
     get_model_class_type_from_model_type,
 )
 from QEfficient.utils.logging_utils import logger
-from transformers import AutoConfig
 
 # loop over all the model types which are not present in transformers and register them
 for model_type, model_cls in MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS.items():

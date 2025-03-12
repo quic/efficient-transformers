@@ -1,4 +1,3 @@
-
 # -----------------------------------------------------------------------------
 #
 # Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
@@ -19,8 +18,6 @@ from torch import nn
 from transformers import LlamaConfig
 from transformers.cache_utils import Cache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
-from transformers.modeling_utils import PreTrainedModel
-from transformers.models.llama.modeling_llama import LlamaMLP, LlamaRMSNorm, logger, repeat_kv
 from transformers.modeling_utils import PreTrainedModel
 from transformers.models.llama.modeling_llama import LlamaMLP, LlamaRMSNorm, logger, repeat_kv
 

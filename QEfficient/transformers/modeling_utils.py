@@ -392,17 +392,6 @@ def convert_str_to_class(className):
     module = __import__("transformers")
     return getattr(module, className)
 
-def convert_str_to_class(className):
-    """
-    Convert the string to class name
-    ---------
-    :className: `str`- Class name string.
-    Return:
-        Class Name
-    """
-    module = __import__("transformers")
-    return getattr(module, className)
-
 
 def get_auto_model_class(model_type, NonTransformerModelCls):
     """
