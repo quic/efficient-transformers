@@ -29,6 +29,7 @@ class QEffInternDecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.config = self.model.language_model.config
+        self.language_model = self.model.language_model
 
     def forward(self, input_ids, vit_embeds, position_ids, past_key_values):
         # TODO: Check if Hardcoding this is okay, i.e. check if this value is common for all intern models
