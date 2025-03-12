@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import importlib
 from collections import namedtuple
 from typing import Dict, Optional, Tuple, Type
 
@@ -390,7 +389,7 @@ def convert_str_to_class(className):
     Return:
         Class Name
     """
-    module = importlib.import_module("transformers")
+    module = __import__("transformers")
     return getattr(module, className)
 
 def convert_str_to_class(className):
