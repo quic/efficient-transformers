@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from argparse import ArgumentParser
+import argparse
 from dataclasses import dataclass
 from time import perf_counter
 from typing import List, Optional, Union
@@ -326,7 +326,7 @@ def comma_separated_ints(x: str):
 
 
 def arg_parse():
-    parser = ArgumentParser(description="Draft-based SpD Inference")
+    parser = argparse.ArgumentParser(description="Draft-based SpD Inference")
     parser.add_argument("--prompts", action="append", default=None, help="Input prompt(s)")
     parser.add_argument(
         "--num-speculative-tokens",
