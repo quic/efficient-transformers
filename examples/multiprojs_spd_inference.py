@@ -13,7 +13,7 @@ from typing import List, Optional, Union
 import numpy as np
 import torch
 from torch import nn
-from transformers import AutoTokenizer, AutoConfig
+from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
