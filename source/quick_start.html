@@ -388,7 +388,7 @@ Please raise an <a class="reference external" href="https://github.com/quic/effi
 
 <span class="n">generated_qpc_path</span> <span class="o">=</span> <span class="n">qeff_model</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
     <span class="n">num_cores</span><span class="o">=</span><span class="mi">14</span><span class="p">,</span>
-    <span class="n">mxfp6</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">mxfp6_matmul</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 </div>
@@ -398,8 +398,8 @@ Please raise an <a class="reference external" href="https://github.com/quic/effi
 <p>Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/sec</p>
 <div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># post compilation, we can print the latency stats for the kv models, We provide API to print token and Latency stats on AI 100</span>
 <span class="c1"># We need the compiled prefill and decode qpc to compute the token generated, This is based on Greedy Sampling Approach</span>
-
-<span class="n">qeff_model</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompts</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;My name is&quot;</span><span class="p">])</span>
+<span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
+<span class="n">qeff_model</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompts</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;My name is&quot;</span><span class="p">],</span><span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">)</span>
 </pre></div>
 </div>
 <p>End to End demo examples for various models are available in <strong>notebooks</strong> directory. Please check them out.</p>
@@ -456,6 +456,7 @@ Please raise an <a class="reference external" href="https://github.com/quic/effi
       <dl>
         <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
+        <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
       </dl>
     </div>
 </div><script>
