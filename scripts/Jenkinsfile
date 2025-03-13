@@ -117,7 +117,7 @@ pipeline {
                 steps
                 {
                     build job: 'qefficient_vllm_upstream', 
-                    parameters: [string(name: 'NAME', value: "${param.BUILD_TAG}")],
+                    parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
                     propagate: true
                 }
         }
@@ -135,7 +135,7 @@ pipeline {
                    echo "Failed to delete container ${BUILD_TAG}: ${error}"
                }
            }
-           junit testResults: 'tests/tests_log.xml'
+        //    junit testResults: 'tests/tests_log.xml'
            echo 'Cleaning Workspace'
            deleteDir()
        }
