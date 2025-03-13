@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QEfficient.utils.run_utils &mdash; efficient-transformers main documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=19f00094" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/my_theme.css?v=547657ed" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../../../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js?v=d01aebe5"></script>
+        <script src="../../../_static/doctools.js?v=888ff710"></script>
+        <script src="../../../_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            efficient-transformers
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html#models-coming-soon">Models Coming Soon</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Installation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html">Pre-requisites</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#sanity-check">Sanity Check</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Upgrade Efficient-Transformers</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/upgrade.html">Using GitHub Repository</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/cli_api.html">Command Line Interface Use (CLI)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/python_api.html">Python API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html">Finetune Infra</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/blogs.html#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/reference.html">Qualcomm Cloud AI home</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/reference.html#qualcomm-cloud-ai-sdk-download">Qualcomm Cloud AI SDK download</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/reference.html#qualcomm-cloud-ai-api-reference">Qualcomm Cloud AI API reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/reference.html#user-guide">User Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/reference.html#ocp-microscaling-formats-mx-specification">OCP Microscaling Formats (MX) Specification</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">efficient-transformers</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">QEfficient.utils.run_utils</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for QEfficient.utils.run_utils</h1><div class="highlight"><pre>
+<span></span><span class="c1"># -----------------------------------------------------------------------------</span>
+<span class="c1">#</span>
+<span class="c1"># Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: BSD-3-Clause</span>
+<span class="c1">#</span>
+<span class="c1"># -----------------------------------------------------------------------------</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">onnx</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">onnxruntime</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.generation.text_generation_inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">TextGeneration</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils.generate_inputs</span><span class="w"> </span><span class="kn">import</span> <span class="n">InputHandler</span>
+
+
+<span class="c1"># TODO: Deprecate this class and encourage the use of `QeffAutoModel...` classes</span>
+<div class="viewcode-block" id="ApiRunner"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner">[docs]</a><span class="k">class</span><span class="w"> </span><span class="nc">ApiRunner</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    ApiRunner class is responsible for running:</span>
+<span class="sd">    ---------</span>
+
+<span class="sd">    1. HuggingFace ``PyTorch`` model</span>
+<span class="sd">    2. Transformed KV Pytorch Model</span>
+<span class="sd">    3. ``ONNX`` model on ONNXRT</span>
+<span class="sd">    4. ``ONNX`` model on Cloud AI 100</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">prompt_len</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Initialization</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            :batch_size (int): Number of prompts to run in one batch.</span>
+<span class="sd">            :tokenizer (Union[PreTrainedTokenizer, PreTrainedTokenizerFast]): Pass model tokenizer.</span>
+<span class="sd">            :config (AutoConfig): From pretrained model.</span>
+<span class="sd">            :prompt (List[str]): Input prompt for running the model.</span>
+<span class="sd">            :prompt_len (int): Prompt length to compile the model.</span>
+<span class="sd">            :ctx_len (int): Maximum context length to compile the model.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span> <span class="o">=</span> <span class="n">InputHandler</span><span class="p">(</span>
+            <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+            <span class="n">tokenizer</span><span class="o">=</span><span class="n">tokenizer</span><span class="p">,</span>
+            <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span>
+            <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span>
+            <span class="n">prompt_len</span><span class="o">=</span><span class="n">prompt_len</span><span class="p">,</span>
+            <span class="n">ctx_len</span><span class="o">=</span><span class="n">ctx_len</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="n">full_batch_size</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">ctx_len</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt_len</span>
+
+<div class="viewcode-block" id="ApiRunner.run_hf_model_on_pytorch_CB"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch_CB">[docs]</a>    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">run_hf_model_on_pytorch_CB</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_hf</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Function responsible for running HuggingFace ``PyTorch`` model and return the output tokens</span>
+
+<span class="sd">        ``Mandatory`` Args:</span>
+<span class="sd">            :model_hf (torch.nn.module): Original ``PyTorch`` model</span>
+
+<span class="sd">        Return:</span>
+<span class="sd">            :numpy.ndarray: Generated output tokens</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">input_ids</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">prompt</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span>
+        <span class="p">]</span>
+
+        <span class="n">generated_ids</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">inp_ids</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">input_ids</span><span class="p">):</span>
+            <span class="n">gen_ids</span> <span class="o">=</span> <span class="n">inp_ids</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span><span class="p">):</span>
+                <span class="n">outputs</span> <span class="o">=</span> <span class="n">model_hf</span><span class="p">(</span><span class="n">input_ids</span><span class="o">=</span><span class="n">gen_ids</span><span class="p">)</span>
+                <span class="n">logits</span> <span class="o">=</span> <span class="n">outputs</span><span class="o">.</span><span class="n">logits</span><span class="p">[:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span>
+                <span class="n">predicted_token_id</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+                <span class="n">gen_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">gen_ids</span><span class="p">,</span> <span class="n">predicted_token_id</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+            <span class="n">gen_ids</span> <span class="o">=</span> <span class="n">gen_ids</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+            <span class="n">gen_ids</span> <span class="o">=</span> <span class="n">gen_ids</span><span class="p">[:,</span> <span class="n">inp_ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="p">:]</span>
+            <span class="n">generated_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">gen_ids</span><span class="p">)</span>
+
+        <span class="n">generated_texts</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">gen_ids</span><span class="o">.</span><span class="n">squeeze</span><span class="p">()</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">gen_ids</span> <span class="ow">in</span> <span class="n">generated_ids</span>
+        <span class="p">]</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Original HF Model Outputs (Torch CPU): </span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Prompt:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">))</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Completion:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">generated_texts</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">generated_ids</span></div>
+
+<div class="viewcode-block" id="ApiRunner.run_hf_model_on_pytorch"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_hf_model_on_pytorch">[docs]</a>    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">run_hf_model_on_pytorch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_hf</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Function responsible for running HuggingFace ``PyTorch`` model and return the output tokens</span>
+
+<span class="sd">        ``Mandatory`` Args:</span>
+<span class="sd">            :model_hf (torch.nn.module): Original ``PyTorch`` model</span>
+
+<span class="sd">        Return:</span>
+<span class="sd">            :numpy.ndarray: Generated output tokens</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">input_ids</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">)</span>
+
+        <span class="n">input_ids_len</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">input_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span><span class="p">):</span>
+            <span class="n">outputs</span> <span class="o">=</span> <span class="n">model_hf</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>
+            <span class="n">logits</span> <span class="o">=</span> <span class="n">outputs</span><span class="o">.</span><span class="n">logits</span><span class="p">[:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]</span>
+            <span class="n">predicted_token_id</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">logits</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">input_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">input_ids</span><span class="p">,</span> <span class="n">predicted_token_id</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">generated_ids</span> <span class="o">=</span> <span class="n">input_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">input_ids_len</span><span class="p">:]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+        <span class="n">generated_text</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">generated_ids</span><span class="p">,</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Original HF Model Outputs (Torch CPU): </span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Prompt:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">))</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Completion:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">generated_text</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">generated_ids</span></div>
+
+<div class="viewcode-block" id="ApiRunner.run_kv_model_on_pytorch"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_kv_model_on_pytorch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Function responsible for running KV ``PyTorch`` model and return the output tokens</span>
+
+<span class="sd">        ``Mandatory`` Args:</span>
+<span class="sd">        :model (torch.nn.module): Transformed ``PyTorch`` model</span>
+
+<span class="sd">        Return:</span>
+<span class="sd">            :numpy.ndarray: Generated output tokens</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="n">generated_ids</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prepare_pytorch_inputs</span><span class="p">()</span>
+
+        <span class="n">pt_outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span><span class="p">):</span>
+            <span class="n">generated_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pt_outputs</span><span class="p">[</span><span class="s2">&quot;logits&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+            <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">update_pytorch_inputs</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">pt_outputs</span><span class="p">)</span>
+            <span class="n">pt_outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">)</span>
+
+        <span class="n">generated_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pt_outputs</span><span class="p">[</span><span class="s2">&quot;logits&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">generated_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">generated_ids</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">predicted_string</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">batch_decode</span><span class="p">(</span><span class="n">generated_ids</span><span class="p">,</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;QEff Transformed HF Model Outputs (Torch CPU): </span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Prompt:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">))</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Completion:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">predicted_string</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">generated_ids</span></div>
+
+<div class="viewcode-block" id="ApiRunner.run_ort_session"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_ort_session">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_ort_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inputs</span><span class="p">,</span> <span class="n">session</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs</span>
+
+<span class="sd">        ``Mandatory`` Args:</span>
+<span class="sd">            :inputs (Dict):</span>
+<span class="sd">            :session (onnxruntime.capi.onnxruntime_inference_collection.InferenceSession):</span>
+
+<span class="sd">        Return:</span>
+<span class="sd">            :Dict: Numpy outputs of Onnx model</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">session</span><span class="o">.</span><span class="n">get_outputs</span><span class="p">()]</span>
+        <span class="n">session_input_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()]</span>
+        <span class="n">session_inputs</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">inp_name</span> <span class="ow">in</span> <span class="n">session_input_names</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">inp_name</span> <span class="ow">in</span> <span class="n">inputs</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+                <span class="n">session_inputs</span><span class="p">[</span><span class="n">inp_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="n">inp_name</span><span class="p">]</span>
+        <span class="n">outputs_data</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">output_names</span><span class="p">,</span> <span class="n">session_inputs</span><span class="p">)</span>
+        <span class="n">ort_outputs</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">output_names</span><span class="p">,</span> <span class="n">outputs_data</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">ort_outputs</span></div>
+
+<div class="viewcode-block" id="ApiRunner.run_kv_model_on_ort"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_kv_model_on_ort</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_path</span><span class="p">,</span> <span class="n">is_tlm</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Function responsible for running ``ONNX`` model on onnxruntime and return the output tokens</span>
+
+<span class="sd">        ``Mandatory`` Args:</span>
+<span class="sd">            :model_path (str): Path to the Onnx model.</span>
+
+<span class="sd">        Return:</span>
+<span class="sd">            :numpy.ndarray: Generated output tokens</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="c1"># Replace invalid index value for INT32 max to 0 using add_initializer</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">onnx</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">model_path</span><span class="p">,</span> <span class="n">load_external_data</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="c1"># NOTE: OrtValue objects should be kept around until the session is run, hence this dict is required</span>
+        <span class="n">added_initializers</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="n">m</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">node</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">op_type</span> <span class="o">==</span> <span class="s2">&quot;Constant&quot;</span><span class="p">:</span>
+                <span class="n">np_tensor</span> <span class="o">=</span> <span class="n">onnx</span><span class="o">.</span><span class="n">numpy_helper</span><span class="o">.</span><span class="n">to_array</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">attribute</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">t</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">model_path</span><span class="p">))</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">np_tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">np_tensor</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">==</span> <span class="mi">2147483647</span><span class="p">:</span>
+                    <span class="n">added_initializers</span><span class="p">[</span><span class="n">node</span><span class="o">.</span><span class="n">output</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span> <span class="o">=</span> <span class="n">onnxruntime</span><span class="o">.</span><span class="n">OrtValue</span><span class="o">.</span><span class="n">ortvalue_from_numpy</span><span class="p">(</span>
+                        <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">np_tensor</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+                    <span class="p">)</span>
+
+        <span class="n">session_options</span> <span class="o">=</span> <span class="n">onnxruntime</span><span class="o">.</span><span class="n">SessionOptions</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">added_initializers</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">session_options</span><span class="o">.</span><span class="n">add_initializer</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+        <span class="n">session</span> <span class="o">=</span> <span class="n">onnxruntime</span><span class="o">.</span><span class="n">InferenceSession</span><span class="p">(</span><span class="n">model_path</span><span class="p">,</span> <span class="n">session_options</span><span class="p">)</span>
+
+        <span class="n">generated_ids</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prepare_ort_inputs</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">is_tlm</span><span class="p">:</span>
+            <span class="n">nltk</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+            <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;num_logits_to_keep&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">nltk</span>
+        <span class="n">ort_outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_ort_session</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">session</span><span class="p">)</span>
+        <span class="n">ort_outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">update_ort_outputs</span><span class="p">(</span><span class="n">ort_outputs</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span><span class="p">):</span>
+            <span class="n">generated_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ort_outputs</span><span class="p">[</span><span class="s2">&quot;logits&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+            <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">update_ort_inputs</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">ort_outputs</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">is_tlm</span><span class="p">:</span>
+                <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;num_logits_to_keep&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">nltk</span>
+            <span class="n">ort_outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_ort_session</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">session</span><span class="p">)</span>
+            <span class="n">ort_outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">update_ort_outputs</span><span class="p">(</span><span class="n">ort_outputs</span><span class="p">)</span>
+
+        <span class="n">generated_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ort_outputs</span><span class="p">[</span><span class="s2">&quot;logits&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">generated_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">generated_ids</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">predicted_string</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">batch_decode</span><span class="p">(</span><span class="n">generated_ids</span><span class="p">,</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;QEff Transformed Onnx Model Outputs (OnnxRuntime CPU): </span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Prompt:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">))</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Completion:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">predicted_string</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">generated_ids</span></div>
+
+<div class="viewcode-block" id="ApiRunner.run_kv_model_on_cloud_ai_100"><a class="viewcode-back" href="../../../source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_kv_model_on_cloud_ai_100</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">qpc_path</span><span class="p">,</span> <span class="n">device_group</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Function responsible for running ``ONNX`` model on Cloud AI 100 and return the output tokens</span>
+
+<span class="sd">        ``Mandatory`` Args:</span>
+<span class="sd">            :qpc_path (str): path to qpc generated after compilation</span>
+<span class="sd">            :device_group (List[int]): Device Ids to be used for compilation. if len(device_group) &gt; 1. Multiple Card setup is enabled.</span>
+
+<span class="sd">        Return:</span>
+<span class="sd">            :numpy.ndarray: Generated output tokens</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">execinfo</span> <span class="o">=</span> <span class="n">TextGeneration</span><span class="p">(</span>
+            <span class="n">tokenizer</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">,</span>
+            <span class="n">qpc_path</span><span class="o">=</span><span class="n">qpc_path</span><span class="p">,</span>
+            <span class="n">device_id</span><span class="o">=</span><span class="n">device_group</span><span class="p">,</span>
+            <span class="n">ctx_len</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">ctx_len</span><span class="p">,</span>
+            <span class="n">full_batch_size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">full_batch_size</span><span class="p">,</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">prompt</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span> <span class="n">generation_len</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">gen_len</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="n">predicted_string</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">batch_decode</span><span class="p">(</span><span class="n">execinfo</span><span class="o">.</span><span class="n">generated_ids</span><span class="p">,</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;QEff Transformed Model Outputs (Cloud AI 100): </span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Prompt:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">input_handler</span><span class="o">.</span><span class="n">prompt</span><span class="p">))</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Completion:&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">predicted_string</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">execinfo</span><span class="o">.</span><span class="n">generated_ids</span></div></div>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, Qualcomm.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+    <span class="rst-current-version" data-toggle="rst-current-version">
+      Version: Main
+      <span class="fa fa-caret-down"></span>
+    </span>
+    <div class="rst-other-versions">
+      Versions
+      <dl>
+        <dd><a href="../index.html">main</a></dd>
+        <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
+      </dl>
+    </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
