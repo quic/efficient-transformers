@@ -88,6 +88,12 @@ from transformers.models.whisper.modeling_whisper import (
 
 from QEfficient.customop import CustomRMSNormAIC
 
+# Placeholder for all non-transformer models
+from QEfficient.transformers.models.llama_swiftkv.modeling_llama_swiftkv import (
+    LlamaSwiftKVConfig,
+    LlamaSwiftKVForCausalLM,
+)
+
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QeffCodeGenBlock,
@@ -271,6 +277,17 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
 }
 
+# Map of model type to config class and Model architecture class
+# While onboarding new models make sure to add the new model card names to this dictionary.
+# Developers are expected to follow the naming conventions like ForCausalLM while defining the class names
+MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS = {"llama_swiftkv": [LlamaSwiftKVConfig, LlamaSwiftKVForCausalLM]}
+
+# list of sub-strings representing the model type, this is typically taken from llama-swiftkv
+LIST_OF_MODEL_TYPES = {"swiftkv"}
+
+# list of sub-strings used for representing the model Architecture class name, for example LlamaSwiftKVForCausalLM
+MODEL_TYPE_TO_MODEL_CLASS_TYPE = {"swiftkv": "SwiftKVFor"}
+
 
 def _prepare_cross_attention_mask(
     cross_attention_mask: torch.Tensor,
@@ -362,3 +379,51 @@ def _create_causal_mask(
         attention_mask = attention_mask.unsqueeze(1)
 
     return attention_mask
+
+
+def convert_str_to_class(className):
+    """
+    Convert the string to class name
+    ---------
+    :className: `str`- Class name string.
+    Return:
+        Class Name
+    """
+    module = __import__("transformers")
+    return getattr(module, className)
+
+
+def get_auto_model_class(model_type, NonTransformerModelCls):
+    """
+    Register the Non Transformer Models like swiftkv
+    ---------------------------------------
+    : model_type: str: name of the Non Transformer model for example llama_swiftkv
+    : NonTransformerModelCls: SwiftKV model class name for example LlamaSwiftKVForCausalLM
+    """
+
+    # Construct the AutoModel class name using NonTransformerModel class e.g. SwiftKVModel Class name, this code is written to make things generic
+    nonTransformerModelClsName = NonTransformerModelCls.__name__
+    start_index = nonTransformerModelClsName.find(model_type)
+
+    # Calculate the index after model_type example "SwiftKVFor"
+    substring_start = start_index + len(model_type)
+
+    # Get the substring after model_type example "SwiftKVFor"
+    nonTransformerModel = nonTransformerModelClsName[substring_start:]
+
+    autoModelName = "AutoModelFor" + nonTransformerModel
+
+    # Convert the string to class name
+    autoModelClassName = convert_str_to_class(autoModelName)
+
+    return autoModelClassName
+
+
+def get_model_class_type_from_model_type(model_type):
+    for substring in LIST_OF_MODEL_TYPES:
+        if substring in model_type:
+            model_class_type = substring
+            break
+
+    model_class_name = MODEL_TYPE_TO_MODEL_CLASS_TYPE[model_class_type]
+    return model_class_name
