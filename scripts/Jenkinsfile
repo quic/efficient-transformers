@@ -117,7 +117,7 @@ pipeline {
                 steps
                 {
                     build job: 'qefficient_vllm_upstream', 
-                    parameters: [string(name: 'qeff_container', value: "${BUILD_TAG}")],
+                    parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
                     propagate: true
                 }
         }
