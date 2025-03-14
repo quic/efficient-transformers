@@ -21,7 +21,7 @@ from QEfficient.utils.constants import Constants
 
 
 @dataclass
-class PerfMetrics:
+class SpDPerfMetrics:
     """
     Holds all performance metrics
 
@@ -42,6 +42,10 @@ class PerfMetrics:
     mean_num_accepted_tokens: float
     max_gen_len: int
     generated_tokens_per_prompt: List[int]
+    e2e_time: float
+    decode_time: float
+    decode_target_time: float
+    decode_iterations: int
 
 
 @dataclass
@@ -68,7 +72,7 @@ class CloudAI100ExecInfo:
     batch_size: int
     generated_texts: Union[List[str], List[List[str]]]
     generated_ids: Union[List[np.ndarray], np.ndarray]
-    perf_metrics: PerfMetrics
+    perf_metrics: SpDPerfMetrics
     num_speculative_tokens: int
     prefill_seq_len: int
     ctx_len: int
@@ -245,16 +249,20 @@ def multiprojs_spec_decode_inference(
     seq_batch_indices = np.arange(decode_batch_size, dtype=np.int64)
     it = 0
     mean_num_accepted_tokens = 0
+    decode_target_time = 0.0
     decode_start = perf_counter()
     while True:
         it += 1
         # run precode
+        target_start = perf_counter()
         tlm_outputs = session.run(precode_inputs)
         target_logits = tlm_outputs[
             "logits"
         ]  # shape: [decode_batch_size, num_logits_to_keep, num_logits_to_keep, vocab_size]
         # greedy sampling from target model
         target_tokens = target_logits[:, :, 0].argmax(-1)  # shape: [decode_batch_size, num_logits_to_keep]
+        target_end = perf_counter() - target_start
+        decode_target_time += target_end
         # exact matching between draft and target tokens
         draft_tokens = precode_inputs["input_ids"][:, 1:]  # shape: [decode_batch_size, num_speculative_tokens]
         matching = draft_tokens == target_tokens[:, :-1]  # shape: [decode_batch_size, num_speculative_tokens]
@@ -290,7 +298,7 @@ def multiprojs_spec_decode_inference(
     e2e_throughput = (sum(generated_tokens_per_prompt) + decode_batch_size) / e2e_end
     batch_decode = tokenizer.batch_decode(generated_ids)
     mean_num_accepted_tokens /= it
-    perf_metrics = PerfMetrics(
+    perf_metrics = SpDPerfMetrics(
         mean_ttft,
         batch_ttft,
         decode_throughput,
@@ -298,6 +306,10 @@ def multiprojs_spec_decode_inference(
         mean_num_accepted_tokens,
         max_gen_len,
         generated_tokens_per_prompt,
+        e2e_end,
+        decode_end,
+        decode_target_time,
+        it,
     )
     exec_info = CloudAI100ExecInfo(
         prompts,
