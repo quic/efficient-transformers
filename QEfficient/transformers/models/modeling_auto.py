@@ -14,7 +14,7 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 import torch
 import torch.nn as nn
-from accelerator import load_checkpoint_and_dispatch
+from accelerate import load_checkpoint_and_dispatch
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
@@ -1268,7 +1268,7 @@ class QEFFAutoModelForImageTextToText:
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoModelForImageTextToText}
 
 
-class QEFFAutoModelForCausalLM(QEFFBaseModel):
+class QEFFAutoModelForCausalLM(QEFFTransformersBase):
     """
     The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
     Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
@@ -1392,7 +1392,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
 
-        self = super().from_pretrained(pretrained_model_name_or_path, is_tlm=is_tlm, *args, **kwargs)
+        self = super().from_pretrained(
+            pretrained_model_name_or_path,
+            is_tlm=is_tlm,
+            hidden_size_projections=hidden_size_projections,
+            *args,
+            **kwargs,
+        )
         self.continuous_batching = continuous_batching
         return self
 
