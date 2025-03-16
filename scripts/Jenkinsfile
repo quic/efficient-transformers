@@ -120,6 +120,16 @@ pipeline {
     //             }
     //         }
     //     }
+      stage('vLLM Test')
+            {
+
+                steps
+                {
+                    build job: 'qefficient_vllm_upstream', 
+                    parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
+                    propagate: true
+                }
+        }
     }
 
    post {
