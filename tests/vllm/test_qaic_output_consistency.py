@@ -73,7 +73,7 @@ def test_output_consistency(model_name):
         "In which country yamana river flows",
         "How many people died in World War II",
         "Thy youth is proud livery, so gazed on now",
-        "Will be a tattered weed, of small worth held:" "Then being asked where all thy beauty lies",
+        "Will be a tattered weed, of small worth held:Then being asked where all thy beauty lies",
         "Where all the treasure of thy lusty days",
         "To say, within thine own deep-sunken eyes",
         "Where is Statue of Liberty located?",
