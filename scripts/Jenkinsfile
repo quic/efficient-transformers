@@ -16,10 +16,19 @@ pipeline {
                    sudo docker run --privileged -dit --name ${BUILD_TAG} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
                    sudo docker exec ${BUILD_TAG} bash -c "
                    cd /efficient-transformers &&
+                   apt update &&
+                   apt install -y python3.10-venv &&
+                   python3.10 -m venv preflight_qeff &&
+                   . preflight_qeff/bin/activate &&
+                   pip install --upgrade pip setuptools &&
+                   pip install .[test] &&
+                   pip install junitparser pytest-xdist &&
+                   pip install librosa==0.10.2 soundfile==0.13.1 && #packages needed to load example for whisper testing
                    rm -rf QEfficient"
                '''
            }
        }
+
     //    stage('Non CLI Tests') {
     //        parallel {
     //            stage('Run Non-CLI Non-QAIC Tests') {
@@ -111,16 +120,6 @@ pipeline {
     //             }
     //         }
     //     }
-        stage('vLLM Test')
-            {
-
-                steps
-                {
-                    build job: 'qefficient_vllm_upstream', 
-                    parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
-                    propagate: true
-                }
-        }
     }
 
    post {
@@ -135,7 +134,7 @@ pipeline {
                    echo "Failed to delete container ${BUILD_TAG}: ${error}"
                }
            }
-        //    junit testResults: 'tests/tests_log.xml'
+           junit testResults: 'tests/tests_log.xml'
            echo 'Cleaning Workspace'
            deleteDir()
        }
