@@ -1,7 +1,7 @@
 pipeline {
    agent {
        node {
-           label 'qeff_node-63'
+           label 'qeff_node'
        }
    }
    options {
