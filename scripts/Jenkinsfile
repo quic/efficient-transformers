@@ -28,6 +28,7 @@ pipeline {
                '''
            }
        }
+
        stage('Non CLI Tests') {
            parallel {
                stage('Run Non-CLI Non-QAIC Tests') {
@@ -126,7 +127,8 @@ pipeline {
                 {
                     build job: 'qefficient_vllm_upstream', 
                     parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
-                    propagate: true
+                    propagate: true,
+                    wait: true
                 }
         }
     }
