@@ -77,7 +77,7 @@ pipeline {
                            mkdir -p $PWD/cli &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/cli &&
-                           pytest tests -m '(cli and not qnn)' --ignore tests/vllm -n 5--junitxml=tests/tests_log3.xml &&
+                           pytest tests -m '(cli and not qnn)' --ignore tests/vllm -n 5 --junitxml=tests/tests_log3.xml &&
                            deactivate"
                            '''
                        }
