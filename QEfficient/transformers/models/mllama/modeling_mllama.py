@@ -1319,6 +1319,19 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
 
 
 class QEffMllamaVisionAttention(MllamaVisionAttention):
+    def compute_block_attention(self, query_states, key_states, value_states, attention_mask, start_idx, end_idx):
+        curr_attn_weights = torch.matmul(
+            query_states[:, :, start_idx:end_idx, :], key_states.transpose(2, 3)
+        ) / math.sqrt(self.head_dim)
+
+        if attention_mask is not None:  # no matter the length, we just slice it
+            causal_mask_block = attention_mask[:, :, start_idx:end_idx, : key_states.shape[-2]]
+            curr_attn_weights += causal_mask_block
+        # upcast attention to fp32
+        curr_attn_weights = nn.functional.softmax(curr_attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        curr_attn_output = torch.matmul(curr_attn_weights, value_states)
+
+        return curr_attn_output
 
     def forward(
         self,
@@ -1327,7 +1340,6 @@ class QEffMllamaVisionAttention(MllamaVisionAttention):
         output_attentions: bool = None,
         block_size: int = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        
         query = self.q_proj(hidden_state)
         key = self.k_proj(hidden_state)
         value = self.v_proj(hidden_state)
@@ -1338,35 +1350,35 @@ class QEffMllamaVisionAttention(MllamaVisionAttention):
         query = query.view(batch_size, q_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         key = key.view(batch_size, kv_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         value = value.view(batch_size, kv_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+
         if block_size is not None:
-            num_blocks = q_seq_len // block_size
+            runtime_block_size = torch.where(
+                (q_seq_len // torch.tensor(block_size)) > 0, torch.tensor(block_size), torch.tensor(1)
+            )
+            reminder_block_size = q_seq_len % block_size  # calculate the remaining query block
+            attn_output = torch.zeros(batch_size, self.num_heads, q_seq_len, self.head_dim)
+            num_iterations = q_seq_len // runtime_block_size
 
-            attn_output_blocks = []
-            attn_weights_blocks = []
+            for iteration in range(num_iterations):
+                start_idx = iteration * runtime_block_size
+                end_idx = (iteration + 1) * runtime_block_size
+                attn_output[:, :, start_idx:end_idx, :] = self.compute_block_attention(
+                    query, key, value, attention_mask, start_idx, end_idx
+                )
 
-            for i in range(num_blocks):
-                query_block = query[:, :, i * block_size:(i + 1) * block_size, :]
-                attn_weights_block = torch.matmul(query_block, key.transpose(2, 3)) / math.sqrt(self.head_dim)
+            if reminder_block_size:
+                start_idx = num_iterations * runtime_block_size
+                end_idx = start_idx + reminder_block_size
+                attn_output[:, :, start_idx:end_idx, :] = self.compute_block_attention(
+                    query, key, value, attention_mask, start_idx, end_idx
+                )
 
-                if attention_mask is not None:
-                    # causal_mask_block = attention_mask[:, :, :, : key.shape[-2]]
-                    causal_mask_block = attention_mask[:, :, i * block_size:(i + 1) * block_size,:]
-                    attn_weights_block = attn_weights_block + causal_mask_block
-
-                attn_weights_block = nn.functional.softmax(attn_weights_block, dim=-1, dtype=torch.float32).to(query.dtype)
-                attn_output_block = torch.matmul(attn_weights_block, value)
-
-                attn_output_blocks.append(attn_output_block)
-                attn_weights_blocks.append(attn_weights_block)
-            
-            attn_output = torch.cat(attn_output_blocks, dim=2)
-            attn_weights = torch.cat(attn_weights_blocks, dim=2)
         else:
             # Regular attention
             attn_weights = torch.matmul(query, key.transpose(2, 3)) / math.sqrt(self.head_dim)
 
             if attention_mask is not None:
-                causal_mask = attention_mask[:, :, :, :key.shape[-2]]
+                causal_mask = attention_mask[:, :, :, : key.shape[-2]]
                 attn_weights = attn_weights + causal_mask
 
             attn_weights = nn.functional.softmax(attn_weights, dim=-1)
