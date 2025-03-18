@@ -24,6 +24,7 @@ try:
     import torch_qaic.debug as qaic_debug  # noqa: F401
     import torch_qaic.profile as qaic_profile  # noqa: F401
     import torch_qaic.utils as qaic_utils  # noqa: F401
+    from torch.qaic.amp import GradScaler as QAicGradScaler
 except ImportError as e:
     print(f"Warning: {e}. Moving ahead without these qaic modules.")
 
@@ -60,7 +61,6 @@ def train(
 
     Returns: results dictionary containing average training and validation perplexity and loss
     """
-
     train_prep = []
     train_loss = []
     val_prep = []
@@ -92,7 +92,10 @@ def train(
         tensorboard_updates = SummaryWriter()
 
     if train_config.grad_scaler:
-        scaler = GradScaler()
+        if device.startswith("qaic"):
+            scaler = QAicGradScaler()
+        else:
+            scaler = GradScaler()
 
     loss_0_counter = torch.tensor([0]).to(device)
 
