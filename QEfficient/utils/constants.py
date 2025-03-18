@@ -65,6 +65,13 @@ ONNX_EXPORT_OPSET = 13
 COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-aic-hw-version=2.0"]
 
 
+# InternVL constants
+# Fixing the feature size with reference to OpenGVLab/InternVL2_5-1B, OpenGVLab/InternVL2_5-38B and OpenGVLab/InternVL2_5-78B
+# FIXME feature_size should be derived param wrt to image size.
+INTERN_FEATURE_SIZE = 256
+INTERN_NUM_PATCHES = 13
+
+
 class Constants:
     # Export Constants.
     SEQ_LEN = 32
