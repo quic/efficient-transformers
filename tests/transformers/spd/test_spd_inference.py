@@ -19,17 +19,17 @@ from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id
 
 configs = [
-#    pytest.param(
-#        Constants.INPUT_STR,  # prompts
-#        4,  # num_speculative_tokens
-#        32,  # prefill_seq_len
-#        128,  # ctx_len
-#        1,  # prefill_bsz
-#        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # draft_model_name
-#        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # target_model_name
-#        1,  # full_batch_size
-#        id="CB llama",
-#    ),
+    #    pytest.param(
+    #        Constants.INPUT_STR,  # prompts
+    #        4,  # num_speculative_tokens
+    #        32,  # prefill_seq_len
+    #        128,  # ctx_len
+    #        1,  # prefill_bsz
+    #        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # draft_model_name
+    #        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # target_model_name
+    #        1,  # full_batch_size
+    #        id="CB llama",
+    #    ),
     pytest.param(
         Constants.INPUT_STR,  # prompts
         4,  # num_speculative_tokens
@@ -180,7 +180,7 @@ def test_spec_decode_inference(
         p_tok: dict = tokenizer(p, return_tensors="np", padding="max_length", max_length=input_len_padded)
         position_ids = np.where(p_tok.pop("attention_mask"), np.arange(input_len_padded), -1)
         p_tok["position_ids"] = position_ids
-        p_tok["num_logits_to_keep"] = np.zeros((1,1), dtype=np.int64)
+        p_tok["num_logits_to_keep"] = np.zeros((1, 1), dtype=np.int64)
         prompts_tokenized.append(p_tok)
     # create caches to hold generated ids and input prompt lengths
     generated_ids = [[] for i in range(decode_batch_size)]
@@ -198,7 +198,7 @@ def test_spec_decode_inference(
         input_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
         position_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
         batch_index=np.arange(decode_batch_size, dtype=np.int64).reshape(-1, 1),
-        num_logits_to_keep=np.zeros((num_logits_to_keep, 1), dtype=np.int64)
+        num_logits_to_keep=np.zeros((num_logits_to_keep, 1), dtype=np.int64),
     )
     max_gen_len = [ctx_len] * decode_batch_size
     # setup buffers
