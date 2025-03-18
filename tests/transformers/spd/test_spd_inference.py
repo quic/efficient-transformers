@@ -30,6 +30,17 @@ configs = [
         1,  # full_batch_size
         id="CB llama",
     ),
+    pytest.param(
+        Constants.INPUT_STR,  # prompts
+        4,  # num_speculative_tokens
+        32,  # prefill_seq_len
+        128,  # ctx_len
+        1,  # prefill_bsz
+        "Qwen/Qwen2-0.5B",  # draft_model_name
+        "Qwen/Qwen2-0.5B",  # target_model_name
+        1,  # full_batch_size
+        id="CB qwen",
+    ),
 ]
 
 

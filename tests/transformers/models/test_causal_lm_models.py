@@ -48,6 +48,7 @@ test_models = [
 
 spd_test_models = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "Qwen/Qwen2-0.5B",
 ]
 
 
