@@ -171,7 +171,7 @@ class QEffInternVLModel(nn.Module):
         # Taken from the modeling files of OpenGVLab/InternVL2_5-1B
         # feature_size = int((((self.config.vision_config.hidden_size**0.5) * self.config.downsample_ratio) ** 2))
         # Fixing the feature size with reference to OpenGVLab/InternVL2_5-1B, OpenGVLab/InternVL2_5-38B and OpenGVLab/InternVL2_5-78B
-        # FIXME feature_size should be derived param wrt to image size. 
+        # FIXME feature_size should be derived param wrt to image size.
         feature_size = 256
 
         # Define shapes
