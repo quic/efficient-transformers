@@ -75,9 +75,6 @@ SpDTransformTestConfigs = [
 
 SpDTransformProjTestConfigs = [
     ("llama", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    #    ("llama", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
-    #    ("llama", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
-    #    ("llama", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
 ]
 
 
