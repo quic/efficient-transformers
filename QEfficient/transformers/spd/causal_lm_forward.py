@@ -139,7 +139,7 @@ def tlm_forward(
     hidden_size_projections = getattr(self, "hidden_size_projections", None)
     if hidden_size_projections:
         hidden_states = project_hidden_states(hidden_states, hidden_size_projections)
-    if self.config.pretraining_tp > 1:
+    if hasattr(self.config, "pretraining_tp") and self.config.pretraining_tp > 1:
         lm_head_slices = self.lm_head.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
         logits = [F.linear(hidden_states, lm_head_slices[i]) for i in range(self.config.pretraining_tp)]
         logits = torch.cat(logits, dim=-1)
