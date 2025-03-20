@@ -159,6 +159,7 @@ def multiprojs_spec_decode_inference(
     pretrained_model_name_or_path: str,
     full_batch_size: Optional[int],
     session: QAICInferenceSession,
+    ignore_eos_token: bool = False,
 ) -> CloudAI100ExecInfo:
     """
     Perform draft speculative decode inference on the given prompts.
@@ -274,8 +275,11 @@ def multiprojs_spec_decode_inference(
                 continue
             accepted_tokens = num_tokens_selected[bi]
             num_tokens_to_append = min(accepted_tokens, max_gen_len[bi] - len(generated_ids[bi]))
-            generated_ids[bi].extend(target_tokens[bi, :num_tokens_to_append].tolist())
-            if len(generated_ids[bi]) >= max_gen_len[bi]:
+            accepted_tokens_arr = target_tokens[bi, :num_tokens_to_append]
+            generated_ids[bi].extend(accepted_tokens_arr.tolist())
+            if len(generated_ids[bi]) >= max_gen_len[bi] or (
+                (not ignore_eos_token) and (accepted_tokens_arr == tokenizer.eos_token_id).any()
+            ):
                 valid_batch_indices[bi] = False
         # check if all generations are done
         if not valid_batch_indices.any():
@@ -447,7 +451,8 @@ def main():
     args = arg_parse()
     if args.prompts is None:
         args.prompts = Constants.INPUT_STR
-    session = get_session(
+
+    session: QAICInferenceSession = get_session(
         pretrained_model_name_or_path=args.pretrained_model_name_or_path,
         device_group=args.device_group,
         prefill_seq_len=args.prefill_seq_len,
