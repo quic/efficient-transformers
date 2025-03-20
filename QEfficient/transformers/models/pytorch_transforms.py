@@ -303,7 +303,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma2Model: QEffGemma2Model,
         Gemma2ForCausalLM: QEffGemma2ForCausalLM,
         # Granite
-        GraniteRMSNorm: CustomRMSNormAIC,
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
         GraniteAttention: QEffGraniteAttention,
