@@ -363,6 +363,7 @@ def arg_parse():
     )
     parser.add_argument("--full-batch-size", type=optional_int, default=None, help="Full batch size")
     parser.add_argument("--device-group", type=comma_separated_ints, default="0", help="device QIDs")
+    parser.add_argument("--ignore-eos-token", action="store_true")
     args = parser.parse_args()
     return args
 
