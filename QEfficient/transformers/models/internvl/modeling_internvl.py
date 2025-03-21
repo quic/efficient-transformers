@@ -36,7 +36,7 @@ class QEffInternDecoderWrapper(nn.Module):
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
         image_input_ids = input_ids.reshape(B * N)
-        selected = image_input_ids == constants.IMG_CONTEXT_TOKEN
+        selected = image_input_ids == constants.INTERN_IMG_CONTEXT_TOKEN
         indices1 = selected.unsqueeze(0).to(torch.int64).cumsum(1) - 1
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
         image_features_expanded = vit_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
@@ -163,6 +163,15 @@ class QEffInternVLModel(nn.Module):
         if img_size != constants.INTERN_IMG_SIZE and kv_offload:
             raise NotImplementedError("Image Size other than 448 is not supported for Intern models yet.")
 
+        patch_size = getattr(self.config.vision_config, "patch_size", None)
+        downsample_ratio = getattr(self.config, "downsample_ratio", None)
+        if patch_size and downsample_ratio:
+            computed_feature_size = int(((img_size / patch_size) * downsample_ratio) ** 2)
+            if computed_feature_size != constants.INTERN_FEATURE_SIZE:
+                logger.warning(
+                    "Discrepancy detected between estimated and actual feature sizes. Could impact on functionality or accuracy"
+                )
+
         # Define shapes
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
@@ -222,7 +231,7 @@ class QEffInternVLModel(nn.Module):
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
         image_input_ids = input_ids.reshape(B * N)
-        selected = image_input_ids == constants.IMG_CONTEXT_TOKEN
+        selected = image_input_ids == constants.INTERN_IMG_CONTEXT_TOKEN
         indices1 = selected.unsqueeze(0).to(torch.int64).cumsum(1) - 1
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
         image_features_expanded = vit_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
