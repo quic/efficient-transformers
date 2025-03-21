@@ -196,13 +196,6 @@ class QEFfMptModel(MptModel):
         all_self_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
 
-        if self.gradient_checkpointing and self.training:
-            if use_cache:
-                logger.warning_once(
-                    "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
-                )
-                use_cache = False
-
         # Compute alibi tensor: check build_alibi_tensor documentation
         seq_length_with_past = seq_length
         past_key_values_length = 0
@@ -224,17 +217,7 @@ class QEFfMptModel(MptModel):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            if self.gradient_checkpointing and self.training:
-                outputs = self._gradient_checkpointing_func(
-                    block.__call__,
-                    hidden_states,
-                    alibi,
-                    causal_mask,
-                    layer_past,
-                    use_cache,
-                    output_attentions,
-                )
-            elif batch_index is not None:
+            if batch_index is not None:
                 outputs = block(
                     hidden_states,
                     layer_past=layer_past,
@@ -328,26 +311,8 @@ class QEffMptForCausalLM(MptForCausalLM):
         lm_logits = self.lm_head(hidden_states)
         lm_logits = lm_logits.float()
 
-        loss = None
-        if labels is not None:
-            # move labels to correct device to enable model parallelism
-            labels = labels.to(lm_logits.device)
-            # Shift so that tokens < n predict n
-            shift_logits = lm_logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            batch_size, seq_length, vocab_size = shift_logits.shape
-            # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(
-                shift_logits.view(batch_size * seq_length, vocab_size), shift_labels.view(batch_size * seq_length)
-            )
-
-        if not return_dict:
-            output = (lm_logits,) + transformer_outputs[1:]
-            return ((loss,) + output) if loss is not None else output
-
         return CausalLMOutputWithCrossAttentions(
-            loss=loss,
+            loss=None,
             logits=lm_logits,
             past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
