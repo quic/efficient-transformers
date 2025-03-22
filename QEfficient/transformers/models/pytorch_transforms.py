@@ -390,8 +390,8 @@ class SpDTransform:
 
     # supported architectures
     _module_mapping = {
-        # Llama
         QEffLlamaForCausalLM,
+        QEffQwen2ForCausalLM,
     }
 
     @classmethod
