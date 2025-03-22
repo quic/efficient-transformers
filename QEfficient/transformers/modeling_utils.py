@@ -10,6 +10,7 @@ from typing import Dict, Optional, Tuple, Type
 
 import torch
 import torch.nn as nn
+import transformers.models.auto.modeling_auto as mapping
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,
@@ -269,6 +270,15 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     WhisperPositionalEmbedding: QEffWhisperPositionalEmbedding,
     WhisperModel: QEffWhisperModel,
     WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
+}
+
+
+model_class_mapping = {
+    **{architecture: "QEFFAutoModelForCausalLM" for architecture in mapping.MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values()},
+    **{
+        architecture: "QEFFAutoModelForImageTextToText"
+        for architecture in mapping.MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values()
+    },
 }
 
 
