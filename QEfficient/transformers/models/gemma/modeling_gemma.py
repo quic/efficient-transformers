@@ -28,6 +28,7 @@ from transformers.models.gemma.modeling_gemma import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
+
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -49,6 +50,7 @@ def eager_attention_forward(
     attn_output = attn_output.transpose(1, 2).contiguous()
 
     return attn_output, attn_weights
+
 
 class QEffGemmaRotaryEmbedding(GemmaRotaryEmbedding):
     """
@@ -319,7 +321,7 @@ class QEffGemmaModel(GemmaModel):
 
         # embed positions
         hidden_states = inputs_embeds
-        
+
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
