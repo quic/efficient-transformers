@@ -48,6 +48,7 @@ from transformers.models.granite.modeling_granite import (
     GraniteAttention,
     GraniteForCausalLM,
     GraniteModel,
+    GraniteRMSNorm,
 )
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
@@ -258,6 +259,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Phi3RMSNorm: CustomRMSNormAIC,
         Qwen2RMSNorm: CustomRMSNormAIC,
         MllamaTextRMSNorm: CustomRMSNormAIC,
+        GraniteRMSNorm: CustomRMSNormAIC,
     }
 
 
