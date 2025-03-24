@@ -5,14 +5,11 @@
 #
 # -----------------------------------------------------------------------------
 
-import math
 from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
-from torch.nn import CrossEntropyLoss
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
-from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
@@ -24,12 +21,12 @@ from transformers.models.gemma.modeling_gemma import (
     GemmaForCausalLM,
     GemmaModel,
     GemmaRotaryEmbedding,
-    logger,
     repeat_kv,
     rotate_half,
 )
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+
 
 def eager_attention_forward(
     module: nn.Module,
@@ -52,6 +49,7 @@ def eager_attention_forward(
     attn_output = attn_output.transpose(1, 2).contiguous()
 
     return attn_output, attn_weights
+
 
 class QEffGemmaRotaryEmbedding(GemmaRotaryEmbedding):
     """
@@ -164,7 +162,7 @@ class QEffGemmaAttention(GemmaAttention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         kv_seq_len = key_states.shape[-2]
-        
+
         kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cos, sin = position_embeddings
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
@@ -215,7 +213,6 @@ class QEffGemmaForCausalLM(GemmaForCausalLM):
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -241,7 +238,7 @@ class QEffGemmaForCausalLM(GemmaForCausalLM):
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        
+
         logits = self.lm_head(hidden_states).float()
         logits = logits.float()
 
@@ -382,7 +379,7 @@ class QEffGemmaModel(GemmaModel):
 
         # embed positions
         hidden_states = inputs_embeds
-        
+
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
@@ -399,7 +396,7 @@ class QEffGemmaModel(GemmaModel):
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
-                
+
             if batch_index is not None:
                 layer_outputs = decoder_layer(
                     hidden_states,
@@ -427,7 +424,7 @@ class QEffGemmaModel(GemmaModel):
                 )
 
             hidden_states = layer_outputs[0]
-            
+
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
@@ -457,7 +454,6 @@ class QEffGemmaModel(GemmaModel):
         past_key_values: Cache,
         output_attentions: bool,
     ):
-
         past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         using_static_cache = isinstance(past_key_values, StaticCache)
 
