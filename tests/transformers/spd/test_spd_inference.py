@@ -120,7 +120,7 @@ def test_spec_decode_inference(
 ):
     # get device group
     device_group: List[int] = [1]
-    #device_group: List[int] = get_available_device_id()
+    # device_group: List[int] = get_available_device_id()
     if not device_group:
         pytest.skip("No available devices to run model on Cloud AI 100")
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
