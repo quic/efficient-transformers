@@ -62,7 +62,7 @@ class QEffDynamicCache(DynamicCache):
                     self.value_cache[layer_idx], position_ids, value_states
                 )
 
-    def read_only(self, layer_idx, **cache_kwargs):
+    def read_only(self, layer_idx, cache_kwargs):
         k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)
