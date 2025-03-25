@@ -900,11 +900,9 @@ class QEffTextGenerationBase:
         current_token_idx_ccl = 0
         for num_token in range(1, generation_len):
             if self.comp_ctx_lengths is not None:
-                if cache_index >= ccl_curr - 1:
+                if cache_index >= self.comp_ctx_lengths[ccl_id] - 1:
                     ccl_id = min(ccl_id + 1, max_ccl_id)
-                    ccl_curr = self.comp_ctx_lengths[ccl_id]
                     decode_inputs["comp_ctx_lengths"] = np.random.rand(self.comp_ctx_lengths[ccl_id])
-
             if streamer:
                 streamer.put(decode_inputs["input_ids"][0])
             outputs = self._session.run(decode_inputs)
