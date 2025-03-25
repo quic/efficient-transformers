@@ -99,8 +99,7 @@ class QnnConstants:
     QNN_CONTEXT_BIN = "{}/bin/{}/qnn-context-binary-generator"
 
     # QNN Libraries required for compilation
-    QNN_CONTEXT_LIB_BACKEND = "{}/lib/{}/libQnnAicCC.so"
-    QNN_CONTEXT_LIB_MODEL = "{}/lib/{}/libQnnModelDlc.so"
+    QNN_CONTEXT_LIB_BACKEND = "{}/lib/{}/libQnnAic.so"
     QNN_CONTEXT_LIB_NET_RUN_EXTENSIONS = "{}/lib/{}/libQnnAicNetRunExtensions.so"
 
     # QNN Compilation target names

@@ -279,7 +279,6 @@ class QNN:
         """
         binary_gen_tool = QnnConstants.QNN_CONTEXT_BIN.format(self.qnn_sdk_path, self.qnn_target)
         backend_lib = QnnConstants.QNN_CONTEXT_LIB_BACKEND.format(self.qnn_sdk_path, self.qnn_target)
-        model_lib = QnnConstants.QNN_CONTEXT_LIB_MODEL.format(self.qnn_sdk_path, self.qnn_target)
         config_file_path = self.create_qnn_compiler_config_json()
 
         cmd = (
@@ -287,7 +286,6 @@ class QNN:
             f"--backend_binary {QnnConstants.CONTEXT_BIN_QPC_NAME} "
             f"--output_dir {self.qnn_binary_dir} "
             f"--backend {backend_lib} "
-            f"--model {model_lib} "
             f"--dlc_path {self.dlc_model_path} "
             f"--config_file {config_file_path} "
         )
