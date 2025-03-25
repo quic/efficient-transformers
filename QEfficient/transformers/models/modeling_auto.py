@@ -76,14 +76,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(
-        cls,
-        pretrained_model_name_or_path: str,
-        is_tlm: bool = False,
-        hidden_size_projections: Optional[Tuple[nn.ModuleList, str]] = None,
-        *args,
-        **kwargs,
-    ):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -93,19 +86,6 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        if hidden_size_projections is not None:
-            if isinstance(hidden_size_projections, tuple):
-                projs, checkpoint = hidden_size_projections
-                assert isinstance(projs, nn.ModuleList)
-                assert isinstance(checkpoint, str)
-                model.hidden_size_projections = load_checkpoint_and_dispatch(
-                    projs, checkpoint=checkpoint, device_map="auto"
-                )
-            elif isinstance(hidden_size_projections, nn.ModuleList):
-                model.hidden_size_projections = hidden_size_projections
-            else:
-                raise ValueError(f"`hidden_size_projections` of type {type(hidden_size_projections)} is not supported.")
-
         return cls(model, is_tlm=is_tlm)
 
     @property
@@ -1268,7 +1248,7 @@ class QEFFAutoModelForImageTextToText:
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoModelForImageTextToText}
 
 
-class QEFFAutoModelForCausalLM(QEFFTransformersBase):
+class QEFFAutoModelForCausalLM(QEFFBaseModel):
     """
     The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
     Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
@@ -1392,15 +1372,39 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
 
-        self = super().from_pretrained(
-            pretrained_model_name_or_path,
-            is_tlm=is_tlm,
-            hidden_size_projections=hidden_size_projections,
-            *args,
-            **kwargs,
-        )
-        self.continuous_batching = continuous_batching
-        return self
+        if kwargs.get("attn_implementation", None) not in {None, "eager"}:
+            logger.warning('Updating attn_implementation="eager"')
+
+        if kwargs.get("low_cpu_mem_usage", None):
+            logger.warning("Updating low_cpu_mem_usage=False")
+
+        kv_offload = kwargs.pop("kv_offload", None)
+
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        if hidden_size_projections is not None:
+            if isinstance(hidden_size_projections, tuple):
+                projections, checkpoint = hidden_size_projections
+                assert isinstance(projections, nn.ModuleList)
+                assert isinstance(checkpoint, str)
+                model.projections = projections
+                model = load_checkpoint_and_dispatch(
+                    model, checkpoint=checkpoint, strict=False
+                )
+            elif isinstance(hidden_size_projections, nn.ModuleList):
+                model.hidden_size_projections = hidden_size_projections
+            else:
+                raise ValueError(f"`hidden_size_projections` of type {type(hidden_size_projections)} is not supported.")
+
+
+        # This is support models that should be classified to in a different auto class but transformers load them via this class
+
+        if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
+            return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
+                model, kv_offload=kv_offload
+            )
+
+        return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching)
 
     @property
     def model_hash(self) -> str:

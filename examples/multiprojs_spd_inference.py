@@ -473,6 +473,7 @@ def main():
         args.pretrained_model_name_or_path,
         args.full_batch_size,
         args.session,
+        args.ignore_eos_token,
     )
     print(exec_info)
     prompts = exec_info.prompts

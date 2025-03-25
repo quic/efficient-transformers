@@ -64,7 +64,6 @@ def project_hidden_states(hidden_states, hidden_size_projections):
         :torch.Tensor: Filtered hidden states.
     """
     proj_hidden_states = [hidden_states]
-    hidden_states = hidden_states.clone()
     num_projs = len(hidden_size_projections)
     for i in range(num_projs):
         hidden_states_i = hidden_size_projections[i](hidden_states)
@@ -136,7 +135,7 @@ def tlm_forward(
     )
 
     hidden_states = filter_hidden_states(outputs[0], position_ids, num_logits_to_keep)
-    hidden_size_projections = getattr(self, "hidden_size_projections", None)
+    hidden_size_projections = getattr(self, "projections", None)
     if hidden_size_projections:
         hidden_states = project_hidden_states(hidden_states, hidden_size_projections)
     if hasattr(self.config, "pretraining_tp") and self.config.pretraining_tp > 1:

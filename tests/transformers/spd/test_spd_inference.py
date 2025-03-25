@@ -25,8 +25,8 @@ configs = [
         32,  # prefill_seq_len
         128,  # ctx_len
         1,  # prefill_bsz
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # draft_model_name
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # target_model_name
+        "JackFram/llama-68m",  # draft_model_name
+        "JackFram/llama-68m",  # target_model_name
         1,  # full_batch_size
         id="CB llama",
     ),
