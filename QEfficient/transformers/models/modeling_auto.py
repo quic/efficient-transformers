@@ -1388,14 +1388,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 assert isinstance(projections, nn.ModuleList)
                 assert isinstance(checkpoint, str)
                 model.projections = projections
-                model = load_checkpoint_and_dispatch(
-                    model, checkpoint=checkpoint, strict=False
-                )
+                model = load_checkpoint_and_dispatch(model, checkpoint=checkpoint, strict=False)
             elif isinstance(hidden_size_projections, nn.ModuleList):
                 model.hidden_size_projections = hidden_size_projections
             else:
                 raise ValueError(f"`hidden_size_projections` of type {type(hidden_size_projections)} is not supported.")
-
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
 
