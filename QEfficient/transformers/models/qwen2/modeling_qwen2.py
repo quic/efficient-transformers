@@ -7,13 +7,11 @@
 
 """PyTorch Qwen2 model."""
 
-import math
-from typing import List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from torch.nn import CrossEntropyLoss
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
@@ -35,6 +33,29 @@ from transformers.models.qwen2.modeling_qwen2 import (
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
+def eager_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    **kwargs,
+):
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+
+    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    if attention_mask is not None:
+        attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_output = torch.matmul(attn_weights, value_states)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output, attn_weights
+
+
 #  Can be replaced with llama/modeling_llama.py::QEffLlamaRotaryEmbedding but keeping it following transformers ideology
 class QEffQwen2RotaryEmbedding(Qwen2RotaryEmbedding):
     """
@@ -43,48 +64,21 @@ class QEffQwen2RotaryEmbedding(Qwen2RotaryEmbedding):
     - Add static sin/cos computations.
     """
 
-    def __init__(
-        self,
-        dim=None,
-        max_position_embeddings=2048,
-        base=10000,
-        device=None,
-        scaling_factor=1.0,
-        rope_type="default",
-        config: Optional[Qwen2Config] = None,
-    ):
+    def __init__(self, config: Qwen2Config, device=None):
         super(Qwen2RotaryEmbedding, self).__init__()  # Initialize nn.Module
-        # TODO (joao): remove the `if` below, only used for BC
-        self.rope_kwargs = {}
-        if config is None:
-            logger.warning_once(
-                "`LlamaRotaryEmbedding` can now be fully parameterized by passing the model config through the "
-                "`config` argument. All other arguments will be removed in v4.45"
-            )
-            self.rope_kwargs = {
-                "rope_type": rope_type,
-                "factor": scaling_factor,
-                "dim": dim,
-                "base": base,
-                "max_position_embeddings": max_position_embeddings,
-            }
-            self.rope_type = rope_type
-            self.max_seq_len_cached = max_position_embeddings
-            self.original_max_seq_len = max_position_embeddings
+        if hasattr(config, "rope_scaling") and config.rope_scaling is not None:
+            self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
         else:
-            # BC: "rope_type" was originally "type"
-            if config.rope_scaling is not None:
-                self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
-            else:
-                self.rope_type = "default"
-            self.max_seq_len_cached = config.max_position_embeddings
-            self.original_max_seq_len = config.max_position_embeddings
+            self.rope_type = "default"
+        self.max_seq_len_cached = config.max_position_embeddings
+        self.original_max_seq_len = config.max_position_embeddings
 
         self.config = config
         self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device, **self.rope_kwargs)
+        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.original_inv_freq = self.inv_freq
 
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
@@ -112,7 +106,7 @@ class QEffQwen2RotaryEmbedding(Qwen2RotaryEmbedding):
         )
 
 
-def apply_qeff_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
     Explanation:
@@ -145,8 +139,8 @@ def apply_qeff_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
 
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
 
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
@@ -169,86 +163,51 @@ class QEffQwen2Attention(Qwen2Attention):
         self.__qeff_init__()
 
     def __qeff_init__(self):
-        self.rotary_emb = QEffQwen2RotaryEmbedding(
-            self.head_dim,
-            max_position_embeddings=self.max_position_embeddings,
-            base=self.rope_theta,
-        )
+        self.rotary_emb = QEffQwen2RotaryEmbedding(config=self.config)
 
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
-        output_attentions: bool = False,
-        use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+        **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        bsz, q_len, _ = hidden_states.size()
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
 
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
-
-        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         kv_seq_len = key_states.shape[-2]
-        if past_key_value is not None:
-            if self.layer_idx is None:
-                raise ValueError(
-                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
-                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
-                    "with a layer index."
-                )
-            kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
 
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = apply_qeff_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+        cos, sin = position_embeddings
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            # Update the cache_kwargs with position_ids for Cloud AI 100
+            # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        # repeat k/v heads if n_kv_heads < n_heads
-        key_states = repeat_kv(key_states, self.num_key_value_groups)
-        value_states = repeat_kv(value_states, self.num_key_value_groups)
+        attention_interface: Callable = eager_attention_forward
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            scaling=self.scaling,
+            **kwargs,
+        )
 
-        if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
-            raise ValueError(
-                f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
-                f" {attn_weights.size()}"
-            )
-
-        if attention_mask is not None:
-            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
-
-        # upcast attention to fp32
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
-        attn_output = torch.matmul(attn_weights, value_states)
-
-        if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
-            raise ValueError(
-                f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
-                f" {attn_output.size()}"
-            )
-
-        attn_output = attn_output.transpose(1, 2).contiguous()
-        attn_output = attn_output.reshape(bsz, q_len, -1)
-
+        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
-
-        if not output_attentions:
-            attn_weights = None
-
         return attn_output, attn_weights, past_key_value
 
 
@@ -265,7 +224,7 @@ class QEffQwen2Model(Qwen2Model):
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        past_key_values: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -273,6 +232,7 @@ class QEffQwen2Model(Qwen2Model):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -287,21 +247,18 @@ class QEffQwen2Model(Qwen2Model):
                 "You cannot specify both input_ids and inputs_embeds at the same time, and must specify either one"
             )
 
-        if self.gradient_checkpointing and self.training:
-            if use_cache:
+        return_legacy_cache = False
+        if use_cache and not isinstance(past_key_values, Cache):
+            return_legacy_cache = True
+            if past_key_values is None:
+                past_key_values = DynamicCache()
+            else:
+                past_key_values = DynamicCache.from_legacy_cache(past_key_values)
                 logger.warning_once(
-                    "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
+                    "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
+                    "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
+                    "(https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)"
                 )
-                use_cache = False
-
-        use_legacy_cache = False
-        if use_cache and not isinstance(past_key_values, Cache) and not self.training:
-            use_legacy_cache = True
-            past_key_values = DynamicCache.from_legacy_cache(past_key_values)
-            logger.warning_once(
-                "We detected that you are passing `past_key_values` as a tuple and this is deprecated and will be removed in v4.43. "
-                "Please use an appropriate `Cache` class (https://huggingface.co/docs/transformers/v4.41.3/en/internal/generation_utils#transformers.Cache)"
-            )
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -327,41 +284,24 @@ class QEffQwen2Model(Qwen2Model):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        next_decoder_cache = None
 
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            if self.gradient_checkpointing and self.training:
-                layer_outputs = self._gradient_checkpointing_func(
-                    decoder_layer.__call__,
-                    hidden_states,
-                    causal_mask,
-                    position_ids,
-                    past_key_values,
-                    output_attentions,
-                    use_cache,
-                    cache_position,
-                    position_embeddings,
-                )
-            else:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=causal_mask,
-                    position_ids=position_ids,
-                    past_key_value=past_key_values,
-                    batch_index=batch_index,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                    cache_position=cache_position,
-                    position_embeddings=position_embeddings,
-                )
+            layer_outputs = decoder_layer(
+                hidden_states,
+                attention_mask=causal_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_values,
+                batch_index=batch_index,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+            )
 
             hidden_states = layer_outputs[0]
-
-            if use_cache:
-                next_decoder_cache = layer_outputs[2 if output_attentions else 1]
 
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
@@ -372,18 +312,16 @@ class QEffQwen2Model(Qwen2Model):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
-        next_cache = None
-        if use_cache:
-            next_cache = next_decoder_cache.to_legacy_cache() if use_legacy_cache else next_decoder_cache
+        if return_legacy_cache:
+            past_key_values = past_key_values.to_legacy_cache()
 
-        if not return_dict:
-            return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
-        return BaseModelOutputWithPast(
+        output = BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
-            past_key_values=next_cache,
+            past_key_values=past_key_values if use_cache else None,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
         )
+        return output if return_dict else output.to_tuple()
 
 
 class QEffQwen2DecoderLayer(Qwen2DecoderLayer):
@@ -399,12 +337,12 @@ class QEffQwen2DecoderLayer(Qwen2DecoderLayer):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        past_key_value: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -441,6 +379,7 @@ class QEffQwen2DecoderLayer(Qwen2DecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            **kwargs,
         )
         hidden_states = residual + hidden_states
 
@@ -474,7 +413,7 @@ class QEffQwen2ForCausalLM(Qwen2ForCausalLM):
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -483,33 +422,9 @@ class QEffQwen2ForCausalLM(Qwen2ForCausalLM):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
+        **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-        r"""
-        Args:
-            labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-                Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
-                config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
-                (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
-
-        Returns:
-
-        Example:
-
-        ```python
-        >>> from transformers import AutoTokenizer, Qwen2ForCausalLM
-
-        >>> model = Qwen2ForCausalLM.from_pretrained(PATH_TO_CONVERTED_WEIGHTS)
-        >>> tokenizer = AutoTokenizer.from_pretrained(PATH_TO_CONVERTED_TOKENIZER)
-
-        >>> prompt = "Hey, are you conscious? Can you talk to me?"
-        >>> inputs = tokenizer(prompt, return_tensors="pt")
-
-        >>> # Generate
-        >>> generate_ids = model.generate(inputs.input_ids, max_length=30)
-        >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-        "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
-        ```"""
-
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -533,28 +448,12 @@ class QEffQwen2ForCausalLM(Qwen2ForCausalLM):
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+
         logits = self.lm_head(hidden_states)
         logits = logits.float()
 
-        loss = None
-        if labels is not None:
-            # Shift so that tokens < n predict n
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
-            shift_logits = shift_logits.view(-1, self.config.vocab_size)
-            shift_labels = shift_labels.view(-1)
-            # Enable model parallelism
-            shift_labels = shift_labels.to(shift_logits.device)
-            loss = loss_fct(shift_logits, shift_labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[1:]
-            return (loss,) + output if loss is not None else output
-
         return CausalLMOutputWithPast(
-            loss=loss,
+            loss=None,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
