@@ -761,7 +761,6 @@ class QEffTextGenerationBase:
         ccl_curr = self.comp_ctx_lengths[ccl_id]
         decode_inputs["comp_ctx_lengths"] = np.random.rand(ccl_curr)
         buffers = {"comp_ctx_len_out": np.zeros(1)}
-        print("ccl_curr:", ccl_curr)
 
         return buffers, ccl_curr, ccl_id, max_ccl_id
 
@@ -837,11 +836,11 @@ class QEffTextGenerationBase:
                             ]
 
                         if self.comp_ctx_lengths is not None:
-                            ###Recalculate ccl_curr based on position ids###
+                            ###Recalculate ccl_id based on position ids###
                             # Determine the maximum value of position_ids across all batch elements
                             max_position_id = np.max(decode_inputs["position_ids"])
 
-                            # Update ccl_curr and comp_ctx_lengths based on the maximum position id
+                            # Update ccl_id and comp_ctx_lengths based on the maximum position id
                             ccl_id = 1
                             for i in range(1, len(self.comp_ctx_lengths)):
                                 if max_position_id < self.comp_ctx_lengths[i]:
@@ -863,8 +862,8 @@ class QEffTextGenerationBase:
                     generated_id_current_index[decode_batch_id] += 1
 
                     if self.comp_ctx_lengths is not None:
-                        # Update ccl_curr and comp_ctx_lengths based on the maximum position id
-                        if decode_inputs["position_ids"][decode_batch_id, -1] >= ccl_curr - 1:
+                        # Update ccl_id and comp_ctx_lengths based on the maximum position id
+                        if decode_inputs["position_ids"][decode_batch_id, -1] >= self.comp_ctx_lengths[ccl_id] - 1:
                             ccl_id = min(ccl_id + 1, max_ccl_id)
                             decode_inputs["comp_ctx_lengths"] = np.random.rand(self.comp_ctx_lengths[ccl_id])
 
