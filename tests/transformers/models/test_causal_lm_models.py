@@ -8,6 +8,8 @@
 import os
 from typing import Optional
 
+import numpy as np
+
 import pytest
 from transformers import AutoModelForCausalLM
 
@@ -123,17 +125,18 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     # testing for CB models
     model_hf, _ = load_causal_lm_model(model_config)
+    config = model_hf.config
     full_batch_size = 4
     fbs_prompts = Constants.INPUT_STR * 4
-    api_runner = ApiRunner(
-        batch_size,
-        tokenizer,
-        config,
-        fbs_prompts,
-        Constants.PROMPT_LEN,
-        Constants.CTX_LEN,
-        full_batch_size,
-    )
+    # api_runner = ApiRunner(
+    #     batch_size,
+    #     tokenizer,
+    #     config,
+    #     fbs_prompts,
+    #     Constants.PROMPT_LEN,
+    #     Constants.CTX_LEN,
+    #     full_batch_size,
+    # )
 
     # pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
     # pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
