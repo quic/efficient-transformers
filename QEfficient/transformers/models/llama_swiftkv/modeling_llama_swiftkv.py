@@ -94,7 +94,6 @@ class LlamaSwiftKVAttention(nn.Module):
     ) -> torch.Tensor:
         bsz, q_len, _ = hidden_states.size()
         query = self.q_proj_swiftkv(hidden_states)
-
         # Reshape the query, key, and value tensors.
         query_states = query.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
 
@@ -107,10 +106,9 @@ class LlamaSwiftKVAttention(nn.Module):
                     "with a layer index."
                 )
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+        cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+        key_states, value_states = past_key_value.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
 
-        key_states, value_states = past_key_value.read_only(
-            self.layer_idx, position_ids=position_ids, batch_index=batch_index
-        )
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         position_ids = position_ids[torch.arange(bsz), position_ids.to(torch.int32).argmax(1)].unsqueeze(1)
         query_states, _ = qeff_apply_rotary_pos_emb(
@@ -121,10 +119,8 @@ class LlamaSwiftKVAttention(nn.Module):
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
-
         if attention_mask is not None:  # no matter the length, we just slice it
             attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
-
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         # attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
@@ -148,7 +144,6 @@ class LlamaSwiftKVDecoderLayer(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.num_key_value_heads = config.num_key_value_heads
-
         self.self_attn = LlamaSwiftKVAttention(config=config, layer_idx=layer_idx)
         self.mlp = LlamaMLP(config)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -343,7 +338,6 @@ class LlamaSwiftKVModel(nn.Module):
 
         bsz, q_len, _ = hidden_states.size()
         swiftkv_hidden_states = self.norm_swiftkv(hidden_states)
-
         ####################################
         ## THE MAGIC OF SWIFT KV BEGINS HERE
         ####################################
@@ -374,24 +368,30 @@ class LlamaSwiftKVModel(nn.Module):
         last_pos_id = position_ids.to(torch.int32).argmax(1, keepdim=True)
         orig_hidden_states = hidden_states
 
-        hidden_states = orig_hidden_states[torch.arange(bsz), last_pos_id, :]
-
-        causal_mask = causal_mask[torch.arange(bsz), :, last_pos_id, :]
+        # Extracting only the last valid position id to be processed by self-attn of half of the layers, as KV cache is already filled.
+        if batch_index is not None:
+            hidden_states = orig_hidden_states[batch_index, last_pos_id, :]
+            causal_mask = causal_mask[batch_index, :, last_pos_id, :]
+        else:
+            hidden_states = orig_hidden_states[torch.arange(bsz), last_pos_id, :]
+            causal_mask = causal_mask[torch.arange(bsz), :, last_pos_id, :]
 
         hidden_states, next_decoder_cache = self._run_swiftkv_layers(
             hidden_states, position_ids, past_key_values, causal_mask, batch_index
         )
-
-        orig_hidden_states[torch.arange(bsz), last_pos_id, :] = hidden_states
+        # We can fill the orig_hidden_states with the processed hidden_states here but it's not needed as for next token prediction
+        # we only need the last valid pos_indices hidden_states.
+        # Here the shape of hiden_states is [batch_size, 1, hidden_dim] instead of [batch_size, seq_len, hidden_dim]
+        # This saves un-necessary data movement on devices.
         ####################################
         ## THE MAGIC OF SWIFT KV ENDS HERE
         ####################################
 
         next_cache = next_decoder_cache.to_legacy_cache()
-        return orig_hidden_states, next_cache
+        return hidden_states, next_cache
 
 
-class LlamaSwiftKVForCausalLM(PreTrainedModel):
+class LlamaSwiftKVForCausalLM(PreTrainedModel):  #
     config_class = LlamaSwiftKVConfig
 
     def __init__(self, config: LlamaSwiftKVConfig):
@@ -412,8 +412,6 @@ class LlamaSwiftKVForCausalLM(PreTrainedModel):
         batch_index: Optional[torch.LongTensor] = None,
     ):
         hidden_states, output_past_key_values = self.model(input_ids, position_ids, past_key_values, batch_index)
-        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         return CausalLMOutputWithPast(
             loss=None,
