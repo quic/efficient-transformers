@@ -902,6 +902,7 @@ class QEffTextGenerationBase:
             if self.comp_ctx_lengths is not None:
                 if cache_index >= ccl_curr - 1:
                     ccl_id = min(ccl_id + 1, max_ccl_id)
+                    ccl_curr = self.comp_ctx_lengths[ccl_id]
                     decode_inputs["comp_ctx_lengths"] = np.random.rand(self.comp_ctx_lengths[ccl_id])
 
             if streamer:
