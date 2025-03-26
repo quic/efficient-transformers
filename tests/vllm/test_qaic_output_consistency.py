@@ -24,6 +24,7 @@ KV_DTYPE = "mxint8"
 DEVICE_GROUP = [0]
 
 
+@pytest.mark.vllm
 @pytest.mark.parametrize("model_name", test_models)
 def test_output_consistency(model_name):
     """This pytest function is used to check the consistency of vLLM.
