@@ -281,10 +281,11 @@ def train(
             else:
                 train_epoch_loss = total_loss / len(train_dataloader)
 
-        # Get the correct train loss from all the nodes.
-        dist.barrier()
-        dist.all_reduce(train_epoch_loss, op=dist.ReduceOp.SUM)
-        train_epoch_loss /= dist.get_world_size()
+        if train_config.enable_ddp:
+            # Get the correct train loss from all the nodes.
+            dist.barrier()
+            dist.all_reduce(train_epoch_loss, op=dist.ReduceOp.SUM)
+            train_epoch_loss /= dist.get_world_size()
 
         train_perplexity = torch.exp(train_epoch_loss)
 
