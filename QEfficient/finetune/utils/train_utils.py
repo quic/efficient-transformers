@@ -212,9 +212,6 @@ def train(
                 train_step_loss.append(loss.detach().float().item())
                 train_step_perplexity.append(float(torch.exp(loss.detach().float())))
 
-            if train_config.gradient_checkpointing:
-                # Enforce that the loss retains its gradient tracking.
-                loss.requires_grad = True
 
             if train_config.grad_scaler:
                 scaler.scale(loss).backward()  # backward pass
