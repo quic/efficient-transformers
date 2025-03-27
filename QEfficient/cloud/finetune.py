@@ -103,6 +103,18 @@ def main(**kwargs):
     # print the datatype of the model parameters
     # print(get_parameter_dtypes(model))
 
+    # Note: Need to call this before calling PeftModel.from_pretrained or get_peft_model.
+    # Because, both makes model.is_gradient_checkpointing = True which is used in peft library to
+    # apply gradient checkpointing related hooks to the input embeddings. Without this we will get
+    # "No inf checks were recorded for this optimizer." error.
+    # Enable gradient checkpointing
+    if train_config.gradient_checkpointing:
+        # Note: below attribute and method is only available in HuggingFace Transformer models.
+        if model.supports_gradient_checkpointing:
+            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"preserve_rng_state": False})
+        else:
+            raise RuntimeError("Given model doesn't support gradient checkpointing. Please disable it and run it.")
+
     if train_config.use_peft:
         # Load the pre-trained peft model checkpoint and setup its configuration
         if train_config.from_peft_checkpoint:
@@ -114,13 +126,6 @@ def main(**kwargs):
             model = get_peft_model(model, peft_config)
         model.print_trainable_parameters()
 
-    # Enable gradient checkpointing
-    if train_config.gradient_checkpointing:
-        # Note: below attribute and method is only available in HuggingFace Transformer models.
-        if model.supports_gradient_checkpointing:
-            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"preserve_rng_state": False})
-        else:
-            raise RuntimeError("Given model doesn't support gradient checkpointing. Please disable it and run it.")
 
     # Get the dataset utils
     dataset_config = generate_dataset_config(train_config, kwargs)
