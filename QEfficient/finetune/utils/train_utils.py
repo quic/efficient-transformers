@@ -178,10 +178,7 @@ def train(
                         # adjust atol & rtol this as required
                         atol=1e-1,
                         use_ref_output_on_mismatch=True,
-                        # report all mismatches
-                        max_failures=None,
-                        # generate unittest for each op once
-                        repeat_same_op=True,
+                        filter_config=qaic_debug.DispatchFilterConfig.default(device, opwise_limit=10),
                         dump_root_dir=train_config.dump_root_dir + str(step),
                     ) as verifier:
                         loss = model(**batch).loss  # Forward call
@@ -214,6 +211,10 @@ def train(
             if train_config.save_metrics:
                 train_step_loss.append(loss.detach().float().item())
                 train_step_perplexity.append(float(torch.exp(loss.detach().float())))
+
+            if train_config.gradient_checkpointing:
+                # Enforce that the loss retains its gradient tracking.
+                loss.requires_grad = True
 
             if train_config.grad_scaler:
                 scaler.scale(loss).backward()  # backward pass
@@ -283,6 +284,11 @@ def train(
             else:
                 train_epoch_loss = total_loss / len(train_dataloader)
 
+        # Get the correct train loss from all the nodes.
+        dist.barrier()
+        dist.all_reduce(train_epoch_loss, op=dist.ReduceOp.SUM)
+        train_epoch_loss /= dist.get_world_size()
+
         train_perplexity = torch.exp(train_epoch_loss)
 
         train_prep.append(float(train_perplexity))
@@ -299,6 +305,7 @@ def train(
                 )
                 dist.barrier()
                 dist.all_reduce(eval_epoch_loss, op=dist.ReduceOp.SUM)
+                eval_epoch_loss /= dist.get_world_size()
                 if local_rank == 0:
                     tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
 
