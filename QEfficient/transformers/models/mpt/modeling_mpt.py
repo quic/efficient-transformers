@@ -216,28 +216,16 @@ class QEFfMptModel(MptModel):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            if batch_index is not None:
-                outputs = block(
-                    hidden_states,
-                    layer_past=layer_past,
-                    attention_mask=causal_mask,
-                    position_ids=position_ids,
-                    batch_index=batch_index,
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                    position_bias=alibi,
-                )
-            else:
-                outputs = block(
-                    hidden_states,
-                    layer_past=layer_past,
-                    attention_mask=causal_mask,
-                    position_ids=position_ids,
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                    position_bias=alibi,
-                )
-
+            outputs = block(
+                hidden_states,
+                layer_past=layer_past,
+                attention_mask=causal_mask,
+                position_ids=position_ids,
+                batch_index=batch_index,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                position_bias=alibi,
+            )
             hidden_states = outputs[0]
             if use_cache is True:
                 presents = presents + (outputs[1],)
