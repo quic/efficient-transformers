@@ -18,7 +18,6 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     CausalLMOutputWithCrossAttentions,
 )
-from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconConfig,
@@ -28,7 +27,6 @@ from transformers.models.falcon.modeling_falcon import (
     FalconRotaryEmbedding,
     apply_rotary_pos_emb,
     dropout_add,
-    logger,
     rotate_half,
 )
 
@@ -42,49 +40,8 @@ class QEffFalconRotaryEmbedding(FalconRotaryEmbedding):
     - Add static sin/cos computations.
     """
 
-    def __init__(
-        self,
-        dim=None,
-        max_position_embeddings=2048,
-        base=10000,
-        device=None,
-        scaling_factor=1.0,
-        rope_type="default",
-        config: Optional[FalconConfig] = None,
-    ):
-        super(FalconRotaryEmbedding, self).__init__()  # Initialize nn.Module
-        # TODO (joao): remove the `if` below, only used for BC
-        self.rope_kwargs = {}
-        if config is None:
-            logger.warning_once(
-                "`LlamaRotaryEmbedding` can now be fully parameterized by passing the model config through the "
-                "`config` argument. All other arguments will be removed in v4.45"
-            )
-            self.rope_kwargs = {
-                "rope_type": rope_type,
-                "factor": scaling_factor,
-                "dim": dim,
-                "base": base,
-                "max_position_embeddings": max_position_embeddings,
-            }
-            self.rope_type = rope_type
-            self.max_seq_len_cached = max_position_embeddings
-            self.original_max_seq_len = max_position_embeddings
-        else:
-            # BC: "rope_type" was originally "type"
-            if config.rope_scaling is not None:
-                self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
-            else:
-                self.rope_type = "default"
-            self.max_seq_len_cached = config.max_position_embeddings
-            self.original_max_seq_len = config.max_position_embeddings
-
-        self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device, **self.rope_kwargs)
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.original_inv_freq = self.inv_freq
+    def __init__(self, config: FalconConfig, device=None):
+        FalconRotaryEmbedding.__init__(self, config=config)
 
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
@@ -214,6 +171,77 @@ class QEffFalconAttention(FalconAttention):
             return attn_output, layer_past
 
 
+class QEffFalconDecoderLayer(FalconDecoderLayer):
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        alibi: Optional[torch.Tensor],
+        attention_mask: torch.Tensor,
+        position_ids: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        layer_past: Optional[Union[Cache, Tuple[torch.Tensor, torch.Tensor]]] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        use_cache: bool = False,
+        output_attentions: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+        **kwargs,
+    ):
+        residual = hidden_states
+
+        attention_layernorm_out = self.input_layernorm(hidden_states)
+
+        # Self attention.
+        attn_outputs = self.self_attention(
+            attention_layernorm_out,
+            layer_past=layer_past,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            batch_index=batch_index,
+            alibi=alibi,
+            head_mask=head_mask,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            cache_position=cache_position,
+            position_embeddings=position_embeddings,
+        )
+
+        attention_output = attn_outputs[0]
+
+        if not self.config.new_decoder_architecture:
+            if self.config.parallel_attn:
+                mlp_layernorm_out = attention_layernorm_out
+            else:
+                residual = dropout_add(
+                    attention_output, residual, self.config.attention_dropout, training=self.training
+                )
+                mlp_layernorm_out = self.post_attention_layernorm(residual)
+
+        if (
+            self.config.new_decoder_architecture
+            and self.config.parallel_attn
+            and self.config.num_ln_in_parallel_attn == 1
+        ):
+            mlp_layernorm_out = attention_layernorm_out
+
+        outputs = attn_outputs[1:]
+
+        # MLP.
+        mlp_output = self.mlp(mlp_layernorm_out)
+
+        if self.config.new_decoder_architecture or self.config.parallel_attn:
+            mlp_output += attention_output
+
+        output = dropout_add(mlp_output, residual, self.config.hidden_dropout, training=self.training)
+
+        if use_cache:
+            outputs = (output,) + outputs
+        else:
+            outputs = (output,) + outputs[1:]
+
+        return outputs  # hidden_states, past_kv, attentions
+
+
 class QEffFalconModel(FalconModel):
     """
     Copied from FalconModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/falcon/modeling_falcon.py
@@ -252,19 +280,10 @@ class QEffFalconModel(FalconModel):
         if inputs_embeds is None:
             inputs_embeds = self.word_embeddings(input_ids)
 
-        # kept for BC (non `Cache` `past_key_values` inputs)
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            if past_key_values is None:
-                past_key_values = DynamicCache()
-            else:
-                past_key_values = DynamicCache.from_legacy_cache(past_key_values)
-                logger.warning_once(
-                    "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
-                    "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
-                    "(https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)"
-                )
+            past_key_values = DynamicCache.from_legacy_cache(past_key_values)
 
         past_key_values_length = past_key_values.get_seq_length() if past_key_values is not None else 0
         batch_size, seq_length, _ = inputs_embeds.shape
@@ -425,74 +444,3 @@ class QEffFalconForCausalLM(FalconForCausalLM):
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
         )
-
-
-class QEffFalconDecoderLayer(FalconDecoderLayer):
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        alibi: Optional[torch.Tensor],
-        attention_mask: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
-        layer_past: Optional[Union[Cache, Tuple[torch.Tensor, torch.Tensor]]] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        use_cache: bool = False,
-        output_attentions: bool = False,
-        cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
-        **kwargs,
-    ):
-        residual = hidden_states
-
-        attention_layernorm_out = self.input_layernorm(hidden_states)
-
-        # Self attention.
-        attn_outputs = self.self_attention(
-            attention_layernorm_out,
-            layer_past=layer_past,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            batch_index=batch_index,
-            alibi=alibi,
-            head_mask=head_mask,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            cache_position=cache_position,
-            position_embeddings=position_embeddings,
-        )
-
-        attention_output = attn_outputs[0]
-
-        if not self.config.new_decoder_architecture:
-            if self.config.parallel_attn:
-                mlp_layernorm_out = attention_layernorm_out
-            else:
-                residual = dropout_add(
-                    attention_output, residual, self.config.attention_dropout, training=self.training
-                )
-                mlp_layernorm_out = self.post_attention_layernorm(residual)
-
-        if (
-            self.config.new_decoder_architecture
-            and self.config.parallel_attn
-            and self.config.num_ln_in_parallel_attn == 1
-        ):
-            mlp_layernorm_out = attention_layernorm_out
-
-        outputs = attn_outputs[1:]
-
-        # MLP.
-        mlp_output = self.mlp(mlp_layernorm_out)
-
-        if self.config.new_decoder_architecture or self.config.parallel_attn:
-            mlp_output += attention_output
-
-        output = dropout_add(mlp_output, residual, self.config.hidden_dropout, training=self.training)
-
-        if use_cache:
-            outputs = (output,) + outputs
-        else:
-            outputs = (output,) + outputs[1:]
-
-        return outputs  # hidden_states, past_kv, attentions
