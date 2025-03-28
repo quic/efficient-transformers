@@ -27,6 +27,7 @@ def main(
     full_batch_size: Optional[int] = None,
     prompt_len: int = 32,
     ctx_len: int = 128,
+    comp_ctx_lengths: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
     mxfp6: bool = False,
     mxint8: bool = False,
@@ -99,6 +100,7 @@ def main(
     _ = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
+        comp_ctx_lengths=comp_ctx_lengths,
         num_cores=num_cores,
         mxfp6_matmul=mxfp6,
         aic_enable_depth_first=aic_enable_depth_first,
@@ -121,6 +123,7 @@ def main(
         prompts=prompt,
         device_id=device_group,
         prompt=prompt,
+        comp_ctx_lengths=comp_ctx_lengths,
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
     )
@@ -149,6 +152,12 @@ if __name__ == "__main__":
         "--prompt-len", "--prompt_len", default=32, type=int, help="Sequence length for text generation."
     )
     parser.add_argument("--ctx-len", "--ctx_len", default=128, type=int, help="Context length for text generation.")
+    parser.add_argument(
+        "--comp_ctx_lengths",
+        "--comp_ctx_lengths",
+        type=lambda comp_ctx_lengths: [int(x) for x in comp_ctx_lengths.strip("[]").split(",")],
+        help="Compute Context length for text generation (comma-separated) e.g. [512,1024,2048]  ",
+    )
     parser.add_argument(
         "--mxfp6",
         "--mxfp6_matmul",
