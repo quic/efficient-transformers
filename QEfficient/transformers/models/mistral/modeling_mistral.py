@@ -17,7 +17,6 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
     MistralConfig,
@@ -41,21 +40,7 @@ class QEffMistralRotaryEmbedding(MistralRotaryEmbedding):
     """
 
     def __init__(self, config: MistralConfig, device=None):
-        super(MistralRotaryEmbedding, self).__init__()  # Initialize nn.Module
-
-        if hasattr(config, "rope_scaling") and config.rope_scaling is not None:
-            self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
-        else:
-            self.rope_type = "default"
-        self.max_seq_len_cached = config.max_position_embeddings
-        self.original_max_seq_len = config.max_position_embeddings
-
-        self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.original_inv_freq = self.inv_freq
+        MistralRotaryEmbedding.__init__(self, config=config)
 
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
