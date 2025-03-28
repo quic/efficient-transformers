@@ -31,6 +31,7 @@ def test_simple_prefix_caching(model_name):
         num_cores=14,
     )
     prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
 
 @pytest.mark.on_qaic
@@ -39,14 +40,14 @@ def test_simple_prefix_caching(model_name):
 def test_simple_prefix_caching_qnn(model_name):
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True)
     qnn_config = {
-        "convertor_args_extension": "",
+        "converter_args_extension": "",
         "context_binary_generator_args_extension": "--log_level debug",
         "qnn_compilation_backend": {
             "compiler_enable_depth_first": True,
             "compiler_printDDRStats": False,
             "compiler_printPerfMetrics": False,
         },
-        "SKIP_QNN_CONVERTOR_STEP": False,
+        "SKIP_QNN_CONVERTER_STEP": False,
     }
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, qnn_config)
@@ -61,6 +62,7 @@ def test_simple_prefix_caching_qnn(model_name):
         qnn_config=qnn_config_json_path,
     )
     prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
     os.remove(qnn_config_json_path)
 
 

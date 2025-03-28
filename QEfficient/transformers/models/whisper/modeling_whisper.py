@@ -8,7 +8,6 @@
 import random
 from typing import Optional, Tuple
 
-import numpy as np
 import torch
 from torch import nn
 from transformers.cache_utils import Cache, EncoderDecoderCache, StaticCache
@@ -812,14 +811,19 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
 
         return inputs
 
-    def get_specializations(
-        self, batch_size: int, encoder_ctx_len: int, decoder_ctx_len: int, feature_len: int, **compiler_options
-    ):
+    def get_specializations(self, batch_size: int, encoder_ctx_len, ctx_len, **compiler_options):
+        if encoder_ctx_len is None and hasattr(self.config, "max_source_positions"):
+            encoder_ctx_len = self.config.max_source_positions
+        elif encoder_ctx_len is None:
+            encoder_ctx_len = 1500
+            logger.warning("Setting `encoder_ctx_len=1500` as it was neither passed nor found in config")
+        feature_len = encoder_ctx_len * 2
+
         encoder_specializations = {
             "batch_size": batch_size,
             "seq_len": 1,
             "encoder_ctx_len": encoder_ctx_len,
-            "decoder_ctx_len": decoder_ctx_len,
+            "decoder_ctx_len": ctx_len,
             "feature_len": feature_len,
         }
 
@@ -827,13 +831,13 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
             "batch_size": batch_size,
             "seq_len": 1,
             "encoder_ctx_len": encoder_ctx_len,
-            "decoder_ctx_len": decoder_ctx_len,
+            "decoder_ctx_len": ctx_len,
             "feature_len": 1,  # important dummy feature so that torch.where knows whether to run cross attention or not
         }
 
         specializations = [encoder_specializations, decoder_specializations]
 
-        return specializations
+        return specializations, compiler_options
 
     def get_onnx_dynamic_axes(
         self,
@@ -874,7 +878,5 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
 
     def get_inputs_info(self):
         return [
-            IOInfo(name="input_features", datatype=np.float32, shape=("batch_size", "num_mel_bins", "feature_len")),
-            IOInfo(name="decoder_input_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="decoder_position_ids", datatype=np.int64, shape=("batch_size", "seq_len")),
+            IOInfo(name="input_features", datatype=torch.float32, shape=("batch_size", "num_mel_bins", "feature_len")),
         ]

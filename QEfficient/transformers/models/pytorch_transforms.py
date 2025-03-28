@@ -48,6 +48,7 @@ from transformers.models.granite.modeling_granite import (
     GraniteAttention,
     GraniteForCausalLM,
     GraniteModel,
+    GraniteRMSNorm,
 )
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
@@ -258,6 +259,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Phi3RMSNorm: CustomRMSNormAIC,
         Qwen2RMSNorm: CustomRMSNormAIC,
         MllamaTextRMSNorm: CustomRMSNormAIC,
+        GraniteRMSNorm: CustomRMSNormAIC,
     }
 
 
@@ -433,6 +435,8 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
             "get_onnx_dynamic_axes": QEffInternVLModel.get_onnx_dynamic_axes,
             "get_output_names": QEffInternVLModel.get_output_names,
             "get_inputs_info": QEffInternVLModel.get_inputs_info,
+            "get_qeff_vision_encoder": QEffInternVLModel.get_qeff_vision_encoder,
+            "get_qeff_language_decoder": QEffInternVLModel.get_qeff_language_decoder,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
     }

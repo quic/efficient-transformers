@@ -1,34 +1,64 @@
+# Python API
+
 **This page give you an overview about the all the APIs that you might need to integrate the `QEfficient` into your python applications.**
 
-# High Level API
+## High Level API
 
-## `QEFFAutoModelForCausalLM`
+### `QEFFAutoModelForCausalLM`
+
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM
    :member-order: bysource
    :members:
 ``` 
-## `QEFFAutoModel`
+
+(QEFFAutoModel)=
+### `QEFFAutoModel`
+
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel
    :member-order: bysource
    :members:
 ``` 
-## `QEffAutoPeftModelForCausalLM`
+
+(QEffAutoPeftModelForCausalLM)=
+### `QEffAutoPeftModelForCausalLM`
+
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
    :member-order: bysource
    :members:
 ```
 
-## `QEffAutoLoraModelForCausalLM`
+(QEffAutoLoraModelForCausalLM)=
+### `QEffAutoLoraModelForCausalLM`
+
 ```{eval-rst}
 .. autoclass:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM
    :member-order: bysource
    :members:
 ```
 
-## `export`
+(QEFFAutoModelForImageTextToText)=
+### `QEFFAutoModelForImageTextToText`
+
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText
+   :member-order: bysource
+   :members:
+```
+
+(QEFFAutoModelForSpeechSeq2Seq)=
+### `QEFFAutoModelForSpeechSeq2Seq`
+
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq
+   :member-order: bysource
+   :members:
+```
+
+### `export`
+
 ```{eval-rst}
 .. automodule:: QEfficient.exporter.export_hf_to_cloud_ai_100
    :members:
@@ -37,7 +67,9 @@
 .. deprecated::
    This function will be deprecated in version 1.19, please use QEFFAutoModelForCausalLM.export instead
 ```
-## `compile`
+
+### `compile`
+
 ```{eval-rst}
 .. automodule:: QEfficient.compile.compile_helper
    :members:
@@ -50,10 +82,53 @@
 .. deprecated::
    This function will be deprecated in version 1.19, please use QEFFAutoModelForCausalLM.compile instead
 ```
-## `Execute`
+
+### `Execute`
+
 ```{eval-rst}
 .. automodule:: QEfficient.generation.text_generation_inference
    :members:
    :show-inheritance:
    :exclude-members:  latency_stats_bertstyle,cloud_ai_100_exec_kv_helper
+```
+## Low Level API
+
+### `convert_to_cloud_kvstyle`
+
+```{eval-rst}
+.. automodule:: QEfficient.exporter.export_hf_to_cloud_ai_100
+   :members:
+   :show-inheritance:
+   :exclude-members: qualcomm_efficient_converter, convert_to_cloud_bertstyle
+```
+
+### `convert_to_cloud_bertstyle`
+
+```{eval-rst}
+.. automodule:: QEfficient.exporter.export_hf_to_cloud_ai_100
+   :members:
+   :show-inheritance:
+   :exclude-members: qualcomm_efficient_converter, convert_to_cloud_kvstyle
+```
+
+### `utils`
+
+```{eval-rst}
+.. automodule:: QEfficient.utils.device_utils
+   :members:
+   :show-inheritance:
+```
+
+```{eval-rst}
+.. automodule:: QEfficient.utils.generate_inputs
+   :members:
+   :undoc-members:
+   :show-inheritance:
+```
+
+```{eval-rst}
+.. automodule:: QEfficient.utils.run_utils
+   :members:
+   :undoc-members:
+   :show-inheritance:
 ```
