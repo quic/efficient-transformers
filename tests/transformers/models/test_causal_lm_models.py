@@ -16,8 +16,8 @@ from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_con
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils import hf_download
-from QEfficient.utils._utils import load_hf_tokenizer
-from QEfficient.utils.constants import Constants
+from QEfficient.utils._utils import create_json, load_hf_tokenizer
+from QEfficient.utils.constants import Constants, QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
 
@@ -82,6 +82,8 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     ctx_len: int = Constants.CTX_LEN,
     n_layer: int = 1,
     num_speculative_tokens: Optional[int] = None,
+    enable_qnn: Optional[bool] = False,
+    qnn_config: Optional[str] = None,
 ):
     """
     Validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
@@ -128,14 +130,27 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    qpc_path = qeff_model.compile(
-        prefill_seq_len=prompt_len,
-        ctx_len=ctx_len,
-        num_cores=14,
-        mxfp6=False,
-        aic_enable_depth_first=False,
-        num_speculative_tokens=num_speculative_tokens,
-    )
+    if enable_qnn:
+        qpc_path = qeff_model.compile(
+            prefill_seq_len=prompt_len,
+            ctx_len=ctx_len,
+            num_cores=14,
+            mxfp6=False,
+            aic_enable_depth_first=False,
+            num_speculative_tokens=num_speculative_tokens,
+            enable_qnn=enable_qnn,
+            qnn_config=qnn_config,
+        )
+    else:
+        qpc_path = qeff_model.compile(
+            prefill_seq_len=prompt_len,
+            ctx_len=ctx_len,
+            num_cores=14,
+            mxfp6=False,
+            aic_enable_depth_first=False,
+            num_speculative_tokens=num_speculative_tokens,
+        )
+
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
     gen_len = ort_tokens.shape[-1]
@@ -167,15 +182,29 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    qpc_path = qeff_model.compile(
-        prefill_seq_len=prompt_len,
-        ctx_len=ctx_len,
-        num_cores=14,
-        mxfp6=False,
-        aic_enable_depth_first=False,
-        full_batch_size=full_batch_size,
-        num_speculative_tokens=num_speculative_tokens,
-    )
+    if enable_qnn:
+        qpc_path = qeff_model.compile(
+            prefill_seq_len=prompt_len,
+            ctx_len=ctx_len,
+            num_cores=14,
+            mxfp6=False,
+            aic_enable_depth_first=False,
+            full_batch_size=full_batch_size,
+            num_speculative_tokens=num_speculative_tokens,
+            enable_qnn=enable_qnn,
+            qnn_config=qnn_config,
+        )
+    else:
+        qpc_path = qeff_model.compile(
+            prefill_seq_len=prompt_len,
+            ctx_len=ctx_len,
+            num_cores=14,
+            mxfp6=False,
+            aic_enable_depth_first=False,
+            full_batch_size=full_batch_size,
+            num_speculative_tokens=num_speculative_tokens,
+        )
+
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
     assert all(
@@ -233,6 +262,29 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
 
 
+@pytest.mark.on_qaic
+@pytest.mark.qnn
+@pytest.mark.parametrize("model_name", test_models)
+def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
+    """
+    QNN Compilation Test
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    if model_name == "microsoft/Phi-3-mini-4k-instruct":
+        n_layer = 2  # test only 2 layer models
+    else:
+        n_layer = 1
+
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, n_layer=n_layer, enable_qnn=True, qnn_config=qnn_config_json_path
+    )
+
+
 @pytest.mark.skip()  # remove when the SDK 1.20.0 issue solved for compiling this model
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", spd_test_models)
@@ -262,3 +314,20 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
     prompt_len = 1
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
+
+
+@pytest.mark.on_qaic
+@pytest.mark.qnn
+def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_qnn():
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and without continuous batching.
+    """
+    model_name = "gpt2"
+    prompt_len = 1
+
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, prompt_len=prompt_len, enable_qnn=True, qnn_config=qnn_config_json_path
+    )
