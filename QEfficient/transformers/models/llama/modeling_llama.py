@@ -29,7 +29,7 @@ from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
-class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding, nn.Module):
+class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding):
     """
     Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
     The only differences are:

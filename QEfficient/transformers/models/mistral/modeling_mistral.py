@@ -17,7 +17,6 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
     MistralConfig,

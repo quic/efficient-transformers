@@ -40,7 +40,11 @@ class QEffGemma2RotaryEmbedding(Gemma2RotaryEmbedding):
     """
 
     def __init__(self, config: Gemma2Config, device=None):
+<<<<<<< HEAD
         super().__init__(config=config)
+=======
+        Gemma2RotaryEmbedding.__init__(self, config=config)
+>>>>>>> 6ba4c76 (Code cleaning and formating)
 
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
@@ -132,6 +136,16 @@ class QEffGemma2Attention(Gemma2Attention):
     - add new args cache idx for the kv retention
     """
 
+<<<<<<< HEAD
+=======
+    def __init__(self, config: Gemma2Config, layer_idx: Optional[int] = None):
+        super().__init__(config, layer_idx)
+        # Define the general __qeff_init__() for any changes in the init calls
+        # Set the init in the module mapping pytorch transforms
+        self.config = config
+        self.__qeff_init__()
+
+>>>>>>> 6ba4c76 (Code cleaning and formating)
     def __qeff_init__(self):
         self.rotary_emb = QEffGemma2RotaryEmbedding(config=self.config)
 
@@ -344,6 +358,10 @@ class QEffGemma2Model(Gemma2Model):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
+<<<<<<< HEAD
+=======
+                position_embeddings=position_embeddings,
+>>>>>>> 6ba4c76 (Code cleaning and formating)
                 **kwargs,
             )
 
@@ -369,6 +387,26 @@ class QEffGemma2Model(Gemma2Model):
         )
         return output if return_dict else output.to_tuple()
 
+<<<<<<< HEAD
+=======
+    def _update_causal_mask(
+        self,
+        attention_mask: torch.Tensor,
+        input_tensor: torch.Tensor,
+        cache_position: torch.Tensor,
+        position_ids: torch.Tensor,
+        past_key_values: Cache,
+        output_attentions: bool,
+    ):
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
+        causal_mask = _create_causal_mask(
+            position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
+        )
+
+        return causal_mask
+
+>>>>>>> 6ba4c76 (Code cleaning and formating)
 
 class QEffGemma2ForCausalLM(Gemma2ForCausalLM, GenerationMixin):
     """
