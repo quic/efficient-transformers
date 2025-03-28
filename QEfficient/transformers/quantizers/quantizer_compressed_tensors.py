@@ -232,8 +232,9 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
                 "Currently only single quantization group is supported, please raise an issue with model details for support!"
             )
 
-        if quantization_status != "frozen":
-            raise NotImplementedError(f"expected quantization_status=`frozen`, got {quantization_status}")
+        # TODO: vbaddi: Enable FP8 Models via replicate kv heads script.
+        # if quantization_status != "frozen":
+        #     raise NotImplementedError(f"expected quantization_status=`frozen`, got {quantization_status}")
 
         if kv_cache_scheme:
             raise NotImplementedError(f"Expected kv_cache_scheme=None, got {kv_cache_scheme}")
