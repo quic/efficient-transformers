@@ -77,6 +77,7 @@ pipeline {
                            mkdir -p $PWD/cli &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/cli &&
+                           export HF_DATASETS_TRUST_REMOTE_CODE=True &&
                            pytest tests -m '(cli and not qnn)' --junitxml=tests/tests_log3.xml &&
                            deactivate"
                            '''
