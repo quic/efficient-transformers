@@ -629,7 +629,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io_vision["pixel_values"] = "float16"
         for output_name in output_names["vision"]:
-            custom_io_vision[output_name] = kv_cache_dtype
+            custom_io_vision[output_name] = "float16"
 
         if vision_onnx_path:
             self.vision_model.onnx_path = vision_onnx_path
