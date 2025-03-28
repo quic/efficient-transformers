@@ -627,9 +627,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         custom_io_vision = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
-        custom_io_vision["pixel_values"] = kv_cache_dtype
+        custom_io_vision["pixel_values"] = "float16"
         for output_name in output_names["vision"]:
-            custom_io_vision[output_name] = kv_cache_dtype
+            if output_name.startswith("past_"):
+                custom_io_vision[output_name] = kv_cache_dtype
+            else:
+                custom_io_vision[output_name] = "float16"
 
         if vision_onnx_path:
             self.vision_model.onnx_path = vision_onnx_path
@@ -657,12 +660,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Inputs
         for output_name in output_names["lang"]:
             if output_name.endswith("_RetainedState"):
-                custom_io_lang[output_name[: -len("_RetainedState")]] = kv_cache_dtype
+                custom_io_lang[output_name[: -len("_RetainedState")]] = (
+                    "float16" if "vit_embeds" in output_name else kv_cache_dtype
+                )
 
         # outputs
         for output_name in output_names["lang"]:
             if output_name.endswith("_RetainedState"):
-                custom_io_lang[output_name] = kv_cache_dtype
+                custom_io_lang[output_name] = "float16" if "vit_embeds" in output_name else kv_cache_dtype
 
         self.lang_model._compile(
             compile_dir,
@@ -947,12 +952,14 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         # inputs
         for input_name in output_names:
             if input_name.endswith("_RetainedState"):
-                custom_io[input_name[: -len("_RetainedState")]] = kv_cache_dtype
+                custom_io[input_name[: -len("_RetainedState")]] = (
+                    "float16" if "pixel_values" in input_name else kv_cache_dtype
+                )
 
         # outputs
         for output_name in output_names:
             if output_name.endswith("_RetainedState"):
-                custom_io[output_name] = kv_cache_dtype
+                custom_io[output_name] = "float16" if "pixel_values" in output_name else kv_cache_dtype
 
         self._compile(
             onnx_path,

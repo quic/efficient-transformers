@@ -38,9 +38,9 @@ class QEFFLlavaEncoderWrapper(nn.Module):
             selected_image_feature = selected_image_feature
         else:
             raise ValueError(f"Unexpected select feature strategy: {self.model.config.vision_feature_select_strategy}")
-        image_features = self.model.multi_modal_projector(selected_image_feature)
+        vit_embeds = self.model.multi_modal_projector(selected_image_feature)
 
-        return image_features
+        return vit_embeds
 
 
 class QEFFLlavaDecoderWrapper(nn.Module):
@@ -50,21 +50,21 @@ class QEFFLlavaDecoderWrapper(nn.Module):
         self.config = self.model.config
         self.language_model = self.model.language_model
 
-    def forward(self, input_ids, image_features, position_ids, past_key_values):
+    def forward(self, input_ids, vit_embeds, position_ids, past_key_values):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
-        image_features = image_features.to(inputs_embeds.device, inputs_embeds.dtype)
+        vit_embeds = vit_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
         mask = input_ids == self.model.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
         indices0 = torch.arange(mask.shape[0]).view(-1, 1)
-        image_features_expanded = image_features[indices0, indices1]
-        inputs_embeds = torch.where(mask.unsqueeze(-1), image_features_expanded, inputs_embeds)
+        vit_embeds_expanded = vit_embeds[indices0, indices1]
+        inputs_embeds = torch.where(mask.unsqueeze(-1), vit_embeds_expanded, inputs_embeds)
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
         )
 
-        return outputs.logits, image_features, outputs.past_key_values
+        return outputs.logits, vit_embeds, outputs.past_key_values
 
 
 class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
@@ -86,14 +86,14 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             selected_image_feature = selected_image_feature
         else:
             raise ValueError(f"Unexpected select feature strategy: {self.config.vision_feature_select_strategy}")
-        image_features = self.multi_modal_projector(selected_image_feature)
-        image_features = image_features.to(inputs_embeds.device, inputs_embeds.dtype)
+        vit_embeds = self.multi_modal_projector(selected_image_feature)
+        vit_embeds = vit_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
 
         mask = input_ids == self.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
         indices0 = torch.arange(mask.shape[0]).view(-1, 1)
-        image_features_expanded = image_features[indices0, indices1]
-        image_inputs_embeds = torch.where(mask.unsqueeze(-1), image_features_expanded, inputs_embeds)
+        vit_embeds_expanded = vit_embeds[indices0, indices1]
+        image_inputs_embeds = torch.where(mask.unsqueeze(-1), vit_embeds_expanded, inputs_embeds)
         # *where to skip image encoder for decode*
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_inputs_embeds)
         outputs = self.language_model(
@@ -118,7 +118,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         }
         lang_inputs = {
             "input_ids": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
-            "image_features": torch.ones((BS, 576, self.language_model.config.hidden_size), dtype=torch.float32),
+            "vit_embeds": torch.ones((BS, 576, self.language_model.config.hidden_size), dtype=torch.float32),
             "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
         }
         lang_inputs["position_ids"] = lang_inputs.pop("attention_mask").cumsum(1)
@@ -137,7 +137,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             inputs["vision"] = vision_inputs
             inputs["lang"] = lang_inputs
         else:
-            lang_inputs.pop("image_features")
+            lang_inputs.pop("vit_embeds")
             inputs = {**vision_inputs, **lang_inputs}
         return inputs
 
@@ -218,7 +218,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         return dynamic_axes
 
     def get_output_names(self, kv_offload: bool = False):
-        vision_output_names = ["image_features"]
+        vision_output_names = ["vit_embeds"]
         lang_output_names = ["logits"]
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
@@ -226,7 +226,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
 
         output_names = {}
         if kv_offload:
-            lang_output_names.insert(1, "image_features_RetainedState")
+            lang_output_names.insert(1, "vit_embeds_RetainedState")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
