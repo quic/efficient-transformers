@@ -21,8 +21,8 @@ from transformers.models.llama.modeling_llama import (
     LlamaForCausalLM,
     LlamaModel,
     LlamaRotaryEmbedding,
+    apply_rotary_pos_emb,
     repeat_kv,
-    rotate_half,
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
@@ -94,17 +94,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     # Cast back to original dtype
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
-def eager_attention_forward(
-    module: nn.Module,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
-    scaling: float,
-    **kwargs,
-):
-    key_states = repeat_kv(key, module.num_key_value_groups)
-    value_states = repeat_kv(value, module.num_key_value_groups)
 
 def eager_attention_forward(
     module: nn.Module,
@@ -159,7 +148,7 @@ class QEffLlamaAttention(LlamaAttention):
         kv_seq_len = key_states.shape[-2]
 
         kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos, sin = position_embeddings
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
