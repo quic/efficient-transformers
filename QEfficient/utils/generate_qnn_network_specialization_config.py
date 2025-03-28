@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import json
-from typing import Optional
+from typing import Dict, List, Optional
 
 import onnx
 import yaml
@@ -17,15 +17,11 @@ from onnx import helper
 """
 
 
-def fetch_nodes_info(
+def generate_qnn_specialization(
     onnx_graph_path: str,
-    batch_size: int,
-    sequence_length: int,
-    context_length: int,
+    specializations: List[Dict[str, int]],
+    custom_io: Optional[Dict[str, str]] = None,
     file_path: str = "custom_io_config.yaml",
-    full_batch_size: Optional[int] = None,
-    kv_precision: Optional[str] = "float16",
-    kv_cache_batch_size: Optional[int] = None,
 ) -> None:
     """
     Generates network specialization config custom IO file for converter stage in QNN compilation.
@@ -34,134 +30,113 @@ def fetch_nodes_info(
 
     ``Mandatory`` Args:
         :onnx_graph_path (str): Generated ``ONNX`` Model Path.
-        :batch_size (int): Batch size to compile the model for.
-        :sequence_length (int): Sequence length for the model to compile.
-        :context_length (int): Maximum context length to compile the model.
+        :specializations (List[Dict[str, int]]): Specialization file containing compilation parameter values.
 
     ``Optional`` Args:
+        :custom_io (Dict[str, str]): Custom IO containing overriding datatype information for onnx graph nodes used in compilation.
         :file_path (str): File path to save the generated custom IO config. ``Defaults to custom_io_config.yaml.``
-        :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Default to None``
-        :kv_precision (str): Sets kv precision for compilation.  ``Defaults to float16.``
-        :kv_cache_batch_size (int): kv_cache_batch_size for Prefix Caching. ``Defaults to None.``
     """
 
-    # Load the ONNX model
+    # Load the ONNX model graph
     onnx_model = onnx.load(onnx_graph_path)
 
-    input_nodes = []
     input_nodes_info = []
     final_dict = {}
-    output_nodes = []
     output_nodes_info = []
+
+    # Populating input graph nodes information.
     for node in onnx_model.graph.input:
-        input_nodes.append(node.name)
         input_info = {}
+
+        # Assigining data type value as per the onnx graph input.
         input_info["DataType"] = str(helper.tensor_dtype_to_np_dtype(node.type.tensor_type.elem_type))
-        if "past_key" in node.name or "past_value" in node.name:
-            input_info["DataType"] = kv_precision
 
-        if "batch_index" in node.name:
-            if full_batch_size:
-                input_info["Shape"] = f"(1, 1), ({full_batch_size}, 1)"
+        # Over riding the data type according to the custom_io (if provided).
+        if custom_io is not None and node.name in custom_io:
+            input_info["DataType"] = "uint8" if custom_io[node.name] == "mxint8" else custom_io[node.name]
+
+        # Create Shapes List for the input node.
+        shapes = []
+        for input_shape in node.type.tensor_type.shape.dim:
+            if input_shape.HasField("dim_value"):
+                shape = input_shape.dim_value
+            elif input_shape.HasField("dim_param"):
+                shape = input_shape.dim_param
             else:
-                raise AttributeError(
-                    "ERROR: Full batch size is required for populating batch_index in custom_io_config.yaml"
-                )
-        else:
-            shapes = []
-            for input_shape in node.type.tensor_type.shape.dim:
-                if input_shape.HasField("dim_value"):
-                    shape = input_shape.dim_value
-                elif input_shape.HasField("dim_param"):
-                    shape = input_shape.dim_param
-                else:
-                    shape = "shape_not_found"
-                shapes.append(shape)
+                raise AttributeError(f"ERROR: {input_shape} Shape not Found")
+            shapes.append(shape)
 
-            if (
-                ("batch_size" in shapes or "full_batch_size" in shapes)
-                and ("ctx_len" in shapes or "max_context_len" in shapes)
-                and len(shapes) >= 3
-            ):
-                shapeList = []
-                for shape in shapes:
-                    if isinstance(shape, str):
-                        if "full_batch_size" in shape:
-                            if ("past_key" in node.name or "past_value" in node.name) and kv_cache_batch_size:
-                                shapeList.append(kv_cache_batch_size)
-                            elif full_batch_size:
-                                shapeList.append(full_batch_size)
-                            else:
-                                raise AttributeError(
-                                    "ERROR: Full batch size is required to generate custom_io_config.yaml"
-                                )
-                        elif "batch_size" in shape:
-                            shapeList.append(batch_size)
-                        elif shape in ["ctx_len", "max_context_len"]:
-                            shapeList.append(context_length)
+        # Filling shape value for nodes with shape size != 2, example: past_key / past_value nodes.
+        if len(shapes) != 2:
+            shape_list = []
+            for input_shape in shapes:
+                # If shape contains the parameter string, it value is extracted from the specialization file.
+                if isinstance(input_shape, str):
+                    if input_shape in specializations[0]:
+                        shape_list.append(int(specializations[0][input_shape]))
                     else:
-                        shapeList.append(shape)
-                shape = str(shapeList).replace("[", "(").replace("]", ")")
-            elif "batch_size" in shapes and ("seq_len" in shapes or "prompt_len" in shapes):
-                shape_1 = (
-                    str(
-                        [
-                            batch_size if isinstance(shape, str) and "batch_size" in shape else sequence_length
-                            for shape in shapes
-                        ]
-                    )
-                    .replace("[", "(")
-                    .replace("]", ")")
-                )
-                if full_batch_size:
-                    shape_2 = (
-                        str(
-                            [
-                                full_batch_size if isinstance(shape, str) and "batch_size" in shape else 1
-                                for shape in shapes
-                            ]
-                        )
-                        .replace("[", "(")
-                        .replace("]", ")")
-                    )
+                        raise AttributeError(f"ERROR: {input_shape} is required in specializations")
+                # If shape contains the value, then that value is used as it is.
                 else:
-                    shape_2 = (
-                        str([batch_size if isinstance(shape, str) and "batch_size" in shape else 1 for shape in shapes])
-                        .replace("[", "(")
-                        .replace("]", ")")
-                    )
-                shape = shape_1 + "," + shape_2
-            elif ("batch_size" in shapes or "full_batch_size" in shapes) and (
-                "ctx_len" in shapes or "max_context_len" in shapes
-            ):
-                shape = (
-                    str(
-                        [
-                            batch_size if isinstance(shape, str) and "batch_size" in shape else context_length
-                            for shape in shapes
-                        ]
-                    )
-                    .replace("[", "(")
-                    .replace("]", ")")
+                    shape_list.append(input_shape)
+
+            # Calculated shape is now assigned to the input node.
+            input_info["Shape"] = str(shape_list).replace("[", "(").replace("]", ")")
+        # If shape value for nodes is with shape size == 2, example: input_ids, position_ids, etc.
+        else:
+            shape_list = []
+            for input_shape in shapes:
+                if isinstance(input_shape, str):
+                    if input_shape in specializations[0]:
+                        shape_list.append(int(specializations[0][input_shape]))
+                    else:
+                        raise AttributeError(f"ERROR: {input_shape} is required in specializations")
+                else:
+                    shape_list.append(input_shape)
+            # If specializations file contains more than one parameters list, then first list is used for prefill and second one for decode graph.
+            if len(specializations) > 1:
+                prefill_shape_list = shape_list
+                decode_shape_list = []
+                for input_shape in shapes:
+                    if isinstance(input_shape, str):
+                        if input_shape in specializations[1]:
+                            decode_shape_list.append(int(specializations[1][input_shape]))
+                        else:
+                            raise AttributeError(f"ERROR: {input_shape} is required in specializations")
+                    else:
+                        decode_shape_list.append(input_shape)
+
+                input_info["Shape"] = (
+                    str(prefill_shape_list).replace("[", "(").replace("]", ")")
+                    + ", "
+                    + str(decode_shape_list).replace("[", "(").replace("]", ")")
                 )
-            input_info["Shape"] = shape
+
+            # If specializations file contains only one parameters list, then that list is used for decode graph information.
+            else:
+                input_info["Shape"] = str(shape_list).replace("[", "(").replace("]", ")")
+
+        # Finally, input node is created with its name, and desired model parameters {DataType, Shape}
         input_nodes_info.append({"Name": node.name, "Desired Model Parameters": input_info})
 
     # Prepare output tensor configuration
     for output in onnx_model.graph.output:
-        output_nodes.append(output.name)
         output_info = {}
+
+        # Assigining data type value as per the onnx graph input.
         output_info["DataType"] = str(helper.tensor_dtype_to_np_dtype(output.type.tensor_type.elem_type))
-        if "past_key" in output.name or "past_value" in output.name:
-            output_info["DataType"] = kv_precision
-        elif "logits" in output.name:
-            output_info["DataType"] = "float32"
+
+        # Over riding the data type according to the custom_io (if provided).
+        if custom_io is not None and output.name in custom_io:
+            output_info["DataType"] = "uint8" if custom_io[output.name] == "mxint8" else custom_io[output.name]
+
+        # Finally, output node is created with its name, and desired model parameters {DataType}
         output_nodes_info.append({"Name": output.name, "Desired Model Parameters": output_info})
 
-    # Combine input and output configurations
+    # Combining input and output configurations
     final_dict = {"Input Tensor Configuration": input_nodes_info, "Output Tensor Configuration": output_nodes_info}
 
-    # Save the configuration to a YAML file
+    # Saving the configuration to a YAML file
     try:
         with open(file_path, "w") as yaml_file:
             yaml.dump(final_dict, yaml_file, default_flow_style=False, sort_keys=False)
