@@ -29,16 +29,14 @@ class QEffInternDecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.config = self.model.language_model.config
+        self.language_model = self.model.language_model
 
     def forward(self, input_ids, vit_embeds, position_ids, past_key_values):
-        # TODO: Check if Hardcoding this is okay, i.e. check if this value is common for all intern models
-        IMG_CONTEXT_TOKEN = 151667
-
         input_embeds = self.model.language_model.get_input_embeddings()(input_ids)
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
         image_input_ids = input_ids.reshape(B * N)
-        selected = image_input_ids == IMG_CONTEXT_TOKEN
+        selected = image_input_ids == constants.INTERN_IMG_CONTEXT_TOKEN
         indices1 = selected.unsqueeze(0).to(torch.int64).cumsum(1) - 1
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
         image_features_expanded = vit_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
@@ -72,16 +70,16 @@ class QEffInternVLModel(nn.Module):
             logger.warning(
                 "User should pass `num_patches` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 13"
             )
-            num_patches = 13
+            num_patches = constants.INTERN_NUM_PATCHES
 
-        prefill_seq_len = prefill_seq_len if prefill_seq_len else 3840  # 4096-256
-        ctx_len = ctx_len if ctx_len else 4096
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.INTERN_PREFILL_SEQ_LEN  # 4096-256
+        ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
             img_size = getattr(self.config.vision_config, "image_size")
         elif img_size is None:
-            img_size = 448
+            img_size = constants.INTERN_IMG_SIZE
             logger.warning("Setting img_size to be 448, as it was neither passed nor found in vision_config")
-        if img_size != 448 and kv_offload:
+        if img_size != constants.INTERN_IMG_SIZE and kv_offload:
             raise NotImplementedError("Image Size other than 448 is not supported for Intern models yet.")
         vision = [
             {
@@ -124,6 +122,7 @@ class QEffInternVLModel(nn.Module):
         lang_dynamic_axes = {}
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
+        lang_dynamic_axes["vit_embeds"] = {0: "num_patches"}
         vision_dynamic_axes["pixel_values"] = {0: "num_patches", 2: "img_size", 3: "img_size"}
 
         pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
@@ -157,31 +156,40 @@ class QEffInternVLModel(nn.Module):
         return output_names
 
     def get_dummy_inputs(self, kv_offload: bool = False):
-        num_patches = 13
-        C = 3
         if vis_cfg := getattr(self.config, "vision_config", None):
-            img_size = getattr(vis_cfg, "image_size", 448)
+            img_size = getattr(vis_cfg, "image_size", constants.INTERN_IMG_SIZE)
         else:
-            img_size = 448
-        if img_size != 448 and kv_offload:
+            img_size = constants.INTERN_IMG_SIZE
+        if img_size != constants.INTERN_IMG_SIZE and kv_offload:
             raise NotImplementedError("Image Size other than 448 is not supported for Intern models yet.")
 
-        # Taken from the modeling files of OpenGVLab/InternVL2_5-1B
-        feature_size = int((((self.config.vision_config.hidden_size**0.5) * self.config.downsample_ratio) ** 2))
+        patch_size = getattr(self.config.vision_config, "patch_size", None)
+        downsample_ratio = getattr(self.config, "downsample_ratio", None)
+        if patch_size and downsample_ratio:
+            computed_feature_size = int(((img_size / patch_size) * downsample_ratio) ** 2)
+            if computed_feature_size != constants.INTERN_FEATURE_SIZE:
+                logger.warning(
+                    "Discrepancy detected between estimated and actual feature sizes. Could impact on functionality or accuracy"
+                )
 
         # Define shapes
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         inputs_shapes["vit_embeds"] = (
-            num_patches,
-            feature_size,
+            constants.INTERN_NUM_PATCHES,
+            constants.INTERN_FEATURE_SIZE,
             self.language_model.config.hidden_size,
         )
         inputs_shapes["position_ids"] = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
-        inputs_shapes["pixel_values"] = (num_patches, C, img_size, img_size)
+        inputs_shapes["pixel_values"] = (
+            constants.INTERN_NUM_PATCHES,
+            constants.INTERN_NUM_CHANNELS,
+            img_size,
+            img_size,
+        )
 
         # Define inputs
         vision_inputs = {}
@@ -218,15 +226,12 @@ class QEffInternVLModel(nn.Module):
         return inputs
 
     def forward(self, input_ids, pixel_values, position_ids, past_key_values):
-        # TODO: Check if Hardcoding this is okay, i.e. check if this value is common for all intern models
-        IMG_CONTEXT_TOKEN = 151667
-
         input_embeds = self.language_model.get_input_embeddings()(input_ids)
         vit_embeds = self.extract_feature(pixel_values)
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
         image_input_ids = input_ids.reshape(B * N)
-        selected = image_input_ids == IMG_CONTEXT_TOKEN
+        selected = image_input_ids == constants.INTERN_IMG_CONTEXT_TOKEN
         indices1 = selected.unsqueeze(0).to(torch.int64).cumsum(1) - 1
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
         image_features_expanded = vit_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]

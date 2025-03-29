@@ -40,14 +40,14 @@ def test_simple_prefix_caching(model_name):
 def test_simple_prefix_caching_qnn(model_name):
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True)
     qnn_config = {
-        "convertor_args_extension": "",
+        "converter_args_extension": "",
         "context_binary_generator_args_extension": "--log_level debug",
         "qnn_compilation_backend": {
             "compiler_enable_depth_first": True,
             "compiler_printDDRStats": False,
             "compiler_printPerfMetrics": False,
         },
-        "SKIP_QNN_CONVERTOR_STEP": False,
+        "SKIP_QNN_CONVERTER_STEP": False,
     }
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, qnn_config)
