@@ -31,7 +31,7 @@ from QEfficient.transformers.models.llama.modeling_llama import (
 )
 
 
-class LlamaSwiftKVConfig(LlamaConfig):
+class QeffLlamaSwiftKVConfig(LlamaConfig):
     """
     Args:
         num_key_value_layers (int, optional):
@@ -59,8 +59,8 @@ class LlamaSwiftKVConfig(LlamaConfig):
         assert (self.num_hidden_layers - self.num_key_value_layers) % self.key_value_group_size == 0
 
 
-class LlamaSwiftKVAttention(nn.Module):
-    def __init__(self, config: LlamaSwiftKVConfig, layer_idx) -> None:
+class QeffLlamaSwiftKVAttention(nn.Module):
+    def __init__(self, config: QeffLlamaSwiftKVConfig, layer_idx) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
         self.attention_dropout = config.attention_dropout
@@ -139,12 +139,12 @@ class LlamaSwiftKVAttention(nn.Module):
         return attn_output, past_key_value
 
 
-class LlamaSwiftKVDecoderLayer(nn.Module):
-    def __init__(self, config: LlamaSwiftKVConfig, layer_idx) -> None:
+class QeffLlamaSwiftKVDecoderLayer(nn.Module):
+    def __init__(self, config: QeffLlamaSwiftKVConfig, layer_idx) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
         self.num_key_value_heads = config.num_key_value_heads
-        self.self_attn = LlamaSwiftKVAttention(config=config, layer_idx=layer_idx)
+        self.self_attn = QeffLlamaSwiftKVAttention(config=config, layer_idx=layer_idx)
         self.mlp = LlamaMLP(config)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -179,10 +179,10 @@ class LlamaSwiftKVDecoderLayer(nn.Module):
         return hidden_states, past_key_values
 
 
-class LlamaSwiftKVModel(nn.Module):
-    config_class = LlamaSwiftKVConfig
+class QeffLlamaSwiftKVModel(nn.Module):
+    config_class = QeffLlamaSwiftKVConfig
 
-    def __init__(self, config: LlamaSwiftKVConfig):
+    def __init__(self, config: QeffLlamaSwiftKVConfig):
         super().__init__()
         self.vocab_size = config.vocab_size
         self.config = config
@@ -192,7 +192,7 @@ class LlamaSwiftKVModel(nn.Module):
             [
                 QEffLlamaDecoderLayer(config=config, layer_idx=idx)
                 if idx < config.num_key_value_layers
-                else LlamaSwiftKVDecoderLayer(config=config, layer_idx=idx)
+                else QeffLlamaSwiftKVDecoderLayer(config=config, layer_idx=idx)
                 for idx in range(config.num_hidden_layers)
             ]
         )
@@ -391,13 +391,13 @@ class LlamaSwiftKVModel(nn.Module):
         return hidden_states, next_cache
 
 
-class LlamaSwiftKVForCausalLM(PreTrainedModel):  #
-    config_class = LlamaSwiftKVConfig
+class QeffLlamaSwiftKVForCausalLM(PreTrainedModel):  #
+    config_class = QeffLlamaSwiftKVConfig
 
-    def __init__(self, config: LlamaSwiftKVConfig):
+    def __init__(self, config: QeffLlamaSwiftKVConfig):
         super().__init__(config=config)
 
-        self.model = LlamaSwiftKVModel(
+        self.model = QeffLlamaSwiftKVModel(
             config=config,
         )
         self.vocab_size = config.vocab_size
