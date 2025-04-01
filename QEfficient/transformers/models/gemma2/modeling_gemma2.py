@@ -24,6 +24,7 @@ from transformers.models.gemma2.modeling_gemma2 import (
     Gemma2RotaryEmbedding,
     repeat_kv,
     rotate_half,
+    apply_rotary_pos_emb,
 )
 
 # from transformers.utils import is_torchdynamo_compiling
@@ -64,38 +65,6 @@ class QEffGemma2RotaryEmbedding(Gemma2RotaryEmbedding):
             self.cos_cached[:seq_len].to(dtype=x.dtype),
             self.sin_cached[:seq_len].to(dtype=x.dtype),
         )
-
-
-def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
-    """Applies Rotary Position Embedding to the query and key tensors.
-
-    Args:
-        q (`torch.Tensor`): The query tensor.
-        k (`torch.Tensor`): The key tensor.
-        cos (`torch.Tensor`): The cosine part of the rotary embedding.
-        sin (`torch.Tensor`): The sine part of the rotary embedding.
-        position_ids (`torch.Tensor`):
-            The position indices of the tokens corresponding to the query and key tensors. For example, this can be
-            used to pass offsetted position ids when working with a KV-cache.
-        unsqueeze_dim (`int`, *optional*, defaults to 1):
-            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
-            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
-            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
-            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
-            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
-            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
-    Returns:
-        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
-    """
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
-
-    # Apply rotation
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    # Cast back to original dtype
-    return q_embed.to(q.dtype), k_embed.to(k.dtype)
-
 
 def eager_attention_forward(
     module: nn.Module,
@@ -162,7 +131,7 @@ class QEffGemma2Attention(Gemma2Attention):
 
         kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cos, sin = position_embeddings
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
@@ -322,10 +291,7 @@ class QEffGemma2Model(Gemma2Model):
                     attention_mask.shape[-1] if attention_mask.dim() == 2 else cache_position[-1].item()
                 )
 
-        causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, position_ids, past_key_values, output_attentions
-        )
-
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
         # embed positions
         hidden_states = inputs_embeds
 
@@ -380,23 +346,6 @@ class QEffGemma2Model(Gemma2Model):
             attentions=all_self_attns,
         )
         return output if return_dict else output.to_tuple()
-
-    def _update_causal_mask(
-        self,
-        attention_mask: torch.Tensor,
-        input_tensor: torch.Tensor,
-        cache_position: torch.Tensor,
-        position_ids: torch.Tensor,
-        past_key_values: Cache,
-        output_attentions: bool,
-    ):
-        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        causal_mask = _create_causal_mask(
-            position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
-        )
-
-        return causal_mask
 
 
 class QEffGemma2ForCausalLM(Gemma2ForCausalLM, GenerationMixin):
