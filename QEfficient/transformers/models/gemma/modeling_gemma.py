@@ -21,9 +21,8 @@ from transformers.models.gemma.modeling_gemma import (
     GemmaForCausalLM,
     GemmaModel,
     GemmaRotaryEmbedding,
+    apply_rotary_pos_emb,
     repeat_kv,
-    rotate_half,
-    apply_rotary_pos_emb
 )
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -86,6 +85,7 @@ class QEffGemmaRotaryEmbedding(GemmaRotaryEmbedding):
             self.cos_cached[:seq_len].to(dtype=x.dtype),
             self.sin_cached[:seq_len].to(dtype=x.dtype),
         )
+
 
 class QEffGemmaAttention(GemmaAttention):
     """
@@ -327,6 +327,7 @@ class QEffGemmaModel(GemmaModel):
             attentions=all_self_attns,
         )
         return output if return_dict else output.to_tuple()
+
 
 class QEffGemmaForCausalLM(GemmaForCausalLM):
     """
