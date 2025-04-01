@@ -24,9 +24,8 @@ from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2ForCausalLM,
     Qwen2Model,
     Qwen2RotaryEmbedding,
-    repeat_kv,
-    rotate_half,
     apply_rotary_pos_emb,
+    repeat_kv,
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
@@ -92,6 +91,7 @@ class QEffQwen2RotaryEmbedding(Qwen2RotaryEmbedding):
         )
 
 
+<<<<<<< HEAD
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
@@ -134,6 +134,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
 
+=======
+>>>>>>> d0f7ffd (Ruff check and format)
 class QEffQwen2Attention(Qwen2Attention):
     """
     Copied from Qwen2Attention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen2/modeling_qwen2.py

@@ -24,10 +24,9 @@ from transformers.models.mistral.modeling_mistral import (
     MistralForCausalLM,
     MistralModel,
     MistralRotaryEmbedding,
+    apply_rotary_pos_emb,
     logger,
     repeat_kv,
-    apply_rotary_pos_emb,
-    rotate_half,
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache

@@ -26,7 +26,6 @@ from transformers.models.falcon.modeling_falcon import (
     FalconModel,
     FalconRotaryEmbedding,
     dropout_add,
-    rotate_half,
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
@@ -310,6 +309,7 @@ class QEffFalconModel(FalconModel):
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
         )
+
 
 class QEffFalconForCausalLM(FalconForCausalLM):
     """
