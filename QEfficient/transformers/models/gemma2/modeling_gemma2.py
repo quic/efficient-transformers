@@ -22,9 +22,8 @@ from transformers.models.gemma2.modeling_gemma2 import (
     Gemma2ForCausalLM,
     Gemma2Model,
     Gemma2RotaryEmbedding,
-    repeat_kv,
-    rotate_half,
     apply_rotary_pos_emb,
+    repeat_kv,
 )
 
 # from transformers.utils import is_torchdynamo_compiling
@@ -65,6 +64,7 @@ class QEffGemma2RotaryEmbedding(Gemma2RotaryEmbedding):
             self.cos_cached[:seq_len].to(dtype=x.dtype),
             self.sin_cached[:seq_len].to(dtype=x.dtype),
         )
+
 
 def eager_attention_forward(
     module: nn.Module,
