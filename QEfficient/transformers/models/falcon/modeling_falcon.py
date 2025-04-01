@@ -27,7 +27,6 @@ from transformers.models.falcon.modeling_falcon import (
     FalconRotaryEmbedding,
     apply_rotary_pos_emb,
     dropout_add,
-    rotate_half,
 )
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -319,6 +318,7 @@ class QEffFalconModel(FalconModel):
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
         )
+
 
 class QEffFalconForCausalLM(FalconForCausalLM):
     """

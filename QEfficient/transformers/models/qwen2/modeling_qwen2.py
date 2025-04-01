@@ -24,9 +24,8 @@ from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2ForCausalLM,
     Qwen2Model,
     Qwen2RotaryEmbedding,
-    repeat_kv,
-    rotate_half,
     apply_rotary_pos_emb,
+    repeat_kv,
 )
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -90,6 +89,7 @@ class QEffQwen2RotaryEmbedding(Qwen2RotaryEmbedding):
             self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
             self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
         )
+
 
 class QEffQwen2Attention(Qwen2Attention):
     """
