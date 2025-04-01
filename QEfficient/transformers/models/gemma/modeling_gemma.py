@@ -23,6 +23,7 @@ from transformers.models.gemma.modeling_gemma import (
     GemmaRotaryEmbedding,
     repeat_kv,
     rotate_half,
+    apply_rotary_pos_emb
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
