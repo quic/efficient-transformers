@@ -12,24 +12,25 @@ from typing import List, Optional
 
 import requests
 from PIL import Image
-from transformers import AutoProcessor, TextStreamer, PreTrainedModel
+from transformers import AutoProcessor, PreTrainedModel, TextStreamer
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
 from QEfficient.base.common import QEFFCommonLoader
 from QEfficient.utils import check_and_assign_cache_dir, constants, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
+
 def execute_vlm_model(
     qeff_model: PreTrainedModel,
     model_name: str,
     image_url: str,
     image_path: str,
-    prompt: Optional[str] = None, #type: ignore
+    prompt: Optional[str] = None,  # type: ignore
     device_group: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
 ):
     if not (image_url or image_path):
-            raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
+        raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
     raw_image = Image.open(requests.get(image_url, stream=True).raw) if image_url else Image.open(image_path)
 
     processor = AutoProcessor.from_pretrained(model_name, use_fast=False)
@@ -54,6 +55,7 @@ def execute_vlm_model(
         generation_len=generation_len,
     )
     return output
+
 
 def main(
     model_name: str,
