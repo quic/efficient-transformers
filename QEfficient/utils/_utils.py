@@ -357,6 +357,50 @@ def get_num_layers_from_config(config):
     return n_layer
 
 
+def get_num_layers_vlm(config):
+    """
+    Gets number of layers from model config of VLM
+    --------
+
+    :config: AutoConfig from pretrained model.
+
+    Return:
+        number of layers of text and vision part
+    """
+
+    if hasattr(config, "llm_config") and hasattr(config, "vision_config"):  # Intern
+        n_layers_text = config.llm_config.num_hidden_layers
+        n_layers_vision = config.vision_config.num_hidden_layers
+    elif hasattr(config, "text_config") and hasattr(config, "vision_config"):  # Llava, Mllama
+        n_layers_text = config.text_config.num_hidden_layers
+        n_layers_vision = config.vision_config.num_hidden_layers
+
+    return (n_layers_text, n_layers_vision)
+
+
+def get_padding_shape_vlm(config, ctx_len, batch_size=1):
+    """
+    Gets padding dims for VLM models- number of kv heads and d_head
+    and returns padding shape - (batch_size, number of kv heads, seq_len, hidden size)
+    required for initialization of past_key_values
+    --------
+
+    :config: AutoConfig from pretrained model.
+    :batch_size: int. number of input prompts used to create inputs
+    :seq_len: int. sequence length to run the model for.
+
+    Return:
+        List[int, int, int, int]
+    """
+    if hasattr(config, "architectures") and "LlavaForConditionalGeneration" in config.architectures:
+        n_heads = config.text_config.num_key_value_heads
+        d_head = config.text_config.hidden_size // config.text_config.num_attention_heads
+        padding_shape = [batch_size, n_heads, ctx_len, d_head]
+    elif hasattr(config, "architectures") and "MllamaForConditionalGeneration" in config.architectures:
+        padding_shape = []
+    return padding_shape
+
+
 def execute_command(process: str, command: str, output_file_path: Optional[str] = None):
     """
     Executes the give command using subprocess.
