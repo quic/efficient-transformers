@@ -21,8 +21,8 @@ from transformers.models.llama.modeling_llama import (
     LlamaForCausalLM,
     LlamaModel,
     LlamaRotaryEmbedding,
-    apply_rotary_pos_emb,
     repeat_kv,
+    rotate_half,
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
