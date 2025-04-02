@@ -373,7 +373,7 @@ def get_num_layers_vlm(config):
     return (n_layers_text, n_layers_vision)
 
 
-def get_padding_shape_vlm(config, ctx_len, batch_size=1):
+def get_padding_shape_vlm(config, prompt_len, batch_size=1):
     """
     Gets padding dims for VLM models- number of kv heads and d_head
     and returns padding shape - (batch_size, number of kv heads, seq_len, hidden size)
@@ -387,12 +387,14 @@ def get_padding_shape_vlm(config, ctx_len, batch_size=1):
     Return:
         List[int, int, int, int]
     """
-    if hasattr(config, "architectures") and "LlavaForConditionalGeneration" in config.architectures:
+    if hasattr(config, "text_config"):
         n_heads = config.text_config.num_key_value_heads
         d_head = config.text_config.hidden_size // config.text_config.num_attention_heads
-        padding_shape = [batch_size, n_heads, ctx_len, d_head]
-    elif hasattr(config, "architectures") and "MllamaForConditionalGeneration" in config.architectures:
-        padding_shape = []
+        padding_shape = [batch_size, n_heads, prompt_len, d_head]
+    elif hasattr(config, "llm_config"):
+        n_heads = config.llm_config.num_key_value_heads
+        d_head = config.llm_config.hidden_size // config.llm_config.num_attention_heads
+        padding_shape = [batch_size, n_heads, prompt_len, d_head]
     return padding_shape
 
 

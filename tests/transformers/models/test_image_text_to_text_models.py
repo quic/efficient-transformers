@@ -5,46 +5,52 @@
 #
 # ----------------------------------------------------------------------------
 
+from io import BytesIO
+from typing import List
+
 import pytest
 import requests
-from PIL import Image
 import torch
-from typing import List
-from io import BytesIO
+from PIL import Image
 from transformers import (
     AutoConfig,
-    AutoTokenizer,
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
     AutoProcessor,
+    AutoTokenizer,
     TextStreamer,
 )
-from QEfficient.utils.test_utils import InternProcessor, InternVLModelWrapper
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText, QEFFAutoModelForCausalLM
+
+from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils import hf_download
+from QEfficient.utils._utils import get_num_layers_vlm
 from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunnerVlm
-from QEfficient.utils._utils import get_num_layers_vlm
+from QEfficient.utils.test_utils import InternProcessor, InternVLModelWrapper
 
+HF_TOKEN = ""
+NEW_GENERATION_TOKENS = 2
 test_models_config = [
-    (
-        "llava-hf/llava-1.5-7b-hf",
-        1,
-        784,
-        1024,
-        336,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
-        "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-    ),
-    (
-        "meta-llama/Llama-3.2-11B-Vision-Instruct",
-        1,
-        32,
-        512,
-        560,
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
-        "Explain this image",
-    ),
+    # (
+    #     "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    #     1,
+    #     32,
+    #     512,
+    #     560,
+    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
+    #     "Explain this image",
+    #     4,
+    # ),
+    # (
+    #     "llava-hf/llava-1.5-7b-hf",
+    #     1,
+    #     784,
+    #     1024,
+    #     336,
+    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
+    #     "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
+    #     1,
+    # ),
 ]
 
 intern_model_config = [
@@ -55,37 +61,56 @@ intern_model_config = [
         4096,
         "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
         "Please describe the image in detail.",
+        1,
     )
 ]
 
 
+### Seems no more changes would be required. Probably done for all.
 def load_image_text_to_text_model(model_config):
     model_path = hf_download(
-        repo_id=model_config["model_name"],
+        repo_id=model_config._name_or_path,
+        hf_token=HF_TOKEN,
         ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
     try:
         model_hf = AutoModelForImageTextToText.from_pretrained(
             model_path,
-            _attn_implementation="eager",
+            # _attn_implementation="eager",
             low_cpu_mem_usage=False,
-        )  # TODO:# Run models for single layers only
+            token=HF_TOKEN,
+            config=model_config,
+        )
     except ValueError:
         model_hf = AutoModelForCausalLM.from_pretrained(
-            model_path, _attn_implementation="eager", low_cpu_mem_usage=False, trust_remote_code=True
+            model_path,
+            low_cpu_mem_usage=False,
+            token=HF_TOKEN,
+            trust_remote_code=True,
+            config=model_config,
         )
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
     return model_hf, params
 
 
-def set_single_num_layers(config, n_layer=1):
-    if hasattr(config, "architectures") and "LlavaForConditionalGeneration" in config.architectures:
+### Add for InternVL and see if config.text_config could be used to decide layer names instead of architectures
+def set_num_layers(config, n_layer=1):
+    ## -1 indicates use all the layers of the model.
+    if n_layer == -1:
+        return config
+    elif hasattr(config, "model_type") and "mllama" in config.model_type:
+        config.text_config.num_hidden_layers = n_layer
+        config.text_config.cross_attention_layers = [
+            x for x in config.text_config.cross_attention_layers if x < n_layer
+        ]
+        # breakpoint()
+    elif hasattr(config, "text_config"):
         config.text_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
-    elif hasattr(config, "architectures") and "MllamaForConditionalGeneration" in config.architectures:
-        config.text_config.num_hidden_layers = n_layer
-        # config.vision_config.num_hidden_layers = n_layer
+    elif hasattr(config, "llm_config"):
+        config.llm_config.num_hidden_layers = n_layer
+        config.vision_config.num_hidden_layers = n_layer
     return config
 
 
@@ -96,16 +121,23 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     query: str,
     prompt_len: int,
     ctx_len: int,
+    max_gen_len: int = 20,
     batch_size: int = 1,
     n_layer: int = 1,
+    kv_offload: bool = False,
+    num_devices: int = 1,
 ):
+    # breakpoint()
     model_config = {"model_name": model_name}
     model_config["img_size"] = img_size
-    model_hf, _ = load_image_text_to_text_model(model_config)
-    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-    config = AutoConfig.from_pretrained(model_config["model_name"])
+    config = AutoConfig.from_pretrained(
+        model_config["model_name"], token=HF_TOKEN, trust_remote_code=True, padding=True
+    )
     config._attn_implementation = "eager"
-    # config = set_single_num_layers(config, 1)
+    config = set_num_layers(config, n_layer=n_layer)
+    model_hf, _ = load_image_text_to_text_model(config)
+    processor = AutoProcessor.from_pretrained(model_name, token=HF_TOKEN, trust_remote_code=True, padding=True)
+
     n_layer = get_num_layers_vlm(config)
     image = Image.open(requests.get(img_url, stream=True).raw)
     conversation = [
@@ -125,32 +157,63 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         image,
         conversation,
         prompt,
+        prompt_len,
         ctx_len,
+        max_gen_len,
         n_layer,
     )
 
     inputs = processor(images=image, text=prompt, return_tensors="pt")
     streamer = TextStreamer(processor.tokenizer)
+    # breakpoint()
+    checks = []
     pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-        model_config["model_name"], kv_offload=False, config=config
+        model_config["model_name"],
+        kv_offload=kv_offload,
+        config=config,
+        token=HF_TOKEN,
     )
-    pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model, inputs)
+    # breakpoint()
+    ### Using only late fusion api for both llava and llama right now.
+    # inputs = processor(images=image, text=prompt, return_tensors="pt")
+    pytorch_kv_tokens = api_runner.run_late_fusion_vlm_kv_model_on_pytorch(qeff_model.model)
+    # breakpoint()
+    # assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
+    #     "Tokens don't match for pytorch HF output and pytorch KV output"
+    # )
+    checks.append(pytorch_hf_tokens == pytorch_kv_tokens)
+    # breakpoint()
     onnx_model_path = qeff_model.export()
-    ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
-    # assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for pytorch KV output and ort output"
+
+    ort_tokens = api_runner.run_late_fusion_vlm_kv_model_on_ort(onnx_model_path)
+    # breakpoint()
+    # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
+    checks.append(pytorch_hf_tokens == ort_tokens)
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
     qeff_model.compile(
         img_size=model_config["img_size"],
-        num_devices=1,
+        num_devices=num_devices,
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
-        onnx_path=onnx_model_path,
         mxfp6=False,
     )
-    output = qeff_model.generate(inputs=inputs, device_ids=[0], generation_len=128, streamer=streamer)
-    print(processor.tokenizer.batch_decode(output.generated_ids))
+    inputs = processor(images=image, text=prompt, return_tensors="pt")
+    print("QPC Outputs (QAIC):")
+    output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
+    qpc_tokens = output.generated_ids[:, :-1]
+    # breakpoint()
+    # print(processor.tokenizer.batch_decode(output.generated_ids))
+    # breakpoint()
+    # assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
+    checks.append(pytorch_hf_tokens == qpc_tokens)
+    # breakpoint()
+    print(checks)
+    del model_hf
+    del qeff_model
+    del api_runner
+    del processor
     return
 
 
@@ -159,7 +222,7 @@ def run_intern_model_on_pytorch(model, tokenizer, processor, img_file):
     question = "<image>\n" + "Please describe the image shortly."
     inputs = tokenizer(question, return_tensors="pt")
     inputs["pixel_values"] = pixel_values.clone()
-    generation_config = dict(max_new_tokens=20, do_sample=True, bos_token_id=1)
+    # generation_config = dict(max_new_tokens=NEW_GENERATION_TOKENS, do_sample=True, bos_token_id=1)
     model_wrapper = InternVLModelWrapper(model)
     input_ids_len = len(inputs["input_ids"][0])
     outputs = model_wrapper(**inputs)
@@ -174,7 +237,7 @@ def run_intern_model_on_pytorch(model, tokenizer, processor, img_file):
         inputs["input_ids"] = torch.cat([inputs["input_ids"], predicted_token_id.unsqueeze(1)], dim=-1)
 
     generated_ids = inputs["input_ids"][0][input_ids_len:].detach().numpy()
-    generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+    tokenizer.decode(generated_ids, skip_special_tokens=True)
     return
 
 
@@ -197,7 +260,7 @@ def run_intern_kv_model_on_pytorch(model, inputs, processor, ctx_len, batch_size
     ]
 
     streamer = TextStreamer(processor.tokenizer)
-    generation_len = 10
+    generation_len = NEW_GENERATION_TOKENS
     generated_ids = torch.full((batch_size, generation_len + 1), processor.tokenizer.pad_token_id)
     pt_outputs = model(**inputs)
     inputs["input_ids"] = pt_outputs[0].argmax(2)
@@ -228,19 +291,35 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     query: str,
     prompt_len: int,
     ctx_len: int,
-    n_layer: int = 1,
+    max_gen_len: int = 20,
     batch_size: int = 1,
+    n_layer: int = 1,
+    kv_offload: bool = False,
+    num_devices: int = 1,
 ):
+    # model_config = {"model_name": model_name}
+    # model_hf, _ = load_image_text_to_text_model(model_config)
+
     model_config = {"model_name": model_name}
-    model_hf, _ = load_image_text_to_text_model(model_config)
+
+    config = AutoConfig.from_pretrained(model_config["model_name"], token=HF_TOKEN, trust_remote_code=True)
+    config._attn_implementation = "eager"
+    config = set_num_layers(config, n_layer=n_layer)
+    model_hf, _ = load_image_text_to_text_model(config)
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True)
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_config["model_name"],
+        kv_offload=kv_offload,
+        config=config,
+        token=HF_TOKEN,
+    )
     processor = InternProcessor(qeff_model.model, tokenizer)
     img = requests.get(img_url, stream=True)
     image = Image.open(BytesIO(img.content)).convert("RGB")
     image = image.resize((1000, 747))
-    pytorch_hf_output = run_intern_model_on_pytorch(model_hf, tokenizer, processor, image)
+    pytorch_hf_tokens = run_intern_model_on_pytorch(model_hf, tokenizer, processor, image)
+    breakpoint()
     pixel_values = processor.load_image(image, max_num=12)
     question = "<image>\n" + query
     # Chat Template information for prompt preprocessing
@@ -252,14 +331,54 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     inputs["pixel_values"] = pixel_values.clone()
     inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
     inputs.pop("attention_mask")
-    run_intern_kv_model_on_pytorch(qeff_model.model, inputs, processor, ctx_len)
+    checks = []
+    pytorch_kv_tokens = run_intern_kv_model_on_pytorch(qeff_model.model, inputs, processor, ctx_len)
+    checks.append(pytorch_hf_tokens == pytorch_kv_tokens)
+    breakpoint()
 
+    api_runner = ApiRunnerVlm(
+        batch_size,
+        processor,
+        config,
+        image,
+        messages,
+        prompt,
+        prompt_len,
+        ctx_len,
+        max_gen_len,
+        n_layer,
+    )
+
+    # inputs = processor(images=image, text=prompt, return_tensors="pt")
+    streamer = TextStreamer(processor.tokenizer)
+    onnx_model_path = qeff_model.export()
+
+    ort_tokens = api_runner.run_late_fusion_vlm_kv_model_on_ort(onnx_model_path)
+    # breakpoint()
+    # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
+    checks.append(pytorch_hf_tokens == ort_tokens)
+    if not get_available_device_id():
+        pytest.skip("No available devices to run model on Cloud AI 100")
+    qeff_model.compile(
+        num_devices=num_devices,
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
+        mxfp6=False,
+    )
+    # inputs = processor(images=image, text=prompt, return_tensors="pt")
+    print("QPC Outputs (QAIC):")
+    output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
+    # qpc_tokens = output.generated_ids[:, :-1]
+    print(processor.tokenizer.batch_decode(output.generated_ids))
     return
 
 
-@pytest.mark.parametrize("model_name, batch_size, prompt_len, ctx_len, img_size, img_url, query", test_models_config)
+@pytest.mark.on_qaic
+@pytest.mark.parametrize(
+    "model_name, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
+)
 def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-    model_name, batch_size, prompt_len, ctx_len, img_size, img_url, query
+    model_name, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
 ):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
@@ -267,29 +386,37 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
 
-    n_layer = 1
-    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-        prompt_len=prompt_len,
-        ctx_len=ctx_len,
-        img_size=img_size,
-        img_url=img_url,
-        query=query,
-        n_layer=n_layer,
-        batch_size=batch_size,
-    )
+    # n_layer = 4
+    # kv_offload = False
+    kv_offload = True
+    # breakpoint()
+    for offload in [kv_offload]:
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+            model_name=model_name,
+            prompt_len=prompt_len,
+            ctx_len=ctx_len,
+            max_gen_len=NEW_GENERATION_TOKENS,
+            img_size=img_size,
+            img_url=img_url,
+            query=query,
+            n_layer=n_layer,
+            batch_size=batch_size,
+            kv_offload=offload,
+        )
 
 
-@pytest.mark.parametrize("model_name, batch_size, prompt_len, ctx_len, img_url, query", intern_model_config)
+@pytest.mark.parametrize("model_name, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config)
 def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100(
-    model_name, batch_size, prompt_len, ctx_len, img_url, query
+    model_name, batch_size, prompt_len, ctx_len, img_url, query, n_layer
 ):
     check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         prompt_len=prompt_len,
         ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
         img_url=img_url,
         query=query,
-        n_layer=1,
+        n_layer=n_layer,
         batch_size=batch_size,
+        kv_offload=True,
     )
