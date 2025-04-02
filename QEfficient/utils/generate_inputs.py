@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+from typing import List
 
 import numpy as np
 import torch
@@ -11,7 +12,6 @@ import torch
 from QEfficient.utils import (
     get_num_layers_from_config,
     get_padding_shape_from_config,
-    # get_padding_shape_vlm,
     padding_check_and_fix,
 )
 
@@ -243,8 +243,6 @@ class InputHandlerVLM:
             num_patches = (vis_cfg.image_size // vis_cfg.patch_size) ** 2 + 1
             image_tokens_len = vis_cfg.max_num_tiles * num_patches
 
-        # generation_len = self.gen_len
-        # generated_ids = torch.full((self.batch_size, generation_len), self.processor.tokenizer.pad_token_id)
         inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
         inputs["past_key_values"] = []
         for i in range(num_hidden_layers):
@@ -269,7 +267,10 @@ class InputHandlerVLM:
         return inputs
 
     def prepare_vlm_ort_inputs(self):
-        txt_cfg = self.config.get_text_config()
+        if hasattr(self.config, "text_config"):
+            txt_cfg = self.config.text_config
+        else:
+            txt_cfg = self.config.llm_config
         num_hidden_layers = txt_cfg.num_hidden_layers
         num_key_value_heads = txt_cfg.num_key_value_heads
         head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
@@ -368,3 +369,83 @@ class InputHandlerVLM:
             if k not in updated_inputs.keys():
                 updated_inputs[k] = v
         return updated_inputs
+
+
+class InputHandlerInternVL(InputHandlerVLM):
+    def __init__(self, batch_size, config, image, processor, prompt, prompt_len, ctx_len, max_gen_len, n_layer):
+        self.ctx_len = ctx_len
+        self.prompt_len = prompt_len
+        self.max_gen_len = max_gen_len
+        self.config = config
+        self.image = image
+        self.prompt = prompt
+        self.batch_size = batch_size
+        self.n_layer = n_layer
+        self.processor = processor
+
+    def prepare_pytorch_inputs(self):
+        question = "<image>\n" + self.prompt
+        pixel_values = self.processor.load_image(self.image, max_num=12)
+        # Chat Template information for prompt preprocessing
+        messages: List[List[str]] = []
+        roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
+        prompt = self.processor(pixel_values, question, messages, roles)
+        inputs = self.processor.tokenizer(prompt, return_tensors="pt")
+        inputs["pixel_values"] = pixel_values.clone()
+
+        if hasattr(self.config, "text_config"):
+            txt_cfg = self.config.text_config
+        else:
+            txt_cfg = self.config.llm_config
+
+        num_hidden_layers = txt_cfg.num_hidden_layers
+        num_key_value_heads = txt_cfg.num_key_value_heads
+        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
+
+        inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
+        inputs["past_key_values"] = []
+        for i in range(num_hidden_layers):
+            inputs["past_key_values"].append(
+                (
+                    torch.zeros(1, num_key_value_heads, self.ctx_len, head_dim),
+                    torch.zeros(1, num_key_value_heads, self.ctx_len, head_dim),
+                )
+            )
+
+        return inputs
+
+    def prepare_vlm_ort_inputs(self):
+        if hasattr(self.config, "text_config"):
+            txt_cfg = self.config.text_config
+        else:
+            txt_cfg = self.config.llm_config
+        num_hidden_layers = txt_cfg.num_hidden_layers
+        num_key_value_heads = txt_cfg.num_key_value_heads
+        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
+
+        question = "<image>\n" + self.prompt
+        pixel_values = self.processor.load_image(self.image, max_num=12)
+        # Chat Template information for prompt preprocessing
+        messages: List[List[str]] = []
+        roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
+        prompt = self.processor(pixel_values, question, messages, roles)
+        inputs = self.processor.tokenizer(prompt, return_tensors="np")
+        inputs["pixel_values"] = pixel_values.numpy()
+
+        if "attention_mask" in inputs.keys():
+            inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
+        inputs["past_key_values"] = []
+
+        vision_inputs = {
+            k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
+        }
+
+        for i in range(num_hidden_layers):
+            inputs["past_key." + str(i)] = np.zeros(
+                (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
+            )
+            inputs["past_value." + str(i)] = np.zeros(
+                (self.batch_size, num_key_value_heads, self.ctx_len, head_dim), dtype=np.float32
+            )
+        lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
+        return vision_inputs, lang_inputs

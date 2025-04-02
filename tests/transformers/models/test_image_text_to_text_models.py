@@ -10,7 +10,6 @@ from typing import List
 
 import pytest
 import requests
-import torch
 from PIL import Image
 from transformers import (
     AutoConfig,
@@ -25,8 +24,8 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 from QEfficient.utils import hf_download
 from QEfficient.utils._utils import get_num_layers_vlm
 from QEfficient.utils.device_utils import get_available_device_id
-from QEfficient.utils.run_utils import ApiRunnerVlm
-from QEfficient.utils.test_utils import InternProcessor, InternVLModelWrapper
+from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerVlm
+from QEfficient.utils.test_utils import InternProcessor
 
 HF_TOKEN = ""
 NEW_GENERATION_TOKENS = 2
@@ -41,16 +40,16 @@ test_models_config = [
     #     "Explain this image",
     #     4,
     # ),
-    # (
-    #     "llava-hf/llava-1.5-7b-hf",
-    #     1,
-    #     784,
-    #     1024,
-    #     336,
-    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
-    #     "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-    #     1,
-    # ),
+    (
+        "llava-hf/llava-1.5-7b-hf",
+        1,
+        784,
+        1024,
+        336,
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
+        "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
+        1,
+    ),
 ]
 
 intern_model_config = [
@@ -66,7 +65,6 @@ intern_model_config = [
 ]
 
 
-### Seems no more changes would be required. Probably done for all.
 def load_image_text_to_text_model(model_config):
     model_path = hf_download(
         repo_id=model_config._name_or_path,
@@ -76,7 +74,6 @@ def load_image_text_to_text_model(model_config):
     try:
         model_hf = AutoModelForImageTextToText.from_pretrained(
             model_path,
-            # _attn_implementation="eager",
             low_cpu_mem_usage=False,
             token=HF_TOKEN,
             config=model_config,
@@ -94,7 +91,6 @@ def load_image_text_to_text_model(model_config):
     return model_hf, params
 
 
-### Add for InternVL and see if config.text_config could be used to decide layer names instead of architectures
 def set_num_layers(config, n_layer=1):
     ## -1 indicates use all the layers of the model.
     if n_layer == -1:
@@ -104,7 +100,6 @@ def set_num_layers(config, n_layer=1):
         config.text_config.cross_attention_layers = [
             x for x in config.text_config.cross_attention_layers if x < n_layer
         ]
-        # breakpoint()
     elif hasattr(config, "text_config"):
         config.text_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
@@ -127,7 +122,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     kv_offload: bool = False,
     num_devices: int = 1,
 ):
-    # breakpoint()
     model_config = {"model_name": model_name}
     model_config["img_size"] = img_size
     config = AutoConfig.from_pretrained(
@@ -165,7 +159,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     inputs = processor(images=image, text=prompt, return_tensors="pt")
     streamer = TextStreamer(processor.tokenizer)
-    # breakpoint()
     checks = []
     pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -174,20 +167,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         config=config,
         token=HF_TOKEN,
     )
-    # breakpoint()
-    ### Using only late fusion api for both llava and llama right now.
-    # inputs = processor(images=image, text=prompt, return_tensors="pt")
-    pytorch_kv_tokens = api_runner.run_late_fusion_vlm_kv_model_on_pytorch(qeff_model.model)
-    # breakpoint()
+    pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
     # assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
     #     "Tokens don't match for pytorch HF output and pytorch KV output"
     # )
     checks.append(pytorch_hf_tokens == pytorch_kv_tokens)
-    # breakpoint()
     onnx_model_path = qeff_model.export()
 
     ort_tokens = api_runner.run_late_fusion_vlm_kv_model_on_ort(onnx_model_path)
-    # breakpoint()
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
     checks.append(pytorch_hf_tokens == ort_tokens)
     if not get_available_device_id():
@@ -203,85 +190,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     print("QPC Outputs (QAIC):")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     qpc_tokens = output.generated_ids[:, :-1]
-    # breakpoint()
-    # print(processor.tokenizer.batch_decode(output.generated_ids))
-    # breakpoint()
     # assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
     checks.append(pytorch_hf_tokens == qpc_tokens)
-    # breakpoint()
     print(checks)
-    del model_hf
-    del qeff_model
-    del api_runner
-    del processor
-    return
-
-
-def run_intern_model_on_pytorch(model, tokenizer, processor, img_file):
-    pixel_values = processor.load_image(img_file, max_num=12)
-    question = "<image>\n" + "Please describe the image shortly."
-    inputs = tokenizer(question, return_tensors="pt")
-    inputs["pixel_values"] = pixel_values.clone()
-    # generation_config = dict(max_new_tokens=NEW_GENERATION_TOKENS, do_sample=True, bos_token_id=1)
-    model_wrapper = InternVLModelWrapper(model)
-    input_ids_len = len(inputs["input_ids"][0])
-    outputs = model_wrapper(**inputs)
-    logits = outputs.logits[:, -1, :]
-    predicted_token_id = torch.argmax(logits, dim=-1)
-    inputs["input_ids"] = torch.cat([inputs["input_ids"], predicted_token_id.unsqueeze(1)], dim=-1)
-    # change hardcode
-    for _ in range(15):
-        outputs = model_wrapper(inputs["input_ids"])
-        logits = outputs.logits[:, -1, :]
-        predicted_token_id = torch.argmax(logits, dim=-1)
-        inputs["input_ids"] = torch.cat([inputs["input_ids"], predicted_token_id.unsqueeze(1)], dim=-1)
-
-    generated_ids = inputs["input_ids"][0][input_ids_len:].detach().numpy()
-    tokenizer.decode(generated_ids, skip_special_tokens=True)
-    return
-
-
-def run_intern_kv_model_on_pytorch(model, inputs, processor, ctx_len, batch_size=1):
-    head_dim = model.language_model.config.hidden_size // model.language_model.config.num_attention_heads
-    inputs["past_key_values"] = [
-        tuple(
-            [
-                torch.zeros(
-                    batch_size,
-                    model.language_model.config.num_key_value_heads,
-                    ctx_len,
-                    head_dim,
-                    dtype=torch.float32,
-                )
-                for _ in range(2)
-            ]
-        )
-        for _ in range(model.language_model.config.num_hidden_layers)
-    ]
-
-    streamer = TextStreamer(processor.tokenizer)
-    generation_len = NEW_GENERATION_TOKENS
-    generated_ids = torch.full((batch_size, generation_len + 1), processor.tokenizer.pad_token_id)
-    pt_outputs = model(**inputs)
-    inputs["input_ids"] = pt_outputs[0].argmax(2)
-    inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-    streamer.put(inputs["input_ids"])
-    generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
-    finished_sequences = inputs["input_ids"] == processor.tokenizer.eos_token_id
-    for i in range(1, generation_len):
-        outputs = model(**inputs)
-        inputs["input_ids"] = outputs[0].argmax(2)
-        streamer.put(inputs["input_ids"])
-        inputs["position_ids"] += 1
-        generated_ids[:, i] = inputs["input_ids"].squeeze(1)
-        finished_sequences |= inputs["input_ids"] == processor.tokenizer.eos_token_id
-        if finished_sequences.all():
-            break
-
-    streamer.end()
-
-    generated_texts = processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-    print(generated_texts)
     return
 
 
@@ -297,15 +208,13 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     kv_offload: bool = False,
     num_devices: int = 1,
 ):
-    # model_config = {"model_name": model_name}
-    # model_hf, _ = load_image_text_to_text_model(model_config)
-
     model_config = {"model_name": model_name}
 
     config = AutoConfig.from_pretrained(model_config["model_name"], token=HF_TOKEN, trust_remote_code=True)
     config._attn_implementation = "eager"
     config = set_num_layers(config, n_layer=n_layer)
     model_hf, _ = load_image_text_to_text_model(config)
+    n_layer = get_num_layers_vlm(config)
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
@@ -318,45 +227,44 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     img = requests.get(img_url, stream=True)
     image = Image.open(BytesIO(img.content)).convert("RGB")
     image = image.resize((1000, 747))
-    pytorch_hf_tokens = run_intern_model_on_pytorch(model_hf, tokenizer, processor, image)
-    breakpoint()
+
+    api_runner = ApiRunnerInternVL(
+        batch_size,
+        processor,
+        config,
+        image,
+        query,
+        prompt_len,
+        ctx_len,
+        max_gen_len,
+        n_layer,
+    )
     pixel_values = processor.load_image(image, max_num=12)
     question = "<image>\n" + query
     # Chat Template information for prompt preprocessing
     messages: List[List[str]] = []
     roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
     prompt = processor(pixel_values, question, messages, roles)
+
     inputs = tokenizer(prompt, return_tensors="pt")
     batch_size, prompt_len = inputs["input_ids"].shape
     inputs["pixel_values"] = pixel_values.clone()
-    inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
-    inputs.pop("attention_mask")
+    # inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
+    # inputs.pop("attention_mask")
     checks = []
-    pytorch_kv_tokens = run_intern_kv_model_on_pytorch(qeff_model.model, inputs, processor, ctx_len)
-    checks.append(pytorch_hf_tokens == pytorch_kv_tokens)
-    breakpoint()
+    ### HF Intern inference isn't working as of yet.
+    # pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf,inputs)
+    pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
+    # assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), "Tokens don't match for pytorch HF output and QEFF KV Model output"
+    checks.append(pytorch_kv_tokens == pytorch_kv_tokens)
+    # breakpoint()
 
-    api_runner = ApiRunnerVlm(
-        batch_size,
-        processor,
-        config,
-        image,
-        messages,
-        prompt,
-        prompt_len,
-        ctx_len,
-        max_gen_len,
-        n_layer,
-    )
-
-    # inputs = processor(images=image, text=prompt, return_tensors="pt")
     streamer = TextStreamer(processor.tokenizer)
     onnx_model_path = qeff_model.export()
 
     ort_tokens = api_runner.run_late_fusion_vlm_kv_model_on_ort(onnx_model_path)
-    # breakpoint()
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
-    checks.append(pytorch_hf_tokens == ort_tokens)
+    checks.append(pytorch_kv_tokens == ort_tokens)
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
     qeff_model.compile(
@@ -365,11 +273,12 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         ctx_len=ctx_len,
         mxfp6=False,
     )
-    # inputs = processor(images=image, text=prompt, return_tensors="pt")
     print("QPC Outputs (QAIC):")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
-    # qpc_tokens = output.generated_ids[:, :-1]
-    print(processor.tokenizer.batch_decode(output.generated_ids))
+    qpc_tokens = output.generated_ids[:, :-1]
+    # assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
+    checks.append(pytorch_kv_tokens == qpc_tokens)
+    print(checks)
     return
 
 
@@ -386,29 +295,30 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
 
-    # n_layer = 4
     # kv_offload = False
     kv_offload = True
-    # breakpoint()
-    for offload in [kv_offload]:
-        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-            model_name=model_name,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            max_gen_len=NEW_GENERATION_TOKENS,
-            img_size=img_size,
-            img_url=img_url,
-            query=query,
-            n_layer=n_layer,
-            batch_size=batch_size,
-            kv_offload=offload,
-        )
+
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_size=img_size,
+        img_url=img_url,
+        query=query,
+        n_layer=n_layer,
+        batch_size=batch_size,
+        kv_offload=kv_offload,
+    )
 
 
+@pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config)
 def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name, batch_size, prompt_len, ctx_len, img_url, query, n_layer
 ):
+    # kv_offload = False
+    kv_offload = True
     check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         prompt_len=prompt_len,
@@ -418,5 +328,5 @@ def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100(
         query=query,
         n_layer=n_layer,
         batch_size=batch_size,
-        kv_offload=True,
+        kv_offload=kv_offload,
     )

@@ -188,7 +188,7 @@ class InternVLModelWrapper(torch.nn.Module):
         self.model = model
         # self.generation_config = generation_config
 
-    def forward(self, input_ids, pixel_values=None, **kwargs):
+    def forward(self, input_ids, attention_mask, pixel_values=None, **kwargs):
         if pixel_values is not None:
             vit_embeds = self.model.extract_feature(pixel_values)
             input_embeds = self.model.language_model.get_input_embeddings()(input_ids)
@@ -203,9 +203,9 @@ class InternVLModelWrapper(torch.nn.Module):
         else:
             input_embeds = self.model.language_model.get_input_embeddings()(input_ids)
 
-        outputs = self.model.language_model.generate(
+        outputs = self.model.language_model(
             inputs_embeds=input_embeds,
-            max_new_tokens=20,
+            attention_mask=attention_mask,
             use_cache=True,
         )
         # outputs = self.model.language_model(

@@ -14,7 +14,8 @@ import torch
 from transformers import TextStreamer
 
 from QEfficient.generation.text_generation_inference import TextGeneration
-from QEfficient.utils.generate_inputs import InputHandler, InputHandlerVLM
+from QEfficient.utils.generate_inputs import InputHandler, InputHandlerInternVL, InputHandlerVLM
+from QEfficient.utils.test_utils import InternVLModelWrapper
 
 
 # TODO: Deprecate this class and encourage the use of `QeffAutoModel...` classes
@@ -280,7 +281,6 @@ class ApiRunnerVlm:
         self.config = config
         self.gen_len = max_gen_len
 
-    ### works for early + late and any kv_offload instance
     @torch.no_grad()
     def run_vlm_hf_model_on_pytorch(self, model, inputs):
         output = model.generate(**inputs, max_new_tokens=self.gen_len, do_sample=False)
@@ -290,9 +290,8 @@ class ApiRunnerVlm:
         print("Completion:", repr(py_output))
         return offset_output
 
-    ### works for early + late and any kv_offload instance
     @torch.no_grad()
-    def run_late_fusion_vlm_kv_model_on_pytorch(self, model):
+    def run_vlm_kv_model_on_pytorch(self, model):
         generation_len = self.gen_len
         generated_ids = torch.full((self.batch_size, generation_len), self.processor.tokenizer.pad_token_id)
         inputs = self.input_handler_vlm.prepare_pytorch_inputs()
@@ -323,7 +322,6 @@ class ApiRunnerVlm:
         return generated_ids[0]
 
     def late_fusion_llava_both_kv_model_on_pytorch(self, model, inputs):
-        breakpoint()
         txt_cfg = self.config.get_text_config()
         num_hidden_layers = txt_cfg.num_hidden_layers
         num_key_value_heads = txt_cfg.num_key_value_heads
@@ -381,23 +379,12 @@ class ApiRunnerVlm:
         return generated_ids[0]
 
     def run_ort_session(self, inputs, session) -> dict:
-        """
-        Function responsible for running onnxrt session with given inputs and passing retained state outputs to be used for next iteration inputs
-
-        ``Mandatory`` Args:
-            :inputs (Dict):
-            :session (onnxruntime.capi.onnxruntime_inference_collection.InferenceSession):
-
-        Return:
-            :Dict: Numpy outputs of Onnx model
-        """
         output_names = [x.name for x in session.get_outputs()]
         session_input_names = [x.name for x in session.get_inputs()]
         session_inputs = {}
         for inp_name in session_input_names:
             if inp_name in inputs.keys():
                 session_inputs[inp_name] = inputs[inp_name]
-        # breakpoint()
         outputs_data = session.run(output_names, session_inputs)
         ort_outputs = dict(zip(output_names, outputs_data))
         return ort_outputs
@@ -471,3 +458,85 @@ class ApiRunnerVlm:
             print("Completion:", repr(predicted_string))
             del added_initializers
         return generated_ids
+
+
+class ApiRunnerInternVL(ApiRunnerVlm):
+    """
+    ApiRunner for InternVL Vision models:
+    ---------
+
+    1. HuggingFace ``PyTorch`` model
+    2. Transformed KV Pytorch Model
+    3. ``ONNX`` model on ONNXRT
+    4. ``ONNX`` model on Cloud AI 100
+    """
+
+    def __init__(self, batch_size, processor, config, image, prompt, prompt_len, ctx_len, max_gen_len, n_layer):
+        """ """
+        self.input_handler_vlm = InputHandlerInternVL(
+            batch_size=batch_size,
+            prompt_len=prompt_len,
+            ctx_len=ctx_len,
+            max_gen_len=max_gen_len,
+            config=config,
+            image=image,
+            processor=processor,
+            n_layer=n_layer,
+            prompt=prompt,
+        )
+        self.processor = processor
+        self.ctx_len = ctx_len
+        self.prompt_len = prompt_len
+        self.batch_size = batch_size
+        self.config = config
+        self.gen_len = max_gen_len
+
+    @torch.no_grad()
+    def run_vlm_hf_model_on_pytorch(self, model, inputs):
+        model_wrapper = InternVLModelWrapper(model)
+        input_ids_len = len(inputs["input_ids"][0])
+        outputs = model_wrapper(**inputs)
+        logits = outputs.logits[:, -1, :]
+        predicted_token_id = torch.argmax(logits, dim=-1)
+        inputs["input_ids"] = torch.cat([inputs["input_ids"], predicted_token_id.unsqueeze(1)], dim=-1)
+        for _ in range(self.gen_len):
+            outputs = model_wrapper(**inputs)
+            logits = outputs.logits[:, -1, :]
+            predicted_token_id = torch.argmax(logits, dim=-1)
+            inputs["input_ids"] = torch.cat([inputs["input_ids"], predicted_token_id.unsqueeze(1)], dim=-1)
+
+        generated_ids = inputs["input_ids"][0][input_ids_len:].detach().numpy()
+        # self.processor.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        # return generated_ids
+        py_output = self.processor.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+        print("Original HF Model Outputs (Torch CPU):")
+        print("Completion:", repr(py_output))
+        return generated_ids
+
+    @torch.no_grad()
+    def run_vlm_kv_model_on_pytorch(self, model):
+        generation_len = self.gen_len
+        generated_ids = torch.full((self.batch_size, generation_len), self.processor.tokenizer.pad_token_id)
+        inputs = self.input_handler_vlm.prepare_pytorch_inputs()
+
+        outputs = model(**inputs)
+        inputs["input_ids"] = outputs[0].argmax(2)
+
+        generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
+        finished_sequences = inputs["input_ids"] == self.processor.tokenizer.eos_token_id
+        inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
+
+        print("QEFF Model Outputs (Torch CPU):")
+        streamer = TextStreamer(self.processor.tokenizer)
+        streamer.put(inputs["input_ids"])
+        for num_token in range(1, self.gen_len):
+            outputs = model(**inputs)
+            inputs["input_ids"] = outputs[0].argmax(2)
+            inputs["position_ids"] += 1
+            streamer.put(inputs["input_ids"])
+            generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
+            finished_sequences |= inputs["input_ids"] == self.processor.tokenizer.eos_token_id
+            if finished_sequences.all():
+                break
+        streamer.end()
+        return generated_ids[0]
