@@ -8,7 +8,12 @@
 import numpy as np
 import torch
 
-from QEfficient.utils import get_num_layers_from_config, get_padding_shape_from_config, padding_check_and_fix
+from QEfficient.utils import (
+    get_num_layers_from_config,
+    get_padding_shape_from_config,
+    padding_check_and_fix,
+    get_padding_shape_vlm,
+)
 
 
 class InputHandler:
@@ -198,3 +203,75 @@ class InputHandler:
         outputs["logits"] = ort_outputs["logits"]
 
         return outputs
+
+
+class InputHandlerVLM:
+    def __init__(self, batch_size, config, image, conversation, processor, prompt, ctx_len, n_layer):
+        self.ctx_len = ctx_len
+        self.config = config
+        self.image = image
+        self.prompt = prompt
+        self.batch_size = batch_size
+        self.padding_shape = get_padding_shape_vlm(config, ctx_len, batch_size)
+        self.n_layer = n_layer
+        self.processor = processor
+        self.conversation = conversation
+
+    def prepare_vlm_ort_inputs(self):
+        inputs = self.processor(images=self.image, text=self.prompt, return_tensors="np")
+        if "attention_mask" in inputs.keys():
+            inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1)
+        inputs["past_key_values"] = []
+        for i in range(self.n_layer[0]):
+            inputs["past_key." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
+            inputs["past_value." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
+
+        return inputs
+
+    def update_vlm_ort_outputs(self, ort_outputs):
+        """
+        Function responsible for updating ONNXRT session outputs.
+
+        ``Mandatory`` Args:
+            :ort_outputs (Dict): Numpy outputs of Onnx model from current iteration
+
+        Return:
+            updated_outputs (Dict): Updated past_key_values, logits, pixel_values
+        """
+
+        present_key_values = []
+        for i in range(self.n_layer[0]):
+            if "past_key." + str(i) + "_RetainedState" in ort_outputs:
+                present_key_values.append(ort_outputs["past_key." + str(i) + "_RetainedState"])
+            if "past_value." + str(i) + "_RetainedState" in ort_outputs:
+                present_key_values.append(ort_outputs["past_value." + str(i) + "_RetainedState"])
+
+        outputs = {}
+        outputs["past_key_values"] = present_key_values
+        outputs["logits"] = ort_outputs["logits"]
+        outputs["pixel_values_RetainedState"] = (
+            ort_outputs["pixel_values_RetainedState"] if "pixel_values_RetainedState" in ort_outputs else None
+        )
+        return outputs
+
+    def update_vlm_ort_inputs(self, inputs, ort_outputs):
+        """
+        Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.
+
+        ``Mandatory`` Args:
+            :inputs (Dict): NumPy inputs of Onnx model from previous iteration
+            :ort_outputs (Dict): Numpy outputs of Onnx model from previous iteration
+
+        Return:
+            :Dict: Updated input_ids, position_ids, pixel_values and past_key_values
+        """
+
+        updated_inputs = {}
+        updated_inputs["input_ids"] = ort_outputs["logits"].argmax(-1)
+        updated_inputs["position_ids"] = np.max(inputs["position_ids"], axis=1, keepdims=True) + 1
+        for i in range(self.n_layer[0]):
+            updated_inputs["past_key." + str(i)] = ort_outputs["past_key_values"][i * 2]
+            updated_inputs["past_value." + str(i)] = ort_outputs["past_key_values"][i * 2 + 1]
+        if "pixel_values_RetainedState" in ort_outputs.keys():
+            updated_inputs["pixel_values"] = ort_outputs["pixel_values_RetainedState"]
+        return updated_inputs
