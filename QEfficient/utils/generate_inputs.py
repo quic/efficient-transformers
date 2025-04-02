@@ -9,15 +9,10 @@ import numpy as np
 import torch
 
 from QEfficient.utils import (
-    (
     get_num_layers_from_config,
-   
     get_padding_shape_from_config,
     # get_padding_shape_vlm,
-   
     padding_check_and_fix,
-),
-    get_padding_shape_vlm,
 )
 
 

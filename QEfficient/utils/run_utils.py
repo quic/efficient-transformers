@@ -13,7 +13,6 @@ import onnxruntime
 import torch
 from transformers import TextStreamer
 
-from transformers import TextStreamer
 from QEfficient.generation.text_generation_inference import TextGeneration
 from QEfficient.utils.generate_inputs import InputHandler, InputHandlerVLM
 
