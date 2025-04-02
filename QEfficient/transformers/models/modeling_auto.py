@@ -579,6 +579,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
         self.lang_model.export(inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir)
+        return self.onnx_path
 
     def compile(
         self,
@@ -676,6 +677,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             custom_io=custom_io_lang,
             **compiler_options,
         )
+        return self.qpc_path
 
     def generate(
         self,
@@ -896,7 +898,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
-        self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
+        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
 
     def compile(
         self,
@@ -1732,20 +1734,26 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
-        self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
+        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
 
     def compile(
         self,
         onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
         *,
-        encoder_ctx_len: int = 1500,
-        decoder_ctx_len: int = 150,
-        feature_len: int = 3000,
+        prefill_seq_len: Optional[int] = 1,
+        encoder_ctx_len: Optional[int] = None,
+        ctx_len: int = 150,
+        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: Optional[int] = None,
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
+        mxint8_kv_cache: bool = False,
+        num_speculative_tokens: Optional[int] = None,
+        enable_qnn: bool = False,
+        qnn_config: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -1756,19 +1764,41 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         ``Optional`` Args:
             :onnx_path (str, optional): Path to pre-exported onnx model.
             :compile_dir (str, optional): Path for saving the qpc generated.
-            :seq_len (int, optional): The length of the prompt should be less that ``seq_len``. ``Defaults to 32``.
+            :encoder_ctx_len (int, optional): The maximum length of context for encoder, based on the AutoProcessor output. ``Defaults to checking config, if None in config then 1500``
+            :ctx_len (int, optional): The maximum length of context to keep for decoding. ``Defaults to 150``.
             :batch_size (int, optional): Batch size. ``Defaults to 1``.
             :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
             :num_cores (int): Number of cores used to compile the model.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
-            :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+
+            Other args are not yet implemented for AutoModelForSpeechSeq2Seq
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-        specializations = self.model.get_specializations(batch_size, encoder_ctx_len, decoder_ctx_len, feature_len)
+        specializations, compiler_options = self.model.get_specializations(
+            batch_size,
+            encoder_ctx_len,
+            ctx_len,
+            **compiler_options,
+        )
 
-        self._compile(
+        if full_batch_size:
+            logger.warning("Continuous batching is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        if kv_cache_batch_size:
+            logger.warning("Prefix caching is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        if mxint8_kv_cache:
+            logger.warning("mxint8 cache is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        if num_speculative_tokens:
+            logger.warning("Speculative decoding is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        if enable_qnn or qnn_config:
+            logger.warning("QNN compile is not yet enabled for AutoModelForSpeechSeq2Seq")
+
+        return self._compile(
             onnx_path,
             compile_dir,
             compile_only=True,
@@ -1786,7 +1816,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         inputs: torch.Tensor,
         generation_len: int,
         streamer: Optional[TextStreamer] = None,
-        enable_debug_logs: bool = False,
         device_ids: List[int] = None,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
@@ -1795,9 +1824,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
         ``Mandatory`` Args:
             :processor: autoprocessor to process inputs and decode logits
-            :inputs (np.ndarray): inputs to run the execution.
+            :inputs (torch.Tensor): inputs to run the execution.
             :generation_len (int): length upto which to generate
-            :sample_rate (int): sampling rate at which input audio is stored in inputs (needed for processor)
             :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
@@ -1808,8 +1836,19 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         inputs = self.auto_correct_inputs(inputs)
 
         if self.qpc_session is None:
-            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids, enable_debug_logs=enable_debug_logs)
+            self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
+
+        inputs["input_features"] = inputs["input_features"].numpy().astype(np.float32)
+
+        # add start token id and initial position ids to inputs
+        seq_len = 1
+        inputs["decoder_input_ids"] = (
+            torch.ones((self.batch_size, seq_len), dtype=torch.int64) * self.model.config.decoder_start_token_id
+        ).numpy()
+        inputs["decoder_position_ids"] = (
+            torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1).numpy()
+        )
 
         self.qpc_session.skip_buffers(
             [x for x in self.qpc_session.input_names + self.qpc_session.output_names if x.startswith("past_")]

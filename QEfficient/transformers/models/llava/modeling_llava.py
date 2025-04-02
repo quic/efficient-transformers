@@ -25,6 +25,7 @@ class QEFFLlavaEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
+        self.model.vision_model = self.model.vision_tower
 
     def forward(self, pixel_values):
         # Image features
@@ -47,6 +48,7 @@ class QEFFLlavaDecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.config = self.model.config
+        self.language_model = self.model.language_model
 
     def forward(self, input_ids, image_features, position_ids, past_key_values):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
