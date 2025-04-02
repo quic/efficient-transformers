@@ -12,13 +12,48 @@ from typing import List, Optional
 
 import requests
 from PIL import Image
-from transformers import AutoProcessor, TextStreamer
+from transformers import AutoProcessor, TextStreamer, PreTrainedModel
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
 from QEfficient.base.common import QEFFCommonLoader
 from QEfficient.utils import check_and_assign_cache_dir, constants, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
+def execute_vlm_model(
+    qeff_model: PreTrainedModel,
+    model_name: str,
+    image_url: str,
+    image_path: str,
+    prompt: Optional[str] = None, #type: ignore
+    device_group: Optional[List[int]] = None,
+    generation_len: Optional[int] = None,
+):
+    if not (image_url or image_path):
+            raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
+    raw_image = Image.open(requests.get(image_url, stream=True).raw) if image_url else Image.open(image_path)
+
+    processor = AutoProcessor.from_pretrained(model_name, use_fast=False)
+
+    conversation = constants.Constants.conversation
+    conversation[0]["content"][1].update({"text": prompt[0]})  # Currently accepting only 1 prompt
+
+    # Converts a list of dictionaries with `"role"` and `"content"` keys to a list of token ids.
+    input_text = processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
+
+    split_inputs = processor(
+        text=input_text,
+        images=raw_image,
+        return_tensors="pt",
+        add_special_tokens=False,
+    )
+    streamer = TextStreamer(processor.tokenizer)
+    output = qeff_model.generate(
+        inputs=split_inputs,
+        streamer=streamer,
+        device_ids=device_group,
+        generation_len=generation_len,
+    )
+    return output
 
 def main(
     model_name: str,
@@ -130,32 +165,16 @@ def main(
     # Execute
     #########
     if architecture in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values():
-        processor = AutoProcessor.from_pretrained(model_name, use_fast=False)
-
-        if not (image_url or image_path):
-            raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
-        raw_image = Image.open(requests.get(image_url, stream=True).raw) if image_url else Image.open(image_path)
-
-        conversation = constants.Constants.conversation
-        conversation[0]["content"][1].update({"text": prompt[0]})  # Currently accepting only 1 prompt
-
-        # Converts a list of dictionaries with `"role"` and `"content"` keys to a list of token ids.
-        input_text = processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
-
-        split_inputs = processor(
-            text=input_text,
-            images=raw_image,
-            return_tensors="pt",
-            add_special_tokens=False,
-        )
-        streamer = TextStreamer(processor.tokenizer)
-        output = qeff_model.generate(
-            inputs=split_inputs,
-            streamer=streamer,
-            device_ids=device_group,
+        exec_info = execute_vlm_model(
+            qeff_model=qeff_model,
+            model_name=model_name,
+            prompt=prompt,
+            image_url=image_url,
+            image_path=image_path,
+            device_group=device_group,
             generation_len=generation_len,
         )
-        print(output)
+        print(exec_info)
     else:
         tokenizer = load_hf_tokenizer(
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
@@ -265,7 +284,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--enable_qnn",
         "--enable-qnn",
-        action="store_true",
         nargs="?",
         const=True,
         type=str,
