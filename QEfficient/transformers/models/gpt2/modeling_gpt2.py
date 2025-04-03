@@ -21,15 +21,10 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 def eager_attention_forward(module, query, key, value, attention_mask, head_mask=None, **kwargs):
     attn_weights = torch.matmul(query, key.transpose(-1, -2))
-
     if module.scale_attn_weights:
         attn_weights = attn_weights / torch.full(
             [], value.size(-1) ** 0.5, dtype=attn_weights.dtype, device=attn_weights.device
         )
-
-    # Layer-wise attention scaling
-    if module.scale_attn_by_inverse_layer_idx:
-        attn_weights = attn_weights / float(module.layer_idx + 1)
 
     if not module.is_cross_attention:
         # if only "normal" attention layer implements causal mask
@@ -50,10 +45,6 @@ def eager_attention_forward(module, query, key, value, attention_mask, head_mask
     # Downcast (if necessary) back to V's dtype (if in mixed-precision) -- No-Op otherwise
     attn_weights = attn_weights.type(value.dtype)
     attn_weights = module.attn_dropout(attn_weights)
-
-    # Mask heads if we want to
-    if head_mask is not None:
-        attn_weights = attn_weights * head_mask
 
     attn_output = torch.matmul(attn_weights, value)
     attn_output = attn_output.transpose(1, 2)
@@ -265,19 +256,7 @@ class QEffGPT2Model(GPT2Model):
         # Attention mask.
         if attention_mask is not None:
             attention_mask = attention_mask.view(batch_size, -1)
-            # if self._attn_implementation == "flash_attention_2":
-            #     attention_mask = attention_mask if 0 in attention_mask else None
-            # else:
-            # We create a 3D attention mask from a 2D tensor mask.
-            # Sizes are [batch_size, 1, 1, to_seq_length]
-            # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
-            # this attention mask is more simple than the triangular masking of causal attention                # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
             attention_mask = attention_mask[:, None, None, :]
-            # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
-            # masked positions, this operation will create a tensor which is 0.0 for
-            # positions we want to attend and the dtype's smallest value for masked positions.
-            # Since we are adding it to the raw scores before the softmax, this is
-            # effectively the same as removing these entirely.
             attention_mask = attention_mask.to(dtype=self.dtype)  # fp16 compatibility
             attention_mask = (1.0 - attention_mask) * torch.finfo(self.dtype).min
         elif attention_mask is None:
