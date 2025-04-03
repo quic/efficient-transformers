@@ -232,13 +232,13 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
                 "Currently only single quantization group is supported, please raise an issue with model details for support!"
             )
 
-        if quantization_status != "frozen":
+        if quantization_status not in {"compressed", "frozen"}:
             raise NotImplementedError(f"expected quantization_status=`frozen`, got {quantization_status}")
 
         if kv_cache_scheme:
             raise NotImplementedError(f"Expected kv_cache_scheme=None, got {kv_cache_scheme}")
 
-        if format not in ["naive-quantized", "float-quantized"]:
+        if format not in {"naive-quantized", "float-quantized"}:
             raise NotImplementedError(
                 f"Expected quantization format in ['naive_quantized', 'float-quantized']  got {format}"
             )
