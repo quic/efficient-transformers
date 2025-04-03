@@ -63,9 +63,9 @@ def main(**kwargs):
         # TODO: may have to init qccl backend, next try run with torchrun command
         torch_device = torch.device(device)
         assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
-        assert torch_device.index is None, (
-            f"DDP requires specification of device type only, however provided device index as well: {torch_device}"
-        )
+        assert (
+            torch_device.index is None
+        ), f"DDP requires specification of device type only, however provided device index as well: {torch_device}"
         dist.init_process_group(backend=train_config.dist_backend)
         # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
         getattr(torch, torch_device.type).set_device(dist.get_rank())
@@ -103,6 +103,18 @@ def main(**kwargs):
     # print the datatype of the model parameters
     # print(get_parameter_dtypes(model))
 
+    # Note: Need to call this before calling PeftModel.from_pretrained or get_peft_model.
+    # Because, both makes model.is_gradient_checkpointing = True which is used in peft library to
+    # apply gradient checkpointing related hooks to the input embeddings. Without this we will get
+    # "No inf checks were recorded for this optimizer." error.
+    # Enable gradient checkpointing
+    if train_config.gradient_checkpointing:
+        # Note: below attribute and method is only available in HuggingFace Transformer models.
+        if model.supports_gradient_checkpointing:
+            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"preserve_rng_state": False})
+        else:
+            raise RuntimeError("Given model doesn't support gradient checkpointing. Please disable it and run it.")
+
     if train_config.use_peft:
         # Load the pre-trained peft model checkpoint and setup its configuration
         if train_config.from_peft_checkpoint:
@@ -113,6 +125,7 @@ def main(**kwargs):
             peft_config = generate_peft_config(train_config, kwargs)
             model = get_peft_model(model, peft_config)
         model.print_trainable_parameters()
+
 
     # Get the dataset utils
     dataset_config = generate_dataset_config(train_config, kwargs)
