@@ -9,11 +9,12 @@ import hashlib
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
+from accelerate import load_checkpoint_and_dispatch
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
@@ -1332,7 +1333,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(
-        cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, *args, **kwargs
+        cls,
+        pretrained_model_name_or_path,
+        continuous_batching: bool = False,
+        is_tlm: bool = False,
+        hidden_size_projections: Optional[Tuple[nn.ModuleList, str]] = None,
+        *args,
+        **kwargs,
     ):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
@@ -1377,6 +1384,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        if hidden_size_projections is not None:
+            if isinstance(hidden_size_projections, tuple):
+                projections, checkpoint = hidden_size_projections
+                assert isinstance(projections, nn.ModuleList)
+                assert isinstance(checkpoint, str)
+                model.projections = projections
+                model = load_checkpoint_and_dispatch(model, checkpoint=checkpoint, strict=False)
+            elif isinstance(hidden_size_projections, nn.ModuleList):
+                model.hidden_size_projections = hidden_size_projections
+            else:
+                raise ValueError(f"`hidden_size_projections` of type {type(hidden_size_projections)} is not supported.")
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
 

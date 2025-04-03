@@ -48,6 +48,7 @@ test_models = [
 
 spd_test_models = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "Qwen/Qwen2-0.5B",
 ]
 
 
@@ -233,7 +234,6 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
 
 
-@pytest.mark.skip()  # remove when the SDK 1.20.0 issue solved for compiling this model
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", spd_test_models)
 def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
