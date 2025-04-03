@@ -89,41 +89,6 @@ class InternProcessor:
             processed_images.append(thumbnail_img)
         return processed_images
 
-    def fixed_preprocess(self, image, min_num=1, max_num=12, image_size=448, use_thumbnail=False):
-        orig_width, orig_height = image.size
-
-        # Calculate the best resizing option based on max_num
-        width_chunk = round(orig_width / image_size)
-        height_chunk = round(orig_height / image_size)
-
-        if width_chunk * height_chunk == max_num:
-            target_aspect_ratio = (width_chunk, height_chunk)
-        else:
-            factors = [(i, max_num // i) for i in range(1, int(max_num ** (0.5)) + 1) if (max_num % i == 0)]
-            target_aspect_ratio = min(factors, key=lambda p: abs(p[0] - width_chunk) + abs(p[1] - height_chunk))
-        # calculate the target width and height
-        target_width = image_size * target_aspect_ratio[0]
-        target_height = image_size * target_aspect_ratio[1]
-        blocks = target_aspect_ratio[0] * target_aspect_ratio[1]
-        # resize the image
-        resized_img = image.resize((target_width, target_height))
-        processed_images = []
-        for i in range(blocks):
-            box = (
-                (i % (target_width // image_size)) * image_size,
-                (i // (target_width // image_size)) * image_size,
-                ((i % (target_width // image_size)) + 1) * image_size,
-                ((i // (target_width // image_size)) + 1) * image_size,
-            )
-            # split the image
-            split_img = resized_img.crop(box)
-            processed_images.append(split_img)
-        assert len(processed_images) == blocks
-        if use_thumbnail and len(processed_images) != 1:
-            thumbnail_img = image.resize((image_size, image_size))
-            processed_images.append(thumbnail_img)
-        return processed_images
-
     # Process the input messages to generate prompt for the model.
     def get_prompt(self, messages) -> str:
         """Get the prompt for generation."""
@@ -143,8 +108,7 @@ class InternProcessor:
 
     def load_image(self, image, input_size=448, max_num=12):
         transform = self.build_transform(input_size=input_size)
-        # images = self.dynamic_preprocess(image, image_size=input_size, use_thumbnail=True, max_num=max_num)
-        images = self.fixed_preprocess(image, image_size=input_size, use_thumbnail=True, max_num=max_num)
+        images = self.dynamic_preprocess(image, image_size=input_size, use_thumbnail=True, max_num=max_num)
         pixel_values = [transform(image) for image in images]
         pixel_values = torch.stack(pixel_values)
         return pixel_values
@@ -180,37 +144,3 @@ class InternProcessor:
             image_tokens = IMG_START_TOKEN + IMG_CONTEXT_TOKEN * self.num_image_token * num_patches + IMG_END_TOKEN
             query = query.replace("<image>", image_tokens, 1)
         return query
-
-
-class InternVLModelWrapper(torch.nn.Module):
-    def __init__(self, model):
-        super().__init__()
-        self.model = model
-        # self.generation_config = generation_config
-
-    def forward(self, input_ids, attention_mask, pixel_values=None, **kwargs):
-        if pixel_values is not None:
-            vit_embeds = self.model.extract_feature(pixel_values)
-            input_embeds = self.model.language_model.get_input_embeddings()(input_ids)
-            B, N, C = input_embeds.shape
-            input_embeds = input_embeds.reshape(B * N, C)
-
-            input_ids = input_ids.reshape(B * N)
-            selected = input_ids == self.model.img_context_token_id
-            input_embeds[selected] = vit_embeds.reshape(-1, C).to(input_embeds.device)
-
-            input_embeds = input_embeds.reshape(B, N, C)
-        else:
-            input_embeds = self.model.language_model.get_input_embeddings()(input_ids)
-
-        outputs = self.model.language_model(
-            inputs_embeds=input_embeds,
-            attention_mask=attention_mask,
-            use_cache=True,
-        )
-        # outputs = self.model.language_model(
-        #     inputs_embeds=input_embeds,
-        #     use_cache=True,
-
-        # )
-        return outputs

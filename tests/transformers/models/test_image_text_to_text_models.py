@@ -30,16 +30,16 @@ from QEfficient.utils.test_utils import InternProcessor
 HF_TOKEN = ""
 NEW_GENERATION_TOKENS = 2
 test_models_config = [
-    # (
-    #     "meta-llama/Llama-3.2-11B-Vision-Instruct",
-    #     1,
-    #     32,
-    #     512,
-    #     560,
-    #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
-    #     "Explain this image",
-    #     4,
-    # ),
+    (
+        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+        1,
+        32,
+        512,
+        560,
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
+        "Explain this image",
+        4,
+    ),
     (
         "llava-hf/llava-1.5-7b-hf",
         1,
@@ -60,7 +60,7 @@ intern_model_config = [
         4096,
         "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
         "Please describe the image in detail.",
-        1,
+        2,
     )
 ]
 
@@ -159,6 +159,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     inputs = processor(images=image, text=prompt, return_tensors="pt")
     streamer = TextStreamer(processor.tokenizer)
+    breakpoint()
     checks = []
     pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -168,14 +169,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         token=HF_TOKEN,
     )
     pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
-    # assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
-    #     "Tokens don't match for pytorch HF output and pytorch KV output"
-    # )
+    assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
+        "Tokens don't match for pytorch HF output and pytorch KV output"
+    )
     checks.append(pytorch_hf_tokens == pytorch_kv_tokens)
     onnx_model_path = qeff_model.export()
 
-    ort_tokens = api_runner.run_late_fusion_vlm_kv_model_on_ort(onnx_model_path)
-    # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
+    ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
+    assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
     checks.append(pytorch_hf_tokens == ort_tokens)
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
@@ -190,7 +191,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     print("QPC Outputs (QAIC):")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     qpc_tokens = output.generated_ids[:, :-1]
-    # assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
+    assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
     checks.append(pytorch_hf_tokens == qpc_tokens)
     print(checks)
     return
@@ -210,20 +211,14 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 ):
     model_config = {"model_name": model_name}
 
-    config = AutoConfig.from_pretrained(model_config["model_name"], token=HF_TOKEN, trust_remote_code=True)
+    config = AutoConfig.from_pretrained(model_config["model_name"], trust_remote_code=True)
     config._attn_implementation = "eager"
     config = set_num_layers(config, n_layer=n_layer)
     model_hf, _ = load_image_text_to_text_model(config)
     n_layer = get_num_layers_vlm(config)
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_config["model_name"],
-        kv_offload=kv_offload,
-        config=config,
-        token=HF_TOKEN,
-    )
-    processor = InternProcessor(qeff_model.model, tokenizer)
+    processor = InternProcessor(model_hf, tokenizer)
     img = requests.get(img_url, stream=True)
     image = Image.open(BytesIO(img.content)).convert("RGB")
     image = image.resize((1000, 747))
@@ -249,21 +244,30 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     inputs = tokenizer(prompt, return_tensors="pt")
     batch_size, prompt_len = inputs["input_ids"].shape
     inputs["pixel_values"] = pixel_values.clone()
-    # inputs["position_ids"] = torch.arange(prompt_len).view(1, -1)
-    # inputs.pop("attention_mask")
+
     checks = []
-    ### HF Intern inference isn't working as of yet.
-    # pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf,inputs)
+    generation_config = dict(max_new_tokens=max_gen_len, do_sample=False)
+    generation_config["eos_token_id"] = tokenizer.convert_tokens_to_ids("<|im_end|>\n".strip())
+    pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs, generation_config)
+
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_config["model_name"],
+        kv_offload=kv_offload,
+        config=config,
+        token=HF_TOKEN,
+    )
+
     pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
-    # assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), "Tokens don't match for pytorch HF output and QEFF KV Model output"
-    checks.append(pytorch_kv_tokens == pytorch_kv_tokens)
-    # breakpoint()
+    assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
+        "Tokens don't match for pytorch HF output and QEFF KV Model output"
+    )
+    checks.append(pytorch_hf_tokens == pytorch_kv_tokens)
 
     streamer = TextStreamer(processor.tokenizer)
     onnx_model_path = qeff_model.export()
 
-    ort_tokens = api_runner.run_late_fusion_vlm_kv_model_on_ort(onnx_model_path)
-    # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
+    ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
+    assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
     checks.append(pytorch_kv_tokens == ort_tokens)
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
@@ -276,7 +280,7 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     print("QPC Outputs (QAIC):")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     qpc_tokens = output.generated_ids[:, :-1]
-    # assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
+    assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
     checks.append(pytorch_kv_tokens == qpc_tokens)
     print(checks)
     return

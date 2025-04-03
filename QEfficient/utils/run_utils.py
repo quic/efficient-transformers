@@ -15,7 +15,6 @@ from transformers import TextStreamer
 
 from QEfficient.generation.text_generation_inference import TextGeneration
 from QEfficient.utils.generate_inputs import InputHandler, InputHandlerInternVL, InputHandlerVLM
-from QEfficient.utils.test_utils import InternVLModelWrapper
 
 
 # TODO: Deprecate this class and encourage the use of `QeffAutoModel...` classes
@@ -321,63 +320,6 @@ class ApiRunnerVlm:
         streamer.end()
         return generated_ids[0]
 
-    def late_fusion_llava_both_kv_model_on_pytorch(self, model, inputs):
-        txt_cfg = self.config.get_text_config()
-        num_hidden_layers = txt_cfg.num_hidden_layers
-        num_key_value_heads = txt_cfg.num_key_value_heads
-        head_dim = txt_cfg.hidden_size // txt_cfg.num_attention_heads
-        if hasattr(txt_cfg, "cross_attention_layers"):
-            cross_attention_layers = txt_cfg.cross_attention_layers
-
-            vis_cfg = self.config.vision_config
-            num_patches = (vis_cfg.image_size // vis_cfg.patch_size) ** 2 + 1
-            image_tokens_len = vis_cfg.max_num_tiles * num_patches
-
-        generation_len = self.gen_len
-        generated_ids = torch.full((self.batch_size, generation_len), self.processor.tokenizer.pad_token_id)
-        inputs["position_ids"] = inputs.pop("attention_mask").cumsum(1) - 1
-        inputs["past_key_values"] = []
-        for i in range(num_hidden_layers):
-            # Specific to mllama as of now
-            if hasattr(txt_cfg, "cross_attention_layers") and i in cross_attention_layers:
-                idx = cross_attention_layers.index(i)
-                assert idx == ((i - 3) // 5), f"{i}, {(i - 3) // 5}"
-                inputs["past_key_values"].append(
-                    (
-                        torch.zeros(1, num_key_value_heads, image_tokens_len, head_dim),
-                        torch.zeros(1, num_key_value_heads, image_tokens_len, head_dim),
-                    )
-                )
-            else:
-                inputs["past_key_values"].append(
-                    (
-                        torch.zeros(1, num_key_value_heads, self.ctx_len, head_dim),
-                        torch.zeros(1, num_key_value_heads, self.ctx_len, head_dim),
-                    )
-                )
-        outputs = model(**inputs)
-        inputs["input_ids"] = outputs[0].argmax(2)
-        if "cross_attention_mask" in inputs:
-            bs, _, num_images, img_tiles = inputs["cross_attention_mask"].shape
-            inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64)
-        generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
-        finished_sequences = inputs["input_ids"] == self.processor.tokenizer.eos_token_id
-        inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-        print("QEFF Model Outputs (Torch CPU):")
-        streamer = TextStreamer(self.processor.tokenizer)
-        streamer.put(inputs["input_ids"])
-        for num_token in range(1, self.gen_len):
-            outputs = model(**inputs)
-            inputs["input_ids"] = outputs[0].argmax(2)
-            inputs["position_ids"] += 1
-            streamer.put(inputs["input_ids"])
-            generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
-            finished_sequences |= inputs["input_ids"] == self.processor.tokenizer.eos_token_id
-            if finished_sequences.all():
-                break
-        streamer.end()
-        return generated_ids[0]
-
     def run_ort_session(self, inputs, session) -> dict:
         output_names = [x.name for x in session.get_outputs()]
         session_input_names = [x.name for x in session.get_inputs()]
@@ -407,7 +349,7 @@ class ApiRunnerVlm:
 
         return added_initializers, session
 
-    def run_late_fusion_vlm_kv_model_on_ort(self, model_path):
+    def run_vlm_kv_model_on_ort(self, model_path):
         vision_inputs, lang_inputs = self.input_handler_vlm.prepare_vlm_ort_inputs()
         # TODO: Make a DAG based parser to compile and run N ONNX files with dependencies
         ### If kv_offload was `True`
@@ -492,51 +434,11 @@ class ApiRunnerInternVL(ApiRunnerVlm):
         self.gen_len = max_gen_len
 
     @torch.no_grad()
-    def run_vlm_hf_model_on_pytorch(self, model, inputs):
-        model_wrapper = InternVLModelWrapper(model)
-        input_ids_len = len(inputs["input_ids"][0])
-        outputs = model_wrapper(**inputs)
-        logits = outputs.logits[:, -1, :]
-        predicted_token_id = torch.argmax(logits, dim=-1)
-        inputs["input_ids"] = torch.cat([inputs["input_ids"], predicted_token_id.unsqueeze(1)], dim=-1)
-        for _ in range(self.gen_len):
-            outputs = model_wrapper(**inputs)
-            logits = outputs.logits[:, -1, :]
-            predicted_token_id = torch.argmax(logits, dim=-1)
-            inputs["input_ids"] = torch.cat([inputs["input_ids"], predicted_token_id.unsqueeze(1)], dim=-1)
+    def run_vlm_hf_model_on_pytorch(self, model, inputs, generation_config):
+        outputs = model.generate(**inputs, **generation_config)
+        generated_ids = outputs[0].detach().numpy()
 
-        generated_ids = inputs["input_ids"][0][input_ids_len:].detach().numpy()
-        # self.processor.tokenizer.decode(generated_ids, skip_special_tokens=True)
-        # return generated_ids
         py_output = self.processor.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
         print("Original HF Model Outputs (Torch CPU):")
         print("Completion:", repr(py_output))
         return generated_ids
-
-    @torch.no_grad()
-    def run_vlm_kv_model_on_pytorch(self, model):
-        generation_len = self.gen_len
-        generated_ids = torch.full((self.batch_size, generation_len), self.processor.tokenizer.pad_token_id)
-        inputs = self.input_handler_vlm.prepare_pytorch_inputs()
-
-        outputs = model(**inputs)
-        inputs["input_ids"] = outputs[0].argmax(2)
-
-        generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
-        finished_sequences = inputs["input_ids"] == self.processor.tokenizer.eos_token_id
-        inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
-
-        print("QEFF Model Outputs (Torch CPU):")
-        streamer = TextStreamer(self.processor.tokenizer)
-        streamer.put(inputs["input_ids"])
-        for num_token in range(1, self.gen_len):
-            outputs = model(**inputs)
-            inputs["input_ids"] = outputs[0].argmax(2)
-            inputs["position_ids"] += 1
-            streamer.put(inputs["input_ids"])
-            generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
-            finished_sequences |= inputs["input_ids"] == self.processor.tokenizer.eos_token_id
-            if finished_sequences.all():
-                break
-        streamer.end()
-        return generated_ids[0]

@@ -127,7 +127,6 @@ class QEffMllamaTextCrossAttentionSingleQPC(MllamaTextCrossAttention):
         value_states_new = torch.index_put(value_states_old, indices, value_states)
 
         # Select old or new image KV states based on q_len
-        # breakpoint()
         key_states = torch.where(torch.tensor(q_len == 1), key_states_old, key_states_new)
         value_states = torch.where(torch.tensor(q_len == 1), value_states_old, value_states_new)
 
@@ -348,7 +347,6 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
-        # breakpoint()
         bsz, q_len, _ = hidden_states.size()
         query_states = self.q_proj(hidden_states)
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
@@ -362,7 +360,6 @@ class QEffMllamaTextCrossAttentionTwoQPC(MllamaTextCrossAttention):
             if past_key_value is not None:
                 # if we have a new image + new tokens, we only computed key_states on that new image
                 # we still update the cross key states, past_image, new_image. And use it!
-                # breakpoint()
                 key_states, value_states = past_key_value.update(
                     key_states,
                     value_states,
@@ -432,7 +429,6 @@ class QEffMllamaCrossAttentionDecoderLayer(MllamaCrossAttentionDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=cross_attention_mask,
             cross_attention_states=cross_attention_states,
-            # position_ids=position_ids,
             past_key_value=past_key_value,
             batch_index=batch_index,
             output_attentions=output_attentions,
@@ -741,7 +737,6 @@ class QEffMllamaTextModel(MllamaTextModel):
             past_key_values,
             output_attentions,
         )
-        # breakpoint()
 
         # embed positions
         hidden_states = inputs_embeds
@@ -1118,7 +1113,6 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             cache_position=cache_position,
             num_logits_to_keep=num_logits_to_keep,
         )
-        # breakpoint()
         outputs["pixel_values"] = pixel_values
         return outputs
 
