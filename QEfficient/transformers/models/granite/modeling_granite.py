@@ -34,7 +34,6 @@ def eager_attention_forward(
     value: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
     scaling: float,
-    dropout: float = 0.0,
     **kwargs,
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
@@ -45,7 +44,6 @@ def eager_attention_forward(
         attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
 
@@ -132,12 +130,9 @@ class QEffGraniteAttention(GraniteAttention):
         self,
         hidden_states: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
-        position_embeddings: Tuple[torch.Tensor, torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         past_key_value: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
-        output_attentions: bool = False,
-        use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -166,7 +161,6 @@ class QEffGraniteAttention(GraniteAttention):
             key_states,
             value_states,
             attention_mask,
-            dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling,
             **kwargs,
         )
@@ -245,6 +239,7 @@ class QEffGraniteModel(GraniteModel):
             )
 
             hidden_states = layer_outputs[0]
+
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
@@ -339,12 +334,12 @@ class QEffGraniteForCausalLM(GraniteForCausalLM):
             **kwargs,
         )
 
-        hidden_states = outputs[0]
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+
         logits = self.lm_head(hidden_states)
-        logits = logits / self.config.logits_scaling
+        logits = logits.float()
 
         return CausalLMOutputWithPast(
             loss=None,
