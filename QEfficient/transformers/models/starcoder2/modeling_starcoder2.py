@@ -162,8 +162,9 @@ class QEffStarcoder2Model(Starcoder2Model):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, position_ids, past_key_values, output_attentions
+        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
+        causal_mask = _create_causal_mask(
+            position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
         )
 
         hidden_states = inputs_embeds
@@ -215,20 +216,6 @@ class QEffStarcoder2Model(Starcoder2Model):
             attentions=all_self_attns,
         )
         return output if return_dict else output.to_tuple()
-
-    def _update_causal_mask(
-        self,
-        attention_mask: torch.Tensor,
-        input_tensor: torch.Tensor,
-        cache_position: torch.Tensor,
-        position_ids: torch.Tensor,
-        past_key_values: Cache,
-        output_attentions: bool,
-    ):
-        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
-        return causal_mask
 
 
 class QEFFStarcoder2DecoderLayer(Starcoder2DecoderLayer):
