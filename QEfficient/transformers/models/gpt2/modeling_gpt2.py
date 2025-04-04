@@ -404,7 +404,6 @@ class QEffGPT2Attention(GPT2Attention):
             value_states,
             attention_mask,
             head_mask=head_mask,
-            dropout=self.attn_dropout.p if self.training else 0.0,
             **kwargs,
         )
         attn_output = attn_output.reshape(*attn_output.shape[:-2], -1).contiguous()

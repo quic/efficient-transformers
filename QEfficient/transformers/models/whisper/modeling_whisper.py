@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import random
 from typing import Optional, Tuple
 
 import torch
@@ -128,7 +127,7 @@ class QEffWhisperAttention(WhisperAttention):
             attn_weights = layer_head_mask.view(1, -1, 1, 1) * attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
-        attn_weights = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
+        attn_weights = nn.functional.dropout(attn_weights, p=self.dropout)
         attn_output = torch.matmul(attn_weights, value_states)
 
         if tuple(attn_output.size()) != (bsz, self.num_heads, tgt_len, self.head_dim):
@@ -209,7 +208,7 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
             cache_position=cache_position,
             input_features=input_features,
         )
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout)
         hidden_states = residual + hidden_states
 
         # Cross-Attention Block
@@ -230,7 +229,7 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
                 input_features=input_features,
                 is_cross_attention=True,  # explicitly pass this argument, instead of figuring it out form key_value_states
             )
-            hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+            hidden_states = nn.functional.dropout(hidden_states, p=self.dropout)
             hidden_states = residual + hidden_states
 
             # update the cached past_key_values accordingly
@@ -244,9 +243,9 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.activation_fn(self.fc1(hidden_states))
-        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
+        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout)
         hidden_states = self.fc2(hidden_states)
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout)
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
@@ -319,7 +318,7 @@ class QEffWhisperEncoder(WhisperEncoder):
         embed_pos = self.embed_positions.weight
 
         hidden_states = inputs_embeds + embed_pos
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout)
 
         encoder_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None
@@ -334,33 +333,13 @@ class QEffWhisperEncoder(WhisperEncoder):
             if output_hidden_states:
                 encoder_states = encoder_states + (hidden_states,)
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
-            dropout_probability = random.uniform(0, 1)
-            if self.training and (dropout_probability < self.layerdrop):  # skip the layer
-                layer_outputs = (None, None)
-            else:
-                if self.gradient_checkpointing and self.training:
-
-                    def create_custom_forward(module):
-                        def custom_forward(*inputs):
-                            return module(*inputs, output_attentions)
-
-                        return custom_forward
-
-                    layer_outputs = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(encoder_layer),
-                        hidden_states,
-                        None,
-                        (head_mask[idx] if head_mask is not None else None),
-                    )
-                else:
-                    layer_outputs = encoder_layer(
-                        hidden_states,
-                        None,
-                        layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                        output_attentions=output_attentions,
-                    )
-
-                hidden_states = layer_outputs[0]
+            layer_outputs = encoder_layer(
+                hidden_states,
+                None,
+                layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                output_attentions=output_attentions,
+            )
+            hidden_states = layer_outputs[0]
 
             if output_attentions:
                 all_attentions = all_attentions + (layer_outputs[1],)
@@ -520,7 +499,7 @@ class QEffWhisperDecoder(WhisperDecoder):
         # embed positions
         positions = self.embed_positions(input_ids, past_key_values_length=position)
         hidden_states = inputs_embeds + positions
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout)
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
