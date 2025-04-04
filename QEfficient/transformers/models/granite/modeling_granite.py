@@ -211,9 +211,6 @@ class QEffGraniteModel(GraniteModel):
             return_legacy_cache = True
             past_key_values = DynamicCache.from_legacy_cache(past_key_values)
 
-        if use_cache and past_key_values is None:
-            past_key_values = DynamicCache()
-
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
@@ -227,7 +224,6 @@ class QEffGraniteModel(GraniteModel):
 
         hidden_states = inputs_embeds
 
-        position_embeddings = None
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -245,7 +241,6 @@ class QEffGraniteModel(GraniteModel):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
-                position_embeddings=position_embeddings,
                 **kwargs,
             )
 
