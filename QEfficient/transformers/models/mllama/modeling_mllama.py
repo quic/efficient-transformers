@@ -829,7 +829,6 @@ class QEffMllamaTextModel(MllamaTextModel):
             attentions=all_self_attns,
         )
 
-    # Copied from transformers.models.llama.modeling_llama.LlamaModel._update_causal_mask
     def _update_causal_mask(
         self,
         attention_mask: torch.Tensor,
@@ -850,6 +849,8 @@ class QEffMllamaTextModel(MllamaTextModel):
         past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
 
         # When output attentions is True, sdpa implementation's forward method calls the eager implementation's forward
+        # TODO: we have only SDPA currently and there's a bug when attn-bias is passed. Need to add eager attn and return the line
+        # self.config._attn_implementation == "sdpa" and
         if self.config._attn_implementation == "sdpa" and not output_attentions:
             if AttentionMaskConverter._ignore_causal_mask_sdpa(
                 attention_mask,
