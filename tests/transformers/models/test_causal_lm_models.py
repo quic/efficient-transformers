@@ -255,7 +255,6 @@ def check_non_hf_kv_vs_ort_vs_ai100(
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
     # testing for CB models
-    model_hf, _ = load_causal_lm_model(model_config)
     config = model_hf.config
     full_batch_size = 4
     fbs_prompts = Constants.INPUT_STR * 4
