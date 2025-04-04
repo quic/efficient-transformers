@@ -11,7 +11,6 @@ from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
-
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
@@ -23,11 +22,11 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2ForCausalLM,
     Starcoder2Model,
     apply_rotary_pos_emb,
-    logger,
     repeat_kv,
 )
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+
 
 def eager_attention_forward(
     module: nn.Module,
@@ -230,6 +229,7 @@ class QEffStarcoder2Model(Starcoder2Model):
         target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
         return causal_mask
+
 
 class QEFFStarcoder2DecoderLayer(Starcoder2DecoderLayer):
     """
