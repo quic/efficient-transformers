@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import os
+from typing import Optional
 
 import numpy as np
 import onnxruntime as ort
@@ -13,7 +14,8 @@ import pytest
 from transformers import AutoModel, AutoTokenizer
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
-from QEfficient.utils.constants import Constants
+from QEfficient.utils._utils import create_json
+from QEfficient.utils.constants import Constants, QnnConstants
 
 embed_test_models = [
     # model_name, architecture
@@ -27,6 +29,8 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     model_name: str,
     seq_len: int = Constants.CTX_LEN,
     n_layer: int = 1,
+    enable_qnn: Optional[bool] = False,
+    qnn_config: Optional[str] = None,
 ):
     # Prepare input
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -69,9 +73,17 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     print("Mad for onnx and PyTorch is ", mad)
     assert mad <= 10**-5, f"MAD is too high for onnx and Pytorch: {mad}"
 
-    qeff_model.compile(
-        num_cores=14,
-    )
+    if enable_qnn:
+        qeff_model.compile(
+            num_cores=14,
+            enable_qnn=enable_qnn,
+            qnn_config=qnn_config,
+        )
+    else:
+        qeff_model.compile(
+            num_cores=14,
+        )
+
     ai100_output = qeff_model.generate(inputs=inputs)
 
     # Compare ONNX and AI 100 outputs
@@ -88,3 +100,19 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100(model_name):
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
     """
     check_embed_pytorch_vs_ort_vs_ai100(model_name=model_name, seq_len=32, n_layer=1)
+
+
+@pytest.mark.on_qaic
+@pytest.mark.qnn
+@pytest.mark.parametrize("model_name", embed_test_models)
+def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
+    """
+    QNN Compilation path test.
+    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
+    """
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+
+    check_embed_pytorch_vs_ort_vs_ai100(
+        model_name=model_name, seq_len=32, n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path
+    )
