@@ -21,7 +21,6 @@ CTX_LEN = 256
 DECOE_BSZ = 4
 DTYPE = "mxfp6"
 KV_DTYPE = "mxint8"
-DEVICE_GROUP = [0]
 
 
 @pytest.mark.vllm
@@ -43,7 +42,6 @@ def test_output_consistency(model_name):
     # Creating LLM Object
     qllm = LLM(
         model=model_name,
-        device_group=DEVICE_GROUP,
         max_num_seqs=DECOE_BSZ,
         max_model_len=CTX_LEN,
         max_seq_len_to_capture=SEQ_LEN,
@@ -53,17 +51,20 @@ def test_output_consistency(model_name):
     )
 
     # Single prompt test
-    prompt1 = ["My name is"]
+    single_prompt = ["My name is"]
 
-    output1 = qllm.generate(prompt1 * 5, sampling_params)
+    single_prompt_output = qllm.generate(single_prompt * 5, sampling_params)
 
-    check_output1 = []
-    for i, op in enumerate(output1):
-        check_output1.append(op.outputs[0].text)
+    check_output = []
+    for i, op in enumerate(single_prompt_output):
+        check_output.append(op.outputs[0].text)
+
+        # Assertion to check the consistency of single prompt.
+    assert len(set(check_output)) == 1, "Outputs from different slots for same prompt does not match!!"
 
     # Multiple prompt test
     outputDict = dict()
-    prompt2 = [
+    multiple_prompt = [
         "My name is",
         "How to eat mangosteen?",
         "How many people died in World War II",
@@ -80,22 +81,21 @@ def test_output_consistency(model_name):
         "Where is Statue of Liberty located?",
     ]
 
-    for p in prompt2:
+    for p in multiple_prompt:
         outputDict[p] = []
 
     for _ in range(5):
-        random.shuffle(prompt2)
-        output2 = qllm.generate(prompt2, sampling_params)
-        for i, op in enumerate(output2):
+        random.shuffle(multiple_prompt)
+        multiple_prompt_output = qllm.generate(multiple_prompt, sampling_params)
+        for i, op in enumerate(multiple_prompt_output):
             generated_text = op.outputs[0].text
-            outputDict[prompt2[i]].append(str(prompt2[i] + generated_text))
-
-    # Assertion to check the consistency of single prompt.
-    assert len(set(check_output1)) == 1, "Outputs from different slots for same prompt does not match!!"
+            outputDict[multiple_prompt[i]].append(str(multiple_prompt[i] + generated_text))
 
     # Assertion to check multiple prompts.
     for key in outputDict.keys():
         assert len(set(outputDict[key])) == 1, "Outputs from different slots for same prompt does not match!!"
 
     # Assertion to check if any prompts are missed.
-    assert len(prompt2) == len(output2), "Number of Generated Tokens do not match the number of valid inputs!!"
+    assert len(multiple_prompt) == len(multiple_prompt_output), (
+        "Number of Generated Tokens do not match the number of valid inputs!!"
+    )
