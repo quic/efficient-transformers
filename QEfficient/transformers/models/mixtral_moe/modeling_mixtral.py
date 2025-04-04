@@ -12,9 +12,13 @@ from typing import Callable, List, Optional, Tuple, Union
 import torch
 import torch.nn.functional as F
 from torch import nn
-
 from transformers.cache_utils import Cache, DynamicCache
-from transformers.modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    CausalLMOutputWithPast,
+    MoeCausalLMOutputWithPast,
+    MoeModelOutputWithPast,
+)
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
     MixtralConfig,
@@ -24,17 +28,12 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralRotaryEmbedding,
     MixtralSparseMoeBlock,
     load_balancing_loss_func,
-    logger,
     repeat_kv,
     rotate_half,
 )
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPast,
-    CausalLMOutputWithPast,
-)
 
 def eager_attention_forward(
     module: nn.Module,
@@ -58,6 +57,7 @@ def eager_attention_forward(
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_weights
+
 
 class QEffMixtralRotaryEmbedding(MixtralRotaryEmbedding):
     """
@@ -170,7 +170,12 @@ class QEffMixtralAttention(MixtralAttention):
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index,"position_ids": position_ids,}
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+            }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
@@ -376,6 +381,7 @@ class QEffMixtralModel(MixtralModel):
 
         return output if return_dict else output.to_tuple()
 
+
 class QeffMixtralDecoderLayer(MixtralDecoderLayer):
     """
     Copied from MixtralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py
@@ -550,14 +556,6 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
                 self.num_experts_per_tok,
                 attention_mask,
             )
-            if labels is not None:
-                loss += self.router_aux_loss_coef * aux_loss.to(loss.device)  # make sure to reside in the same device
-
-        if not return_dict:
-            output = (logits,) + outputs[1:]
-            if output_router_logits:
-                output = (aux_loss,) + output
-            return (loss,) + output if loss is not None else output
 
         return MoeCausalLMOutputWithPast(
             loss=None,
