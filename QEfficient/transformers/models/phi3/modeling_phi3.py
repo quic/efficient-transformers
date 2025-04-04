@@ -25,6 +25,8 @@ from transformers.models.phi3.modeling_phi3 import (
     rotate_half,
 )
 
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+
 
 class QEffPhi3RotaryEmbedding(Phi3RotaryEmbedding):
     """
@@ -98,7 +100,6 @@ def eager_attention_forward(
     value: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
     scaling: float,
-    dropout: float = 0.0,
     **kwargs,
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
@@ -109,7 +110,6 @@ def eager_attention_forward(
         attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
 
@@ -182,7 +182,6 @@ class QEffPhi3Attention(Phi3Attention):
             key_states,
             value_states,
             attention_mask,
-            dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling,
             **kwargs,
         )
@@ -243,9 +242,7 @@ class QEffPhi3Model(Phi3Model):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, position_ids, past_key_values, output_attentions
-        )
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
 
         hidden_states = inputs_embeds
 
@@ -438,7 +435,6 @@ class QEffPhi3ForCausalLM(Phi3ForCausalLM):
             **kwargs,
         )
 
-        hidden_states = outputs[0]
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
