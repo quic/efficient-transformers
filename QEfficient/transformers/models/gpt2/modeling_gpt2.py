@@ -9,13 +9,13 @@ from typing import Callable, Optional, Tuple, Union
 
 import torch
 from torch import nn
-from transformers.cache_utils import DynamicCache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     CausalLMOutputWithCrossAttentions,
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
@@ -96,7 +96,7 @@ class QEffGPT2Attention(GPT2Attention):
             # Added for optimized GPT Attention for AI 100 KV Retention
             # Update the cache_kwargs with position_ids for Cloud AI 100
             cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
-            pkv = DynamicCache()
+            pkv = QEffDynamicCache()
             pkv.key_cache.append(layer_past[0])
             pkv.value_cache.append(layer_past[1])
             key_states, value_states = pkv.update(key_states, value_states, 0, cache_kwargs)
