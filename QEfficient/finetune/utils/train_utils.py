@@ -301,8 +301,18 @@ def train(
             else:
                 train_epoch_loss = total_loss / len(train_dataloader)
 
+        if train_config.enable_ddp:
+            # Get the correct train loss from all the nodes.
+            dist.barrier()
+            dist.all_reduce(train_epoch_loss, op=dist.ReduceOp.SUM)
+            train_epoch_loss /= dist.get_world_size()
+            
         if train_config.task_type == "seq_classification":
-            train_perplexity = acc_helper.compute()
+            accuracy = acc_helper.compute()
+            if train_config.enable_ddp:
+                dist.all_reduce(accuracy, op=dist.ReduceOp.SUM)
+                accuracy /= dist.get_world_size()
+            train_perplexity = accuracy
         else:
             train_perplexity = torch.exp(train_epoch_loss)
 
