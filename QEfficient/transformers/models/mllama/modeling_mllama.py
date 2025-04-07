@@ -13,7 +13,7 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn.functional as F
 from torch import nn
-from transformers.cache_utils import Cache, DynamicCache
+from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPast,
@@ -41,6 +41,8 @@ from QEfficient.transformers.modeling_utils import (
     _prepare_aspect_ratio_attention_mask,
     _prepare_cross_attention_mask,
 )
+
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 
@@ -704,7 +706,7 @@ class QEffMllamaTextModel(MllamaTextModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):  # kept for BC (non `Cache` `past_key_values` inputs)
             return_legacy_cache = True
-            past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -1020,7 +1022,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             -1,
         )
 
-        lang_inputs["past_key_values"] = DynamicCache()
+        lang_inputs["past_key_values"] = QEffDynamicCache()
         lang_inputs["past_key_values"].key_cache = [0] * num_hidden_layers
         lang_inputs["past_key_values"].value_cache = [0] * num_hidden_layers
 
