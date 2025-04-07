@@ -83,6 +83,7 @@ def train(
     best_val_loss = float("inf")
     total_train_steps = 0
     max_steps_reached = False  # Flag to indicate max training steps reached
+    device_type = device.split(":")[0]
 
     tensorboard_updates = None
     if train_config.enable_ddp:
@@ -95,7 +96,7 @@ def train(
         if device.startswith("qaic"):
             scaler = QAicGradScaler()
         else:
-            scaler = GradScaler()
+            scaler = GradScaler(device_type)
 
     loss_0_counter = torch.tensor([0]).to(device)
 
