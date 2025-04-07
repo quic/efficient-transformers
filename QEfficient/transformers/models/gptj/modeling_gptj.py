@@ -22,7 +22,6 @@ from transformers.models.gptj.modeling_gptj import (
     GPTJForCausalLM,
     GPTJModel,
     get_embed_positions,
-    logger,
     rotate_every_two,
 )
 from transformers.utils.import_utils import is_torch_fx_proxy
@@ -204,7 +203,7 @@ class QEffGPTJModel(GPTJModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.wte(input_ids)
-            
+
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):  # kept for BC (non `Cache` `past_key_values` inputs)
             return_legacy_cache = True
