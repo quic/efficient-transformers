@@ -392,12 +392,14 @@ def get_padding_shape_vlm(config, ctx_len, batch_size=1):
     Return:
         List[int, int, int, int]
     """
-    if hasattr(config, "architectures") and "LlavaForConditionalGeneration" in config.architectures:
+    if hasattr(config, "text_config"):
         n_heads = config.text_config.num_key_value_heads
         d_head = config.text_config.hidden_size // config.text_config.num_attention_heads
         padding_shape = [batch_size, n_heads, ctx_len, d_head]
-    elif hasattr(config, "architectures") and "MllamaForConditionalGeneration" in config.architectures:
-        padding_shape = []
+    elif hasattr(config, "llm_config"):
+        n_heads = config.llm_config.num_key_value_heads
+        d_head = config.llm_config.hidden_size // config.llm_config.num_attention_heads
+        padding_shape = [batch_size, n_heads, ctx_len, d_head]
     return padding_shape
 
 
