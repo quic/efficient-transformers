@@ -111,7 +111,7 @@ def main(**kwargs):
     if train_config.gradient_checkpointing:
         # Note: below attribute and method is only available in HuggingFace Transformer models.
         if model.supports_gradient_checkpointing:
-            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"preserve_rng_state": False})
+            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"preserve_rng_state": True})
         else:
             raise RuntimeError("Given model doesn't support gradient checkpointing. Please disable it and run it.")
 
