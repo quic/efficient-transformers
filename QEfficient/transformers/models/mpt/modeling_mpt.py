@@ -12,7 +12,6 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from transformers.cache_utils import DynamicCache
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
@@ -20,6 +19,7 @@ from transformers.modeling_outputs import (
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
@@ -51,7 +51,7 @@ class QEffMptAttention(MptAttention):
         if past_key_value is not None:
             if len(past_key_value) != 0:
                 cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
-                pkv = DynamicCache()
+                pkv = QEffDynamicCache()
                 pkv.key_cache.append(past_key_value[0])
                 pkv.value_cache.append(past_key_value[1])
                 key_states, value_states = pkv.update(key_states, value_states, 0, cache_kwargs)

@@ -12,7 +12,7 @@ from typing import Callable, List, Optional, Tuple, Union
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from transformers.cache_utils import Cache, DynamicCache
+from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
@@ -29,6 +29,7 @@ from transformers.models.mistral.modeling_mistral import (
     rotate_half,
 )
 
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
@@ -292,7 +293,7 @@ class QEffMistralModel(MistralModel):
 
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache) and not self.training:
-            past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
             return_legacy_cache = True
             logger.warning_once(
                 "We detected that you are passing `past_key_values` as a tuple and this is deprecated and will be removed in v4.43. "
