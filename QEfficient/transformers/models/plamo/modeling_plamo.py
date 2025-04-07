@@ -1,14 +1,15 @@
 from asyncio.log import logger
 import math
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
-
 import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
 from transformers import PretrainedConfig, PreTrainedModel
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
-from transformers.cache_utils import Cache, DynamicCache, StaticCache
+from transformers.cache_utils import Cache, StaticCache
+from QEfficient.customop.rms_norm import CustomRMSNorm
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
@@ -151,6 +152,35 @@ def _rotary_pos_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, posit
     x_embed = (x * cos) + (_rotate_half(x) * sin)
     return x_embed
 
+def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+    """Applies Rotary Position Embedding to the query and key tensors.
+
+    Args:
+        q (`torch.Tensor`): The query tensor.
+        k (`torch.Tensor`): The key tensor.
+        cos (`torch.Tensor`): The cosine part of the rotary embedding.
+        sin (`torch.Tensor`): The sine part of the rotary embedding.
+        position_ids (`torch.Tensor`):
+            The position indices of the tokens corresponding to the query and key tensors. For example, this can be
+            used to pass offsetted position ids when working with a KV-cache.
+        unsqueeze_dim (`int`, *optional*, defaults to 1):
+            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
+            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
+            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
+            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
+            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
+            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
+    Returns:
+        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
+    """
+    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
+    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
+
+    # Apply rotation
+    q_embed = (q * cos) + (_rotate_half(q) * sin)
+    k_embed = (k * cos) + (_rotate_half(k) * sin)
+    # Cast back to original dtype
+    return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
 class QEffPlamoRMSNorm(nn.Module):
     def __init__(self, hidden_size: int, eps: float = 1e-6) -> None:
@@ -196,7 +226,7 @@ class QEffPlamoAttention(torch.nn.Module):
         layer_idx: Optional[int] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor, torch.Tensor]]]:
-        bsz, q_len, _ = hidden_states.size()
+        bsz, q_len, _ = hidden_states.size()  
 
         query_states = self.q_proj(hidden_states).view(bsz, q_len, self.q_num_heads, self.qk_dim).transpose(1, 2)
         key_states = self.k_proj(hidden_states).view(bsz, q_len, self.k_num_heads, self.qk_dim).transpose(1, 2)
@@ -219,22 +249,43 @@ class QEffPlamoAttention(torch.nn.Module):
                     "with a layer index."
                 )
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, layer_idx)
-
+        
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        assert position_ids is not None
+        # query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
         query_states = _rotary_pos_emb(query_states, cos, sin, position_ids)
         key_states = _rotary_pos_emb(key_states, cos, sin, position_ids)
-        # [bsz, nh, t, hd]
 
+        cos = cos.squeeze(1).squeeze(0)  # [seq_len, dim]
+        sin = sin.squeeze(1).squeeze(0)  # [seq_len, dim]
+        
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {"sin": sin, "cos": cos,  "batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, layer_idx, cache_kwargs)
 
-        attn_output = F.scaled_dot_product_attention(query_states, key_states, value_states, attn_mask=attention_mask)
-        attn_output = attn_output.transpose(1, 2)
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.qk_dim)
 
-        attn_output = attn_output.reshape(bsz, q_len, self.q_num_heads * self.v_dim)
+        if attention_mask is not None:  # no matter the length, we just slice it
+            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+            attn_weights = attn_weights + causal_mask
+
+        # upcast attention to fp32
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_output = torch.matmul(attn_weights, value_states)
+
+        if attn_output.size() != (bsz, self.q_num_heads, q_len, self.qk_dim):
+            raise ValueError(
+                f"`attn_output` should be of size {(bsz, self.q_num_heads, q_len, self.qk_dim)}, but is"
+                f" {attn_output.size()}"
+            )
+
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.reshape(bsz, q_len, -1)
+
+        # attn_output = F.scaled_dot_product_attention(query_states, key_states, value_states, attn_mask=attention_mask)
+        # attn_output = attn_output.transpose(1, 2)
+
+        #attn_output = attn_output.reshape(bsz, q_len, self.q_num_heads * self.v_dim)
         attn_output = self.o_proj(attn_output)
 
         if not output_attentions:
@@ -267,6 +318,9 @@ class QEffPlamoDecoderLayer(torch.nn.Module):
         self.mlp = MLP(config)
         self.norm = QEffPlamoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
+    def __qeff_init__(self,):
+        self.norm = CustomRMSNorm(self.config.hidden_size, eps=self.config.rms_norm_eps)
+        
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -438,6 +492,9 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
+    def __qeff_init__(self,):
+        self.norm = CustomRMSNorm(self.config.hidden_size, eps=self.config.rms_norm_eps)
+
     def get_input_embeddings(self) -> torch.nn.Embedding:
         return self.embed_tokens
 
@@ -516,9 +573,9 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
             if past_key_values is None:
-                past_key_values = DynamicCache()
+                past_key_values = QEffDynamicCache()
             else:
-                past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+                past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
                 logger.warning_once(
                     "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
                     "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
