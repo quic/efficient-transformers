@@ -12,7 +12,7 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from transformers.cache_utils import Cache, DynamicCache
+from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
@@ -22,6 +22,7 @@ from transformers.models.codegen.modeling_codegen import (
     apply_rotary_pos_emb,
 )
 
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
@@ -131,7 +132,7 @@ class QEffCodeGenAttention(CodeGenAttention):
                 "position_ids": position_ids,
                 "batch_index": batch_index,
             }
-            pkv = DynamicCache()
+            pkv = QEffDynamicCache()
             pkv.key_cache.append(past_key_value[0])
             pkv.value_cache.append(past_key_value[1])
             key, value = pkv.update(key, value, 0, cache_kwargs)
