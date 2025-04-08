@@ -235,7 +235,7 @@ def sampler_forward(
 
     # Repetition Penalty
     if (repetition_penalties != 1.).any():
-        repetition_penalties = repetition_penalties.unsqueeze(1).repeat(spec_length, vocab_size)  # (batch_size,) -> (batch_size * spec_length, vocab_size)
+        repetition_penalties = repetition_penalties.repeat(spec_length, vocab_size)  # (batch_size, 1) -> (batch_size * spec_length, vocab_size)
         repetition_penalty_retain_state_selected = repetition_penalty_retain_state_selected.repeat(spec_length, 1)  # (batch_size, vocab_size) -> (batch_size * spec_length, vocab_size)
         repetition_penalties[~repetition_penalty_retain_state_selected.bool()] = 1.0
         logits = torch.where(
@@ -244,7 +244,7 @@ def sampler_forward(
 
     # Presence Penalty
     if (presence_penalties != 0.).any():
-        presence_penalties = presence_penalties.unsqueeze(1).repeat(spec_length, 1)  # (batch_size,) -> (batch_size * spec_length, 1)
+        presence_penalties = presence_penalties.repeat(spec_length, 1)  # (batch_size, 1) -> (batch_size * spec_length, 1)
         presence_penalty_retain_state_selected = presence_penalty_retain_state_selected.repeat(spec_length, 1)  # (batch_size, vocab_size) -> (batch_size * spec_length, vocab_size)
         logits -= presence_penalties * presence_penalty_retain_state_selected
     
@@ -252,32 +252,32 @@ def sampler_forward(
 
     # Temperature Scaling
     if (temperatures != 0).any():
-        temperatures = temperatures.unsqueeze(1).repeat(spec_length, 1)  # (batch_size,) -> (batch_size * spec_length, 1)
+        temperatures = temperatures.repeat(spec_length, 1)  # (batch_size, 1) -> (batch_size * spec_length, 1)
         logits = torch.where(temperatures != 0, logits / temperatures, logits)
 
     # Top K
     # TODO (Optimization): if (top_ks != -1 or top_ks != Constants.MAX_TOP_K_IDS).any(): skip
-    topk_values_asc, topk_indices_asc = torch.topk(logits, k=Constants.MAX_TOP_K_IDS, dim=1, largest=False)  # (batch_size * spec_length, vocab_size)
+    topk_values_asc, topk_indices_asc = torch.topk(logits, k=Constants.MAX_TOP_K_IDS, dim=1, largest=False)  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
     top_ks[top_ks > Constants.MAX_TOP_K_IDS] = Constants.MAX_TOP_K_IDS  # Clip k to max value
     # True values in this mask indicate the positions of the non-top K values
-    topk_mask = torch.arange(topk_values_asc.shape[1]).unsqueeze(0) < (topk_values_asc.size(1) - top_ks.to(torch.long)).unsqueeze(1).repeat(spec_length, 1)
+    topk_mask = torch.arange(topk_values_asc.shape[1]).unsqueeze(0) < (topk_values_asc.size(1) - top_ks.to(torch.long)).repeat(spec_length, 1)  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
     topk_values_asc[topk_mask] = torch.finfo(torch.float16).min
 
     # Top P
     # TODO (Optimization): if (top_ps != 1.).any(): skip but will need top_probs for Min P
-    top_probs = torch.softmax(topk_values_asc, dim=1)  # (batch_size * spec_length, vocab_size)
+    top_probs = torch.softmax(topk_values_asc, dim=1)  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
     topk_probs_sum = torch.cumsum(top_probs, dim=1)
-    top_p_mask = topk_probs_sum <= 1 - top_ps.unsqueeze(1).repeat(spec_length, 1) 
+    top_p_mask = topk_probs_sum <= 1 - top_ps.repeat(spec_length, 1)  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
     top_p_mask[:, Constants.MAX_TOP_K_IDS - 1] = False
     topk_values_asc[top_p_mask] = torch.finfo(torch.float16).min
 
     # Min P
     # TODO (Optimization): if (min_ps != 0.).any(): skip
-    scaled_min_p = torch.mul(min_ps.repeat(spec_length), top_probs[:, -1])  # (batch_size * spec_length,)
-    min_p_mask = top_probs < scaled_min_p.unsqueeze(1)
+    scaled_min_p = torch.mul(min_ps.repeat(spec_length, 1), top_probs[:, -1:])  # (batch_size * spec_length, 1)
+    min_p_mask = top_probs < scaled_min_p  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
     topk_values_asc[min_p_mask] = torch.finfo(torch.float16).min
 
-    logits = logits.scatter(1, topk_indices_asc, topk_values_asc)
+    logits = logits.scatter(1, topk_indices_asc, topk_values_asc)  # (batch_size * spec_length, vocab_size)
 
     # Softmax
     # TODO (Optimization): if (temperatures == 0).all(): skip and perform only greedy sampling
@@ -286,7 +286,7 @@ def sampler_forward(
     # Sample the next tokens
     # TODO (Optimization): if self.return_pds: skip 
     greedy_samples = torch.argmax(probs, dim=-1, keepdim=True)  # Greedy Sampling
-    gumbel_noise = -torch.log(-torch.log(random_numbers.unsqueeze(1).repeat(spec_length, 1)))  # Gumbel-Max Trick
+    gumbel_noise = -torch.log(-torch.log(random_numbers.repeat(spec_length, 1)))  # Gumbel-Max Trick
     y = probs + gumbel_noise
     random_samples = torch.argmax(y, dim=-1, keepdim=True)  # Random Sampling
     next_tokens = torch.where(temperatures == 0, greedy_samples, random_samples)  # (batch_size * spec_length, 1)

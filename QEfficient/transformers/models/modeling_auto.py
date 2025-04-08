@@ -258,7 +258,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             }
             output_names.append("repetition_penalty_retain_state_RetainedState")
 
-            example_inputs["repetition_penalties"] = torch.ones(bs, dtype=torch.float) * 0.5
+            example_inputs["repetition_penalties"] = torch.ones((bs, 1), dtype=torch.float) * 0.5
             dynamic_axes["repetition_penalties"] = {0: "batch_size"}
 
             example_inputs["presence_penalty_retain_state"] = torch.zeros(
@@ -268,22 +268,22 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             }
             output_names.append("presence_penalty_retain_state_RetainedState")
 
-            example_inputs["presence_penalties"] = torch.zeros(bs, dtype=torch.float) + 0.5
+            example_inputs["presence_penalties"] = torch.zeros((bs, 1), dtype=torch.float) + 0.5
             dynamic_axes["presence_penalties"] = {0: "batch_size"}
 
-            example_inputs["temperatures"] = torch.ones(bs, dtype=torch.float)
+            example_inputs["temperatures"] = torch.ones((bs, 1), dtype=torch.float)
             dynamic_axes["temperatures"] = {0: "batch_size"}
 
-            example_inputs["top_ks"] = torch.randint(1, max_top_k_ids, size=(bs,)).to(torch.int32)
+            example_inputs["top_ks"] = torch.randint(1, max_top_k_ids, size=(bs, 1)).to(torch.int32)
             dynamic_axes["top_ks"] = {0: "batch_size"}
 
-            example_inputs["top_ps"] = torch.ones(bs, dtype=torch.float) * 0.80
+            example_inputs["top_ps"] = torch.ones((bs, 1), dtype=torch.float) * 0.80
             dynamic_axes["top_ps"] = {0: "batch_size"}
 
-            example_inputs["min_ps"] = torch.ones(bs, dtype=torch.float) * 0.99
+            example_inputs["min_ps"] = torch.ones((bs, 1), dtype=torch.float) * 0.99
             dynamic_axes["min_ps"] = {0: "batch_size"}
 
-            example_inputs["random_numbers"] = torch.rand(bs, dtype=torch.float)
+            example_inputs["random_numbers"] = torch.rand((bs, 1), dtype=torch.float)
             dynamic_axes["random_numbers"] = {0: "batch_size"}
 
         return self._export(
