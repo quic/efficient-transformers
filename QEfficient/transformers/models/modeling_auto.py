@@ -362,10 +362,13 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             "batch_size": 1 if self.continuous_batching else batch_size,
             "seq_len": prefill_seq_len,
             "ctx_len": ctx_len,
-            "vocab_size": self.model.config.vocab_size if self.include_sampler else None,
-            "max_top_k_ids": constants.Constants.MAX_TOP_K_IDS if self.include_sampler else None,
             # TODO: should be renamed to kv_cache_batch_size in specialzation too
         }
+        if self.include_sampler:
+             prefill_specialization.update({
+                 "vocab_size": self.model.config.vocab_size,
+                 "max_top_k_ids": constants.Constants.MAX_TOP_K_IDS,
+             })
         prefill_specialization.update({"num_logits_to_keep": 1})
         if self.continuous_batching:
             prefill_specialization.update({"full_batch_size": kv_cache_batch_size})
@@ -382,9 +385,12 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 "batch_size": full_batch_size if self.continuous_batching else batch_size,
                 "seq_len": num_speculative_tokens + 1 if self.is_tlm else 1,
                 "ctx_len": ctx_len,
-                "vocab_size": self.model.config.vocab_size if self.include_sampler else None,
-                "max_top_k_ids": constants.Constants.MAX_TOP_K_IDS if self.include_sampler else None,
             }
+            if self.include_sampler:
+                decode_specialization.update({
+                    "vocab_size": self.model.config.vocab_size,
+                    "max_top_k_ids": constants.Constants.MAX_TOP_K_IDS,
+                })
             if self.continuous_batching:
                 decode_specialization.update({"full_batch_size": kv_cache_batch_size})
             else:
