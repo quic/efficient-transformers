@@ -102,7 +102,48 @@ def sampler_forward(
             Calculate logits for the last `num_logits_to_keep` tokens. If `0`, calculate logits for all
             `input_ids` (special case). Only last token logits are needed for generation, and calculating them only for that
             token can save memory, which becomes pretty significant for long sequences or large vocabulary size.
+            
+        last_accepted_output_tokens (`torch.Tensor`, *optional*):
+            Output tokens accepted by the Speculative Decoding Draft Language Model.
 
+        repetition_penalty_retain_state (`torch.Tensor`, *optional*):
+            RetainedState buffer used as a mask to apply repetition penalty to the input 
+            prompt and the output generated so far.
+ 
+        repetition_penalties (`torch.Tensor`, *optional*):
+            Sampling parameter that penalizes new tokens based on whether they appear in the 
+            prompt and the generated text so far. Values > 1 encourage the model to use 
+            new tokens, while values < 1 encourage the model to repeat tokens.
+  
+        presence_penalty_retain_state (`torch.Tensor`, *optional*):
+            RetainedState buffer used as a mask to apply presence penalty to the output 
+            generated so far.
+  
+        presence_penalties (`torch.Tensor`, *optional*):
+            Sampling parameter that penalizes new tokens based on whether they appear in the 
+            generated text so far. Values > 0 encourage the model to use new tokens, while values < 0 encourage the model to repeat tokens.
+  
+        temperatures (`torch.Tensor`, *optional*):
+            Sampling parameter that controls the randomness of the sampling. Lower values 
+            make the model more deterministic, while higher values make the model more 
+            random. Zero means greedy sampling.
+  
+        top_ks (`torch.Tensor`, *optional*):
+            Sampling parameter that controls the number of top tokens to consider.
+   
+        top_ps (`torch.Tensor`, *optional*):
+            Sampling parameter that controls the cumulative probability of the top tokens to 
+            consider. Must be in (0, 1]. Set to 1.0 to consider all tokens.
+   
+        min_ps (`torch.Tensor`, *optional*):
+            Sampling parameter that represents the minimum probability for a token to be 
+            considered, relative to the probability of the most likely token. Must be in 
+            [0, 1]. Set to 0.0 to disable this.
+   
+        random_numbers (`torch.Tensor`, *optional*):
+            Sampling parameter that represents the random seeds to use for random sampling. 
+            Must be in [-1, 1].
+            
     Returns:
 
     Example:
