@@ -11,7 +11,7 @@ from typing import List, Optional, Tuple, Union
 @dataclass
 class QEffCausalLMOutputWithPast(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
-    logits: torch.Tensor = None
+    logits: torch.FloatTensor | torch.IntTensor = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
     attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
@@ -209,7 +209,6 @@ def sampler_forward(
     logits = logits.float()  # (batch_size, num_logits_to_keep aka spec_length, vocab_size)
 
     # Perform Sampling
-    device = logits.device
     batch_size, spec_length, vocab_size = logits.shape
     
     # Select relevant rows
@@ -217,7 +216,7 @@ def sampler_forward(
     repetition_penalty_retain_state_selected = torch.index_select(repetition_penalty_retain_state, 0, batch_index_reshaped)
     presence_penalty_retain_state_selected = torch.index_select(presence_penalty_retain_state, 0, batch_index_reshaped)
     
-    logits = logits.reshape(batch_size * spec_length, vocab_size)  # Reshape tensor to 2D
+    logits = logits.reshape(-1, vocab_size)  # Reshape tensor to 2D
 
     if input_ids.shape[1] != spec_length:  # Prefill phase, initialize retained states
         repetition_penalty_retain_state_selected = torch.mul(repetition_penalty_retain_state_selected, 0)
@@ -229,6 +228,10 @@ def sampler_forward(
         repetition_penalty_retain_state_selected.scatter_(1, last_accepted_output_tokens, 1)
         presence_penalty_retain_state_selected.scatter_(1, last_accepted_output_tokens, 1)
         # TODO: For frequency retain state, first gather and then scatter
+
+    # Update relevant rows in original tensors
+    repetition_penalty_retain_state[batch_index_reshaped] = repetition_penalty_retain_state_selected
+    presence_penalty_retain_state[batch_index_reshaped] = presence_penalty_retain_state_selected
 
     # Repetition Penalty
     if (repetition_penalties != 1.).any():
@@ -257,7 +260,7 @@ def sampler_forward(
     topk_values_asc, topk_indices_asc = torch.topk(logits, k=Constants.MAX_TOP_K_IDS, dim=1, largest=False)  # (batch_size * spec_length, vocab_size)
     top_ks[top_ks > Constants.MAX_TOP_K_IDS] = Constants.MAX_TOP_K_IDS  # Clip k to max value
     # True values in this mask indicate the positions of the non-top K values
-    topk_mask = torch.arange(topk_values_asc.shape[1], device=device).unsqueeze(0) < (topk_values_asc.size(1) - top_ks.to(torch.long)).unsqueeze(1).repeat(spec_length, 1)
+    topk_mask = torch.arange(topk_values_asc.shape[1]).unsqueeze(0) < (topk_values_asc.size(1) - top_ks.to(torch.long)).unsqueeze(1).repeat(spec_length, 1)
     topk_values_asc[topk_mask] = torch.finfo(torch.float16).min
 
     # Top P
@@ -289,15 +292,8 @@ def sampler_forward(
     next_tokens = torch.where(temperatures == 0, greedy_samples, random_samples)  # (batch_size * spec_length, 1)
 
     # Reshape tensor back to 3D
-    logits = logits.reshape(-1, spec_length, vocab_size)
     probs = probs.reshape(-1, spec_length, vocab_size)
-    repetition_penalty_retain_state_selected = repetition_penalty_retain_state_selected.reshape(spec_length, -1, vocab_size)[0]  # Undo spec_length repetition
-    presence_penalty_retain_state_selected = presence_penalty_retain_state_selected.reshape(spec_length, -1, vocab_size)[0]
     next_tokens = next_tokens.reshape(-1, spec_length, 1)
-
-    # Update relevant rows in original tensors
-    repetition_penalty_retain_state[batch_index_reshaped] = repetition_penalty_retain_state_selected
-    presence_penalty_retain_state[batch_index_reshaped] = presence_penalty_retain_state_selected
 
     return QEffCausalLMOutputWithPast(
         loss=None,
