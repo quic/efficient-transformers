@@ -121,7 +121,7 @@ class FP8DeQuantLinear(torch.nn.Module):
     def forward(self, x):
         # Only inference supported
         with torch.no_grad():
-            dequantized_weights = self.weight.to(torch.float32) * self.weight_scale
+            dequantized_weights = self.weight.to(torch.float32)  # * self.weight_scale
             out = torch.matmul(x.float(), dequantized_weights.T)
             out = out + self.bias if self.bias is not None else out
 
