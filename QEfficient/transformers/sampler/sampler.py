@@ -221,11 +221,10 @@ def sampler_forward(
     logits = logits.reshape(-1, vocab_size)  # Reshape tensor to 2D
 
     if input_ids.shape[1] > spec_length:  # Prefill phase, initialize retained states
-        repetition_penalty_retain_state_selected = torch.mul(repetition_penalty_retain_state_selected, 0)
-        presence_penalty_retain_state_selected = torch.mul(presence_penalty_retain_state_selected, 0)
         # TODO: Replace scatter_ with CtxScatterFunc; Replace -1 with int_max while exporting on onnx
         # repetition_penalty_retain_state_selected = CtxScatterFunc.apply(repetition_penalty_retain_state_selected.unsqueeze(1), input_ids, 1).squeeze(1)
         repetition_penalty_retain_state_selected.scatter_(1, input_ids, 1)
+        presence_penalty_retain_state_selected.scatter_(1, input_ids, 0)
     else:  # Decode phase, update retained states
         repetition_penalty_retain_state_selected.scatter_(1, last_accepted_output_tokens, 1)
         presence_penalty_retain_state_selected.scatter_(1, last_accepted_output_tokens, 1)
