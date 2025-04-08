@@ -48,6 +48,7 @@ ONNX_EXPORT_EXAMPLE_BATCH_SIZE = 1
 ONNX_EXPORT_EXAMPLE_SEQ_LEN = 32
 ONNX_EXPORT_EXAMPLE_FBS = 4
 ONNX_EXPORT_EXAMPLE_NLK = 2  # Number of Logits to Keep
+ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS = 512
 ONNX_EXPORT_OPSET = 13
 
 COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-aic-hw-version=2.0"]
@@ -63,6 +64,7 @@ class Constants:
     MAX_QPC_LIMIT = 30
     MAX_RETRIES = 5  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
     NUM_SPECULATIVE_TOKENS = 2
+    MAX_TOP_K_IDS = 512
 
 
 @dataclass

@@ -246,6 +246,8 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
 
         if self.include_sampler:
             nlk = constants.ONNX_EXPORT_EXAMPLE_NLK  # Number of Logits to Keep
+            max_top_k_ids = constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS
+            
             example_inputs["last_accepted_output_tokens"] = torch.randint(low=0, high=self.model.config.vocab_size, size=(bs, nlk))
             dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "num_logits_to_keep"}
 
@@ -266,7 +268,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             example_inputs["temperatures"] = torch.ones(bs, dtype=torch.float)
             dynamic_axes["temperatures"] = {0: "batch_size"}
 
-            example_inputs["top_ks"] = torch.ones(bs, dtype=torch.int32) + 10
+            example_inputs["top_ks"] = torch.randint(1, max_top_k_ids, size=(bs,)).to(torch.int32)
             dynamic_axes["top_ks"] = {0: "batch_size"}
 
             example_inputs["top_ps"] = torch.ones(bs, dtype=torch.float) * 0.80
@@ -361,6 +363,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             "seq_len": prefill_seq_len,
             "ctx_len": ctx_len,
             "vocab_size": self.model.config.vocab_size if self.include_sampler else None,
+            "max_top_k_ids": constants.Constants.MAX_TOP_K_IDS if self.include_sampler else None,
             # TODO: should be renamed to kv_cache_batch_size in specialzation too
         }
         prefill_specialization.update({"num_logits_to_keep": 1})
@@ -380,6 +383,7 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 "seq_len": num_speculative_tokens + 1 if self.is_tlm else 1,
                 "ctx_len": ctx_len,
                 "vocab_size": self.model.config.vocab_size if self.include_sampler else None,
+                "max_top_k_ids": constants.Constants.MAX_TOP_K_IDS if self.include_sampler else None,
             }
             if self.continuous_batching:
                 decode_specialization.update({"full_batch_size": kv_cache_batch_size})
