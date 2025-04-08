@@ -13,6 +13,12 @@ from torchvision.transforms.functional import InterpolationMode
 
 # Processor class for InternVL models
 class InternProcessor:
+    """
+    InternVL model only has an AutoTokenizer so this class performs the processing tasks similar to an AutoProcessor.
+    The methods used here are borrowed from the original InternVL modelling files.
+    "https://huggingface.co/OpenGVLab/InternVL2_5-1B/"
+    """
+
     def __init__(self, model: nn.Module, tokenizer):
         self.model = model
         image_size = self.model.config.force_image_size or self.model.config.vision_config.image_size
