@@ -206,37 +206,38 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
         """ """
         batch_size, sequence_length, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
-        # router_logits: (batch * sequence_length, n_experts)
-        router_logits = self.gate(hidden_states)
-
+        
+        # Compute routing logits for selecting experts
+        router_logits = self.gate(hidden_states)  # Shape: (batch * seq_len, num_experts)
+        
+        # Compute routing probabilities and select top-k experts per token
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
         routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-        routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
-        # we cast back to the input dtype
-        routing_weights = routing_weights.to(hidden_states.dtype)
+        routing_weights /= routing_weights.sum(dim=-1, keepdim=True)  # Normalize weights
+        routing_weights = routing_weights.to(hidden_states.dtype)  # Ensure correct dtype
 
+        # Initialize final output tensor
         final_hidden_states = torch.zeros(
             (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
         )
+        # One-hot encode selected experts (batch * seq_len, top_k, num_experts)
+        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts)
+        expert_mask = expert_mask.to(hidden_states.dtype)  # Ensure dtype matches for efficient computation
 
-        # One hot encode the selected experts to create an expert mask
-        # this will be used to easily index which expert is going to be sollicitated
-        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
+        # Compute all expert outputs in parallel (batch * seq_len, num_experts, hidden_dim)
+        expert_outputs = torch.stack([self.experts[i](hidden_states) for i in range(self.num_experts)], dim=1)
+        
+        # Efficient expert selection using matrix multiplication
+        selected_expert_outputs = torch.einsum("bte,beh->bth", expert_mask, expert_outputs)
 
-        # Loop over all available experts in the model and perform the computation on each expert
-        for expert_idx in range(self.num_experts):
-            expert_layer = self.experts[expert_idx]
-            expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
-            current_hidden_states = expert_layer(hidden_states) * (((routing_weights * expert_mask_tr).sum(1))[:, None])
-            current_hidden_states = torch.where(
-                (routing_weights * expert_mask_tr).sum(1).to(torch.bool)[:, None],
-                current_hidden_states,
-                torch.tensor(0.0),
-            )
-            final_hidden_states = final_hidden_states + current_hidden_states
-        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+
+        # Multiply by routing weights and sum over top_k experts
+        final_hidden_states = (selected_expert_outputs * routing_weights.unsqueeze(-1)).sum(dim=1)
+
+        # Reshape back to original dimensions
+        final_hidden_states = final_hidden_states.view(batch_size, sequence_length, hidden_dim)
+
         return final_hidden_states, router_logits
-
 
 class QeffMixtralDecoderLayer(MixtralDecoderLayer):
     """
