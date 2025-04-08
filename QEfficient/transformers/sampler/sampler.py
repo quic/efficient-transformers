@@ -207,7 +207,7 @@ def sampler_forward(
 
     # Top K
     topk_values_asc, topk_indices_asc = torch.topk(logits, k=Constants.MAX_TOP_K_IDS, dim=1, largest=False)  # (batch_size * spec_length, vocab_size)
-
+    top_ks[top_ks > Constants.MAX_TOP_K_IDS] = Constants.MAX_TOP_K_IDS  # Clip k to max value 
     # True values in this mask indicate the positions of the non-top K values
     topk_mask = torch.arange(topk_values_asc.shape[1], device=device).unsqueeze(0) < (topk_values_asc.size(1) - top_ks.to(torch.long)).unsqueeze(1).repeat(spec_length, 1)
     topk_values_asc[topk_mask] = torch.finfo(torch.float16).min
