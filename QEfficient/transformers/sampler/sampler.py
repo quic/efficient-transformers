@@ -231,8 +231,9 @@ def sampler_forward(
 
     # Sample the next tokens
     greedy_samples = torch.argmax(probs, dim=-1, keepdim=True)  # Greedy Sampling
-    probs_sum = torch.cumsum(probs, dim=1)
-    random_samples = (probs_sum >= random_numbers.unsqueeze(1).repeat(spec_length, 1)).float().argmax(-1, keepdim=True)  # Random Sampling
+    gumbel_noise = -torch.log(-torch.log(random_numbers.unsqueeze(1).repeat(spec_length, 1)))  # Gumbel-Max Trick
+    y = probs + gumbel_noise
+    random_samples = torch.argmax(y, dim=-1, keepdim=True)  # Random Sampling
     next_tokens = torch.where(temperatures == 0, greedy_samples, random_samples)  # (batch_size * spec_length, 1)
 
     # Reshape tensor back to 3D
