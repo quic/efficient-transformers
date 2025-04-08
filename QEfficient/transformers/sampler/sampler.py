@@ -257,7 +257,9 @@ def sampler_forward(
 
     # Top K
     # TODO (Optimization): if (top_ks != -1 or top_ks != Constants.MAX_TOP_K_IDS).any(): skip
-    topk_values_asc, topk_indices_asc = torch.topk(logits, k=Constants.MAX_TOP_K_IDS, dim=1, largest=False)  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
+    topk_values, topk_indices = torch.topk(logits, k=Constants.MAX_TOP_K_IDS, dim=1)  # (batch_size * spec_length, vocab_size)
+    topk_values_asc = topk_values.flip(dims=[1])
+    topk_indices_asc = topk_indices.flip(dims=[1])
     top_ks[top_ks > Constants.MAX_TOP_K_IDS] = Constants.MAX_TOP_K_IDS  # Clip k to max value
     # True values in this mask indicate the positions of the non-top K values
     topk_mask = torch.arange(topk_values_asc.shape[1]).unsqueeze(0) < (topk_values_asc.size(1) - top_ks.to(torch.long)).repeat(spec_length, 1)  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
@@ -277,6 +279,7 @@ def sampler_forward(
     min_p_mask = top_probs < scaled_min_p  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
     topk_values_asc[min_p_mask] = torch.finfo(torch.float16).min
 
+    logits.fill_(torch.finfo(torch.float16).min)
     logits = logits.scatter(1, topk_indices_asc, topk_values_asc)  # (batch_size * spec_length, vocab_size)
 
     # Softmax
