@@ -251,15 +251,23 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             example_inputs["last_accepted_output_tokens"] = torch.randint(low=0, high=self.model.config.vocab_size, size=(bs, nlk))
             dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "num_logits_to_keep"}
 
-            example_inputs["repetition_penalty_retain_state"] = torch.zeros(bs, self.model.config.vocab_size, dtype=torch.int32)
-            dynamic_axes["repetition_penalty_retain_state"] = {0: "batch_size", 1: "vocab_size"}
+            example_inputs["repetition_penalty_retain_state"] = torch.zeros(
+                fbs if self.continuous_batching else bs, self.model.config.vocab_size, dtype=torch.int32)
+            dynamic_axes["repetition_penalty_retain_state"] = {
+                0: "full_batch_size" if self.continuous_batching else "batch_size",
+                1: "vocab_size",
+            }
             output_names.append("repetition_penalty_retain_state_RetainedState")
 
             example_inputs["repetition_penalties"] = torch.ones(bs, dtype=torch.float) * 0.5
             dynamic_axes["repetition_penalties"] = {0: "batch_size"}
 
-            example_inputs["presence_penalty_retain_state"] = torch.zeros(bs, self.model.config.vocab_size, dtype=torch.int32)
-            dynamic_axes["presence_penalty_retain_state"] = {0: "batch_size", 1: "vocab_size"}
+            example_inputs["presence_penalty_retain_state"] = torch.zeros(
+                fbs if self.continuous_batching else bs, self.model.config.vocab_size, dtype=torch.int32)
+            dynamic_axes["presence_penalty_retain_state"] = {
+                0: "full_batch_size" if self.continuous_batching else "batch_size",
+                1: "vocab_size",
+            }
             output_names.append("presence_penalty_retain_state_RetainedState")
 
             example_inputs["presence_penalties"] = torch.zeros(bs, dtype=torch.float) + 0.5
