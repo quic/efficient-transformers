@@ -255,7 +255,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 fbs if self.continuous_batching else bs, self.model.config.vocab_size, dtype=torch.int32)
             dynamic_axes["repetition_penalty_retain_state"] = {
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
-                1: "vocab_size",
             }
             output_names.append("repetition_penalty_retain_state_RetainedState")
 
@@ -266,7 +265,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
                 fbs if self.continuous_batching else bs, self.model.config.vocab_size, dtype=torch.int32)
             dynamic_axes["presence_penalty_retain_state"] = {
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
-                1: "vocab_size",
             }
             output_names.append("presence_penalty_retain_state_RetainedState")
 
@@ -374,7 +372,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
         }
         if self.include_sampler:
              prefill_specialization.update({
-                 "vocab_size": self.model.config.vocab_size,
                  "max_top_k_ids": constants.Constants.MAX_TOP_K_IDS,
              })
         prefill_specialization.update({"num_logits_to_keep": 1})
@@ -396,7 +393,6 @@ class QEFFAutoModelForCausalLM(QEFFTransformersBase):
             }
             if self.include_sampler:
                 decode_specialization.update({
-                    "vocab_size": self.model.config.vocab_size,
                     "max_top_k_ids": constants.Constants.MAX_TOP_K_IDS,
                 })
             if self.continuous_batching:
