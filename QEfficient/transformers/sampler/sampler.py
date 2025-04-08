@@ -8,6 +8,7 @@ from transformers.cache_utils import Cache
 from transformers.modeling_outputs import ModelOutput, CausalLMOutputWithPast
 from typing import List, Optional, Tuple, Union
 
+
 @dataclass
 class QEffCausalLMOutputWithPast(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
@@ -105,45 +106,46 @@ def sampler_forward(
 
         last_accepted_output_tokens (`torch.Tensor`, *optional*):
             Output tokens accepted by the Speculative Decoding Draft Language Model.
-            
+
         repetition_penalty_retain_state (`torch.Tensor`, *optional*):
-            RetainedState buffer used as a mask to apply repetition penalty to the input 
+            RetainedState buffer used as a mask to apply repetition penalty to the input
             prompt and the output generated so far.
- 
+
         repetition_penalties (`torch.Tensor`, *optional*):
-            Sampling parameter that penalizes new tokens based on whether they appear in the 
-            prompt and the generated text so far. Values > 1 encourage the model to use 
+            Sampling parameter that penalizes new tokens based on whether they appear in the
+            prompt and the generated text so far. Values > 1 encourage the model to use
             new tokens, while values < 1 encourage the model to repeat tokens.
-  
+
         presence_penalty_retain_state (`torch.Tensor`, *optional*):
-            RetainedState buffer used as a mask to apply presence penalty to the output 
+            RetainedState buffer used as a mask to apply presence penalty to the output
             generated so far.
-  
+
         presence_penalties (`torch.Tensor`, *optional*):
-            Sampling parameter that penalizes new tokens based on whether they appear in the 
-            generated text so far. Values > 0 encourage the model to use new tokens, while values < 0 encourage the model to repeat tokens.
-  
+            Sampling parameter that penalizes new tokens based on whether they appear in the
+            generated text so far. Values > 0 encourage the model to use new tokens, while
+            values < 0 encourage the model to repeat tokens.
+
         temperatures (`torch.Tensor`, *optional*):
-            Sampling parameter that controls the randomness of the sampling. Lower values 
-            make the model more deterministic, while higher values make the model more 
+            Sampling parameter that controls the randomness of the sampling. Lower values
+            make the model more deterministic, while higher values make the model more
             random. Zero means greedy sampling.
-  
+
         top_ks (`torch.Tensor`, *optional*):
             Sampling parameter that controls the number of top tokens to consider.
-   
+
         top_ps (`torch.Tensor`, *optional*):
-            Sampling parameter that controls the cumulative probability of the top tokens to 
+            Sampling parameter that controls the cumulative probability of the top tokens to
             consider. Must be in (0, 1]. Set to 1.0 to consider all tokens.
-   
+
         min_ps (`torch.Tensor`, *optional*):
-            Sampling parameter that represents the minimum probability for a token to be 
-            considered, relative to the probability of the most likely token. Must be in 
+            Sampling parameter that represents the minimum probability for a token to be
+            considered, relative to the probability of the most likely token. Must be in
             [0, 1]. Set to 0.0 to disable this.
-   
+
         random_numbers (`torch.Tensor`, *optional*):
-            Sampling parameter that represents the random seeds to use for random sampling. 
+            Sampling parameter that represents the random seeds to use for random sampling.
             Must be in [-1, 1].
-            
+
     Returns:
 
     Example:
@@ -210,12 +212,12 @@ def sampler_forward(
 
     # Perform Sampling
     batch_size, spec_length, vocab_size = logits.shape
-    
+
     # Select relevant rows
     batch_index_reshaped = batch_index.view(-1)
     repetition_penalty_retain_state_selected = torch.index_select(repetition_penalty_retain_state, 0, batch_index_reshaped)
     presence_penalty_retain_state_selected = torch.index_select(presence_penalty_retain_state, 0, batch_index_reshaped)
-    
+
     logits = logits.reshape(-1, vocab_size)  # Reshape tensor to 2D
 
     if input_ids.shape[1] > spec_length:  # Prefill phase, initialize retained states
@@ -238,16 +240,14 @@ def sampler_forward(
         repetition_penalties = repetition_penalties.repeat(spec_length, vocab_size)  # (batch_size, 1) -> (batch_size * spec_length, vocab_size)
         repetition_penalty_retain_state_selected = repetition_penalty_retain_state_selected.repeat(spec_length, 1)  # (batch_size, vocab_size) -> (batch_size * spec_length, vocab_size)
         repetition_penalties[~repetition_penalty_retain_state_selected.bool()] = 1.0
-        logits = torch.where(
-            logits > 0, logits / repetition_penalties, logits * repetition_penalties
-        )
+        logits = torch.where(logits > 0, logits / repetition_penalties, logits * repetition_penalties)
 
     # Presence Penalty
     if (presence_penalties != 0.).any():
         presence_penalties = presence_penalties.repeat(spec_length, 1)  # (batch_size, 1) -> (batch_size * spec_length, 1)
         presence_penalty_retain_state_selected = presence_penalty_retain_state_selected.repeat(spec_length, 1)  # (batch_size, vocab_size) -> (batch_size * spec_length, vocab_size)
         logits -= presence_penalties * presence_penalty_retain_state_selected
-    
+
     # TODO: Frequency Penalty
 
     # Temperature Scaling
@@ -284,7 +284,7 @@ def sampler_forward(
     probs = torch.softmax(logits, dim=1)  # (batch_size * spec_length, vocab_size)
 
     # Sample the next tokens
-    # TODO (Optimization): if self.return_pds: skip 
+    # TODO (Optimization): if self.return_pds: skip
     greedy_samples = torch.argmax(probs, dim=-1, keepdim=True)  # Greedy Sampling
     gumbel_noise = -torch.log(-torch.log(random_numbers.repeat(spec_length, 1)))  # Gumbel-Max Trick
     y = probs + gumbel_noise
