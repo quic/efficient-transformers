@@ -130,12 +130,7 @@ class FP8DeQuantLinear(torch.nn.Module):
 
 class QEffFP8Config(QuantizationConfigMixin):
     def __init__(
-        self,
-        quant_method: str,
-        activation_scheme: str,
-        ignored_layers: List[str] = None,
-        kv_cache_scheme: str = None,
-        run_compressed: bool = False,
+        self, quant_method: str, activation_scheme: str, ignored_layers: List[str] = None, kv_cache_scheme: str = None
     ):
         self.quant_method = quant_method
         self.activation_scheme = activation_scheme
@@ -230,7 +225,6 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
         ignore=None,
         sparsity_config=None,
         quant_method="compressed-tensors",
-        run_compressed: bool = False,
         **kwargs,
     ):
         self.config_groups = config_groups
