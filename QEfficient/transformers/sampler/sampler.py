@@ -201,24 +201,24 @@ def sampler_forward(
         logits = torch.where(temperatures != 0, logits / temperatures, logits)
 
     # Top K
-    topk_values, topk_indices = torch.topk(logits, k=500, dim=1)  # (batch_size * spec_length, 500)
+    topk_values, topk_indices = torch.topk(logits, k=vocab_size, dim=1)  # (batch_size * spec_length, vocab_size)
 
     # True values in this mask indicate the positions of the top K values.
     topk_inverted_mask = torch.arange(topk_values.shape[1]).unsqueeze(0) < top_ks.unsqueeze(1).repeat(spec_length, 1)
     topk_values[~topk_inverted_mask] = -float("inf")
 
     # Top P
-    top_probs = torch.softmax(topk_values, dim=1)  # (batch_size * spec_length, 500)
+    top_probs = torch.softmax(topk_values, dim=1)  # (batch_size * spec_length, vocab_size)
     topk_probs_sum = torch.cumsum(top_probs, dim=1)
     top_p_mask = topk_probs_sum > top_ps.unsqueeze(1).repeat(spec_length, 1)  # True values in
     # this mask indicate the positions where the cumulative probability exceeds the
     # threshold, and these values are set to -inf.
     top_p_mask[:, 0] = False  # Keep at least one
-    top_probs = torch.where(top_p_mask, torch.tensor(0.0), top_probs)  # (batch_size * spec_length, 500)
+    top_probs = torch.where(top_p_mask, torch.tensor(0.0), top_probs)  # (batch_size * spec_length, vocab_size)
 
     # Min P
     scaled_min_p = torch.mul(min_ps.repeat(spec_length), top_probs[:, 0])  # (batch_size * spec_length,)
-    top_probs = torch.where(top_probs < scaled_min_p.unsqueeze(1), torch.tensor(0.0), top_probs)  # (batch_size * spec_length, 500)
+    top_probs = torch.where(top_probs < scaled_min_p.unsqueeze(1), torch.tensor(0.0), top_probs)  # (batch_size * spec_length, vocab_size)
 
     # Scatter the top probs into the probs tensor
     probs = torch.zeros(logits.shape, dtype=torch.float)
