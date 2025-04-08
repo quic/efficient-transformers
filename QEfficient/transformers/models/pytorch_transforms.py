@@ -201,7 +201,7 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Model,
 )
 from QEfficient.transformers.spd.causal_lm_forward import tlm_forward
-
+from QEfficient.transformers.sampler.sampler import sampler_forward
 
 class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
@@ -337,6 +337,36 @@ class SpDTransform:
         transformed = False
         if (model_class := model.__class__) in cls._module_mapping:
             model.forward = MethodType(tlm_forward, model)
+            transformed = True
+        else:
+            raise NotImplementedError(
+                f"model class {model_class} does not yet support returning multiple logits to keep."
+            )
+
+        return model, transformed
+
+
+class SamplerTransform:
+    """
+    ``Mandatory`` Args:
+        :model (nn.Module): PyTorch model.
+
+    Returns:
+        :model (nn.Module): PyTorch model.
+        :transformed (bool): whether transformation was applied successfully.
+    """
+
+    # supported architectures
+    _module_mapping = {
+        # Llama
+        QEffLlamaForCausalLM,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        transformed = False
+        if (model_class := model.__class__) in cls._module_mapping:
+            model.forward = MethodType(sampler_forward, model)
             transformed = True
         else:
             raise NotImplementedError(
