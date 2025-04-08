@@ -28,11 +28,10 @@ def get_preprocessed_imdb(dataset_config, tokenizer, split, context_length=None)
         data = tokenizer(
             sample["text"],
             add_special_tokens=True,
-            max_length=context_length,
-            pad_to_max_length=True,
+            max_length=tokenizer.model_max_length,
         )
 
-        data["labels"] = sample["label"]
+        data["labels"] = [sample["label"]]
         return data
 
     dataset = dataset.map(tokenize_add_label, remove_columns=list(dataset.features))

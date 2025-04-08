@@ -145,13 +145,9 @@ def main(**kwargs):
     dataset_processer = tokenizer
 
     # Load and preprocess the dataset for training and validation
-    ctx_len = train_config.context_length
-    if ctx_len is None and hasattr(model.config, "max_position_embeddings"):
-        ctx_len = model.config.max_position_embeddings
+    dataset_train = get_preprocessed_dataset(dataset_processer, dataset_config, split="train", context_length=train_config.context_length)
 
-    dataset_train = get_preprocessed_dataset(dataset_processer, dataset_config, split="train", context_length=ctx_len)
-
-    dataset_val = get_preprocessed_dataset(dataset_processer, dataset_config, split="test", context_length=ctx_len)
+    dataset_val = get_preprocessed_dataset(dataset_processer, dataset_config, split="test", context_length=train_config.context_length)
 
     # TODO: vbaddi, check if its necessary to do this?
     # dataset_train = ConcatDataset(

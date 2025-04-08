@@ -194,7 +194,7 @@ def train(
                         loss = model_outputs.loss  # Forward call
                         if train_config.task_type == "seq_classification":
                             logits = model_outputs.logits
-                            labels = batch["labels"]
+                            labels = batch["labels"][:, 0]
                             preds = torch.nn.functional.softmax(logits, dim=-1)
                             acc_helper.forward(preds, labels)
                     print("Mismatches detected:", verifier.get_perop_mismatch_count())
@@ -203,7 +203,7 @@ def train(
                     loss = model_outputs.loss  # Forward call
                     if train_config.task_type == "seq_classification":
                         logits = model_outputs.logits
-                        labels = batch["labels"]
+                        labels = batch["labels"][:, 0]
                         preds = torch.nn.functional.softmax(logits, dim=-1)
                         acc_helper.forward(preds, labels)
 
@@ -306,7 +306,7 @@ def train(
             dist.barrier()
             dist.all_reduce(train_epoch_loss, op=dist.ReduceOp.SUM)
             train_epoch_loss /= dist.get_world_size()
-            
+
         if train_config.task_type == "seq_classification":
             accuracy = acc_helper.compute()
             if train_config.enable_ddp:
@@ -513,7 +513,7 @@ def evaluation_acc(model, train_config, eval_dataloader, local_rank, tokenizer, 
                 outputs = model(**batch)
             loss = outputs.loss
             logits = outputs.logits
-            labels = batch["labels"]
+            labels = batch["labels"][:, 0]
             if train_config.save_metrics:
                 val_step_loss.append(loss.detach().float().item())
                 preds = torch.nn.functional.softmax(logits, dim=-1)
