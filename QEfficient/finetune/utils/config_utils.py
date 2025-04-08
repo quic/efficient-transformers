@@ -88,19 +88,14 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, mode):
                     num_replicas=dist.get_world_size(),
                     shuffle=False,
                 )
-                if train_config.task_type == "seq_classification":
-                    kwargs["collate_fn"] = default_data_collator
-                else:
-                    kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
         else:
             kwargs["sampler"] = data_utils.DistributedSampler(
                 dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True
             )
             kwargs["batch_size"] = batch_size
             kwargs["drop_last"] = True
-            kwargs["collate_fn"] = default_data_collator
     else:
         kwargs["batch_size"] = batch_size
         kwargs["drop_last"] = True
-        kwargs["collate_fn"] = default_data_collator
+    kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
     return kwargs
