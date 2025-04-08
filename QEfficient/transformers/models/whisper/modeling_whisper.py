@@ -9,8 +9,7 @@ from typing import Optional, Tuple
 
 import torch
 from torch import nn
-from transformers.cache_utils import Cache, EncoderDecoderCache, StaticCache
-from transformers.modeling_attn_mask_utils import AttentionMaskConverter
+from transformers.cache_utils import Cache, StaticCache
 from transformers.modeling_outputs import (
     BaseModelOutputWithCrossAttentions,
     BaseModelOutputWithPastAndCrossAttentions,
