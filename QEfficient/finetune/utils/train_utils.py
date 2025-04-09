@@ -309,6 +309,7 @@ def train(
 
         if train_config.task_type == "seq_classification":
             accuracy = acc_helper.compute()
+            acc_helper.reset()
             if train_config.enable_ddp:
                 dist.all_reduce(accuracy, op=dist.ReduceOp.SUM)
                 accuracy /= dist.get_world_size()
