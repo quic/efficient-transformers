@@ -64,6 +64,16 @@ ONNX_EXPORT_OPSET = 13
 
 COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-aic-hw-version=2.0"]
 
+# InternVL constants
+# Fixing the feature size with reference to OpenGVLab/InternVL2_5-1B, OpenGVLab/InternVL2_5-38B and OpenGVLab/InternVL2_5-78B
+INTERN_FEATURE_SIZE = 256
+INTERN_NUM_PATCHES = 13
+INTERN_IMG_SIZE = 448
+INTERN_CTX_LEN = 4096
+INTERN_PREFILL_SEQ_LEN = INTERN_CTX_LEN - 256  # 4096-256
+INTERN_NUM_CHANNELS = 3
+INTERN_IMG_CONTEXT_TOKEN = 151667
+
 
 class Constants:
     # Export Constants.
@@ -89,8 +99,7 @@ class QnnConstants:
     QNN_CONTEXT_BIN = "{}/bin/{}/qnn-context-binary-generator"
 
     # QNN Libraries required for compilation
-    QNN_CONTEXT_LIB_BACKEND = "{}/lib/{}/libQnnAicCC.so"
-    QNN_CONTEXT_LIB_MODEL = "{}/lib/{}/libQnnModelDlc.so"
+    QNN_CONTEXT_LIB_BACKEND = "{}/lib/{}/libQnnAic.so"
     QNN_CONTEXT_LIB_NET_RUN_EXTENSIONS = "{}/lib/{}/libQnnAicNetRunExtensions.so"
 
     # QNN Compilation target names
@@ -102,10 +111,10 @@ class QnnConstants:
     # TARGET System Architecture
     TARGET = "x86_64-linux-clang"  # TODO add support in infer to be override
 
-    # Convertor Arguments
+    # Converter Arguments
     FLOAT_BITWIDTH = 16
     FLOAT_BIAS_BITWIDTH = 32
-    CONVERTOR_DEFAULT_ARGS = "--preserve_io_datatype --onnx_skip_simplification "
+    CONVERTER_DEFAULT_ARGS = "--preserve_io_datatype --onnx_skip_simplification "
 
     # Context-Binary-Generator Arguments
     LOG_LEVEL = "error"
@@ -125,12 +134,12 @@ class QnnConstants:
     GRAPH_NAMES = [f"{MODEL_NAME}_configuration_1", f"{MODEL_NAME}_configuration_2"]
 
     # qnn_config JSON file supported Keys
-    CONVERTOR_ARGS_EXTENSION_STR = "convertor_args_extension"
+    CONVERTER_ARGS_EXTENSION_STR = "converter_args_extension"
     CONTEXT_BIN_ARGS_EXTENSION_STR = "context_binary_generator_args_extension"
     QNN_COMPILATION_BACKEND_STR = "qnn_compilation_backend"
-    SKIP_QNN_CONVERTOR_STEP_STR = "SKIP_QNN_CONVERTOR_STEP"
+    SKIP_QNN_CONVERTER_STEP_STR = "SKIP_QNN_CONVERTER_STEP"
 
-    IMMUTABLE_CONVERTOR_ARGS = [
+    IMMUTABLE_CONVERTER_ARGS = [
         "--input_network ",
         "--output_path ",
         "--config ",

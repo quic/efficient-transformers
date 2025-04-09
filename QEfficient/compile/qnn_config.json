@@ -1,5 +1,5 @@
 {
-    "convertor_args_extension": "",
+    "converter_args_extension": "",
     "context_binary_generator_args_extension": "--log_level debug",
     "qnn_compilation_backend":
     {
@@ -8,5 +8,5 @@
         "compiler_printPerfMetrics": false,
         "compiler_stat_level": 10
     },
-    "SKIP_QNN_CONVERTOR_STEP": false
+    "SKIP_QNN_CONVERTER_STEP": false
 }
