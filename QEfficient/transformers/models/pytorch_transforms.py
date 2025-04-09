@@ -227,12 +227,12 @@ from QEfficient.transformers.models.phi3.modeling_phi3 import (
 )
 from QEfficient.transformers.models.plamo.modeling_plamo import (
     QEffPlamoAttention,
-    QEffPlamoDecoder, 
-    QEffPlamoDecoderLayer, 
-    QEffPlamoForCausalLM, 
-    QEffPlamoModel, 
-    QEffPlamoRMSNorm, 
-    QEffPlamoRotaryEmbedding
+    QEffPlamoDecoder,
+    QEffPlamoDecoderLayer,
+    QEffPlamoForCausalLM,
+    QEffPlamoModel,
+    QEffPlamoRMSNorm,
+    QEffPlamoRotaryEmbedding,
 )
 from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2Attention,
@@ -433,7 +433,6 @@ class VlmNoKVOffloadTransform(ModuleMappingTransform):
         # Llama
         MllamaTextCrossAttention: QEffMllamaTextCrossAttentionSingleQPC,
     }
-
 
 class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
     _match_string_replace_method = {
