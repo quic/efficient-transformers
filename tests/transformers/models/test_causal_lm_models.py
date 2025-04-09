@@ -130,27 +130,16 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    if enable_qnn:
-        qpc_path = qeff_model.compile(
-            prefill_seq_len=prompt_len,
-            ctx_len=ctx_len,
-            num_cores=14,
-            mxfp6=False,
-            aic_enable_depth_first=False,
-            num_speculative_tokens=num_speculative_tokens,
-            enable_qnn=enable_qnn,
-            qnn_config=qnn_config,
-        )
-    else:
-        qpc_path = qeff_model.compile(
-            prefill_seq_len=prompt_len,
-            ctx_len=ctx_len,
-            num_cores=14,
-            mxfp6=False,
-            aic_enable_depth_first=False,
-            num_speculative_tokens=num_speculative_tokens,
-        )
-
+    qpc_path = qeff_model.compile(
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
+        num_cores=14,
+        mxfp6=False,
+        aic_enable_depth_first=False,
+        num_speculative_tokens=num_speculative_tokens,
+        enable_qnn=enable_qnn,
+        qnn_config=qnn_config,
+    )
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
     gen_len = ort_tokens.shape[-1]
@@ -182,29 +171,17 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    if enable_qnn:
-        qpc_path = qeff_model.compile(
-            prefill_seq_len=prompt_len,
-            ctx_len=ctx_len,
-            num_cores=14,
-            mxfp6=False,
-            aic_enable_depth_first=False,
-            full_batch_size=full_batch_size,
-            num_speculative_tokens=num_speculative_tokens,
-            enable_qnn=enable_qnn,
-            qnn_config=qnn_config,
-        )
-    else:
-        qpc_path = qeff_model.compile(
-            prefill_seq_len=prompt_len,
-            ctx_len=ctx_len,
-            num_cores=14,
-            mxfp6=False,
-            aic_enable_depth_first=False,
-            full_batch_size=full_batch_size,
-            num_speculative_tokens=num_speculative_tokens,
-        )
-
+    qpc_path = qeff_model.compile(
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
+        num_cores=14,
+        mxfp6=False,
+        aic_enable_depth_first=False,
+        full_batch_size=full_batch_size,
+        num_speculative_tokens=num_speculative_tokens,
+        enable_qnn=enable_qnn,
+        qnn_config=qnn_config,
+    )
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
     assert all(

@@ -73,17 +73,11 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     print("Mad for onnx and PyTorch is ", mad)
     assert mad <= 10**-5, f"MAD is too high for onnx and Pytorch: {mad}"
 
-    if enable_qnn:
-        qeff_model.compile(
-            num_cores=14,
-            enable_qnn=enable_qnn,
-            qnn_config=qnn_config,
-        )
-    else:
-        qeff_model.compile(
-            num_cores=14,
-        )
-
+    qeff_model.compile(
+        num_cores=14,
+        enable_qnn=enable_qnn,
+        qnn_config=qnn_config,
+    )
     ai100_output = qeff_model.generate(inputs=inputs)
 
     # Compare ONNX and AI 100 outputs

@@ -335,20 +335,13 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    if enable_qnn:
-        qeff_model.compile(
-            ctx_len=ctx_len,
-            num_cores=16,
-            batch_size=batch_size,
-            enable_qnn=enable_qnn,
-            qnn_config=qnn_config,
-        )
-    else:
-        qeff_model.compile(
-            ctx_len=ctx_len,
-            num_cores=16,
-            batch_size=batch_size,
-        )
+    qeff_model.compile(
+        ctx_len=ctx_len,
+        num_cores=16,
+        batch_size=batch_size,
+        enable_qnn=enable_qnn,
+        qnn_config=qnn_config,
+    )
 
     exec_info = qeff_model.generate(
         inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=ctx_len

@@ -102,7 +102,6 @@ class QEFFBaseModel(ABC):
             Following flag can be passed in compiler_options to enable QNN Compilation path.
                 :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False. if not passed.``
                 :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None. if not passed``
-                any other parameter passed will be ignored in QNN compilation path as we expect overriding or extra parameters for QNN via config file.
             for QAIC compilation path, any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
@@ -244,12 +243,7 @@ class QEFFBaseModel(ABC):
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
             :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
-            :compiler_options: Pass any compiler option as input.
-            Following flag can be passed in compiler_options to enable QNN Compilation path.
-                :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False. if not passed.``
-                :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None. if not passed``
-                any other parameter passed will be ignored in QNN compilation path as we expect overriding or extra parameters for QNN via config file.
-            for QAIC compilation path, any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
+            :compiler_options: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
 

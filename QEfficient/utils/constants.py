@@ -161,7 +161,7 @@ class QnnConstants:
     ]
 
     QNN_SAMPLE_CONFIG = {
-        "converter_args_extension": "",
+        "converter_args_extension": "--onnx_defer_loading",
         "context_binary_generator_args_extension": "--log_level debug",
         "qnn_compilation_backend": {
             "compiler_enable_depth_first": True,
