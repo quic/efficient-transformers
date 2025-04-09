@@ -1,16 +1,14 @@
 from asyncio.log import logger
 import math
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import torch
 from torch import nn
-from torch.nn import functional as F
 from transformers import PretrainedConfig, PreTrainedModel
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
-from transformers.cache_utils import Cache, StaticCache
+from transformers.cache_utils import Cache
 from QEfficient.customop.rms_norm import CustomRMSNorm
 from QEfficient.transformers.cache_utils import QEffDynamicCache
-
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
@@ -195,6 +193,25 @@ class QEffPlamoRMSNorm(nn.Module):
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
         return self.weight * hidden_states.to(input_dtype)
 
+def eager_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    **kwargs,
+):
+    attn_weights = torch.matmul(query, key.transpose(2, 3)) / math.sqrt(module.qk_dim)
+
+    if attention_mask is not None:
+        attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+
+    # upcast attention to fp32
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_output = torch.matmul(attn_weights, value)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+    
+    return attn_output, attn_weights
 
 class QEffPlamoAttention(torch.nn.Module):
     def __init__(self, config: QEffPlamoConfig, layer_idx: Optional[int] = None) -> None:
@@ -225,6 +242,7 @@ class QEffPlamoAttention(torch.nn.Module):
         batch_index: Optional[torch.Tensor] = None,
         layer_idx: Optional[int] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()  
 
@@ -254,45 +272,30 @@ class QEffPlamoAttention(torch.nn.Module):
         # query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
         query_states = _rotary_pos_emb(query_states, cos, sin, position_ids)
         key_states = _rotary_pos_emb(key_states, cos, sin, position_ids)
-
-        cos = cos.squeeze(1).squeeze(0)  # [seq_len, dim]
-        sin = sin.squeeze(1).squeeze(0)  # [seq_len, dim]
         
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"sin": sin, "cos": cos,  "batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, layer_idx, cache_kwargs)
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.qk_dim)
+        attention_interface: Callable = eager_attention_forward
 
-        if attention_mask is not None:  # no matter the length, we just slice it
-            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-            attn_weights = attn_weights + causal_mask
-
-        # upcast attention to fp32
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_output = torch.matmul(attn_weights, value_states)
-
-        if attn_output.size() != (bsz, self.q_num_heads, q_len, self.qk_dim):
-            raise ValueError(
-                f"`attn_output` should be of size {(bsz, self.q_num_heads, q_len, self.qk_dim)}, but is"
-                f" {attn_output.size()}"
-            )
-
-        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            **kwargs,
+        )
+        
         attn_output = attn_output.reshape(bsz, q_len, -1)
-
-        # attn_output = F.scaled_dot_product_attention(query_states, key_states, value_states, attn_mask=attention_mask)
-        # attn_output = attn_output.transpose(1, 2)
-
-        #attn_output = attn_output.reshape(bsz, q_len, self.q_num_heads * self.v_dim)
         attn_output = self.o_proj(attn_output)
 
         if not output_attentions:
             attn_weights = None
 
         return attn_output, attn_weights, past_key_value
-
 
 class MLP(nn.Module):
     def __init__(self, config: QEffPlamoConfig) -> None:
@@ -381,7 +384,6 @@ class QEffPlamoDecoder(torch.nn.Module):
                 output_hidden_states: Optional[bool] = False,
                 output_attentions: Optional[bool] = False,
                 use_cache: Optional[bool] = False,
-                gradient_checkpointing: bool = False,
                 batch_index: Optional[torch.LongTensor] = None,
                 cache_position: Optional[torch.LongTensor] = None,
                 ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
@@ -396,25 +398,7 @@ class QEffPlamoDecoder(torch.nn.Module):
                 assert all_hidden_states is not None
                 all_hidden_states += (hidden_states,)
 
-            #past_key_value = x.past_key_values[idx] if x.past_key_values is not None else None
-
-            if self.training and gradient_checkpointing:
-
-                def create_custom_forward(module):  # type: ignore
-                    def custom_forward(*inputs):  # type: ignore
-                        # None for past_key_value
-                        return module(*inputs, output_attentions, None)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(decoder_layer),  # type: ignore
-                    hidden_states,
-                    attention_mask,
-                    position_ids,
-                    None,
-                )
-            elif batch_index is not None:
+            if batch_index is not None:
                 layer_outputs = decoder_layer(
                     hidden_states,
                     attention_mask=attention_mask,
@@ -501,38 +485,6 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
     def set_input_embeddings(self, value: torch.nn.Embedding) -> None:
         self.embed_tokens = value
 
-    # Copied from transformers.models.bart.modeling_bart.BartDecoder._prepare_decoder_attention_mask
-    def _prepare_decoder_attention_mask(
-        self,
-        attention_mask: torch.Tensor,
-        input_shape: Tuple[int, int],
-        inputs_embeds: Optional[torch.FloatTensor],
-        past_key_values_length: int,
-    ) -> Optional[torch.Tensor]:
-        # create causal mask
-        # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-        combined_attention_mask: Optional[torch.Tensor] = None
-        if input_shape[-1] > 1:
-            assert inputs_embeds is not None
-            combined_attention_mask = _make_causal_mask(
-                input_shape,
-                inputs_embeds.dtype,
-                device=inputs_embeds.device,
-                past_key_values_length=past_key_values_length,
-            )
-
-        if attention_mask is not None:
-            # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-            assert inputs_embeds is not None
-            expanded_attn_mask = _expand_mask(attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]).to(
-                inputs_embeds.device
-            )
-            combined_attention_mask = (
-                expanded_attn_mask if combined_attention_mask is None else expanded_attn_mask + combined_attention_mask
-            )
-
-        return combined_attention_mask
-
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -603,13 +555,14 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
         # decoder layers
         layer_outputs = self.layers(
             hidden_states=hidden_states,
-            attention_mask=attention_mask,
             position_ids=position_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=output_hidden_states,
             past_key_values=past_key_values,
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
-            batch_index=batch_index
+            batch_index=batch_index,
         )
         
         hidden_states = layer_outputs[0]
@@ -682,25 +635,6 @@ class QEffPlamoForCausalLM(QEffPlamoPreTrainedModel):
         cache_position: Optional[torch.LongTensor] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-        r"""
-        Args:
-            labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-                Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
-                config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
-                (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
-        Returns:
-        Example:
-        ```python
-        >>> from transformers import AutoTokenizer, LlamaForCausalLM
-        >>> model = LlamaForCausalLM.from_pretrained(PATH_TO_CONVERTED_WEIGHTS)
-        >>> tokenizer = AutoTokenizer.from_pretrained(PATH_TO_CONVERTED_TOKENIZER)
-        >>> prompt = "Hey, are you consciours? Can you talk to me?"
-        >>> inputs = tokenizer(prompt, return_tensors="pt")
-        >>> # Generate
-        >>> generate_ids = model.generate(inputs.input_ids, max_length=30)
-        >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-        "Hey, are you consciours? Can you talk to me?\nI'm not consciours, but I can talk to you."
-        ```"""
         assert input_ids is not None
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
