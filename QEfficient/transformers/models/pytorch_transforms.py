@@ -434,6 +434,7 @@ class VlmNoKVOffloadTransform(ModuleMappingTransform):
         MllamaTextCrossAttention: QEffMllamaTextCrossAttentionSingleQPC,
     }
 
+
 class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
     _match_string_replace_method = {
         "InternVLChatModel": {
@@ -447,12 +448,12 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
             "get_qeff_language_decoder": QEffInternVLModel.get_qeff_language_decoder,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
-        "PlamoForCausalLM" : {"forward": QEffPlamoForCausalLM.forward},
+        "PlamoForCausalLM": {"forward": QEffPlamoForCausalLM.forward},
         "PlamoModel": {"forward": QEffPlamoModel.forward},
-        "PlamoDecoder":{ "forward": QEffPlamoDecoder.forward},
-        "PlamoDecoderLayer":{ "forward": QEffPlamoDecoderLayer.forward},
+        "PlamoDecoder": {"forward": QEffPlamoDecoder.forward},
+        "PlamoDecoderLayer": {"forward": QEffPlamoDecoderLayer.forward},
         "Attention": {"forward": QEffPlamoAttention.forward},
-        "RMSNorm":{"forward": QEffPlamoRMSNorm.forward},
-        "RotaryEmbedding":{"forward": QEffPlamoRotaryEmbedding.forward},
+        "RMSNorm": {"forward": QEffPlamoRMSNorm.forward},
+        "RotaryEmbedding": {"forward": QEffPlamoRotaryEmbedding.forward},
     }
     _match_class_replace_method = {}
