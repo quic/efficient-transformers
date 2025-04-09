@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
+
 import pytest
 from transformers import AutoModelForCausalLM
 
@@ -91,7 +93,6 @@ def test_generate_text_stream(
     text_generator = TextGeneration(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
-        device_id=device_id,
         ctx_len=ctx_len,
         full_batch_size=full_batch_size,
     )
@@ -102,3 +103,4 @@ def test_generate_text_stream(
     assert cloud_ai_100_output == stream_tokens, (
         f"Deviation in output observed while comparing regular execution and streamed output: {cloud_ai_100_output} != {stream_tokens}"
     )
+    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))

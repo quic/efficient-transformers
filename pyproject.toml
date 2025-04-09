@@ -19,8 +19,9 @@ classifiers = [
 ]
 requires-python = ">=3.8,<3.11"
 dependencies = [
-    "transformers==4.45.2",
+    "transformers==4.46.3",
     "huggingface-hub==0.27.0",
+    "hf_transfer==0.1.9",
     "peft==0.13.2",
     "datasets==2.20.0",
     "fsspec==2023.6.0",
@@ -32,6 +33,7 @@ dependencies = [
     "numpy==1.26.4",
     "protobuf==3.20.2",
     "onnxscript==0.1.0.dev20240327",
+    "pillow===10.4.0",
     "sympy",
     "tensorboard",
     "fire",

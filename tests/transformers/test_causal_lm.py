@@ -6,6 +6,7 @@
 # ----------------------------------------------------------------------------
 
 import copy
+import os
 from time import perf_counter
 
 import onnx
@@ -28,6 +29,7 @@ configs = [
     ("phi3", 256, 2, 4, 128, 512, 127, {"pad_token_id": 0}),
     ("qwen2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("starcoder2", 256, 2, 4, 128, 512, 127, {}),
+    ("granite", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
 ]
 
 configs = [
@@ -169,3 +171,4 @@ def test_causal_lm_compile(config, cb, tmp_cache):
     end = perf_counter()
     compile_time = end - start
     assert compile_time < 2.0
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))

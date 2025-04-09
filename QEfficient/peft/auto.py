@@ -107,6 +107,10 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         mhash = mhash.hexdigest()[:16]
         return mhash
 
+    @property
+    def get_model_config(self) -> dict:
+        return self.model.get_base_model().config.__dict__
+
     def load_adapter(self, model_id: str, adapter_name: str):
         """Loads a new adapter from huggingface hub or local path
 

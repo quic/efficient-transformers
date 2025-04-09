@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 from typing import Optional
 
 import numpy as np
@@ -38,6 +39,11 @@ test_models = [
     "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
     "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
     "ibm-granite/granite-20b-code-base",
+    # "neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8-dynamic",  # naive-quantized compressed-tensor FP8 model per-channel weight, per-token activations
+    "neuralmagic/Llama-3.2-3B-Instruct-FP8",  # float quantized compressed-tensor per tensor both weight and activations
+    "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
+    "ibm-granite/granite-3.1-2b-instruct",
+    "ibm-granite/granite-guardian-3.1-2b",
 ]
 
 spd_test_models = [
@@ -122,7 +128,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    _ = qeff_model.compile(
+    qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
         num_cores=14,
@@ -136,6 +142,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     assert (ort_tokens == cloud_ai_100_tokens[:, :gen_len]).all(), (
         "Tokens don't match for ONNXRT output and Cloud AI 100 output."
     )
+    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
     # testing for CB models
     model_hf, _ = load_causal_lm_model(model_config)
@@ -160,7 +167,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
-    _ = qeff_model.compile(
+    qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
         num_cores=14,
@@ -177,6 +184,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
             for pt_token, cloud_token in zip(pytorch_hf_tokens, exec_info_fbs.generated_ids)
         ]
     ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
+    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
 
 # FIXME: there should be a CB test here
@@ -225,6 +233,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
 
 
+@pytest.mark.skip()  # remove when the SDK 1.20.0 issue solved for compiling this model
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", spd_test_models)
 def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
@@ -233,6 +242,7 @@ def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
+
     if model_name == "microsoft/Phi-3-mini-4k-instruct":
         n_layer = 2  # test only 2 layer models
     else:

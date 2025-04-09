@@ -6,4 +6,9 @@
 # -----------------------------------------------------------------------------
 
 from QEfficient.base.common import QEFFCommonLoader  # noqa: F401
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModel, QEFFAutoModelForCausalLM  # noqa: F401
+from QEfficient.transformers.models.modeling_auto import (  # noqa: F401
+    QEFFAutoModel,
+    QEFFAutoModelForCausalLM,
+    QEFFAutoModelForImageTextToText,
+    QEFFAutoModelForSpeechSeq2Seq,
+)

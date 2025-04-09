@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 from time import perf_counter
 from typing import List, Optional
 
@@ -92,6 +93,7 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     return bonus_token_inputs, dlm_decode_inputs
 
 
+@pytest.mark.skip()  # remove when the SDK 1.20.0 issue solved for compiling this model
 @pytest.mark.parametrize(
     "prompts, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, draft_model_name, target_model_name, full_batch_size",
     configs,
@@ -258,19 +260,13 @@ def test_spec_decode_inference(
         all_accept[valid_batch_indices] = num_tokens_selected[valid_batch_indices] == num_speculative_tokens + 1
         mean_num_accepted_tokens += num_tokens_selected[valid_batch_indices].mean().item()
         # append selected tokens to the generated_ids
-        tlm_precode_position_ids = tlm_precode_inputs["position_ids"] + num_tokens_selected.reshape(
-            decode_batch_size, 1
-        )
-        # tlm_precode_position_ids = tlm_precode_inputs["position_ids"] + num_tokens_selected.reshape(decode_batch_size,1)+1
         for bi, valid in enumerate(valid_batch_indices):
             if not valid:
                 continue
             accepted_tokens = num_tokens_selected[bi]
             num_tokens_to_append = min(accepted_tokens, max_gen_len[bi] - len(generated_ids[bi]))
             generated_ids[bi].extend(target_tokens[bi, :num_tokens_to_append].tolist())
-            # position_ids > ctx_len-1 result in erronous output for logits at each seq_len of TLM
-            # (e.g., ctx_len=128 -> position_ids=[127,128,129] will give erronous output at each predicted token)
-            if len(generated_ids[bi]) >= max_gen_len[bi] or (tlm_precode_position_ids[bi] > ctx_len - 1).any():
+            if len(generated_ids[bi]) >= max_gen_len[bi]:
                 valid_batch_indices[bi] = False
         # check if all generations are done
         if not valid_batch_indices.any():
@@ -336,3 +332,5 @@ def test_spec_decode_inference(
     ]  # Because we always run for single input and single batch size
     all_matching = np.array_equal(cloud_ai_100_tokens, generated_ids)
     assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
+    assert os.path.isfile(os.path.join(os.path.dirname(target_model_qpc_path), "qconfig.json"))
+    assert os.path.isfile(os.path.join(os.path.dirname(draft_model_qpc_path), "qconfig.json"))

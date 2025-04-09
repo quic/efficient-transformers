@@ -5,6 +5,15 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
+
+# For faster downloads via hf_transfer
+# This code is put above import statements as this needs to be executed before
+# hf_transfer is imported (will happen on line 15 via leading imports)
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
+from QEfficient.utils.logging_utils import logger
+
 
 def check_qaic_sdk():
     """Check if QAIC SDK is installed"""
@@ -20,12 +29,17 @@ def check_qaic_sdk():
         return False
 
 
-QAIC_INSTALLED = check_qaic_sdk()
-
 # Conditionally import QAIC-related modules if the SDK is installed
 __version__ = "0.0.1.dev0"
-if QAIC_INSTALLED:
-    from QEfficient.base import QEFFAutoModel, QEFFAutoModelForCausalLM, QEFFCommonLoader
+
+if check_qaic_sdk():
+    from QEfficient.base import (
+        QEFFAutoModel,
+        QEFFAutoModelForCausalLM,
+        QEFFAutoModelForImageTextToText,
+        QEFFAutoModelForSpeechSeq2Seq,
+        QEFFCommonLoader,
+    )
     from QEfficient.compile.compile_helper import compile
     from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
     from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
@@ -43,9 +57,10 @@ if QAIC_INSTALLED:
         "QEFFAutoModel",
         "QEFFAutoModelForCausalLM",
         "QEffAutoPeftModelForCausalLM",
+        "QEFFAutoModelForImageTextToText",
+        "QEFFAutoModelForSpeechSeq2Seq",
         "QEFFCommonLoader",
     ]
 
-    print("QAIC SDK is installed.")
 else:
-    print("QAIC SDK is not installed. Proceeding without it.")
+    logger.warning("QAIC SDK is not installed, eager mode features won't be available!")
