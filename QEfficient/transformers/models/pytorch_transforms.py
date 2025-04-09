@@ -245,9 +245,7 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
 )
-from QEfficient.transformers.spd import (
-    build_and_attach_mlp, tlm_forward
-)
+from QEfficient.transformers.spd import build_and_attach_mlp, tlm_forward
 
 
 class CustomOpsTransform(ModuleMappingTransform):
