@@ -607,8 +607,8 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         # Mapping for Plamo model
         "PlamoForCausalLM" : {"forward": QEffPlamoForCausalLM.forward},
         "PlamoModel": {"forward": QEffPlamoModel.forward},
-        "PlamoDecoder":{ "forward": QEffPlamoDecoder.forward},
-        "PlamoDecoderLayer":{ "forward": QEffPlamoDecoderLayer.forward},
+        "PlamoDecoder": {"forward": QEffPlamoDecoder.forward},
+        "PlamoDecoderLayer": {"forward": QEffPlamoDecoderLayer.forward},
         "Attention": {"forward": QEffPlamoAttention.forward},
         "RMSNorm":{"forward": QEffPlamoRMSNorm.forward},
         "RotaryEmbedding":{"forward": QEffPlamoRotaryEmbedding.forward},

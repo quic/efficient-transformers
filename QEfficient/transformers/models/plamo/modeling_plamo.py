@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 import math
 from asyncio.log import logger
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -152,6 +159,7 @@ def _rotary_pos_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, posit
     x_embed = (x * cos) + (_rotate_half(x) * sin)
     return x_embed
 
+
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     """Applies Rotary Position Embedding to the query and key tensors.
 
@@ -182,6 +190,7 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     # Cast back to original dtype
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
+
 class QEffPlamoRMSNorm(nn.Module):
     def __init__(self, hidden_size: int, eps: float = 1e-6) -> None:
         super().__init__()
@@ -194,6 +203,7 @@ class QEffPlamoRMSNorm(nn.Module):
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
         return self.weight * hidden_states.to(input_dtype)
+
 
 def eager_attention_forward(
     module: nn.Module,
@@ -212,8 +222,9 @@ def eager_attention_forward(
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value)
     attn_output = attn_output.transpose(1, 2).contiguous()
-    
+
     return attn_output, attn_weights
+
 
 class QEffPlamoAttention(torch.nn.Module):
     def __init__(self, config: QEffPlamoConfig, layer_idx: Optional[int] = None) -> None:
@@ -246,7 +257,7 @@ class QEffPlamoAttention(torch.nn.Module):
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor, torch.Tensor]]]:
-        bsz, q_len, _ = hidden_states.size()  
+        bsz, q_len, _ = hidden_states.size()
 
         query_states = self.q_proj(hidden_states).view(bsz, q_len, self.q_num_heads, self.qk_dim).transpose(1, 2)
         key_states = self.k_proj(hidden_states).view(bsz, q_len, self.k_num_heads, self.qk_dim).transpose(1, 2)
@@ -269,15 +280,15 @@ class QEffPlamoAttention(torch.nn.Module):
                     "with a layer index."
                 )
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, layer_idx)
-        
+
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         # query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
         query_states = _rotary_pos_emb(query_states, cos, sin, position_ids)
         key_states = _rotary_pos_emb(key_states, cos, sin, position_ids)
-        
+
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos,  "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
@@ -290,7 +301,7 @@ class QEffPlamoAttention(torch.nn.Module):
             attention_mask,
             **kwargs,
         )
-        
+
         attn_output = attn_output.reshape(bsz, q_len, -1)
         attn_output = self.o_proj(attn_output)
 
@@ -298,6 +309,7 @@ class QEffPlamoAttention(torch.nn.Module):
             attn_weights = None
 
         return attn_output, attn_weights, past_key_value
+
 
 class MLP(nn.Module):
     def __init__(self, config: QEffPlamoConfig) -> None:
@@ -323,9 +335,11 @@ class QEffPlamoDecoderLayer(torch.nn.Module):
         self.mlp = MLP(config)
         self.norm = QEffPlamoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-    def __qeff_init__(self,):
+    def __qeff_init__(
+        self,
+    ):
         self.norm = CustomRMSNorm(self.config.hidden_size, eps=self.config.rms_norm_eps)
-        
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -376,25 +390,27 @@ class QEffPlamoDecoderLayer(torch.nn.Module):
 class QEffPlamoDecoder(torch.nn.Module):
     def __init__(self, config: QEffPlamoConfig) -> None:
         super().__init__()
-        self.layers = torch.nn.ModuleList([QEffPlamoDecoderLayer(config,layer_idx) for layer_idx in range(config.num_hidden_layers)])
+        self.layers = torch.nn.ModuleList(
+            [QEffPlamoDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+        )
 
-    def forward(self,
-                hidden_states: torch.Tensor,
-                position_ids: torch.Tensor,
-                attention_mask: Optional[torch.Tensor] = None,
-                past_key_values: Optional[List[torch.FloatTensor]] = None,
-                output_hidden_states: Optional[bool] = False,
-                output_attentions: Optional[bool] = False,
-                use_cache: Optional[bool] = False,
-                batch_index: Optional[torch.LongTensor] = None,
-                cache_position: Optional[torch.LongTensor] = None,
-                ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
-
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        output_hidden_states: Optional[bool] = False,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+        batch_index: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         all_hidden_states: Optional[Tuple[torch.Tensor, ...]] = () if output_hidden_states else None
         all_self_attns: Optional[Tuple[torch.Tensor, ...]] = () if output_attentions else None
         next_decoder_cache: Optional[Tuple[torch.Tensor, ...]] = () if use_cache else None
         hidden_states = hidden_states
-        
+
         for idx, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 assert all_hidden_states is not None
@@ -478,7 +494,9 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    def __qeff_init__(self,):
+    def __qeff_init__(
+        self,
+    ):
         self.norm = CustomRMSNorm(self.config.hidden_size, eps=self.config.rms_norm_eps)
 
     def get_input_embeddings(self) -> torch.nn.Embedding:
@@ -518,7 +536,6 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
         else:
             raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
 
-
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
@@ -541,10 +558,10 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
             cache_position = torch.arange(
                 past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
             )
-        
+
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
-        
+
         past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         attention_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
 
@@ -566,7 +583,7 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
             cache_position=cache_position,
             batch_index=batch_index,
         )
-        
+
         hidden_states = layer_outputs[0]
         all_hidden_states = layer_outputs[1]
         all_self_attns = layer_outputs[2]
@@ -582,10 +599,10 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
         next_cache = next_decoder_cache if use_cache else None
         if not return_dict:
             return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
-           
+
         if return_legacy_cache:
             next_cache = next_cache.to_legacy_cache()
-        
+
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=next_cache,
@@ -644,7 +661,7 @@ class QEffPlamoForCausalLM(QEffPlamoPreTrainedModel):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        
+
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
             input_ids=input_ids,
@@ -663,7 +680,7 @@ class QEffPlamoForCausalLM(QEffPlamoPreTrainedModel):
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        
+
         logits = self.lm_head(hidden_states)
         logits = logits.float()
 
