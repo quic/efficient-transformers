@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 from types import MethodType
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
 import transformers
 from torch import nn
