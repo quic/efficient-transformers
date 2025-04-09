@@ -9,18 +9,16 @@ import hashlib
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
-from huggingface_hub import hf_hub_download
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
     AutoModelForSpeechSeq2Seq,
-    PretrainedConfig,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
     TextStreamer,
@@ -1524,7 +1522,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.is_tlm:
             if num_speculative_tokens is not None and self.num_speculative_tokens is not None:
                 logger.warn(
-                    f"arg `num_speculative_tokens` was specified during compile but it was already set during initialization."
+                    "arg `num_speculative_tokens` was specified during compile but it was already set during initialization."
                     " Passed argument will be ignored."
                 )
                 num_speculative_tokens = self.num_speculative_tokens
