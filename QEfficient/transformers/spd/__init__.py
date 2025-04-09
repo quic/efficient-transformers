@@ -17,3 +17,6 @@ def build_and_attach_mlp(model, config):
         return func(model, config)
     else:
         raise ValueError(f"function {func_name} not found.")
+
+
+__all__ = ["tlm_forward", "build_and_attach_turbo", "build_and_attach_mlp"]
