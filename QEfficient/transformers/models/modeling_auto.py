@@ -14,12 +14,13 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 import torch
 import torch.nn as nn
-from accelerate import load_checkpoint_and_dispatch
+from huggingface_hub import hf_hub_download
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
     AutoModelForSpeechSeq2Seq,
+    PretrainedConfig,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
     TextStreamer,
@@ -52,6 +53,7 @@ from QEfficient.transformers.quantizers.quant_transforms import (
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.spd_utils import get_speculative_config
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -1287,6 +1289,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model: nn.Module,
         continuous_batching: bool = False,
         is_tlm: bool = False,
+        speculative_config: Optional[dict] = None,
         **kwargs,
     ):
         model_class_name = model.__class__.__name__
@@ -1315,8 +1318,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if is_tlm:
             # TODO: It is possible to always apply this transform and make value of indices as last indices by default in PyTorch
-            self.model, transformed = SpDTransform.apply(self.model)
+            self.model, transformed = SpDTransform.apply(self.model, speculative_config)
         self.is_tlm = is_tlm
+
+        self.num_speculative_tokens = None
+        if speculative_config is not None:
+            self.num_speculative_tokens = speculative_config.get("num_speculative_tokens")
 
     @property
     def model_name(self) -> str:
@@ -1335,7 +1342,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         pretrained_model_name_or_path,
         continuous_batching: bool = False,
         is_tlm: bool = False,
-        hidden_size_projections: Optional[Tuple[nn.ModuleList, str]] = None,
+        speculative_model: Optional[str] = None,
         *args,
         **kwargs,
     ):
@@ -1382,17 +1389,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        if hidden_size_projections is not None:
-            if isinstance(hidden_size_projections, tuple):
-                projections, checkpoint = hidden_size_projections
-                assert isinstance(projections, nn.ModuleList)
-                assert isinstance(checkpoint, str)
-                model.projections = projections
-                model = load_checkpoint_and_dispatch(model, checkpoint=checkpoint, strict=False)
-            elif isinstance(hidden_size_projections, nn.ModuleList):
-                model.hidden_size_projections = hidden_size_projections
-            else:
-                raise ValueError(f"`hidden_size_projections` of type {type(hidden_size_projections)} is not supported.")
+        speculative_config = None
+        if speculative_model is not None:
+            assert is_tlm
+            speculative_config: dict = get_speculative_config(speculative_model, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
 
@@ -1401,7 +1401,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 model, kv_offload=kv_offload
             )
 
-        return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching)
+        return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching, speculative_config=speculative_config)
 
     @property
     def model_hash(self) -> str:
@@ -1522,6 +1522,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             :str: Path of the compiled ``qpc`` package.
         """
         if self.is_tlm:
+            if num_speculative_tokens is not None and self.num_speculative_tokens is not None:
+                logger.warn(
+                    f"arg `num_speculative_tokens` was specified during compile but it was already set during initialization."
+                    " Passed argument will be ignored."
+                )
+                num_speculative_tokens = self.num_speculative_tokens
             # assert num_speculative_tokens cfg is acceptable if defined
             if num_speculative_tokens is None:
                 raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` is True.")

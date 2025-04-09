@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 from types import MethodType
-from typing import Tuple
+from typing import Tuple, Optional
 
 import transformers
 from torch import nn
@@ -245,7 +245,7 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
 )
-from QEfficient.transformers.spd.causal_lm_forward import tlm_forward
+from QEfficient.transformers.spd import build_and_attach_mlp, tlm_forward
 
 
 class CustomOpsTransform(ModuleMappingTransform):
@@ -395,7 +395,7 @@ class SpDTransform:
     }
 
     @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, speculative_config: Optional[dict] = None) -> Tuple[nn.Module, bool]:
         transformed = False
         if (model_class := model.__class__) in cls._module_mapping:
             model.forward = MethodType(tlm_forward, model)
@@ -404,7 +404,9 @@ class SpDTransform:
             raise NotImplementedError(
                 f"model class {model_class} does not yet support returning multiple logits to keep."
             )
-
+        if speculative_config is not None:
+            # build and attach draft mlp
+            model = build_and_attach_mlp(model, speculative_config)
         return model, transformed
 
 
