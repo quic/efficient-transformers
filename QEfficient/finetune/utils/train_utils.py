@@ -178,7 +178,6 @@ def train(
                         # adjust atol & rtol this as required
                         atol=1e-1,
                         use_ref_output_on_mismatch=True,
-                        filter_config=qaic_debug.DispatchFilterConfig.default(device, opwise_limit=10),
                         dump_root_dir=train_config.dump_root_dir + str(step),
                     ) as verifier:
                         loss = model(**batch).loss  # Forward call
