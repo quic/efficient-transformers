@@ -11,9 +11,7 @@ from time import perf_counter
 from typing import List, Optional, Union
 
 import numpy as np
-import torch
-from torch import nn
-from transformers import AutoConfig, AutoTokenizer
+from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
