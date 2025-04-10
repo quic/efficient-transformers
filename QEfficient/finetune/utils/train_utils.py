@@ -212,7 +212,6 @@ def train(
                 train_step_loss.append(loss.detach().float().item())
                 train_step_perplexity.append(float(torch.exp(loss.detach().float())))
 
-
             if train_config.grad_scaler:
                 scaler.scale(loss).backward()  # backward pass
             else:
