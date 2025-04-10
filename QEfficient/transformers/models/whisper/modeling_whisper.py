@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 
 import torch
 from torch import nn
-from transformers.cache_utils import Cache, EncoderDecoderCache, StaticCache
+from transformers.cache_utils import Cache, StaticCache
 from transformers.modeling_outputs import (
     BaseModelOutputWithCrossAttentions,
     BaseModelOutputWithPastAndCrossAttentions,
@@ -26,6 +26,7 @@ from transformers.models.whisper.modeling_whisper import (
     logger,
 )
 
+from QEfficient.transformers.cache_utils import QEffEncoderDecoderCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils._utils import IOInfo
 
@@ -325,9 +326,9 @@ class QEffWhisperEncoder(WhisperEncoder):
 
         # check if head_mask has a correct number of layers specified if desired
         if head_mask is not None:
-            assert head_mask.size()[0] == (len(self.layers)), (
-                f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
-            )
+            assert head_mask.size()[0] == (
+                len(self.layers)
+            ), f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
 
         for idx, encoder_layer in enumerate(self.layers):
             if output_hidden_states:
@@ -475,7 +476,7 @@ class QEffWhisperDecoder(WhisperDecoder):
         if use_cache or past_key_values is not None:
             if not isinstance(past_key_values, Cache):
                 return_legacy_cache = True
-                past_key_values = EncoderDecoderCache.from_legacy_cache(past_key_values)
+                past_key_values = QEffEncoderDecoderCache.from_legacy_cache(past_key_values)
                 logger.warning_once(
                     "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
                     "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
