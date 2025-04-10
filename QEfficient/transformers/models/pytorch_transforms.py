@@ -167,6 +167,13 @@ from QEfficient.transformers.models.granite.modeling_granite import (
     QEffGraniteForCausalLM,
     QEffGraniteModel,
 )
+from QEfficient.transformers.models.grok_1.modeling_grok1 import (
+    QEffGrok1DecoderLayer,
+    QEffGrok1Model,
+    QEffGrok1ModelForCausalLM,
+    QEffGrok1MoeBlock,
+    QEffGrok1MultiHeadAttention,
+)
 from QEfficient.transformers.models.internvl.modeling_internvl import (
     QEffInternVisionEmbeddings,
     QEffInternVLModel,
@@ -435,5 +442,15 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
             "get_qeff_language_decoder": QEffInternVLModel.get_qeff_language_decoder,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
+        # #Mapping for grok1 model
+        "Grok1ModelForCausalLM": {"forward": QEffGrok1ModelForCausalLM.forward},
+        "Grok1Model": {"forward": QEffGrok1Model.forward},
+        "DecoderLayer": {"forward": QEffGrok1DecoderLayer.forward},
+        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward},
+        "MultiHeadAttention": {
+            "forward": QEffGrok1MultiHeadAttention.forward,
+            "__qeff_init__": QEffGrok1MultiHeadAttention.__qeff_init__,
+        },
     }
+
     _match_class_replace_method = {}
