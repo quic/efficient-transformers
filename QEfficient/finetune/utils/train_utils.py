@@ -293,7 +293,6 @@ def train(
                 eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity = evaluation(
                     model, train_config, eval_dataloader, local_rank, tokenizer, device
                 )
-                dist.barrier()
                 if local_rank == 0:
                     tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
 
