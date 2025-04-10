@@ -18,6 +18,7 @@ from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
+from QEfficient.transformers.spd.turbo import ResBlock
 from QEfficient.utils._utils import get_padding_shape_from_config
 from QEfficient.utils.logging_utils import logger
 
@@ -181,7 +182,9 @@ def run_kv_cache_transform_and_test(
 
     # Apply transforms
     is_tlm = "num_logits_to_keep" in qaic_model_inputs
-    hf_model = QEFFAutoModelForCausalLM(hf_model, is_tlm=is_tlm, hidden_size_projections=hidden_size_projections).model
+    hf_model = QEFFAutoModelForCausalLM(hf_model, is_tlm=is_tlm).model
+    if hidden_size_projections is not None:
+        hf_model.projections = hidden_size_projections
 
     # Run KV model
     with torch.inference_mode():
@@ -316,38 +319,6 @@ def test_spd_transform(config_class, num_hidden_layers, num_attention_heads, hid
         logits_tolerance=logits_tolerance,
         kv_cache=kv_cache,
     )
-
-
-class ResBlock(torch.nn.Module):  # Res block for Turbo LoRA projection heads
-    """
-    A Residual Block module.
-
-    This module performs a linear transformation followed by a SiLU activation,
-    and then adds the result to the original input, creating a residual connection.
-
-    Args:
-        hidden_size (int): The size of the hidden layers in the block.
-    """
-
-    def __init__(self, hidden_size):
-        super().__init__()
-        self.linear = torch.nn.Linear(hidden_size, hidden_size)
-        # Initialize as an identity mapping
-        torch.nn.init.zeros_(self.linear.weight)
-        # Use SiLU activation to keep consistent with the Llama model
-        self.act = torch.nn.SiLU()
-
-    def forward(self, x):
-        """
-        Forward pass of the ResBlock.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            torch.Tensor: Output after the residual connection and activation.
-        """
-        return x + self.act(self.linear(x))
 
 
 @pytest.mark.parametrize(

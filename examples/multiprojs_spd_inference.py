@@ -344,17 +344,10 @@ def comma_separated_ints(x: str):
 def arg_parse():
     parser = argparse.ArgumentParser(description="Draft-based SpD Inference")
     parser.add_argument("--prompts", action="append", default=None, help="Input prompt(s)")
-    parser.add_argument(
-        "--num-speculative-tokens",
-        type=int,
-        default=3,
-        help="Number of speculative tokens (defines number of hidden size projections)",
-    )
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
     parser.add_argument("--prefill-bsz", type=int, default=1, help="Prefill batch size")
-    parser.add_argument("--proj-num-layers", type=int, default=1, help="Hidden size projection number of layers.")
-    parser.add_argument("--proj-checkpoint", type=str, default=None, help="Hidden size projection checkpoint.")
+    parser.add_argument("--speculative-model", type=str, help="pretrained-speculative-model-name-or-path")
     parser.add_argument(
         "--pretrained-model-name-or-path",
         type=str,
@@ -368,69 +361,19 @@ def arg_parse():
     return args
 
 
-class ResBlock(nn.Module):  # Res block for Turbo LoRA projection heads
-    """
-    A Residual Block module.
-
-    This module performs a linear transformation followed by a SiLU activation,
-    and then adds the result to the original input, creating a residual connection.
-
-    Args:
-        hidden_size (int): The size of the hidden layers in the block.
-    """
-
-    def __init__(self, hidden_size):
-        super().__init__()
-        self.linear = nn.Linear(hidden_size, hidden_size)
-        # Initialize as an identity mapping
-        torch.nn.init.zeros_(self.linear.weight)
-        # Use SiLU activation to keep consistent with the Llama model
-        self.act = nn.SiLU()
-
-    def forward(self, x):
-        """
-        Forward pass of the ResBlock.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            torch.Tensor: Output after the residual connection and activation.
-        """
-        return x + self.act(self.linear(x))
-
-
 def get_session(
     pretrained_model_name_or_path,
+    speculative_model,
     device_group,
     prefill_seq_len,
     ctx_len,
     full_batch_size=None,
-    num_speculative_tokens=3,
-    proj_num_layers=1,
-    proj_checkpoint=None,
 ):
-    # define post-attention hidden size projections
-    hidden_size = AutoConfig.from_pretrained(pretrained_model_name_or_path).hidden_size
-    projs = nn.ModuleList(
-        [
-            nn.Sequential(
-                *([ResBlock(hidden_size)] * proj_num_layers),
-            )
-            for _ in range(num_speculative_tokens)
-        ],
-    )
-    if proj_checkpoint is not None:
-        assert isinstance(proj_checkpoint, str)
-        hidden_size_projections = (projs, proj_checkpoint)
-    else:
-        hidden_size_projections = projs
     is_cb = full_batch_size is not None
     qeff_model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path,
         continuous_batching=is_cb,
-        is_tlm=True,
-        hidden_size_projections=hidden_size_projections,
+        speculative_model=speculative_model,
     )
     num_devices = len(device_group)
     model_qpc_path: str = qeff_model.compile(
@@ -440,12 +383,12 @@ def get_session(
         ctx_len=ctx_len,
         aic_enable_depth_first=True,
         full_batch_size=full_batch_size,
-        num_speculative_tokens=num_speculative_tokens,
     )
     print(f"{model_qpc_path=}")
     # init qaic session
     session = QAICInferenceSession(model_qpc_path, device_ids=device_group)
-    return session
+    num_speculative_tokens = qeff_model.num_speculative_tokens
+    return session, num_speculative_tokens
 
 
 def main():
@@ -453,20 +396,18 @@ def main():
     if args.prompts is None:
         args.prompts = Constants.INPUT_STR
 
-    session: QAICInferenceSession = get_session(
+    session, num_speculative_tokens = get_session(
         pretrained_model_name_or_path=args.pretrained_model_name_or_path,
+        speculative_model=args.speculative_model,
         device_group=args.device_group,
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         full_batch_size=args.full_batch_size,
-        proj_num_layers=args.proj_num_layers,
-        num_speculative_tokens=args.num_speculative_tokens,
-        proj_checkpoint=args.proj_checkpoint,
     )
     args.session = session
     exec_info = multiprojs_spec_decode_inference(
         args.prompts,
-        args.num_speculative_tokens,
+        num_speculative_tokens,
         args.prefill_seq_len,
         args.ctx_len,
         args.prefill_bsz,

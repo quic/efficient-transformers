@@ -42,7 +42,7 @@ class ResBlock(torch.nn.Module):  # Res block for Turbo LoRA projection heads
 
 
 def build_and_attach_turbo(model, speculative_config):
-    hidden_size = model.config.hidden_size["hidden_size"]
+    hidden_size = model.config.hidden_size
     num_layers = speculative_config["turbo_num_layers"]
     num_heads = speculative_config["turbo_num_heads"]
     projections = torch.nn.ModuleList(
@@ -54,7 +54,7 @@ def build_and_attach_turbo(model, speculative_config):
         ],
     )
     model.projections = projections
-    speculative_weights = speculative_config["speculative_weights"]
-    model = load_checkpoint_and_dispatch(model, checkpoint=speculative_weights, strict=False)
+    if (speculative_weights := speculative_config.get("speculative_weights")) is not None:
+        model = load_checkpoint_and_dispatch(model, checkpoint=speculative_weights, strict=False)
     speculative_config["num_speculative_tokens"] = num_heads
     return model
