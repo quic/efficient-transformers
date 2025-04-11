@@ -15,6 +15,7 @@ class train_config:
     batch_size_training: int = 1
     context_length: int = None
     gradient_accumulation_steps: int = 4
+    gradient_checkpointing: bool = False
     num_epochs: int = 1
     max_train_step: int = 0
     max_eval_step: int = 0
