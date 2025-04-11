@@ -616,6 +616,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 f"enable_qnn={enable_qnn}, qnn_config={qnn_config}"
             )
 
+        if compile_for not in {"vision", "lang", None}:
+            raise ValueError(f"Expected 'compile_for' to be one of 'vision', 'lang', or None but got: {compile_for}")
+
         output_names = self.model.get_output_names(kv_offload=True)
 
         specializations, compiler_options = self.model.get_specializations(
@@ -659,7 +662,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             if compile_for == "vision":
                 return vision_qpc_path
 
-        if compile_for is None or compile_for.lower() == "text":
+        if compile_for is None or compile_for.lower() == "lang":
             custom_io_lang = {}
             # Inputs
             for output_name in output_names["lang"]:
@@ -683,7 +686,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 custom_io=custom_io_lang,
                 **compiler_options,
             )
-            if compile_for == "text":
+            if compile_for == "lang":
                 return lang_qpc_path
 
         return self.qpc_path
@@ -720,6 +723,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         device_ids: List[int] = None,
         generation_len: int = None,
     ):
+        if not self.vision_model.qpc_path or not self.lang_model.qpc_path:
+            raise TypeError("Please run compile API for vision and language model first!")
+
+        if not self.vision_model.qpc_path:
+            raise TypeError("Please run compile API for vision model first!")
+
+        if not self.lang_model.qpc_path:
+            raise TypeError("Please run compile API for language model first!")
+
         lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
 
         vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
