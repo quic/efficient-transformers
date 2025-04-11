@@ -600,6 +600,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         num_speculative_tokens: Optional[int] = None,
         enable_qnn: bool = False,
         qnn_config: Optional[str] = None,
+        compile_for: Optional[str] = None,
         **compiler_options,
     ) -> str:
         if (
@@ -614,6 +615,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 f"full_batch_size={full_batch_size}, kv_cache_batch_size={kv_cache_batch_size}, num_speculative_tokens={num_speculative_tokens}, "
                 f"enable_qnn={enable_qnn}, qnn_config={qnn_config}"
             )
+
+        if compile_for not in {"vision", "lang", None}:
+            raise ValueError(f"Expected 'compile_for' to be one of 'vision', 'lang', or None but got: {compile_for}")
 
         output_names = self.model.get_output_names(kv_offload=True)
 
@@ -642,41 +646,49 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ):
             self.export()
 
-        self.vision_model._compile(
-            compile_dir,
-            compile_only=True,
-            specializations=specializations["vision"],
-            convert_to_fp16=True,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=num_devices,
-            aic_num_cores=num_cores,
-            custom_io=custom_io_vision,
-            **compiler_options,
-        )
+        if compile_for is None or compile_for.lower() == "vision":
+            vision_qpc_path = self.vision_model._compile(
+                compile_dir,
+                compile_only=True,
+                specializations=specializations["vision"],
+                convert_to_fp16=True,
+                mxfp6_matmul=mxfp6_matmul,
+                mdp_ts_num_devices=num_devices,
+                aic_num_cores=num_cores,
+                custom_io=custom_io_vision,
+                **compiler_options,
+            )
 
-        custom_io_lang = {}
-        # Inputs
-        for output_name in output_names["lang"]:
-            if output_name.endswith("_RetainedState"):
-                custom_io_lang[output_name[: -len("_RetainedState")]] = kv_cache_dtype
+            if compile_for == "vision":
+                return vision_qpc_path
 
-        # outputs
-        for output_name in output_names["lang"]:
-            if output_name.endswith("_RetainedState"):
-                custom_io_lang[output_name] = kv_cache_dtype
+        if compile_for is None or compile_for.lower() == "lang":
+            custom_io_lang = {}
+            # Inputs
+            for output_name in output_names["lang"]:
+                if output_name.endswith("_RetainedState"):
+                    custom_io_lang[output_name[: -len("_RetainedState")]] = kv_cache_dtype
 
-        self.lang_model._compile(
-            compile_dir,
-            compile_only=True,
-            retained_state=True,
-            specializations=specializations["lang"],
-            convert_to_fp16=True,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=num_devices,
-            aic_num_cores=num_cores,
-            custom_io=custom_io_lang,
-            **compiler_options,
-        )
+            # outputs
+            for output_name in output_names["lang"]:
+                if output_name.endswith("_RetainedState"):
+                    custom_io_lang[output_name] = kv_cache_dtype
+
+            lang_qpc_path = self.lang_model._compile(
+                compile_dir,
+                compile_only=True,
+                retained_state=True,
+                specializations=specializations["lang"],
+                convert_to_fp16=True,
+                mxfp6_matmul=mxfp6_matmul,
+                mdp_ts_num_devices=num_devices,
+                aic_num_cores=num_cores,
+                custom_io=custom_io_lang,
+                **compiler_options,
+            )
+            if compile_for == "lang":
+                return lang_qpc_path
+
         return self.qpc_path
 
     def generate(
@@ -711,6 +723,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         device_ids: List[int] = None,
         generation_len: int = None,
     ):
+        if not self.vision_model.qpc_path or not self.lang_model.qpc_path:
+            raise TypeError("Please run compile API for vision and language model first!")
+
+        if not self.vision_model.qpc_path:
+            raise TypeError("Please run compile API for vision model first!")
+
+        if not self.lang_model.qpc_path:
+            raise TypeError("Please run compile API for language model first!")
+
         lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
 
         vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
