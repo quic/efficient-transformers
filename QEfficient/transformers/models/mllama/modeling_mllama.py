@@ -127,8 +127,8 @@ class QEffMllamaTextCrossAttentionSingleQPC(MllamaTextCrossAttention):
         value_states_new = torch.index_put(value_states_old, indices, value_states)
 
         # Select old or new image KV states based on q_len
-        key_states = torch.where(q_len == 1, key_states_old, key_states_new)
-        value_states = torch.where(q_len == 1, value_states_old, value_states_new)
+        key_states = torch.where(torch.tensor(q_len == 1), key_states_old, key_states_new)
+        value_states = torch.where(torch.tensor(q_len == 1), value_states_old, value_states_new)
 
         # Update the image cache
         past_key_value.key_cache[self.layer_idx] = key_states
@@ -1113,7 +1113,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             cache_position=cache_position,
             num_logits_to_keep=num_logits_to_keep,
         )
-
+        outputs["pixel_values"] = pixel_values
         return outputs
 
     def get_dummy_inputs(self, kv_offload: bool = False):
@@ -1281,6 +1281,8 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             "logits",
             *[f"past_{kv}.{i}_RetainedState" for i in range(num_hidden_layers) for kv in ["key", "value"]],
         ]
+        if not kv_offload:
+            lang_output_names.append("pixel_values_RetainedState")
 
         output_names = {}
         if kv_offload:

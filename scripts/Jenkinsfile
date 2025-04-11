@@ -24,6 +24,7 @@ pipeline {
                    pip install .[test] &&
                    pip install junitparser pytest-xdist &&
                    pip install librosa==0.10.2 soundfile==0.13.1 && #packages needed to load example for whisper testing
+                   pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.19.1+cpu einops==0.8.1 && #packages to load VLMs
                    rm -rf QEfficient"
                '''
            }
@@ -58,6 +59,22 @@ pipeline {
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic &&
                            pytest tests -m '(not cli) and (on_qaic) and (not qnn)' -n 4 --junitxml=tests/tests_log2.xml &&
+                           deactivate"
+                           '''
+                       }
+                   }
+               }
+               stage('Run Non-CLI QAIC MultiModal Tests') {
+                   steps {
+                       timeout(time: 60, unit: 'MINUTES') {
+                           sh '''
+                           sudo docker exec ${BUILD_TAG} bash -c "
+                           cd /efficient-transformers &&
+                           . preflight_qeff/bin/activate &&
+                           mkdir -p $PWD/Non_cli_qaic_multimodal &&
+                           export TOKENIZERS_PARALLELISM=false &&
+                           export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
+                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn)' -n 4 --junitxml=tests/tests_log6.xml &&
                            deactivate"
                            '''
                        }
@@ -114,7 +131,7 @@ pipeline {
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Qnn_non_cli &&
                     pytest tests -m '(not cli) and (qnn) and (on_qaic)' --junitxml=tests/tests_log5.xml &&
-                    junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log3.xml tests/tests_log4.xml tests/tests_log5.xml tests/tests_log.xml &&
+                    junitparser merge tests/tests_log1.xml tests/tests_log2.xml tests/tests_log3.xml tests/tests_log4.xml tests/tests_log5.xml tests/tests_log6.xml tests/tests_log.xml &&
                     deactivate"
                     '''
                 }
