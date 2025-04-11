@@ -46,6 +46,13 @@ test_models = [
     "ibm-granite/granite-guardian-3.1-2b",
 ]
 
+test_models_qnn = [
+    "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    "meta-llama/Llama-3.2-1B",
+    "unsloth/gemma-2b",
+    "ibm-granite/granite-guardian-3.1-2b",
+]
+
 spd_test_models = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
 ]
@@ -241,7 +248,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
 @pytest.mark.on_qaic
 @pytest.mark.qnn
-@pytest.mark.parametrize("model_name", test_models)
+@pytest.mark.parametrize("model_name", test_models_qnn)
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
     """
     QNN Compilation Test
