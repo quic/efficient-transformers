@@ -8,7 +8,6 @@
 from types import MethodType
 from typing import Tuple
 
-import transformers
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
@@ -121,7 +120,6 @@ from transformers.models.whisper.modeling_whisper import (
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
-from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QeffCodeGenBlock,
@@ -370,8 +368,6 @@ class KVCacheTransform(ModuleMappingTransform):
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
-        # FIXME: see if we can merge into _module_mapping dict
-        transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update
         return model, transformed
 
 
