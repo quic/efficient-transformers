@@ -59,6 +59,10 @@ from transformers.models.mistral.modeling_mistral import (
     MistralModel,
     MistralRMSNorm,
 )
+from transformers.models.mistral3.modeling_mistral3 import (
+    Mistral3ForConditionalGeneration,
+    Mistral3RMSNorm,
+)
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
     MixtralDecoderLayer,
@@ -71,6 +75,7 @@ from transformers.models.mllama.modeling_mllama import MllamaForCausalLM
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 from transformers.models.phi.modeling_phi import PhiAttention, PhiForCausalLM, PhiModel
 from transformers.models.phi3.modeling_phi3 import Phi3Attention, Phi3ForCausalLM, Phi3Model, Phi3RMSNorm
+from transformers.models.pixtral.modeling_pixtral import PixtralRMSNorm
 from transformers.models.qwen2.modeling_qwen2 import Qwen2Attention, Qwen2ForCausalLM, Qwen2Model, Qwen2RMSNorm
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
@@ -182,6 +187,7 @@ qeff_supported_architectures = ModelArchitectures(
         GPTBigCodeForCausalLM.__name__,
         MllamaForCausalLM.__name__,
         WhisperForConditionalGeneration.__name__,
+        Mistral3ForConditionalGeneration.__name__,
     ]
 )
 
@@ -234,6 +240,9 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     MistralModel: QEffMistralModel,
     MistralForCausalLM: QEffMistralForCausalLM,
     MistralRMSNorm: CustomRMSNormAIC,
+    # Mistral3 model layers
+    Mistral3ForConditionalGeneration: QEffMistral3ForConditionalGeneration,
+    Mistral3RMSNorm: CustomRMSNormAIC,
     # Mixtral model layers
     MixtralAttention: QEffMixtralAttention,
     MixtralDecoderLayer: QeffMixtralDecoderLayer,
@@ -250,6 +259,8 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     PhiAttention: QEffPhiAttention,
     PhiModel: QEffPhiModel,
     PhiForCausalLM: QEffPhiForCausalLM,
+    # Pixtral model layers
+    PixtralRMSNorm: CustomRMSNormAIC,
     # Falcon model layers
     FalconAttention: QEffFalconAttention,
     FalconForCausalLM: QEffFalconForCausalLM,
