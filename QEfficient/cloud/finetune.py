@@ -291,7 +291,7 @@ def main(
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
     if train_config.enable_ddp:
         model = nn.parallel.DistributedDataParallel(model, device_ids=[dist.get_rank()])
-    train(
+    results = train(
         model,
         train_dataloader,
         eval_dataloader,
@@ -306,6 +306,7 @@ def main(
     )
     if train_config.enable_ddp:
         dist.destroy_process_group()
+    return results
 
 
 if __name__ == "__main__":
