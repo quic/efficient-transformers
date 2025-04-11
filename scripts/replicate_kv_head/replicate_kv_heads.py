@@ -63,6 +63,10 @@ def duplicate_weights_for_linear_layer(
         layer.weight.data = torch.repeat_interleave(
             layer.weight.data.view(orig_kv_heads, head_dim, hidden_size), repeat, 0
         ).view(new_kv_heads * head_dim, hidden_size)
+        if layer.bias is not None:
+            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0).view(
+                new_kv_heads * head_dim
+            )
 
 
 def main(args):
