@@ -478,12 +478,14 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
         # #Mapping for grok1 model
         "Grok1ModelForCausalLM": {"forward": QEffGrok1ModelForCausalLM.forward},
-        "Grok1Model": {"forward": QEffGrok1Model.forward},
+        "Grok1Model": {
+            "forward": QEffGrok1Model.forward,
+            "__qeff_init__": QEffGrok1Model.__qeff_init__,
+        },
         "DecoderLayer": {"forward": QEffGrok1DecoderLayer.forward},
         "MoeBlock": {"forward": QEffGrok1MoeBlock.forward},
         "MultiHeadAttention": {
             "forward": QEffGrok1MultiHeadAttention.forward,
-            "__qeff_init__": QEffGrok1MultiHeadAttention.__qeff_init__,
         },
     }
 
