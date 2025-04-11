@@ -74,7 +74,6 @@ class QEFFLlavaNextEncoderWrapper(nn.Module):
                     np.prod(image_feature.shape) % (num_patch_height * num_patch_width * height * width) != 0
                     and vision_feature_select_strategy == "default"
                 ):
-                    breakpoint()
                     logger.warning_once(
                         "Image feature shape does not line up with the provided patch size. "
                         "You may be using the `default` vision_feature_select_strategy with a"
@@ -114,13 +113,11 @@ class QEFFLlavaNextEncoderWrapper(nn.Module):
                 image_feature = image_feature.flatten(1, 2).transpose(0, 1)
                 image_feature = torch.cat((base_image_feature, image_feature), dim=0)
             else:
-                breakpoint()
                 image_feature = image_feature[0]
                 if self.model.image_newline is not None:
                     image_feature = torch.cat((image_feature, self.model.image_newline[None].to(image_feature)), dim=0)
             new_image_features.append(image_feature)
         image_features = torch.cat(new_image_features, dim=0)
-        breakpoint()
         return image_features
 
 
