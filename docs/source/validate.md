@@ -54,7 +54,7 @@
 ## Multimodal Language Models
 
 ### Vision-Language Models (Text + Image Generation)
-**QEff Auto Class:** `QEFFAutoModelImageTextToText`
+**QEff Auto Class:** `QEFFAutoModelForImageTextToText`
 
 | Architecture                | Model Family | Representative Models                  |
 |-----------------------------|--------------|----------------------------------------|
