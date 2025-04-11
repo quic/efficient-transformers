@@ -9,35 +9,14 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from QEfficient.transformers.cache_utils import QEffDynamicCache
-from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-
 from transformers.modeling_outputs import (
     MoeCausalLMOutputWithPast,
     MoeModelOutputWithPast,
 )
+from transformers.models.llama.modeling_llama import repeat_kv, rotate_half
 
-
-# Copied from transformers.models.llama.modeling_llama.repeat_kv
-def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
-    """
-    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
-    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
-    """
-    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
-    if n_rep == 1:
-        return hidden_states
-    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
-    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
-
-
-# Copied from transformers.models.llama.modeling_llama.rotate_half
-def rotate_half(x):
-    """Rotates half the hidden dims of the input."""
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
+from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
 # Copied from transformers.models.llama.modeling_llama.apply_rotary_pos_emb
@@ -70,12 +49,10 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
 
 
 class QEffGrok1MultiHeadAttention(nn.Module):
-    def __qeff_init__(self):
-        self.layer_idx = 0
-
     def forward(
         self,
         hidden_states: torch.Tensor,
+        layer_idx: int,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
@@ -96,7 +73,7 @@ class QEffGrok1MultiHeadAttention(nn.Module):
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
-            kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+            kv_seq_len = past_key_value.get_usable_length(kv_seq_len, layer_idx)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
@@ -108,7 +85,7 @@ class QEffGrok1MultiHeadAttention(nn.Module):
                 "batch_index": batch_index,
                 "position_ids": position_ids,
             }  # Specific to RoPE models
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_value.update(key_states, value_states, layer_idx, cache_kwargs)
 
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -194,6 +171,7 @@ class QEffGrok1DecoderLayer(nn.Module):
         hidden_states = self.pre_attn_norm(hidden_states)
         hidden_states, attention_weights, present_key_value = self.attn(
             hidden_states,
+            layer_idx=self.layer_idx,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
@@ -221,6 +199,10 @@ class QEffGrok1DecoderLayer(nn.Module):
 
 
 class QEffGrok1Model(nn.Module):
+    def __qeff_init__(self):
+        for idx, layer in enumerate(self.layers):
+            layer.layer_idx = idx
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
