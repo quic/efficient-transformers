@@ -12,6 +12,7 @@ QEFF_MODEL_TYPE and the classes that implement the methods i.e.(compile, export 
 QEFFAutoModel provides a common interface for loading the HuggingFace models using either the HF card name of local path of downloaded model.
 """
 
+import os
 from typing import Any
 
 from transformers import AutoConfig
@@ -19,6 +20,7 @@ from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_N
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.utils._utils import login_and_download_hf_lm
 
 
 class QEFFCommonLoader:
@@ -52,6 +54,9 @@ class QEFFCommonLoader:
         local_model_dir = kwargs.pop("local_model_dir", None)
         hf_token = kwargs.pop("hf_token", None)
         continuous_batching = True if kwargs.pop("full_batch_size", None) else False
+
+        if not os.path.isdir(pretrained_model_name_or_path):
+            pretrained_model_name_or_path = login_and_download_hf_lm(pretrained_model_name_or_path, *args, **kwargs)
 
         qeff_model = model_class.from_pretrained(
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else pretrained_model_name_or_path),
