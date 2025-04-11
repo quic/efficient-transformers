@@ -39,6 +39,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     KVCacheModuleMethodMapperTransform,
     KVCacheTransform,
     SpDTransform,
+    SamplerTransform,
     VlmKVOffloadTransform,
     VlmNoKVOffloadTransform,
 )
@@ -75,7 +76,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, include_sampler: bool = False, return_pdfs: bool = False, *args, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -85,7 +86,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model, is_tlm=is_tlm)
+        return cls(model, is_tlm=is_tlm, include_sampler=include_sampler, return_pdfs=return_pdfs)
 
     @property
     def model_name(self) -> str:
@@ -1258,6 +1259,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         :model (nn.Module):  PyTorch model
         :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
         :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
+        :include_sampler (bool): Enable/Disable sampling of next tokens during decode.
+        :return_pdfs (bool): Return probability distributions (logits/probs) or sampled next tokens. If `is_tlm`=True, then `return_pdfs`=True always. If `is_tlm`=False, then `return_pdfs`=True for Speculative Decoding Draft Language Model and `return_pdfs`=False for regular model. 
 
 
     .. code-block:: python
@@ -1288,6 +1291,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model: nn.Module,
         continuous_batching: bool = False,
         is_tlm: bool = False,
+        include_sampler: bool = False,
+        return_pdfs: bool = False,
         **kwargs,
     ):
         model_class_name = model.__class__.__name__
@@ -1317,8 +1322,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if is_tlm:
             # TODO: It is possible to always apply this transform and make value of indices as last indices by default in PyTorch
             self.model, transformed = SpDTransform.apply(self.model)
+            self.model.return_pdfs = True
         self.is_tlm = is_tlm
 
+        if include_sampler:  # Sampling 
+            self.model, transformed = SamplerTransform.apply(self.model)
+            self.model.return_pdfs = return_pdfs
+        self.include_sampler = include_sampler
+        
     @property
     def model_name(self) -> str:
         mname = self.model.__class__.__name__
@@ -1332,7 +1343,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(
-        cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, *args, **kwargs
+        cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, include_sampler: bool = False, return_pdfs: bool = False, *args, **kwargs
     ):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
@@ -1343,6 +1354,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
             :continuous_batching (bool): Whether this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
             :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
+            :include_sampler (bool): Enable/Disable sampling of next tokens during decode.
+            :return_pdfs (bool): Return probability distributions (logits/probs) or sampled next tokens. If `is_tlm`=True, then `return_pdfs`=True always. If `is_tlm`=False, then `return_pdfs`=True for Speculative Decoding Draft Language Model and `return_pdfs`=False for regular model. 
             :args, kwargs: Additional arguments to pass to transformers.AutoModelForCausalLM.
 
         .. code-block:: python
@@ -1385,7 +1398,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 model, kv_offload=kv_offload
             )
 
-        return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching)
+        return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching, include_sampler=include_sampler, return_pdfs=return_pdfs)
 
     @property
     def model_hash(self) -> str:
@@ -1394,6 +1407,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
         mhash.update(to_hashable({"is_tlm": self.is_tlm}))
+        mhash.update(to_hashable({"include_sampler": self.include_sampler}))
         mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
@@ -1453,6 +1467,48 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             nlk = constants.ONNX_EXPORT_EXAMPLE_NLK  # Number of Logits to Keep
             example_inputs["num_logits_to_keep"] = torch.arange(nlk).view(nlk, 1)
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
+
+        if self.include_sampler:
+            nlk = constants.ONNX_EXPORT_EXAMPLE_NLK  # Number of Logits to Keep
+            max_top_k_ids = constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS
+            
+            example_inputs["last_accepted_output_tokens"] = torch.randint(low=0, high=self.model.config.vocab_size, size=(bs, nlk))
+            dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "num_logits_to_keep"}
+
+            example_inputs["repetition_penalty_retain_state"] = torch.zeros(
+                fbs if self.continuous_batching else bs, self.model.config.vocab_size, dtype=torch.int32)
+            dynamic_axes["repetition_penalty_retain_state"] = {
+                0: "full_batch_size" if self.continuous_batching else "batch_size",
+            }
+            output_names.append("repetition_penalty_retain_state_RetainedState")
+
+            example_inputs["repetition_penalties"] = torch.ones((bs, 1), dtype=torch.float) * 0.5
+            dynamic_axes["repetition_penalties"] = {0: "batch_size"}
+
+            example_inputs["presence_penalty_retain_state"] = torch.zeros(
+                fbs if self.continuous_batching else bs, self.model.config.vocab_size, dtype=torch.int32)
+            dynamic_axes["presence_penalty_retain_state"] = {
+                0: "full_batch_size" if self.continuous_batching else "batch_size",
+            }
+            output_names.append("presence_penalty_retain_state_RetainedState")
+
+            example_inputs["presence_penalties"] = torch.zeros((bs, 1), dtype=torch.float) + 0.5
+            dynamic_axes["presence_penalties"] = {0: "batch_size"}
+
+            example_inputs["temperatures"] = torch.ones((bs, 1), dtype=torch.float)
+            dynamic_axes["temperatures"] = {0: "batch_size"}
+
+            example_inputs["top_ks"] = torch.randint(1, max_top_k_ids, size=(bs, 1)).to(torch.int32)
+            dynamic_axes["top_ks"] = {0: "batch_size"}
+
+            example_inputs["top_ps"] = torch.ones((bs, 1), dtype=torch.float) * 0.80
+            dynamic_axes["top_ps"] = {0: "batch_size"}
+
+            example_inputs["min_ps"] = torch.ones((bs, 1), dtype=torch.float) * 0.99
+            dynamic_axes["min_ps"] = {0: "batch_size"}
+
+            example_inputs["random_numbers"] = torch.rand((bs, 1), dtype=torch.float)
+            dynamic_axes["random_numbers"] = {0: "batch_size"}
 
         return self._export(
             example_inputs,
@@ -1538,7 +1594,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "ctx_len": ctx_len,
             # TODO: should be renamed to kv_cache_batch_size in specialization too
         }
-        prefill_specialization.update({"num_logits_to_keep": 1}) if self.is_tlm else ...
+        if self.include_sampler:
+             prefill_specialization.update({
+                 "max_top_k_ids": constants.Constants.MAX_TOP_K_IDS,
+             })
+        prefill_specialization.update({"num_logits_to_keep": 1})
         if self.continuous_batching:
             prefill_specialization.update({"full_batch_size": kv_cache_batch_size})
         else:
@@ -1555,11 +1615,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "seq_len": num_speculative_tokens + 1 if self.is_tlm else 1,
                 "ctx_len": ctx_len,
             }
+            if self.include_sampler:
+                decode_specialization.update({
+                    "max_top_k_ids": constants.Constants.MAX_TOP_K_IDS,
+                })
             if self.continuous_batching:
                 decode_specialization.update({"full_batch_size": kv_cache_batch_size})
             else:
                 decode_specialization.update({"batch_size": kv_cache_batch_size})
-            decode_specialization.update({"num_logits_to_keep": num_speculative_tokens + 1}) if self.is_tlm else ...
+            decode_specialization.update({"num_logits_to_keep": num_speculative_tokens + 1})
             specializations.append(decode_specialization)
 
         if enable_qnn:
