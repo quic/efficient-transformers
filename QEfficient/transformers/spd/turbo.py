@@ -6,10 +6,11 @@
 # -----------------------------------------------------------------------------
 
 import torch
-from accelerate import load_checkpoint_and_dispatch
+
+from QEfficient.utils.checkpoint_utils import load_checkpoint
 
 
-class ResBlock(torch.nn.Module):  # Res block for Turbo LoRA projection heads
+class ResBlock(torch.nn.Module):
     """
     A Residual Block module.
 
@@ -41,7 +42,32 @@ class ResBlock(torch.nn.Module):  # Res block for Turbo LoRA projection heads
         return x + self.act(self.linear(x))
 
 
-def build_and_attach_turbo(model, speculative_config):
+def post_process_turbo_state_dict(state_dict: dict) -> dict:
+    """normaize turbo state dict keys
+
+    Args:
+        state_dict (dict): turbo state dict
+
+    Returns:
+        dict: normalized state dict
+    """
+    new_state_dict = dict()
+    for name, weights in state_dict.items():
+        new_name = name.replace("projections.", "")
+        new_state_dict[new_name] = weights
+    return new_state_dict
+
+
+def build_and_attach_turbo(model, speculative_config: dict):
+    """build and attach turbo projections
+
+    Args:
+        model: model to attach projections to
+        speculative_config (dict): speculative config file used to build projections
+
+    Returns:
+        model: model with turbo projections
+    """
     hidden_size = model.config.hidden_size
     num_layers = speculative_config["turbo_num_layers"]
     num_heads = speculative_config["turbo_num_heads"]
@@ -53,8 +79,8 @@ def build_and_attach_turbo(model, speculative_config):
             for _ in range(num_heads)
         ],
     )
-    model.projections = projections
     if (speculative_weights := speculative_config.get("speculative_weights")) is not None:
-        model = load_checkpoint_and_dispatch(model, checkpoint=speculative_weights, strict=False)
+        load_checkpoint(projections, speculative_weights, strict=True, post_process_func=post_process_turbo_state_dict)
+    model.projections = projections
     speculative_config["num_speculative_tokens"] = num_heads
     return model

@@ -1287,7 +1287,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model: nn.Module,
         continuous_batching: bool = False,
         is_tlm: bool = False,
-        speculative_config: Optional[dict] = None,
+        speculative_model: Optional[str] = None,
         **kwargs,
     ):
         model_class_name = model.__class__.__name__
@@ -1313,7 +1313,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
-
+        # get speculative config if specified
+        speculative_config = None
+        if speculative_model is not None:
+            speculative_config: dict = get_speculative_config(speculative_model, **kwargs)
+        # apply tlm transform if specified
         if is_tlm or speculative_config is not None:
             is_tlm = True
             # TODO: It is possible to always apply this transform and make value of indices as last indices by default in PyTorch
@@ -1388,9 +1392,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        speculative_config = None
-        if speculative_model is not None:
-            speculative_config: dict = get_speculative_config(speculative_model, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
 
@@ -1399,7 +1400,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 model, kv_offload=kv_offload
             )
 
-        return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching, speculative_config=speculative_config)
+        return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching, speculative_model=speculative_model)
 
     @property
     def model_hash(self) -> str:

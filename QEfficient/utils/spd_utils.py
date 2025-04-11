@@ -10,7 +10,7 @@ from pathlib import Path
 from huggingface_hub import hf_hub_download
 from transformers import PretrainedConfig
 
-from QEfficient.utils.helper_utils import filter_kwargs
+from QEfficient.utils._utils import filter_kwargs
 
 
 def _get_speculative_config(speculative_model, **kwargs) -> dict:
