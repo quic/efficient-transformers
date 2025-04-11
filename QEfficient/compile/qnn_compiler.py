@@ -7,11 +7,14 @@
 
 import os
 import shutil
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from QEfficient.utils._utils import create_json, execute_command, load_json
 from QEfficient.utils.constants import QnnConstants
-from QEfficient.utils.generate_qnn_network_specialization_config import fetch_nodes_info, generate_data_format_config
+from QEfficient.utils.generate_qnn_network_specialization_config import (
+    generate_data_format_config,
+    generate_qnn_specialization,
+)
 from QEfficient.utils.logging_utils import logger
 
 
@@ -31,15 +34,13 @@ class QNN:
         device_group: Optional[List[int]] = None,
         compiler_enable_depth_first: bool = False,
         compiler_max_out_channel_split: int = -1,
-        batch_size: int = 1,
-        prompt_len: int = 32,
-        ctx_len: int = 128,
         compiler_mxfp6_matmul_weights: bool = True,
         qnn_target: str = QnnConstants.TARGET,
         qnn_config_path: Optional[str] = None,
         qnn_binary_dir: Optional[str] = None,
         mxint8: Optional[bool] = False,
         compiler_mxint8_mdp_io: Optional[bool] = False,
+        decode_only: Optional[bool] = False,
         **kwargs,
     ) -> None:
         self.onnx_path = onnx_path
@@ -48,9 +49,6 @@ class QNN:
         self.device_group = device_group
         self.compiler_enable_depth_first = compiler_enable_depth_first
         self.compiler_max_out_channel_split = compiler_max_out_channel_split
-        self.batch_size = batch_size
-        self.prompt_len = prompt_len
-        self.ctx_len = ctx_len
         self.compiler_mxfp6_matmul_weights = compiler_mxfp6_matmul_weights
         self.qnn_config_path = qnn_config_path
         self.qnn_binary_dir = qnn_binary_dir
@@ -59,6 +57,7 @@ class QNN:
         self.custom_io_path = custom_io_path
         self.dlc_model_path = os.path.join(qpc_base_path, f"{QnnConstants.MODEL_NAME}.dlc")
         self.qnn_target = qnn_target
+        self.decode_only = decode_only
         self.qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
         if not self.qnn_sdk_path:
             raise EnvironmentError(
@@ -141,7 +140,7 @@ class QNN:
             "compiler_hardware_version": QnnConstants.COMPILER_HARDWARE_VERSION,
             "compiler_convert_to_FP16": QnnConstants.COMPILER_CONVERT_TO_FP16,
             "compiler_retained_state": QnnConstants.COMPILER_RETAINED_STATE,
-            "graph_names": QnnConstants.GRAPH_NAMES,
+            "graph_names": QnnConstants.GRAPH_NAMES_DECODE_ONLY if self.decode_only else QnnConstants.GRAPH_NAMES,
             "compiler_enable_depth_first": self.compiler_enable_depth_first,
             "compiler_mxfp6_matmul_weights": self.compiler_mxfp6_matmul_weights,
             "compiler_num_of_cores": self.num_cores,
@@ -327,16 +326,13 @@ def compile(
     device_group: Optional[List[int]] = None,
     aic_enable_depth_first: bool = False,
     mos: int = -1,
-    batch_size: int = 1,
-    prompt_len: int = 32,
-    ctx_len: int = 128,
     mxfp6: bool = True,
     mxint8: bool = False,
     allow_mxint8_mdp_io: Optional[bool] = False,
-    full_batch_size=None,
     qnn_config: Optional[str] = None,
     qnn_binary_dir: Optional[str] = None,
-    kv_cache_batch_size: Optional[int] = None,
+    custom_io: Optional[Dict[str, str]] = None,
+    specializations: Optional[List[Dict[str, int]]] = None,
     **kwargs,
 ) -> str:
     """
@@ -352,16 +348,13 @@ def compile(
         :device_group (List[int]): Used for finding the number of devices to compile for.
         :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
         :mos (int): Effort level to reduce the on-chip memory. ``Defaults to -1.``
-        :batch_size (int): Batch size to compile the model for. ``Defaults to 1.``
-        :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Default to None``
-        :prompt_len (int): Prompt length for the model to compile. ``Defaults to 32``
-        :ctx_len (int): Maximum context length to compile the model. ``Defaults to 128``
         :mxfp6 (bool): Enable compilation for ``MXFP6`` precision.  ``Defaults to True.``
-        :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic ``Defaults to False.``
         :mxint8 (bool): Compress Present/Past KV to ``MXINT8`` using ``CustomIO`` config. ``Defaults to False.``
+        :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic ``Defaults to False.``
         :qnn_config (str): Path to ``qnn_config.json`` file (formatted as a string). ``Defaults to None.``
         :qnn_binary_dir (str): Path for saving qnn binaries.
-        :kv_cache_batch_size (int): kv_cache_batch_size for Prefix Caching. ``Defaults to None.``
+        :custom_io (dict): Custom IO to specify the input and outputs in different formats than default
+        :specializations (list): List of specializations to compile for
 
     Returns:
         :str: Path to compiled ``qpc`` package.
@@ -377,22 +370,19 @@ def compile(
     # TODO To make custom_io_config.yaml configurable as not all models need it.
     custom_io_file_path = os.path.join(qpc_base_path, "custom_io_config.yaml")
 
-    kv_precision = "uint8" if mxint8 else "float16"
-    fetch_nodes_info(
+    generate_qnn_specialization(
         onnx_graph_path=onnx_path,
-        batch_size=batch_size,
-        sequence_length=prompt_len,
-        context_length=ctx_len,
+        specializations=specializations,
+        custom_io=custom_io,
         file_path=custom_io_file_path,
-        full_batch_size=full_batch_size,
-        kv_precision=kv_precision,
-        kv_cache_batch_size=kv_cache_batch_size,
     )
 
     if not os.path.isfile(custom_io_file_path):
         raise FileNotFoundError(
             f"file {custom_io_file_path} needs to exist in the qpc_base_path for Compilation. Please rerun infer/compile Api"
         )
+
+    decode_only = True if len(specializations) == 1 else False
 
     qnn_obj = QNN(
         onnx_path=onnx_path,
@@ -403,13 +393,11 @@ def compile(
         custom_io_path=custom_io_file_path,
         compiler_enable_depth_first=aic_enable_depth_first,
         compiler_max_out_channel_split=mos,
-        batch_size=batch_size,
-        prompt_len=prompt_len,
-        ctx_len=ctx_len,
         compiler_mxfp6_matmul_weights=mxfp6,
         qnn_binary_dir=qnn_binary_dir,
         mxint8=mxint8,
         compiler_mxint8_mdp_io=allow_mxint8_mdp_io,
+        decode_only=decode_only,
     )
 
     compiled_binary_path = qnn_obj.compile()
