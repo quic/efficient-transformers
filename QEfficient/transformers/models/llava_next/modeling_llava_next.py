@@ -33,7 +33,7 @@ class QEFFLlavaNextEncoderWrapper(nn.Module):
         self.model.vision_model = self.model.vision_tower
 
     def forward(self, pixel_values, image_sizes):
-        image_num_patches = [10]
+        image_num_patches = [constants.GRANITEVISION_NUM_PATCHES]
         if pixel_values.dim() == 5:
             _pixel_values_list = [pix_val[:num_patch] for pix_val, num_patch in zip(pixel_values, image_num_patches)]
             pixel_values_new = torch.cat(_pixel_values_list, dim=0)
@@ -190,11 +190,11 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         for i in range(num_layers):
             lang_inputs["past_key_values"].append(
                 (
-                    torch.zeros(BS, num_key_value_heads, CTX_LEN, head_dim),
-                    torch.zeros(BS, num_key_value_heads, CTX_LEN, head_dim),
+                    torch.zeros(BS, num_key_value_heads, constants.GRANITEVISION_CTX_LEN, head_dim),
+                    torch.zeros(BS, num_key_value_heads, constants.GRANITEVISION_CTX_LEN, head_dim),
                 )
             )
-        lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
+        lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, constants.GRANITEVISION_CTX_LEN - 1)
         inputs = {}
         if kv_offload:
             inputs["vision"] = vision_inputs
@@ -227,7 +227,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
             {
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
+                "ctx_len": constants.GRANITEVISION_CTX_LEN,
                 "max_num_images": max_num_images,
                 "img_size": img_size,
             }
@@ -236,14 +236,14 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
             {
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
+                "ctx_len": constants.GRANITEVISION_CTX_LEN,
                 "max_num_images": max_num_images,
                 "img_size": img_size,
             },
             {
                 "batch_size": batch_size,
                 "seq_len": "1",
-                "ctx_len": ctx_len,
+                "ctx_len": constants.GRANITEVISION_CTX_LEN,
                 "max_num_images": max_num_images,
                 "img_size": img_size,
             },
