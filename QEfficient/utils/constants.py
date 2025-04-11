@@ -74,6 +74,13 @@ INTERN_PREFILL_SEQ_LEN = INTERN_CTX_LEN - 256  # 4096-256
 INTERN_NUM_CHANNELS = 3
 INTERN_IMG_CONTEXT_TOKEN = 151667
 
+# MISTRAL3 Constants
+# Fixing the feature size with reference to mistralai/Mistral-Small-3.1-24B-Instruct-2503
+MISTRAL3_FEATURE_SIZE = 2255
+MISTRAL3_NUM_CHANNELS = 3
+MISTRAL3_HEIGHT = 1540
+MISTRAL3_WIDTH = 1162
+
 
 class Constants:
     # Export Constants.
