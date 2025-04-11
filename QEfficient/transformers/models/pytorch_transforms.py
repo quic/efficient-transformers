@@ -8,7 +8,6 @@
 from types import MethodType
 from typing import Tuple
 
-import transformers
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
@@ -121,7 +120,6 @@ from transformers.models.whisper.modeling_whisper import (
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
-from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QeffCodeGenBlock,
@@ -168,6 +166,13 @@ from QEfficient.transformers.models.granite.modeling_granite import (
     QEffGraniteAttention,
     QEffGraniteForCausalLM,
     QEffGraniteModel,
+)
+from QEfficient.transformers.models.grok_1.modeling_grok1 import (
+    QEffGrok1DecoderLayer,
+    QEffGrok1Model,
+    QEffGrok1ModelForCausalLM,
+    QEffGrok1MoeBlock,
+    QEffGrok1MultiHeadAttention,
 )
 from QEfficient.transformers.models.internvl.modeling_internvl import (
     QEffInternVisionEmbeddings,
@@ -370,8 +375,6 @@ class KVCacheTransform(ModuleMappingTransform):
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
-        # FIXME: see if we can merge into _module_mapping dict
-        transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update
         return model, transformed
 
 
@@ -439,5 +442,17 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
             "get_qeff_language_decoder": QEffInternVLModel.get_qeff_language_decoder,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
+        # #Mapping for grok1 model
+        "Grok1ModelForCausalLM": {"forward": QEffGrok1ModelForCausalLM.forward},
+        "Grok1Model": {
+            "forward": QEffGrok1Model.forward,
+            "__qeff_init__": QEffGrok1Model.__qeff_init__,
+        },
+        "DecoderLayer": {"forward": QEffGrok1DecoderLayer.forward},
+        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward},
+        "MultiHeadAttention": {
+            "forward": QEffGrok1MultiHeadAttention.forward,
+        },
     }
+
     _match_class_replace_method = {}

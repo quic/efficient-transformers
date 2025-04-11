@@ -12,15 +12,14 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from torch.nn import CrossEntropyLoss
-from transformers.cache_utils import DynamicCache
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     CausalLMOutputWithCrossAttentions,
 )
-from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel, logger
+from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
@@ -52,7 +51,7 @@ class QEffMptAttention(MptAttention):
         if past_key_value is not None:
             if len(past_key_value) != 0:
                 cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
-                pkv = DynamicCache()
+                pkv = QEffDynamicCache()
                 pkv.key_cache.append(past_key_value[0])
                 pkv.value_cache.append(past_key_value[1])
                 key_states, value_states = pkv.update(key_states, value_states, 0, cache_kwargs)
@@ -196,13 +195,6 @@ class QEFfMptModel(MptModel):
         all_self_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
 
-        if self.gradient_checkpointing and self.training:
-            if use_cache:
-                logger.warning_once(
-                    "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
-                )
-                use_cache = False
-
         # Compute alibi tensor: check build_alibi_tensor documentation
         seq_length_with_past = seq_length
         past_key_values_length = 0
@@ -224,38 +216,16 @@ class QEFfMptModel(MptModel):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            if self.gradient_checkpointing and self.training:
-                outputs = self._gradient_checkpointing_func(
-                    block.__call__,
-                    hidden_states,
-                    alibi,
-                    causal_mask,
-                    layer_past,
-                    use_cache,
-                    output_attentions,
-                )
-            elif batch_index is not None:
-                outputs = block(
-                    hidden_states,
-                    layer_past=layer_past,
-                    attention_mask=causal_mask,
-                    position_ids=position_ids,
-                    batch_index=batch_index,
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                    position_bias=alibi,
-                )
-            else:
-                outputs = block(
-                    hidden_states,
-                    layer_past=layer_past,
-                    attention_mask=causal_mask,
-                    position_ids=position_ids,
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                    position_bias=alibi,
-                )
-
+            outputs = block(
+                hidden_states,
+                layer_past=layer_past,
+                attention_mask=causal_mask,
+                position_ids=position_ids,
+                batch_index=batch_index,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                position_bias=alibi,
+            )
             hidden_states = outputs[0]
             if use_cache is True:
                 presents = presents + (outputs[1],)
@@ -328,26 +298,8 @@ class QEffMptForCausalLM(MptForCausalLM):
         lm_logits = self.lm_head(hidden_states)
         lm_logits = lm_logits.float()
 
-        loss = None
-        if labels is not None:
-            # move labels to correct device to enable model parallelism
-            labels = labels.to(lm_logits.device)
-            # Shift so that tokens < n predict n
-            shift_logits = lm_logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            batch_size, seq_length, vocab_size = shift_logits.shape
-            # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(
-                shift_logits.view(batch_size * seq_length, vocab_size), shift_labels.view(batch_size * seq_length)
-            )
-
-        if not return_dict:
-            output = (lm_logits,) + transformer_outputs[1:]
-            return ((loss,) + output) if loss is not None else output
-
         return CausalLMOutputWithCrossAttentions(
-            loss=loss,
+            loss=None,
             logits=lm_logits,
             past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
