@@ -20,10 +20,6 @@ from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.logging_utils import logger
 
 BS = 1
-NUM_CHANNEL = 3
-image_num_patches = 10
-SEQ_LEN = 5500
-CTX_LEN = 6000
 
 
 class QEFFLlavaNextEncoderWrapper(nn.Module):
@@ -83,7 +79,7 @@ class QEFFLlavaNextEncoderWrapper(nn.Module):
                 image_feature = image_feature.view(num_patch_height, num_patch_width, height, width, -1)
                 image_feature = image_feature.permute(4, 0, 2, 1, 3).contiguous()
                 image_feature = image_feature.flatten(1, 2).flatten(2, 3)
-                # image_feature = unpad_image(image_feature, image_sizes[image_idx])
+
                 if not isinstance(image_sizes[image_idx], (list, tuple)):
                     if not isinstance(image_sizes[image_idx], (torch.Tensor, np.ndarray)):
                         raise TypeError(
@@ -92,6 +88,7 @@ class QEFFLlavaNextEncoderWrapper(nn.Module):
                 original_size = image_sizes[image_idx].tolist()
                 original_height, original_width = original_size
                 current_height, current_width = image_feature.shape[1:]
+
                 if torch.is_tensor(current_height):
                     current_height = current_height.item()
                     current_width = current_width.item()
@@ -166,14 +163,16 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
             "pixel_values": torch.zeros(
                 (
                     BS,
-                    image_num_patches,
+                    constants.GRANITEVISION_NUM_PATCHES,
                     constants.GRANITEVISION_NUM_CHANNELS,
                     constants.GRANITEVISION_IMG_SIZE,
                     constants.GRANITEVISION_IMG_SIZE,
                 ),
                 dtype=torch.float32,
             ),
-            "image_sizes": torch.tensor([[1109, 1610]], dtype=torch.int64),
+            "image_sizes": torch.tensor(
+                [[constants.GRANITEVISION_IMG_SIZE_HEIGHT, constants.GRANITEVISION_IMG_SIZE_WIDTH]], dtype=torch.int64
+            ),
         }
         lang_inputs = {
             "input_ids": torch.ones((BS, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64),
@@ -211,13 +210,13 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         **compiler_options,
     ):
         max_num_images = compiler_options.pop("max_num_images", 1)
-        prefill_seq_len = prefill_seq_len if prefill_seq_len else SEQ_LEN
-        ctx_len = ctx_len if ctx_len else CTX_LEN
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.GRANITEVISION_SEQ_LEN
+        ctx_len = ctx_len if ctx_len else constants.GRANITEVISION_CTX_LEN
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
             img_size = getattr(self.config.vision_config, "image_size")
         elif img_size is None:
             img_size = constants.GRANITEVISION_IMG_SIZE
-            logger.warning("Setting img_size to be 336, as it was neither passed nor found in vision_config")
+            logger.warning("Setting img_size to be 384, as it was neither passed nor found in vision_config")
         if img_size != constants.GRANITEVISION_IMG_SIZE and kv_offload:
             raise NotImplementedError("Image Size other than 384 is not supported for LlavaNext models yet.")
         vision = [
