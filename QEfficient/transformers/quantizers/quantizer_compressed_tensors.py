@@ -386,3 +386,6 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
                     replace_linear_with_fp8_dequant_layer(child_module)
 
         replace_linear_with_fp8_dequant_layer(model)
+
+    def _process_model_after_weight_loading(self, model, **kwargs):
+        pass
