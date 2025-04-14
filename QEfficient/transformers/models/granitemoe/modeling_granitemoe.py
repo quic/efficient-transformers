@@ -4,33 +4,30 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
 from typing import List, Optional, Tuple, Union
+
 import torch
 import torch.nn.functional as F
-from torch.nn import CrossEntropyLoss
+from transformers.cache_utils import Cache, DynamicCache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
+from transformers.modeling_outputs import BaseModelOutputWithPast, MoeCausalLMOutputWithPast, MoeModelOutputWithPast
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers.models.granitemoe.modeling_granitemoe import (
-    GraniteMoeRotaryEmbedding,
     GraniteMoeAttention,
     GraniteMoeConfig,
     GraniteMoeForCausalLM,
     GraniteMoeModel,
-    GraniteMoeParallelExperts,
-    GraniteMoeTopKGating,
     GraniteMoeMoE,
+    GraniteMoeParallelExperts,
+    GraniteMoeRotaryEmbedding,
+    GraniteMoeTopKGating,
+    load_balancing_loss_func,
+    logger,
     repeat_kv,
     rotate_half,
-    logger,
 )
 
-from transformers.cache_utils import Cache, DynamicCache, StaticCache
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPast,
-    CausalLMOutputWithPast,
-    MoeCausalLMOutputWithPast,
-    MoeModelOutputWithPast,
-)
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
@@ -446,7 +443,6 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
         # batch_gates = all_gates[index_sorted_experts]  # [num_tokens * top_k]
 
         # return index_sorted_experts, batch_index, batch_gates, expert_size, logits
-        # breakpoint()
         logits = self.layer(hidden_states).float()
         # all_gates = torch.softmax(logits, dim=1).type_as(hidden_states) #routingscores
         # topk_gates, topk_indices = torch.topk(all_gates, self.top_k, dim=-1)
@@ -456,9 +452,8 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
         # all_gates = torch.zeros_like(logits).type_as(hidden_states) # Initialize all_gates with zeros
         # all_gates = all_gates.scatter(dim=1, index=top_k_indices, src=top_k_gates)
         expert_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).permute(2, 1, 0)
-        return top_k_gates, expert_mask, logits, self.num_experts
 
-        return topk_gates, expert_mask, logits, self.num_experts
+        return top_k_gates, expert_mask, logits, self.num_experts
 
 
 class QEffGraniteMoeMoE(GraniteMoeMoE):
@@ -478,7 +473,6 @@ class QEffGraniteMoeMoE(GraniteMoeMoE):
             current_hidden_states = torch.where(mask_weight > 0, expert_outputs * mask_weight, 0.0)
             final_hidden_states += current_hidden_states
         final_hidden_states = final_hidden_states.view(bsz, length, self.input_size)
-        # breakpoint()
         return final_hidden_states, router_logits
 
 
