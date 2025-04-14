@@ -273,7 +273,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
 }
 
 
-model_class_mapping = {
+MODEL_CLASS_MAPPING = {
     **{architecture: "QEFFAutoModelForCausalLM" for architecture in mapping.MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values()},
     **{
         architecture: "QEFFAutoModelForImageTextToText"

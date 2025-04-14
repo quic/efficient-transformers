@@ -16,7 +16,7 @@ from transformers import AutoProcessor, PreTrainedModel, TextStreamer
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
 from QEfficient.base.common import QEFFCommonLoader
-from QEfficient.utils import check_and_assign_cache_dir, constants, load_hf_tokenizer
+from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
 
@@ -35,8 +35,16 @@ def execute_vlm_model(
 
     processor = AutoProcessor.from_pretrained(model_name, use_fast=False)
 
-    conversation = constants.Constants.conversation
-    conversation[0]["content"][1].update({"text": prompt[0]})  # Currently accepting only 1 prompt
+    # Added for QEff version 1.20 supported VLM models (mllama and llava)
+    conversation = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": prompt[0]},
+            ],
+        }
+    ]
 
     # Converts a list of dictionaries with `"role"` and `"content"` keys to a list of token ids.
     input_text = processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
@@ -138,9 +146,8 @@ def main(
 
     config = qeff_model.model.config
     architecture = config.architectures[0] if config.architectures else None
-    if architecture not in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values():
-        img_size = kwargs.pop("img_size", None)
-        if img_size or image_path or image_url:
+
+    if architecture not in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values() and (kwargs.pop("img_size", None) or image_path or image_url):
             logger.warning(f"Skipping image arguments as they are not valid for {architecture}")
 
     #########
@@ -304,7 +311,7 @@ if __name__ == "__main__":
     compiler_options_dict = {}
     for i in range(0, len(compiler_options)):
         if compiler_options[i].startswith("--"):
-            key = compiler_options[i].lstrip("-")
+            key = compiler_options[i].lstrip("-").replace("-", "_")
             value = (
                 compiler_options[i + 1]
                 if i + 1 < len(compiler_options) and not compiler_options[i + 1].startswith("-")

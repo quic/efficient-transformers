@@ -17,7 +17,7 @@ from typing import Any
 from transformers import AutoConfig
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.transformers.modeling_utils import model_class_mapping
+from QEfficient.transformers.modeling_utils import MODEL_CLASS_MAPPING
 
 
 class QEFFCommonLoader:
@@ -41,7 +41,7 @@ class QEFFCommonLoader:
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path)
         architecture = config.architectures[0] if config.architectures else None
 
-        class_name = model_class_mapping.get(architecture)
+        class_name = MODEL_CLASS_MAPPING.get(architecture)
         if class_name:
             module = __import__("QEfficient.transformers.models.modeling_auto")
             model_class = getattr(module, class_name)
