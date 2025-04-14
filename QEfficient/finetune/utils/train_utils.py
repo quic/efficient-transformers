@@ -83,6 +83,7 @@ def train(
     best_val_loss = float("inf")
     total_train_steps = 0
     max_steps_reached = False  # Flag to indicate max training steps reached
+    device_type = device.split(":")[0]
 
     tensorboard_updates = None
     if train_config.enable_ddp:
@@ -95,7 +96,7 @@ def train(
         if device.startswith("qaic"):
             scaler = QAicGradScaler()
         else:
-            scaler = GradScaler()
+            scaler = GradScaler(device_type)
 
     loss_0_counter = torch.tensor([0]).to(device)
 
@@ -177,10 +178,7 @@ def train(
                         # adjust atol & rtol this as required
                         atol=1e-1,
                         use_ref_output_on_mismatch=True,
-                        # report all mismatches
-                        max_failures=None,
-                        # generate unittest for each op once
-                        repeat_same_op=True,
+                        filter_config=qaic_debug.DispatchFilterConfig.default(device),
                         dump_root_dir=train_config.dump_root_dir + str(step),
                     ) as verifier:
                         loss = model(**batch).loss  # Forward call
@@ -296,8 +294,6 @@ def train(
                 eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity = evaluation(
                     model, train_config, eval_dataloader, local_rank, tokenizer, device
                 )
-                dist.barrier()
-                dist.all_reduce(eval_epoch_loss, op=dist.ReduceOp.SUM)
                 if local_rank == 0:
                     tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
 
