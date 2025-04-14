@@ -49,6 +49,16 @@ from transformers.models.granite.modeling_granite import (
     GraniteModel,
     GraniteRMSNorm,
 )
+from transformers.models.granitemoe.modeling_granitemoe import (
+    GraniteMoeRMSNorm,
+    GraniteMoeRotaryEmbedding,
+    GraniteMoeAttention,
+    GraniteMoeParallelExperts,
+    GraniteMoeForCausalLM,
+    GraniteMoeModel,
+    GraniteMoeTopKGating,
+    GraniteMoeMoE,
+)
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
@@ -167,6 +177,15 @@ from QEfficient.transformers.models.granite.modeling_granite import (
     QEffGraniteForCausalLM,
     QEffGraniteModel,
 )
+from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
+    QEffGraniteMoeAttention,
+    QEffGraniteMoeModel,
+    QEffGraniteMoeForCausalLM,
+    QEffGraniteMoeParallelExperts,
+    QEffGraniteMoeRotaryEmbedding,
+    QEffGraniteMoeTopKGating,
+    QEffGraniteMoeMoE,
+)
 from QEfficient.transformers.models.internvl.modeling_internvl import (
     QEffInternVisionEmbeddings,
     QEffInternVLModel,
@@ -258,6 +277,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen2RMSNorm: CustomRMSNormAIC,
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
+        GraniteMoeRMSNorm: CustomRMSNormAIC,
     }
 
 
@@ -304,6 +324,14 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
         GraniteAttention: QEffGraniteAttention,
+        # GraniteMoe
+        GraniteMoeModel: QEffGraniteMoeModel,
+        GraniteMoeForCausalLM: QEffGraniteMoeForCausalLM,
+        GraniteMoeAttention: QEffGraniteMoeAttention,
+        GraniteMoeRotaryEmbedding: QEffGraniteMoeRotaryEmbedding,
+        GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
+        GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
+        GraniteMoeMoE: QEffGraniteMoeMoE,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
