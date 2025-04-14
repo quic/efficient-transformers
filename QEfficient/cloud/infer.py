@@ -147,8 +147,10 @@ def main(
     config = qeff_model.model.config
     architecture = config.architectures[0] if config.architectures else None
 
-    if architecture not in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values() and (kwargs.pop("img_size", None) or image_path or image_url):
-            logger.warning(f"Skipping image arguments as they are not valid for {architecture}")
+    if architecture not in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values() and (
+        kwargs.pop("img_size", None) or image_path or image_url
+    ):
+        logger.warning(f"Skipping image arguments as they are not valid for {architecture}")
 
     #########
     # Compile
