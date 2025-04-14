@@ -15,8 +15,7 @@ from peft import (
     LoraConfig,
     PrefixTuningConfig,
 )
-from transformers import default_data_collator
-from transformers.data import DataCollatorForSeq2Seq, DefaultDataCollator
+from transformers.data import DataCollatorForSeq2Seq
 
 import QEfficient.finetune.configs.dataset_config as datasets
 from QEfficient.finetune.configs.peft_config import lora_config, prefix_config

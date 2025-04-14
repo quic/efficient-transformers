@@ -6,8 +6,9 @@
 # -----------------------------------------------------------------------------
 
 
-import datasets
 from itertools import chain
+
+import datasets
 
 
 def get_preprocessed_imdb(dataset_config, tokenizer, split, context_length=None):

@@ -64,9 +64,9 @@ def main(**kwargs):
         # TODO: may have to init qccl backend, next try run with torchrun command
         torch_device = torch.device(device)
         assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
-        assert (
-            torch_device.index is None
-        ), f"DDP requires specification of device type only, however provided device index as well: {torch_device}"
+        assert torch_device.index is None, (
+            f"DDP requires specification of device type only, however provided device index as well: {torch_device}"
+        )
         dist.init_process_group(backend=train_config.dist_backend)
         # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
         getattr(torch, torch_device.type).set_device(dist.get_rank())
@@ -145,9 +145,13 @@ def main(**kwargs):
     dataset_processer = tokenizer
 
     # Load and preprocess the dataset for training and validation
-    dataset_train = get_preprocessed_dataset(dataset_processer, dataset_config, split="train", context_length=train_config.context_length)
+    dataset_train = get_preprocessed_dataset(
+        dataset_processer, dataset_config, split="train", context_length=train_config.context_length
+    )
 
-    dataset_val = get_preprocessed_dataset(dataset_processer, dataset_config, split="test", context_length=train_config.context_length)
+    dataset_val = get_preprocessed_dataset(
+        dataset_processer, dataset_config, split="test", context_length=train_config.context_length
+    )
 
     # TODO: vbaddi, check if its necessary to do this?
     # dataset_train = ConcatDataset(
