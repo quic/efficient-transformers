@@ -1400,7 +1400,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 model, kv_offload=kv_offload
             )
 
-        return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching, speculative_model=speculative_model)
+        return cls(
+            model, is_tlm=is_tlm, continuous_batching=continuous_batching, speculative_model=speculative_model, **kwargs
+        )
 
     @property
     def model_hash(self) -> str:
