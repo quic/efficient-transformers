@@ -38,5 +38,4 @@ DATASET_PREPROC = {
 }
 DATALOADER_COLLATE_FUNC = {
     "custom_dataset": get_data_collator,
-    "samsum_dataset": get_samsum_collate_fn,
 }
