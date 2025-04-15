@@ -135,7 +135,7 @@ class QEffFP8Config(QuantizationConfigMixin):
         activation_scheme: str,
         ignored_layers: List[str] = None,
         kv_cache_scheme: str = None,
-        run_compressed: bool = True,
+        run_compressed: bool = False,
     ):
         self.quant_method = quant_method
         self.activation_scheme = activation_scheme
@@ -214,6 +214,9 @@ class QEffFP8Quantizer(CompressedTensorsHfQuantizer):
 
     def _process_model_after_weight_loading(self, model, **kwargs):
         pass
+
+    def update_missing_keys_after_loading(self, model, missing_keys: List[str], prefix: str) -> List[str]:
+        return missing_keys
 
 
 class QEffCompressedTensorsConfig(CompressedTensorsConfig):
@@ -389,3 +392,6 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
 
     def _process_model_after_weight_loading(self, model, **kwargs):
         pass
+
+    def update_missing_keys_after_loading(self, model, missing_keys: List[str], prefix: str) -> List[str]:
+        return missing_keys
