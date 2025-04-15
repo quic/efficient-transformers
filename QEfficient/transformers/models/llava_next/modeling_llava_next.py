@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -18,8 +18,6 @@ from transformers.models.llava_next.modeling_llava_next import (
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.logging_utils import logger
-
-BS = 1
 
 
 class QEFFLlavaNextEncoderWrapper(nn.Module):
@@ -162,7 +160,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         vision_inputs = {
             "pixel_values": torch.zeros(
                 (
-                    BS,
+                    constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
                     constants.GRANITEVISION_NUM_PATCHES,
                     constants.GRANITEVISION_NUM_CHANNELS,
                     constants.GRANITEVISION_IMG_SIZE,
@@ -175,8 +173,12 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
             ),
         }
         lang_inputs = {
-            "input_ids": torch.ones((BS, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64),
-            "attention_mask": torch.ones((BS, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64),
+            "input_ids": torch.ones(
+                (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64
+            ),
+            "attention_mask": torch.ones(
+                (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64
+            ),
             "image_features": torch.ones(
                 (constants.GRANITEVISION_FEATURE_SIZE, self.language_model.config.hidden_size), dtype=torch.float32
             ),
@@ -186,8 +188,18 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         for i in range(num_layers):
             lang_inputs["past_key_values"].append(
                 (
-                    torch.zeros(BS, num_key_value_heads, constants.GRANITEVISION_CTX_LEN, head_dim),
-                    torch.zeros(BS, num_key_value_heads, constants.GRANITEVISION_CTX_LEN, head_dim),
+                    torch.zeros(
+                        constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+                        num_key_value_heads,
+                        constants.GRANITEVISION_CTX_LEN,
+                        head_dim,
+                    ),
+                    torch.zeros(
+                        constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+                        num_key_value_heads,
+                        constants.GRANITEVISION_CTX_LEN,
+                        head_dim,
+                    ),
                 )
             )
         lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, constants.GRANITEVISION_CTX_LEN - 1)
@@ -224,8 +236,9 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": constants.GRANITEVISION_CTX_LEN,
+                "num_patches": constants.GRANITEVISION_NUM_PATCHES,
                 "max_num_images": max_num_images,
-                "img_size": img_size,
+                "img_size": constants.GRANITEVISION_IMG_SIZE,
             }
         ]
         lang = [
@@ -233,15 +246,17 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": constants.GRANITEVISION_CTX_LEN,
+                "num_patches": constants.GRANITEVISION_NUM_PATCHES,
                 "max_num_images": max_num_images,
-                "img_size": img_size,
+                "img_size": constants.GRANITEVISION_IMG_SIZE,
             },
             {
                 "batch_size": batch_size,
                 "seq_len": "1",
                 "ctx_len": constants.GRANITEVISION_CTX_LEN,
+                "num_patches": constants.GRANITEVISION_NUM_PATCHES,
                 "max_num_images": max_num_images,
-                "img_size": img_size,
+                "img_size": constants.GRANITEVISION_IMG_SIZE,
             },
         ]
         specializations = {}
@@ -256,7 +271,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
         vision_dynamic_axes = {
-            "pixel_values": {0: "batch_size", 3: "img_size", 4: "img_size"},
+            "pixel_values": {0: "batch_size", 1: "num_patches", 3: "img_size", 4: "img_size"},
         }
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
