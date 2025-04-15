@@ -24,9 +24,6 @@ from QEfficient.finetune.dataset.imdb_dataset import (
 from QEfficient.finetune.dataset.samsum_dataset import (
     get_preprocessed_samsum as get_samsum_dataset,
 )
-from QEfficient.finetune.dataset.samsum_dataset import (
-    get_samsum_collate_fn,
-)
 
 DATASET_PREPROC = {
     "alpaca_dataset": partial(get_alpaca_dataset),
