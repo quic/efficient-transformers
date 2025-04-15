@@ -301,12 +301,6 @@ def train(
             else:
                 train_epoch_loss = total_loss / len(train_dataloader)
 
-        if train_config.enable_ddp:
-            # Get the correct train loss from all the nodes.
-            dist.barrier()
-            dist.all_reduce(train_epoch_loss, op=dist.ReduceOp.SUM)
-            train_epoch_loss /= dist.get_world_size()
-
         if train_config.task_type == "seq_classification":
             accuracy = acc_helper.compute()
             acc_helper.reset()
@@ -479,10 +473,10 @@ def evaluation_acc(model, train_config, eval_dataloader, local_rank, tokenizer, 
     Returns: eval_acc, eval_epoch_loss
     """
     model.eval()
-    if local_rank is None:
-        num_classes = model.classifier.out_features
-    else:
+    if train_config.enable_ddp:
         num_classes = model.module.classifier.out_features
+    else:
+        num_classes = model.classifier.out_features
 
     acc_helper = torchmetrics.classification.MulticlassAccuracy(num_classes=num_classes).to(device)
 
