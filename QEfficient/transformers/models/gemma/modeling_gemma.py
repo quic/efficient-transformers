@@ -37,7 +37,7 @@ class QEffGemmaRotaryEmbedding(GemmaRotaryEmbedding):
     """
 
     def __init__(self, config: GemmaConfig, device=None):
-        GemmaRotaryEmbedding.__init__(self, config=config)
+        super().__init__(config=config)
 
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
@@ -125,13 +125,6 @@ class QEffGemmaAttention(GemmaAttention):
     The only differences are:
     - add new args cache idx for the kv retention
     """
-
-    def __init__(self, config: GemmaConfig, layer_idx: Optional[int] = None):
-        super().__init__(config, layer_idx)
-        # Define the general __qeff_init__() for any changes in the init calls
-        # Set the init in the module mapping pytorch transforms
-        self.config = config
-        self.__qeff_init__()
 
     def __qeff_init__(self):
         self.rotary_emb = QEffGemmaRotaryEmbedding(config=self.config)

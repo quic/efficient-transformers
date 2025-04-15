@@ -19,7 +19,6 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers.models.mllama.modeling_mllama import (
     MllamaConfig,
     MllamaCrossAttentionDecoderLayer,
@@ -66,36 +65,7 @@ class QEffMllamaRotaryEmbedding(MllamaRotaryEmbedding):
         rope_type="default",
         config: Optional[MllamaConfig] = None,
     ):
-        super(MllamaRotaryEmbedding, self).__init__()  # Initialize nn.Module
-        # TODO (joao): remove the `if` below, only used for BC
-        self.rope_kwargs = {}
-        if config is None:
-            logger.warning_once(
-                "`LlamaRotaryEmbedding` can now be fully parameterized by passing the model config through the "
-                "`config` argument. All other arguments will be removed in v4.45"
-            )
-            self.rope_kwargs = {
-                "rope_type": rope_type,
-                "factor": scaling_factor,
-                "dim": dim,
-                "base": base,
-                "max_position_embeddings": max_position_embeddings,
-            }
-            self.rope_type = rope_type
-            self.max_seq_len_cached = max_position_embeddings
-            self.original_max_seq_len = max_position_embeddings
-        else:
-            # BC: "rope_type" was originally "type"
-            if config.rope_scaling is not None:
-                self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
-            else:
-                self.rope_type = "default"
-            self.max_seq_len_cached = config.max_position_embeddings
-            self.original_max_seq_len = config.max_position_embeddings
-
-        self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-
+        super().__init__(config=config)
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device, **self.rope_kwargs)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
@@ -241,13 +211,6 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
     The only differences are:
         - add new args cache idx for the kv retention
     """
-
-    def __init__(self, config: MllamaConfig, layer_idx: Optional[int] = None):
-        super().__init__(config, layer_idx)
-        # Define the general __qeff_init__() for any changes in the init calls
-        # Set the init in the module mapping pytorch transforms
-        self.config = config
-        self.__qeff_init__()
 
     def __qeff_init__(self):
         self.rotary_emb = QEffMllamaRotaryEmbedding(config=self.config)

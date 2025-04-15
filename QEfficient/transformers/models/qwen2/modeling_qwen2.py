@@ -41,8 +41,7 @@ class QEffQwen2RotaryEmbedding(Qwen2RotaryEmbedding):
     """
 
     def __init__(self, config: Qwen2Config, device=None):
-        Qwen2RotaryEmbedding.__init__(self, config=config)
-
+        super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
             seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
@@ -140,13 +139,6 @@ class QEffQwen2Attention(Qwen2Attention):
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     """
-
-    def __init__(self, config, layer_idx=None):
-        super().__init__(config, layer_idx)
-        # Define the general __qeff_init__() for any changes in the init calls
-        # Set the init in the module mapping pytorch transforms
-        self.config = config
-        self.__qeff_init__()
 
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen2RotaryEmbedding(config=self.config)

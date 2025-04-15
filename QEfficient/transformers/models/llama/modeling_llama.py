@@ -37,7 +37,7 @@ class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding):
     """
 
     def __init__(self, config: LlamaConfig, device=None):
-        LlamaRotaryEmbedding.__init__(self, config=config)
+        super().__init__(config=config)
 
         self._set_cos_sin_cache(
             seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
@@ -120,13 +120,6 @@ def eager_attention_forward(
 
 class QEffLlamaAttention(LlamaAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
-
-    def __init__(self, config: LlamaConfig, layer_idx: Optional[int] = None):
-        super().__init__(config, layer_idx)
-        # Define the general __qeff_init__() for any changes in the init calls
-        # Set the init in the module mapping pytorch transforms
-        self.config = config
-        self.__qeff_init__()
 
     def __qeff_init__(self):
         self.rotary_emb = QEffLlamaRotaryEmbedding(config=self.config)
