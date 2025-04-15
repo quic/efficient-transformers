@@ -41,7 +41,6 @@ class QEffFalconRotaryEmbedding(FalconRotaryEmbedding):
     """
 
     def __init__(self, config: FalconConfig, device=None):
-        # FalconRotaryEmbedding.__init__(self, config=config)
         super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(

@@ -227,7 +227,7 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
         ignore=None,
         sparsity_config=None,
         quant_method="compressed-tensors",
-        run_compressed: bool = True,
+        run_compressed: bool = False,
         **kwargs,
     ):
         self.config_groups = config_groups
