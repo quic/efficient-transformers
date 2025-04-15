@@ -221,6 +221,7 @@ class QEFFBaseModel(ABC):
         custom_io: Optional[Dict[str, str]] = None,
         mdp_ts_num_devices: int = 1,
         num_speculative_tokens: Optional[int] = None,
+        is_prefill_only: Optional[bool] = False,
         **compiler_options,
     ) -> str:
         """
@@ -233,6 +234,7 @@ class QEFFBaseModel(ABC):
             :custom_io (dict): Custom IO to specify the input and outputs in different formats than default
             :mdp_ts_num_devices (int): Number of devices to partition to use Multi-Device Partitioning with tensor-slicing.
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
+            :is_prefill_only (bool, optional): By default it is False. If set to True, only specializations for prefill will be dumped.
             :compiler_options: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
@@ -257,6 +259,8 @@ class QEFFBaseModel(ABC):
         compile_hash = hashlib.sha256(to_hashable(command))
 
         if specializations is not None:
+            if is_prefill_only:
+                specializations = [specializations[0]]
             compile_hash.update(to_hashable(specializations))
 
         if custom_io is not None:
@@ -300,7 +304,7 @@ class QEFFBaseModel(ABC):
             command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         # Write mdp_config.json file
-        if mdp_ts_num_devices > 1:
+        if mdp_ts_num_devices > 1 and "mdp_load_partition_config" not in compiler_options:
             num_cores = compiler_options.get("aic_num_cores", 16)
             mdp_ts_json = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
             with open(mdp_ts_json, "w") as fp:
