@@ -9,7 +9,7 @@
 from typing import Any, Dict, Optional, Tuple
 
 import torch
-from transformers.cache_utils import DynamicCache
+from transformers.cache_utils import DynamicCache, EncoderDecoderCache
 
 from QEfficient.customop import (
     CtxGatherFunc,
@@ -181,3 +181,28 @@ class QEffDynamicCache(DynamicCache):
             v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
 
         return k_out, v_out
+
+
+class QEffEncoderDecoderCache(EncoderDecoderCache):
+    """
+    Updated the `EncoderDecoderCache` to use the `QEffDynamicCache` for both self-attention and cross-attention caches.
+    """
+
+    @classmethod
+    def from_legacy_cache(
+        cls, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
+    ) -> "EncoderDecoderCache":
+        """Converts a cache in the legacy cache format into an equivalent `EncoderDecoderCache`."""
+        cache = cls(
+            self_attention_cache=QEffDynamicCache(),
+            cross_attention_cache=QEffDynamicCache(),
+        )
+        if past_key_values is not None:
+            for layer_idx in range(len(past_key_values)):
+                key_states, value_states = past_key_values[layer_idx][:2]
+                cache.self_attention_cache.update(key_states, value_states, layer_idx)
+                if len(past_key_values[layer_idx]) > 2:
+                    key_states, value_states = past_key_values[layer_idx][2:]
+                    cache.cross_attention_cache.update(key_states, value_states, layer_idx)
+                    cache.is_updated[layer_idx] = True
+        return cache
