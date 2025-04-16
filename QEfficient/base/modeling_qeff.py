@@ -9,6 +9,7 @@ import hashlib
 import inspect
 import json
 import logging
+import os
 import shutil
 import subprocess
 import warnings
@@ -301,8 +302,13 @@ class QEFFBaseModel(ABC):
 
         # Write mdp_config.json file
         if mdp_ts_num_devices > 1:
-            if compiler_options.get("mdp_ts_json", None):
-                command.append(f"-mdp-load-partition-config={mdp_ts_json}")
+            mdp_ts_json = compiler_options.get("mdp_ts_json", None)
+
+            if mdp_ts_json:
+                if os.path.exists(mdp_ts_json):
+                    command.append(f"-mdp-load-partition-config={mdp_ts_json}")
+                else:
+                    raise FileNotFoundError(f"Error: Unable to find the JSON file at {mdp_ts_json}")
             else:
                 num_cores = compiler_options.get("aic_num_cores", 16)
                 mdp_ts_json = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
