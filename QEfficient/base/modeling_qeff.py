@@ -256,7 +256,14 @@ class QEFFBaseModel(ABC):
                 continue
             command.append(f"{option}={value}")
         compile_hash = hashlib.sha256(to_hashable(command))
-
+        
+        if compiler_options.get("prefill_only", None):
+            specializations=[specializations[0]]
+        if compiler_options.get("decode_only",None):
+            # if length of specializations is 1, its mean only decode specialization is present
+            # if length of specializations is 2, its mean prefill and decode specialization is present
+            if len(specializations) == 2:
+                specializations=[specializations[1]]
         if specializations is not None:
             compile_hash.update(to_hashable(specializations))
 
