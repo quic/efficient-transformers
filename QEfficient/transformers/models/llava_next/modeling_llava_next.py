@@ -9,7 +9,6 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.utils.checkpoint
 from transformers.models.llava_next.modeling_llava_next import (
     LlavaNextForConditionalGeneration,
     get_anyres_image_grid_shape,
@@ -20,17 +19,15 @@ from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.logging_utils import logger
 
 
-class QEFFLlavaNextEncoderWrapper(nn.Module):
+class QEffLlavaNextEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
         self.model.vision_model = self.model.vision_tower
 
     def forward(self, pixel_values, image_sizes):
-        image_num_patches = [constants.GRANITEVISION_NUM_PATCHES]
-        if pixel_values.dim() == 5:
-            _pixel_values_list = [pix_val[:num_patch] for pix_val, num_patch in zip(pixel_values, image_num_patches)]
-            pixel_values_new = torch.cat(_pixel_values_list, dim=0)
+        if pixel_values.dim() == constants.GRANITEVISION_PIXEL_VALUE_DIM:
+            pixel_values_new = pixel_values.squeeze(0)
 
         image_feature = self.model.vision_tower(pixel_values_new, output_hidden_states=True)
         if isinstance(self.model.config.vision_feature_layer, int):
@@ -47,9 +44,9 @@ class QEFFLlavaNextEncoderWrapper(nn.Module):
         else:
             raise ValueError(f"Unexpected select feature strategy: {self.model.config.vision_feature_select_strategy}")
         image_features = self.model.multi_modal_projector(selected_image_feature)
-        image_features = torch.split(image_features, image_num_patches, dim=0)
-
+        image_features = torch.split(image_features, [image_features.shape[0]], dim=0)
         new_image_features = []
+
         # Image feature
         for image_idx, image_feature in enumerate(image_features):
             if image_feature.shape[0] > 1:
@@ -116,7 +113,7 @@ class QEFFLlavaNextEncoderWrapper(nn.Module):
         return image_features
 
 
-class QEFFLlavaNextDecoderWrapper(nn.Module):
+class QEffLlavaNextDecoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -142,10 +139,10 @@ class QEFFLlavaNextDecoderWrapper(nn.Module):
 
 class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
     def get_qeff_vision_encoder(self):
-        return QEFFLlavaNextEncoderWrapper(self)
+        return QEffLlavaNextEncoderWrapper(self)
 
     def get_qeff_language_decoder(self):
-        return QEFFLlavaNextDecoderWrapper(self)
+        return QEffLlavaNextDecoderWrapper(self)
 
     def get_dummy_inputs(self, kv_offload: bool = False, **kwargs):
         num_layers = self.config.text_config.num_hidden_layers
@@ -222,6 +219,14 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         **compiler_options,
     ):
         max_num_images = compiler_options.pop("max_num_images", 1)
+        num_patches = compiler_options.pop("num_patches", None)
+
+        if num_patches is None:
+            logger.warning(
+                "User should pass `num_patches` to compile API to fix the dynamic axes `pixel_values`, Since its not found setting its value to 10"
+            )
+            num_patches = constants.GRANITEVISION_NUM_PATCHES
+
         prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.GRANITEVISION_SEQ_LEN
         ctx_len = ctx_len if ctx_len else constants.GRANITEVISION_CTX_LEN
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
@@ -235,28 +240,28 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
             {
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
-                "ctx_len": constants.GRANITEVISION_CTX_LEN,
-                "num_patches": constants.GRANITEVISION_NUM_PATCHES,
+                "ctx_len": ctx_len,
+                "num_patches": num_patches,
                 "max_num_images": max_num_images,
-                "img_size": constants.GRANITEVISION_IMG_SIZE,
+                "img_size": img_size,
             }
         ]
         lang = [
             {
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
-                "ctx_len": constants.GRANITEVISION_CTX_LEN,
-                "num_patches": constants.GRANITEVISION_NUM_PATCHES,
+                "ctx_len": ctx_len,
+                "num_patches": num_patches,
                 "max_num_images": max_num_images,
-                "img_size": constants.GRANITEVISION_IMG_SIZE,
+                "img_size": img_size,
             },
             {
                 "batch_size": batch_size,
                 "seq_len": "1",
-                "ctx_len": constants.GRANITEVISION_CTX_LEN,
-                "num_patches": constants.GRANITEVISION_NUM_PATCHES,
+                "ctx_len": ctx_len,
+                "num_patches": num_patches,
                 "max_num_images": max_num_images,
-                "img_size": constants.GRANITEVISION_IMG_SIZE,
+                "img_size": img_size,
             },
         ]
         specializations = {}
