@@ -301,23 +301,28 @@ class QEFFBaseModel(ABC):
 
         # Write mdp_config.json file
         if mdp_ts_num_devices > 1:
-            num_cores = compiler_options.get("aic_num_cores", 16)
-            mdp_ts_json = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
-            with open(mdp_ts_json, "w") as fp:
-                json.dump(
-                    {
-                        "connections": [{"devices": list(range(mdp_ts_num_devices)), "type": "p2p"}],
-                        "partitions": [
-                            {
-                                "name": "Partition0",
-                                "devices": [{"deviceId": d, "numCores": num_cores} for d in range(mdp_ts_num_devices)],
-                            }
-                        ],
-                    },
-                    fp,
-                    indent=4,
-                )
-            command.append(f"-mdp-load-partition-config={mdp_ts_json}")
+            if compiler_options.get("mdp_ts_json", None):
+                command.append(f"-mdp-load-partition-config={mdp_ts_json}")
+            else:
+                num_cores = compiler_options.get("aic_num_cores", 16)
+                mdp_ts_json = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
+                with open(mdp_ts_json, "w") as fp:
+                    json.dump(
+                        {
+                            "connections": [{"devices": list(range(mdp_ts_num_devices)), "type": "p2p"}],
+                            "partitions": [
+                                {
+                                    "name": "Partition0",
+                                    "devices": [
+                                        {"deviceId": d, "numCores": num_cores} for d in range(mdp_ts_num_devices)
+                                    ],
+                                }
+                            ],
+                        },
+                        fp,
+                        indent=4,
+                    )
+                command.append(f"-mdp-load-partition-config={mdp_ts_json}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
