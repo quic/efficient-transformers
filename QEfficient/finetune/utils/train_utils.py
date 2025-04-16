@@ -232,7 +232,7 @@ def train(
             if train_config.save_metrics:
                 train_step_loss.append(loss.detach().float().item())
                 if train_config.task_type == "seq_classification":
-                    step_metric_val = acc_helper.compute()
+                    step_metric_val = float(acc_helper.compute())
                 else:
                     step_metric_val = float(torch.exp(loss.detach().float()))
                 train_step_metric.append(step_metric_val)
