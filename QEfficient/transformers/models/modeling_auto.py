@@ -1501,6 +1501,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
             :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
+            :prefill_only (bool): To compile model only for ``prefill`` part. ``Dafaults to False``.
+            :decode_only (bool): To compile model only decoder part.  ``Dafaults to False``.
+            :compiler_options (dict, optional): Any other options that the `qaic-exec` takes. ``Defaults to None``.
 
         Returns:
             :str: Path of the compiled ``qpc`` package.
@@ -1518,11 +1521,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.num_speculative_tokens = num_speculative_tokens
         self.enable_qnn = enable_qnn
         self.qnn_config = qnn_config
-        self.compiler_options = compiler_options
-        self.is_tlm = False
-        self.is_qnn = False
-        self.is_qpc = False
-        self.is_qnn = False
 
         if self.is_tlm:
             # assert num_speculative_tokens cfg is acceptable if defined
@@ -1559,18 +1557,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             # TODO: should be renamed to kv_cache_batch_size in specialization too
         }
         prefill_specialization.update({"num_logits_to_keep": 1}) if self.is_tlm else ...
+
         prefill_specialization.update(
-            {"full_batch_size" if self.continuous_batching else "batch_size": kv_cache_batch_size}
+            {"full_batch_size" if self.continuous_batching else "batch_size": self.kv_cache_batch_size}
         )
-        prefill_specialization.update({"full_batch_exec_size": full_batch_size}) if full_batch_size else ..
-       
-        specializations = [
-            prefill_specialization,
-        ]
+
+        prefill_specialization.update({"full_batch_exec_size": full_batch_size}) if full_batch_size else ...
+
+        specializations = [prefill_specialization]
 
         # Compile for prefill_only
-        if compiler_options.get("prefill_only", False):
-            prefill_qpc_path = self.compiler_helper(compiler_options, prefill_specialization)
+        if compiler_options.pop("prefill_only", False):
+            prefill_qpc_path = self.compile_model(compiler_options, [prefill_specialization])
             return prefill_qpc_path
 
         # Skip decode specialization if we are not in continuous batching and prefill_seq_len=1 as this repeats prefill specialization
@@ -1582,20 +1580,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "ctx_len": ctx_len,
             }
             if self.continuous_batching:
-                decode_specialization.update({"full_batch_size": kv_cache_batch_size})
+                decode_specialization.update({"full_batch_size": self.kv_cache_batch_size})
             else:
-                decode_specialization.update({"batch_size": kv_cache_batch_size})
+                decode_specialization.update({"batch_size": self.kv_cache_batch_size})
             decode_specialization.update({"num_logits_to_keep": num_speculative_tokens + 1}) if self.is_tlm else ...
+            specializations.append(decode_specialization)
 
-        if compiler_options.get("decode_only", False):
-            decode_qpc_path = self.compiler_helper(compiler_options, decode_specialization)
+        if compiler_options.pop("decode_only", False):
+            decode_qpc_path = self.compile_model(compiler_options, [decode_specialization])
             return decode_qpc_path
 
-        specializations.append()
-        qpc_path = self.compiler_helper(compiler_options, specializations)
+        qpc_path = self.compile_model(compiler_options, specializations)
         return qpc_path
 
-    def compiler_helper(self, compiler_options, specializations):
+    def compile_model(self, compiler_options, specializations):
         if self.enable_qnn:
             if compiler_options:
                 logger.warning("Extra arguments to QNN compilation are supported via qnn_config.json only")
