@@ -57,7 +57,7 @@ def run_model(
             "role": "user",
             "content": [
                 {"type": "image", "url": img_path},
-                {"type": "text", "text": "What is the highest scoring model on ChartQA and what is its score?"},
+                {"type": "text", "text": query},
             ],
         },
     ]
@@ -87,7 +87,7 @@ def run_model(
 if __name__ == "__main__":
     # Model name and Input parameters
     model_name = "ibm-granite/granite-vision-3.2-2b"
-    query = "Describe this image."
+    query = "What is the highest scoring model on ChartQA and what is its score?"
     image_url = "https://huggingface.co/ibm-granite/granite-vision-3.2-2b/resolve/main/example.png"
     # Compilation parameters for the model
     kv_offload = True
