@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -66,7 +66,12 @@ from transformers.models.llama.modeling_llama import (
     LlamaModel,
     LlamaRMSNorm,
 )
-from transformers.models.llava.modeling_llava import LlavaForConditionalGeneration
+from transformers.models.llava.modeling_llava import (
+    LlavaForConditionalGeneration,
+)
+from transformers.models.llava_next.modeling_llava_next import (
+    LlavaNextForConditionalGeneration,
+)
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
     MistralDecoderLayer,
@@ -191,7 +196,12 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaForCausalLM,
     QEffLlamaModel,
 )
-from QEfficient.transformers.models.llava.modeling_llava import QEffLlavaForConditionalGeneration
+from QEfficient.transformers.models.llava.modeling_llava import (
+    QEffLlavaForConditionalGeneration,
+)
+from QEfficient.transformers.models.llava_next.modeling_llava_next import (
+    QEffLlavaNextForConditionalGeneration,
+)
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
     QEffMistralDecoderLayer,
@@ -303,6 +313,8 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaForCausalLM: QEffLlamaForCausalLM,
         # Llava
         LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
+        # Llava Next
+        LlavaNextForConditionalGeneration: QEffLlavaNextForConditionalGeneration,
         # Gemma
         GemmaAttention: QEffGemmaAttention,
         GemmaDecoderLayer: QEffGemmaDecoderLayer,

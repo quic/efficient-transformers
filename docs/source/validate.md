@@ -60,7 +60,7 @@
 |-----------------------------|--------------|----------------------------------------|
 | **LlavaForConditionalGeneration** | LLaVA-1.5   | [llava-hf/llava-1.5-7b-hf](https://huggingface.co/llava-hf/llava-1.5-7b-hf)               |
 | **MllamaForConditionalGeneration** | Llama 3.2   | [meta-llama/Llama-3.2-11B-Vision Instruct](https://huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct)<br>[meta-llama/Llama-3.2-90B-Vision](https://huggingface.co/meta-llama/Llama-3.2-90B-Vision) |
-
+|**LlavaNextForConditionalGeneration** | Granite Vision | [ibm-granite/granite-vision-3.2-2b](https://huggingface.co/ibm-granite/granite-vision-3.2-2b)
 ### Audio Models
 (Automatic Speech Recognition) - Transcription Task
 **QEff Auto Class:** `QEFFAutoModelForSpeechSeq2Seq`
