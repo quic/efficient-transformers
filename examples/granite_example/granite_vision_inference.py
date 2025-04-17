@@ -30,7 +30,8 @@ def run_model(
 
     processor = AutoProcessor.from_pretrained(model_name, token=token)
 
-    # `kv_offload` is used to compile the model in a Single QPC or 2 QPCs.
+    # `kv_offload` is used to compile the model in a 2 QPCs.Currently we are not supporting flag false which is for single qpc for this model.
+    # The `kv_offload` flag should always be set to True.
     # The Dual QPC approach splits the model to perform Image Encoding and Output generation in 2 different QPCs.
     # The outputs of the Vision Encoder are then passed to the Language model via host in this case.
 
@@ -40,9 +41,6 @@ def run_model(
     model.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
-        num_patches=10,
-        image_size_height=1109,
-        image_size_width=1610,
         img_size=img_size,
         num_cores=num_cores,
         num_devices=num_devices,
@@ -68,7 +66,7 @@ def run_model(
     ## STEP - 4 Run Inference on the compiled model
 
     streamer = TextStreamer(processor.tokenizer)
-    model.generate(inputs=inputs, streamer=streamer, generation_len=128)
+    model.generate(inputs=inputs, streamer=streamer, generation_len=generation_len)
 
 
 if __name__ == "__main__":

@@ -224,27 +224,27 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         image_size_width = compiler_options.pop("image_size_width", None)
 
         if num_patches is None:
-            logger.warning(
-                "User should pass `num_patches` to compile API to fix the dynamic axes `pixel_values`, Since its not found setting its value to 10"
-            )
             num_patches = constants.GRANITEVISION_NUM_PATCHES
         if image_size_height is None:
-            logger.warning(
-                "User should pass `image_size_height` to compile API to fix the dynamic axes `image_size_height`, Since its not found setting its value to 1109"
-            )
             image_size_height = constants.GRANITEVISION_IMG_SIZE_HEIGHT
         if image_size_width is None:
-            logger.warning(
-                "User should pass `image_size_width` to compile API to fix the dynamic axes `image_size_width`, Since its not found setting its value to 1610"
-            )
             image_size_width = constants.GRANITEVISION_IMG_SIZE_WIDTH
 
         if num_patches != constants.GRANITEVISION_NUM_PATCHES:
-            raise NotImplementedError("Num Patches should be set to 10")
+            logger.warning("Image Num Patches should be set to 10")
+            num_patches = constants.GRANITEVISION_NUM_PATCHES
+
         if image_size_height != constants.GRANITEVISION_IMG_SIZE_HEIGHT:
-            raise NotImplementedError("Image Size Height Should be fixed to 1109")
+            logger.warning(
+                "Image Size Height Should be fixed to 1109. Please Reshape the image to (w x h) (1610 x 1109)"
+            )
+            image_size_height = constants.GRANITEVISION_IMG_SIZE_HEIGHT
+
         if image_size_width != constants.GRANITEVISION_IMG_SIZE_WIDTH:
-            raise NotImplementedError("Image Size Height Should be fixed to 1610")
+            logger.warning(
+                "Image Size Width Should be fixed to 1610. Please Reshape the image to (w x h) (1610 x 1109)"
+            )
+            image_size_width = constants.GRANITEVISION_IMG_SIZE_WIDTH
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.GRANITEVISION_SEQ_LEN
         ctx_len = ctx_len if ctx_len else constants.GRANITEVISION_CTX_LEN
@@ -256,7 +256,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
             img_size = constants.GRANITEVISION_IMG_SIZE
             logger.warning("Setting img_size to be 384, as it was neither passed nor found in vision_config")
         if img_size != constants.GRANITEVISION_IMG_SIZE and kv_offload:
-            raise NotImplementedError("Image Size other than 384 is not supported for LlavaNext models yet.")
+            logger.warning("Image Size other than 384 is not supported for LlavaNext models yet.")
         vision = [
             {
                 "batch_size": batch_size,
@@ -342,5 +342,6 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="pixel_values", datatype=torch.float32, shape=("batch_size", 3, "img_size", "img_size")),
+            IOInfo(name="pixel_values", datatype=torch.float32, shape=("batch_size", 10, 3, "img_size", "img_size")),
+            IOInfo(name="image_sizes", datatype=torch.int64, shape=(1109, 1610)),
         ]
