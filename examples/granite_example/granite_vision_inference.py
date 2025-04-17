@@ -70,19 +70,6 @@ def run_model(
     streamer = TextStreamer(processor.tokenizer)
     model.generate(inputs=inputs, streamer=streamer, generation_len=128)
 
-    # # QEff pytorch
-
-    # # print(output)
-    # # print(processor.tokenizer.batch_decode(output))
-    # # print(output)
-    # # breakpoint()
-
-    # # AIC Output
-
-    # print(output.generated_ids)
-    # print(processor.tokenizer.batch_decode(output.generated_ids))
-    # print(output)
-
 
 if __name__ == "__main__":
     # Model name and Input parameters
