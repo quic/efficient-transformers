@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -12,7 +12,6 @@ import torch.nn.functional as F
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import BaseModelOutputWithPast, MoeCausalLMOutputWithPast, MoeModelOutputWithPast
-from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeAttention,
     GraniteMoeConfig,
@@ -40,48 +39,11 @@ class QEffGraniteMoeRotaryEmbedding(GraniteMoeRotaryEmbedding):
 
     def __init__(
         self,
-        dim=None,
-        max_position_embeddings=2048,
-        base=10000,
-        device=None,
-        scaling_factor=1.0,
-        rope_type="default",
         config: Optional[GraniteMoeConfig] = None,
+        device=None,
     ):
-        super(GraniteMoeRotaryEmbedding, self).__init__()  # Initialize nn.Module
-        # TODO (joao): remove the `if` below, only used for BC
-        self.rope_kwargs = {}
-        if config is None:
-            logger.warning_once(
-                "`LlamaRotaryEmbedding` can now be fully parameterized by passing the model config through the "
-                "`config` argument. All other arguments will be removed in v4.45"
-            )
-            self.rope_kwargs = {
-                "rope_type": rope_type,
-                "factor": scaling_factor,
-                "dim": dim,
-                "base": base,
-                "max_position_embeddings": max_position_embeddings,
-            }
-            self.rope_type = rope_type
-            self.max_seq_len_cached = max_position_embeddings
-            self.original_max_seq_len = max_position_embeddings
-        else:
-            # BC: "rope_type" was originally "type"
-            if config.rope_scaling is not None:
-                self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
-            else:
-                self.rope_type = "default"
-            self.max_seq_len_cached = config.max_position_embeddings
-            self.original_max_seq_len = config.max_position_embeddings
-
-        self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device, **self.rope_kwargs)
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-
-        # Build here to make `torch.jit.trace` work.
+        super().__init__(config=config)  # Initialize nn.Module
+       
         self._set_cos_sin_cache(
             seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
         )
@@ -139,12 +101,7 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
 
 
 class QEffGraniteMoeAttention(GraniteMoeAttention):
-    def __init__(self, config: GraniteMoeConfig, layer_idx: Optional[int] = None):
-        super().__init__(config, layer_idx)
-        # Define the general __qeff_init__() for any changes in the init calls
-        # Set the init in the module mapping pytorch transforms
-        self.config = config
-        self.__qeff_init__()
+    """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     def __qeff_init__(self):
         self.rotary_emb = QEffGraniteMoeRotaryEmbedding(config=self.config)
@@ -168,18 +125,13 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         kv_seq_len = key_states.shape[-2]
-        if past_key_value is not None:
-            if self.layer_idx is None:
-                raise ValueError(
-                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
-                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
-                    "with a layer index."
-                )
-            kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-
+        
+        kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        
         if past_key_value is not None:
+          
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {
                 "sin": sin,
@@ -418,45 +370,17 @@ class QEffGraniteMoeModel(GraniteMoeModel):
 
 
 class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
+    
     def forward(self, hidden_states):
-        # logits = self.layer(hidden_states).float()
-        # all_logits, all_indices = logits.topk(self.num_experts, dim=1)
-        # all_gates = torch.softmax(logits, dim=1).type_as(hidden_states) # [num_tokens, all_experts]
-
-        # zeros = torch.zeros(
-        #     [all_gates.size(0), self.num_experts], dtype=all_gates.dtype, device=all_gates.device
-        # )
-        # gates = zeros.scatter(1, all_indices, 1)  # [num_tokens, num_experts]
-        # # gates_mask = zers.scatter(1, top_k_indices, 1)
-        # expert_size = gates.long().sum(0)  # [num_experts,]
-        # expert_size = expert_size.tolist()
-
-        # # sort and group input tokens according to expert assignment
-        # # top_k_experts = top_k_indices.flatten()  # [num_tokens * top_k]
-        # all_experts = all_indices.flatten()
-        # # _, index_sorted_experts = top_k_experts.sort(0)  # [num_tokens * top_k]
-        # _, index_sorted_experts = all_experts.sort(0)
-        # batch_index = index_sorted_experts.div(self.num_experts, rounding_mode="trunc")  # [num_tokens * top_k]
-
-        # # gather the gate values for grouped input tokens
-        # all_gates = all_gates.flatten()  # [num_tokens * top_k]
-        # batch_gates = all_gates[index_sorted_experts]  # [num_tokens * top_k]
-
-        # return index_sorted_experts, batch_index, batch_gates, expert_size, logits
         logits = self.layer(hidden_states).float()
-        # all_gates = torch.softmax(logits, dim=1).type_as(hidden_states) #routingscores
-        # topk_gates, topk_indices = torch.topk(all_gates, self.top_k, dim=-1)
-        # expert_mask = F.one_hot(topk_indices, num_classes=self.num_experts).permute(2, 1, 0)
         top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [num_tokens, top_k]
         top_k_gates = torch.softmax(top_k_logits, dim=1).type_as(hidden_states)  # [num_tokens, top_k]
-        # all_gates = torch.zeros_like(logits).type_as(hidden_states) # Initialize all_gates with zeros
-        # all_gates = all_gates.scatter(dim=1, index=top_k_indices, src=top_k_gates)
         expert_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).permute(2, 1, 0)
-
         return top_k_gates, expert_mask, logits, self.num_experts
 
 
 class QEffGraniteMoeMoE(GraniteMoeMoE):
+    
     def forward(self, layer_input):
         bsz, length, emb_size = layer_input.size()
         layer_input = layer_input.reshape(-1, emb_size)
@@ -465,7 +389,6 @@ class QEffGraniteMoeMoE(GraniteMoeMoE):
         for expert_idx in range(num_experts):
             mask = expert_mask[expert_idx].transpose(0, 1).to(layer_input.dtype)
             mask_weight = (topk_gates * mask).sum(dim=1, keepdim=True)
-
             hidden_states = self.input_linear(layer_input, expert_idx)
             chunked_hidden_states = hidden_states.chunk(2, dim=-1)
             hidden_states = self.activation(chunked_hidden_states[0]) * chunked_hidden_states[1]
@@ -477,6 +400,7 @@ class QEffGraniteMoeMoE(GraniteMoeMoE):
 
 
 class QEffGraniteMoeParallelExperts(GraniteMoeParallelExperts):
+    
     def forward(self, inputs, expert_size):
         """
         Forward pass of the GraniteMoeParallelExperts module.
@@ -488,9 +412,8 @@ class QEffGraniteMoeParallelExperts(GraniteMoeParallelExperts):
         Returns:
             Tensor: Output tensor.
         """
-        # breakpoint()
-        expert_idx = expert_size
-        results = torch.matmul(inputs, self.weight[expert_idx].T)
+
+        results = torch.matmul(inputs, self.weight[expert_size].T)
         return results
 
 
@@ -576,17 +499,6 @@ class QEffGraniteMoeForCausalLM(GraniteMoeForCausalLM):
         logits = logits / self.config.logits_scaling
 
         loss = None
-        # if labels is not None:
-        #     # Shift so that tokens < n predict n
-        #     shift_logits = logits[..., :-1, :].contiguous()
-        #     shift_labels = labels[..., 1:].contiguous()
-        #     # Flatten the tokens
-        #     loss_fct = CrossEntropyLoss()
-        #     shift_logits = shift_logits.view(-1, self.config.vocab_size)
-        #     shift_labels = shift_labels.view(-1)
-        #     # Enable model parallelism
-        #     shift_labels = shift_labels.to(shift_logits.device)
-        #     loss = loss_fct(shift_logits, shift_labels)
         if labels is not None:
             # Upcast to float if we need to compute the loss to avoid potential precision issues
             logits = logits.float()
