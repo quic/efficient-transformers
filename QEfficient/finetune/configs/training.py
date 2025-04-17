@@ -29,6 +29,7 @@ class train_config:
     use_autocast: bool = True
     val_batch_size: int = 1
     dataset = "samsum_dataset"
+    task_type = "generation"  # "generation" / "seq_classification"
     peft_method: str = "lora"
     use_peft: bool = True  # use parameter efficient fine tuning
     from_peft_checkpoint: str = ""  # if not empty and use_peft=True, will load the peft checkpoint and resume the fine-tuning on that checkpoint
