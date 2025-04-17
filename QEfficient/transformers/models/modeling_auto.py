@@ -51,6 +51,7 @@ from QEfficient.transformers.quantizers.quant_transforms import (
 from QEfficient.utils import constants, get_padding_shape_from_config
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.spd_utils import get_speculative_config
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -1288,6 +1289,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model: nn.Module,
         continuous_batching: bool = False,
         is_tlm: bool = False,
+        speculative_model: Optional[str] = None,
         **kwargs,
     ):
         model_class_name = model.__class__.__name__
@@ -1313,11 +1315,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
-
-        if is_tlm:
+        # get speculative config if specified
+        speculative_config = None
+        if speculative_model is not None:
+            speculative_config: dict = get_speculative_config(speculative_model, **kwargs)
+        # apply tlm transform if specified
+        if is_tlm or speculative_config is not None:
+            is_tlm = True
             # TODO: It is possible to always apply this transform and make value of indices as last indices by default in PyTorch
-            self.model, transformed = SpDTransform.apply(self.model)
+            self.model, transformed = SpDTransform.apply(self.model, speculative_config)
         self.is_tlm = is_tlm
+        self.speculative_config = speculative_config
+        self.num_speculative_tokens = None
+        if speculative_config is not None:
+            self.num_speculative_tokens = speculative_config.get("num_speculative_tokens")
 
     @property
     def model_name(self) -> str:
@@ -1332,7 +1343,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(
-        cls, pretrained_model_name_or_path, continuous_batching: bool = False, is_tlm: bool = False, *args, **kwargs
+        cls,
+        pretrained_model_name_or_path,
+        continuous_batching: bool = False,
+        is_tlm: bool = False,
+        speculative_model: Optional[str] = None,
+        *args,
+        **kwargs,
     ):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
@@ -1385,7 +1402,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 model, kv_offload=kv_offload
             )
 
-        return cls(model, is_tlm=is_tlm, continuous_batching=continuous_batching)
+        return cls(
+            model, is_tlm=is_tlm, continuous_batching=continuous_batching, speculative_model=speculative_model, **kwargs
+        )
 
     @property
     def model_hash(self) -> str:
@@ -1395,6 +1414,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
         mhash.update(to_hashable({"is_tlm": self.is_tlm}))
         mhash.update(to_hashable(self._transform_names()))
+        if self.speculative_config is not None:
+            speculative_config = self.speculative_config.copy()
+            if "speculative_weights" in speculative_config:
+                del speculative_config["speculative_weights"]
+            mhash.update(to_hashable(speculative_config))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -1506,9 +1530,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             :str: Path of the compiled ``qpc`` package.
         """
         if self.is_tlm:
-            # assert num_speculative_tokens cfg is acceptable if defined
             if num_speculative_tokens is None:
-                raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` is True.")
+                if self.num_speculative_tokens is not None:
+                    num_speculative_tokens = self.num_speculative_tokens
+                else:
+                    raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` is True.")
+            elif (self.num_speculative_tokens is not None) and (num_speculative_tokens != self.num_speculative_tokens):
+                logger.warn(
+                    f"arg `num_speculative_tokens` is a fixed value of {self.num_speculative_tokens} for this model."
+                    " Passed value will be ignored."
+                )
+                num_speculative_tokens = self.num_speculative_tokens
             if not isinstance(num_speculative_tokens, int) and num_speculative_tokens < 2:
                 ValueError(
                     f"`num_speculative_tokens` arg should be an integer greater than 1, got {num_speculative_tokens}"
