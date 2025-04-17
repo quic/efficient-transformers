@@ -17,5 +17,7 @@ python granite_vision_inference.py
 
 Expected output for given sample inputs in the script:
 ```sh
-The highest scoring model on ChartQA is Granite Vision with a score of 0.87.
+The image depicts two cats lying on a pink blanket that is spread out on a red couch. The cats are positioned in a relaxed manner, with their bodies stretched out and their heads resting on the blanket. 
+The cat on the left is a smaller, tabby cat with a mix of black, gray, and white fur. It has a long, slender body and a distinctive tail that is curled up near its tail end. The cat on the right is a larger, 
+tabby cat with a mix of gray, black, and brown fur. It has
 ```
