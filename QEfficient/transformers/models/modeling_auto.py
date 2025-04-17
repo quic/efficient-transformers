@@ -1589,7 +1589,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 spec["batch_size"] = kv_cache_batch_size
             return {k: v for k, v in spec.items() if v is not None}
 
-        if prefill_only is None or prefill_only:
+        if prefill_only is None or prefill_only or prefill_seq_len == 1:
             specializations.append(build_prefill_specialization())
         if prefill_only is None or not prefill_only:
             decode_spec = build_decode_specialization()

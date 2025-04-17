@@ -82,6 +82,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     ctx_len: int = Constants.CTX_LEN,
     n_layer: int = 1,
     num_speculative_tokens: Optional[int] = None,
+    prefill_only: Optional[bool] = None,
 ):
     """
     Validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
@@ -122,6 +123,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
+    gen_len = ort_tokens.shape[-1]
 
     assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
 
@@ -135,14 +137,21 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         mxfp6=False,
         aic_enable_depth_first=False,
         num_speculative_tokens=num_speculative_tokens,
+        prefill_only=prefill_only,
     )
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
-    cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
-    gen_len = ort_tokens.shape[-1]
-    assert (ort_tokens == cloud_ai_100_tokens[:, :gen_len]).all(), (
-        "Tokens don't match for ONNXRT output and Cloud AI 100 output."
-    )
-    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
+    cloud_ai_100_tokens = exec_info.generated_ids[0][
+        :, :gen_len
+    ]  # Because we always run for single input and single batch size
+    if prefill_only:
+        assert (ort_tokens[0][0] == cloud_ai_100_tokens[0][0]).all(), (
+            "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
+        )
+    elif prefill_only is False:
+        assert (ort_tokens == cloud_ai_100_tokens).all(), (
+            "Tokens don't match for ONNXRT output and Cloud AI 100 output."
+        )
+        assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
     # testing for CB models
     model_hf, _ = load_causal_lm_model(model_config)
@@ -175,16 +184,24 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         aic_enable_depth_first=False,
         full_batch_size=full_batch_size,
         num_speculative_tokens=num_speculative_tokens,
+        prefill_only=prefill_only,
     )
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
-    assert all(
-        [
-            all(pt_token[:24] == cloud_token[:24])
-            for pt_token, cloud_token in zip(pytorch_hf_tokens, exec_info_fbs.generated_ids)
-        ]
-    ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
-    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
+    if prefill_only:
+        if prefill_only:
+            assert (ort_tokens[0][0] == cloud_ai_100_tokens[0][0]).all(), (
+                "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
+            )
+
+    else:
+        assert all(
+            [
+                all(pt_token[:24] == cloud_token[:24])
+                for pt_token, cloud_token in zip(pytorch_hf_tokens, exec_info_fbs.generated_ids)
+            ]
+        ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
+        assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
 
 # FIXME: there should be a CB test here
@@ -262,3 +279,12 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
     prompt_len = 1
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
+
+
+@pytest.mark.on_qaic
+def test_prefiill_only_pytorch_vs_kv_vs_ort_vs_ai100():
+    model_name = "gpt2"
+    num_layers = 1
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=num_layers, prefill_only=True)
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=num_layers, prefill_only=False)
