@@ -49,6 +49,16 @@ from transformers.models.granite.modeling_granite import (
     GraniteModel,
     GraniteRMSNorm,
 )
+from transformers.models.granitemoe.modeling_granitemoe import (
+    GraniteMoeAttention,
+    GraniteMoeForCausalLM,
+    GraniteMoeModel,
+    GraniteMoeMoE,
+    GraniteMoeParallelExperts,
+    GraniteMoeRMSNorm,
+    GraniteMoeRotaryEmbedding,
+    GraniteMoeTopKGating,
+)
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
@@ -56,9 +66,7 @@ from transformers.models.llama.modeling_llama import (
     LlamaModel,
     LlamaRMSNorm,
 )
-from transformers.models.llava.modeling_llava import (
-    LlavaForConditionalGeneration,
-)
+from transformers.models.llava.modeling_llava import LlavaForConditionalGeneration
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
     MistralDecoderLayer,
@@ -167,19 +175,23 @@ from QEfficient.transformers.models.granite.modeling_granite import (
     QEffGraniteForCausalLM,
     QEffGraniteModel,
 )
-from QEfficient.transformers.models.internvl.modeling_internvl import (
-    QEffInternVisionEmbeddings,
-    QEffInternVLModel,
+from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
+    QEffGraniteMoeAttention,
+    QEffGraniteMoeForCausalLM,
+    QEffGraniteMoeModel,
+    QEffGraniteMoeMoE,
+    QEffGraniteMoeParallelExperts,
+    QEffGraniteMoeRotaryEmbedding,
+    QEffGraniteMoeTopKGating,
 )
+from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
 )
-from QEfficient.transformers.models.llava.modeling_llava import (
-    QEffLlavaForConditionalGeneration,
-)
+from QEfficient.transformers.models.llava.modeling_llava import QEffLlavaForConditionalGeneration
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
     QEffMistralDecoderLayer,
@@ -258,6 +270,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen2RMSNorm: CustomRMSNormAIC,
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
+        GraniteMoeRMSNorm: CustomRMSNormAIC,
     }
 
 
@@ -304,6 +317,14 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
         GraniteAttention: QEffGraniteAttention,
+        # GraniteMoe
+        GraniteMoeModel: QEffGraniteMoeModel,
+        GraniteMoeForCausalLM: QEffGraniteMoeForCausalLM,
+        GraniteMoeAttention: QEffGraniteMoeAttention,
+        GraniteMoeRotaryEmbedding: QEffGraniteMoeRotaryEmbedding,
+        GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
+        GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
+        GraniteMoeMoE: QEffGraniteMoeMoE,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,

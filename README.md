@@ -16,7 +16,7 @@
 
 <details>
 <summary>More</summary>
-
+- [04/2025] [Granite 3.0 and 3.1 Language MOE Models] (https://huggingface.co/ibm-granite/granite-3.0-1b-a400m-base)
 - [09/2024] [AWQ](https://arxiv.org/abs/2306.00978)/[GPTQ](https://arxiv.org/abs/2210.17323) 4-bit quantized models are supported <br>
 - [09/2024] Now we support [PEFT](https://huggingface.co/docs/peft/index) models
 - [01/2025] Added support for [Ibm-Granite] (https://huggingface.co/ibm-granite/granite-3.1-8b-instruct)
