@@ -9,7 +9,6 @@ import os
 from typing import Optional
 
 import numpy as np
-
 import pytest
 from transformers import AutoModelForCausalLM
 
@@ -89,15 +88,15 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         Constants.CTX_LEN,
     )
 
-    # pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+    pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
     is_tlm = False if num_speculative_tokens is None else True
     qeff_model = QEFFAutoModelForCausalLM(model_hf, is_tlm=is_tlm)
 
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
-    # assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
-    #     "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
-    # )
+    assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
+        "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
+    )
 
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
@@ -117,6 +116,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     )
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
+
     gen_len = ort_tokens.shape[-1]
     assert (ort_tokens == cloud_ai_100_tokens[:, :gen_len]).all(), (
         "Tokens don't match for ONNXRT output and Cloud AI 100 output."
@@ -128,20 +128,20 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     config = model_hf.config
     full_batch_size = 4
     fbs_prompts = Constants.INPUT_STR * 4
-    # api_runner = ApiRunner(
-    #     batch_size,
-    #     tokenizer,
-    #     config,
-    #     fbs_prompts,
-    #     Constants.PROMPT_LEN,
-    #     Constants.CTX_LEN,
-    #     full_batch_size,
-    # )
+    api_runner = ApiRunner(
+        batch_size,
+        tokenizer,
+        config,
+        fbs_prompts,
+        Constants.PROMPT_LEN,
+        Constants.CTX_LEN,
+        full_batch_size,
+    )
 
-    # pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
-    # pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
+    pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
+    pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
 
-    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=True, is_tlm=is_tlm)
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=True, is_tlm=False)
     onnx_model_path = qeff_model.export()
 
     if not get_available_device_id():
@@ -151,13 +151,12 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
         num_cores=14,
-        mxfp6=False,
+        mxfp6_matmul=False,
         aic_enable_depth_first=False,
         full_batch_size=full_batch_size,
         num_speculative_tokens=num_speculative_tokens,
     )
-    # exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
-    qeff_model.generate(tokenizer, prompts=fbs_prompts)
+    exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts, device_id=[0])
 
 
 """
