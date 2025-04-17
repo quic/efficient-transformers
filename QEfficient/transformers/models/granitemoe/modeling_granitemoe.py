@@ -44,15 +44,12 @@ class QEffGraniteMoeRotaryEmbedding(GraniteMoeRotaryEmbedding):
         device=None,
     ):
         super().__init__(config=config)  # Initialize nn.Module
-       
+
         self._set_cos_sin_cache(
             seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
         )
 
-    def _set_cos_sin_cache(self, 
-                           seq_len: int, 
-                           device = None, 
-                           dtype = None):
+    def _set_cos_sin_cache(self, seq_len: int, device=None, dtype=None):
         self.max_seq_len_cached = seq_len
         t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
 
@@ -62,7 +59,7 @@ class QEffGraniteMoeRotaryEmbedding(GraniteMoeRotaryEmbedding):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(self, x, seq_len=None):
+    def forward(self, x: torch.Tensor, seq_len: int = None):
         # x: [bs, num_attention_heads, seq_len, head_size]
         if seq_len > self.max_seq_len_cached:
             self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
@@ -73,7 +70,14 @@ class QEffGraniteMoeRotaryEmbedding(GraniteMoeRotaryEmbedding):
         )
 
 
-def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+def qeff_apply_rotary_pos_emb(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    position_ids: torch.Tensor,
+    unsqueeze_dim: int = 1,
+):
     """Applies Rotary Position Embedding to the query and key tensors.
 
     Args:
@@ -122,14 +126,13 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
         query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         kv_seq_len = key_states.shape[-2]
-        
+
         kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
@@ -161,14 +164,16 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights, past_key_value
 
+
 class QEffGraniteMoeModel(GraniteMoeModel):
-    """  Copied from GraniteMoeModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/granitemoe/modeling_granitemoe.py
-         The only differences are:
-         - added new changes for the kv retention
-         
-        Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`GraniteMoeDecoderLayer`]
+    """Copied from GraniteMoeModel: https://github.com/huggingface/transformers/blob/main/src/transformers/models/granitemoe/modeling_granitemoe.py
+     The only differences are:
+     - added new changes for the kv retention
+
+    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`GraniteMoeDecoderLayer`]
 
     """
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -382,11 +387,11 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
     """
     Routing scores and expert mask are computed here
     """
-    
+
     def forward(self, hidden_states):
         """
         Forward pass of the topkgating layer
-        
+
         Args:
             hidden_states (Tensor):
                 hidden_states tensor.
@@ -400,7 +405,7 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
                 Router logits.
             Tensor:
                 num of experts.
-        
+
         """
         logits = self.layer(hidden_states).float()
         top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [num_tokens, top_k]
@@ -410,7 +415,6 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
 
 
 class QEffGraniteMoeMoE(GraniteMoeMoE):
-    
     def forward(self, layer_input):
         """
         Forward pass of the mixture of experts layer.
@@ -443,7 +447,6 @@ class QEffGraniteMoeMoE(GraniteMoeMoE):
 
 
 class QEffGraniteMoeParallelExperts(GraniteMoeParallelExperts):
-    
     def forward(self, inputs, expert_size):
         """
         Forward pass of the QEffGraniteMoeParallelExperts module.
