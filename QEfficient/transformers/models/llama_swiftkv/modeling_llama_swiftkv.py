@@ -332,8 +332,6 @@ class LlamaSwiftKVModel(nn.Module):
                 batch_index=batch_index,
                 output_attentions=False,
                 use_cache=True,
-                cache_position=cache_position,
-                position_embeddings=None,
             )
 
         bsz, q_len, _ = hidden_states.size()
