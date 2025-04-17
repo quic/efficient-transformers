@@ -92,7 +92,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         batch_index: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         bsz, q_len, _ = hidden_states.size()
-        q_len=1 # as we always run this for single token
+        q_len = 1  # as we always run this for single token
         query = self.q_proj_swiftkv(hidden_states)
         # Reshape the query, key, and value tensors.
         query_states = query.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
