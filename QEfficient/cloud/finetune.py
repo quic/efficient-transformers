@@ -86,6 +86,10 @@ def main(**kwargs):
             attn_implementation="sdpa",
             torch_dtype=torch.float16,
         )
+
+        if not hasattr(model, "base_model_prefix"):
+            raise RuntimeError("Given huggingface model does not have 'base_model_prefix' attribute.")
+
         for param in getattr(model, model.base_model_prefix).parameters():
             param.requires_grad = False
 

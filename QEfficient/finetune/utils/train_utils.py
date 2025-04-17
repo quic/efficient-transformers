@@ -306,12 +306,8 @@ def train(
                 train_epoch_loss = total_loss / len(train_dataloader)
 
         if train_config.task_type == "seq_classification":
-            accuracy = acc_helper.compute()
+            metric_val = acc_helper.compute()
             acc_helper.reset()
-            if train_config.enable_ddp:
-                dist.all_reduce(accuracy, op=dist.ReduceOp.SUM)
-                accuracy /= dist.get_world_size()
-            metric_val = accuracy
         else:
             metric_val = torch.exp(train_epoch_loss)
 
