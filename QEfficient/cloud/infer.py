@@ -29,6 +29,21 @@ def execute_vlm_model(
     device_group: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
 ):
+    """
+    This method generates output by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+    ``Mandatory`` Args:
+        :qeff_model (PreTrainedModel): QEfficient model object.
+        :model_name (str): Hugging Face Model Card name, Example: ``llava-hf/llava-1.5-7b-hf``
+        :num_cores (int): Number of cores to compile model on.
+        :image_url (str): Image URL to be used for inference. ``Defaults to None.``
+        :image_path (str): Image path to be used for inference. ``Defaults to None.``
+    ``Optional`` Args:
+        :prompt (str): Sample prompt for the model text generation. ``Defaults to None.``
+        :device_group (List[int]): Device Ids to be used for compilation. If ``len(device_group) > 1``, multiple Card setup is enabled. ``Defaults to None.``
+        :generation_len (int): Number of tokens to be generated. ``Defaults to None.``
+    Returns:
+        :dict: Output from the ``AI_100`` runtime.
+    """
     if not (image_url or image_path):
         raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
     raw_image = Image.open(requests.get(image_url, stream=True).raw) if image_url else Image.open(image_path)
