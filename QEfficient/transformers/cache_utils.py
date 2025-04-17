@@ -37,6 +37,19 @@ class QEffDynamicCache(DynamicCache):
     """
 
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
+        """
+        Write in the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            key_states (`torch.Tensor`):
+                The new key states to cache.
+            value_states (`torch.Tensor`):
+                The new value states to cache.
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+        """
         # Update the cache
         if len(self.key_cache) <= layer_idx:
             self.key_cache.append(key_states)
@@ -63,6 +76,18 @@ class QEffDynamicCache(DynamicCache):
                 )
 
     def read_only(self, layer_idx, cache_kwargs):
+        """
+        Reads the `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
         k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)

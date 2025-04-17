@@ -91,8 +91,8 @@ from QEfficient.customop import CustomRMSNormAIC
 
 # Placeholder for all non-transformer models
 from QEfficient.transformers.models.llama_swiftkv.modeling_llama_swiftkv import (
-    LlamaSwiftKVConfig,
-    LlamaSwiftKVForCausalLM,
+    QEffLlamaSwiftKVConfig,
+    QEffLlamaSwiftKVForCausalLM,
 )
 
 from .models.codegen.modeling_codegen import (
@@ -280,7 +280,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
 
 # Map of model type to config class, Modelling class and transformer model architecture class
 MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS = {
-    "llama_swiftkv": [LlamaSwiftKVConfig, LlamaSwiftKVForCausalLM, AutoModelForCausalLM],
+    "llama_swiftkv": [QEffLlamaSwiftKVConfig, QEffLlamaSwiftKVForCausalLM, AutoModelForCausalLM],
 }
 
 
