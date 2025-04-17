@@ -29,7 +29,7 @@ def test_vlm_cli(setup, mocker):
         full_batch_size=None,
         prompt_len=1024,
         ctx_len=2048,
-        generation_len=ms.generation_len,
+        generation_len=20,
         mxfp6=False,
         mxint8=False,
         local_model_dir=None,
