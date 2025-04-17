@@ -10,10 +10,8 @@
 from typing import Optional, Tuple, Union
 
 import torch
-import torch.utils.checkpoint
 from torch import nn
-from torch.nn import CrossEntropyLoss
-from transformers.cache_utils import Cache, DynamicCache
+from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
@@ -21,9 +19,9 @@ from transformers.models.codegen.modeling_codegen import (
     CodeGenForCausalLM,
     CodeGenModel,
     apply_rotary_pos_emb,
-    logger,
 )
 
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 
@@ -133,7 +131,7 @@ class QEffCodeGenAttention(CodeGenAttention):
                 "position_ids": position_ids,
                 "batch_index": batch_index,
             }
-            pkv = DynamicCache()
+            pkv = QEffDynamicCache()
             pkv.key_cache.append(past_key_value[0])
             pkv.value_cache.append(past_key_value[1])
             key, value = pkv.update(key, value, 0, cache_kwargs)
@@ -261,14 +259,6 @@ class QEffCodeGenModel(CodeGenModel):
 
         output_shape = input_shape + (hidden_states.size(-1),)
 
-        if self.gradient_checkpointing and self.training:
-            if use_cache:
-                logger.warning_once(
-                    "`use_cache=True` is incompatible with `config.gradient_checkpointing=True`. Setting "
-                    "`use_cache=False`..."
-                )
-                use_cache = False
-
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
@@ -279,41 +269,17 @@ class QEffCodeGenModel(CodeGenModel):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            if self.gradient_checkpointing and self.training:
-                outputs = self._gradient_checkpointing_func(
-                    block.__call__,
-                    hidden_states,
-                    None,
-                    attention_mask,
-                    position_ids,
-                    head_mask[i],
-                    use_cache,
-                    output_attentions,
-                    cache_position,
-                )
-            elif batch_index is not None:
-                outputs = block(
-                    hidden_states=hidden_states,
-                    layer_past=layer_past,
-                    batch_index=batch_index,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    head_mask=head_mask[i],
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                    cache_position=cache_position,
-                )
-            else:
-                outputs = block(
-                    hidden_states=hidden_states,
-                    layer_past=layer_past,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    head_mask=head_mask[i],
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                    cache_position=cache_position,
-                )
+            outputs = block(
+                hidden_states=hidden_states,
+                layer_past=layer_past,
+                batch_index=batch_index,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                head_mask=head_mask[i],
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                cache_position=cache_position,
+            )
 
             hidden_states = outputs[0]
             if use_cache is True:
@@ -398,25 +364,8 @@ class QEffCodeGenForCausalLM(CodeGenForCausalLM):
         hidden_states = transformer_outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         lm_logits = self.lm_head(hidden_states)
 
-        loss = None
-        if labels is not None:
-            # move labels to correct device to enable model parallelism
-            labels = labels.to(lm_logits.device)
-            # Shift so that tokens < n predict n
-            shift_logits = lm_logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-
-            loss = loss.to(hidden_states.dtype)
-
-        if not return_dict:
-            output = (lm_logits,) + transformer_outputs[1:]
-            return ((loss,) + output) if loss is not None else output
-
         return CausalLMOutputWithPast(
-            loss=loss,
+            loss=None,
             logits=lm_logits,
             past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
