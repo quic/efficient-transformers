@@ -1481,6 +1481,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             dynamic_axes,
             export_dir=export_dir,
         )
+
     def compile(
         self,
         onnx_path: Optional[str] = None,
@@ -1500,7 +1501,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         qnn_config: Optional[str] = None,
         prefill_only: Optional[bool] = None,
         **compiler_options,
-        ) -> str:
+    ) -> str:
         """
         This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-exec`` and generates a ``qpc`` package.
         If the model has not been exported yet, this method will handle the export process.
@@ -1623,7 +1624,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 for i in range(self.num_layers):
                     for kv in ["key", "value"]:
                         custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
-            
+
             qpc_path = self._compile(
                 onnx_path=onnx_path,
                 compile_dir=compile_dir,
@@ -1640,7 +1641,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
 
         return qpc_path
-    
+
     # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate
     def generate(
         self,

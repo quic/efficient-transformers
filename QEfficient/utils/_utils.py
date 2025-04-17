@@ -461,7 +461,8 @@ def dump_qconfig(func):
             **{
                 k: v
                 for k, v in kwargs.items()
-                if k not in ["specializations", "mdp_ts_num_devices", "num_speculative_tokens", "custom_io", "onnx_path"]
+                if k
+                not in ["specializations", "mdp_ts_num_devices", "num_speculative_tokens", "custom_io", "onnx_path"]
             },
         )
         return result

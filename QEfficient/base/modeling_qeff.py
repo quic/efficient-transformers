@@ -304,7 +304,7 @@ class QEFFBaseModel(ABC):
         if mdp_ts_num_devices > 1:
             mdp_ts_json_path = compiler_options.get("mdp_ts_json_path", None)
 
-            if mdp_ts_json:
+            if mdp_ts_json_path:
                 if os.path.exists(mdp_ts_json_path):
                     command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
                 else:
