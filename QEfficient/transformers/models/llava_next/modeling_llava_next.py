@@ -220,15 +220,36 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
     ):
         max_num_images = compiler_options.pop("max_num_images", 1)
         num_patches = compiler_options.pop("num_patches", None)
+        image_size_height = compiler_options.pop("image_size_height", None)
+        image_size_width = compiler_options.pop("image_size_width", None)
 
         if num_patches is None:
             logger.warning(
                 "User should pass `num_patches` to compile API to fix the dynamic axes `pixel_values`, Since its not found setting its value to 10"
             )
             num_patches = constants.GRANITEVISION_NUM_PATCHES
+        if image_size_height is None:
+            logger.warning(
+                "User should pass `image_size_height` to compile API to fix the dynamic axes `image_size_height`, Since its not found setting its value to 1109"
+            )
+            image_size_height = constants.GRANITEVISION_IMG_SIZE_HEIGHT
+        if image_size_width is None:
+            logger.warning(
+                "User should pass `image_size_width` to compile API to fix the dynamic axes `image_size_width`, Since its not found setting its value to 1610"
+            )
+            image_size_width = constants.GRANITEVISION_IMG_SIZE_WIDTH
+
+        if num_patches != constants.GRANITEVISION_NUM_PATCHES:
+            raise NotImplementedError("Num Patches should be set to 10")
+        if image_size_height != constants.GRANITEVISION_IMG_SIZE_HEIGHT:
+            raise NotImplementedError("Image Size Height Should be fixed to 1109")
+        if image_size_width != constants.GRANITEVISION_IMG_SIZE_WIDTH:
+            raise NotImplementedError("Image Size Height Should be fixed to 1610")
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.GRANITEVISION_SEQ_LEN
         ctx_len = ctx_len if ctx_len else constants.GRANITEVISION_CTX_LEN
+        if not kv_offload:
+            raise NotImplementedError("We currently support on Dual QPC for this model please set kv_offload to True")
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
             img_size = getattr(self.config.vision_config, "image_size")
         elif img_size is None:
@@ -241,6 +262,8 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
+                "image_size_height": image_size_height,
+                "image_size_width": image_size_width,
                 "num_patches": num_patches,
                 "max_num_images": max_num_images,
                 "img_size": img_size,
@@ -251,6 +274,8 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
+                "image_size_height": image_size_height,
+                "image_size_width": image_size_width,
                 "num_patches": num_patches,
                 "max_num_images": max_num_images,
                 "img_size": img_size,
@@ -259,6 +284,8 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                 "batch_size": batch_size,
                 "seq_len": "1",
                 "ctx_len": ctx_len,
+                "image_size_height": image_size_height,
+                "image_size_width": image_size_width,
                 "num_patches": num_patches,
                 "max_num_images": max_num_images,
                 "img_size": img_size,
@@ -277,6 +304,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         num_layers = self.config.text_config.num_hidden_layers
         vision_dynamic_axes = {
             "pixel_values": {0: "batch_size", 1: "num_patches", 3: "img_size", 4: "img_size"},
+            "image_sizes": {0: "image_size_height", 1: "image_size_width"},
         }
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
