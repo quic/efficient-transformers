@@ -44,6 +44,7 @@ test_models = [
     "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
     "ibm-granite/granite-3.1-2b-instruct",
     "ibm-granite/granite-guardian-3.1-2b",
+    "ibm-granite/granite-3.1-1b-a400m-base",
 ]
 
 spd_test_models = [
