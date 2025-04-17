@@ -311,11 +311,11 @@ def train(
             if train_config.enable_ddp:
                 dist.all_reduce(accuracy, op=dist.ReduceOp.SUM)
                 accuracy /= dist.get_world_size()
-            train_metric = accuracy
+            metric_val = accuracy
         else:
-            train_metric = torch.exp(train_epoch_loss)
+            metric_val = torch.exp(train_epoch_loss)
 
-        train_metric.append(float(train_metric))
+        train_metric.append(float(metric_val))
         train_loss.append(float(train_epoch_loss))
 
         # Update the learning rate as needed
@@ -356,11 +356,11 @@ def train(
             val_metric.append(float(eval_metric))
         if train_config.task_type == "seq_classification":
             print(
-                f"Epoch {epoch + 1}: train_acc={train_metric:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
+                f"Epoch {epoch + 1}: train_acc={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
             )
         else:
             print(
-                f"Epoch {epoch + 1}: train_metric={train_metric:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
+                f"Epoch {epoch + 1}: train_metric={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
             )
 
         # Saving the results every epoch to plot later
