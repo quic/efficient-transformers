@@ -284,7 +284,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
 @pytest.mark.on_qaic
 def test_prefiill_only_pytorch_vs_kv_vs_ort_vs_ai100():
     model_name = "gpt2"
-    num_layers = 1
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=num_layers, prefill_only=True)
+    n_layer = 1
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer, prefill_only=True)
 
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=num_layers, prefill_only=False)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer, prefill_only=False)
