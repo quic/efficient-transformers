@@ -256,14 +256,7 @@ class QEFFBaseModel(ABC):
                 continue
             command.append(f"{option}={value}")
         compile_hash = hashlib.sha256(to_hashable(command))
-        
-        if compiler_options.get("prefill_only", None):
-            specializations=[specializations[0]]
-        if compiler_options.get("decode_only",None):
-            # if length of specializations is 1, its mean only decode specialization is present
-            # if length of specializations is 2, its mean prefill and decode specialization is present
-            if len(specializations) == 2:
-                specializations=[specializations[1]]
+
         if specializations is not None:
             compile_hash.update(to_hashable(specializations))
 
@@ -309,13 +302,13 @@ class QEFFBaseModel(ABC):
 
         # Write mdp_config.json file
         if mdp_ts_num_devices > 1:
-            mdp_ts_json = compiler_options.get("mdp_ts_json", None)
+            mdp_ts_json_path = compiler_options.get("mdp_ts_json_path", None)
 
             if mdp_ts_json:
-                if os.path.exists(mdp_ts_json):
-                    command.append(f"-mdp-load-partition-config={mdp_ts_json}")
+                if os.path.exists(mdp_ts_json_path):
+                    command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
                 else:
-                    raise FileNotFoundError(f"Error: Unable to find the JSON file at {mdp_ts_json}")
+                    raise FileNotFoundError(f"Error: Unable to find the JSON file at {mdp_ts_json_path}")
             else:
                 num_cores = compiler_options.get("aic_num_cores", 16)
                 mdp_ts_json = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
