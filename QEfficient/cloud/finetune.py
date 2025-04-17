@@ -38,7 +38,7 @@ except ImportError as e:
     print(f"Warning: {e}. Moving ahead without these qaic modules.")
 
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
@@ -56,6 +56,7 @@ def main(**kwargs):
     # update the configuration for the training process
     train_config = TRAIN_CONFIG()
     update_config(train_config, **kwargs)
+    dataset_config = generate_dataset_config(train_config, kwargs)
     device = train_config.device
 
     # dist init
@@ -78,12 +79,30 @@ def main(**kwargs):
     # Load the pre-trained model and setup its configuration
     # config = AutoConfig.from_pretrained(train_config.model_name)
     pretrained_model_path = login_and_download_hf_lm(train_config.model_name)
-    model = AutoModelForCausalLM.from_pretrained(
-        pretrained_model_path,
-        use_cache=False,
-        attn_implementation="sdpa",
-        torch_dtype=torch.float16,
-    )
+    if train_config.task_type == "seq_classification":
+        model = AutoModelForSequenceClassification.from_pretrained(
+            pretrained_model_path,
+            num_labels=dataset_config.num_labels,
+            attn_implementation="sdpa",
+            torch_dtype=torch.float16,
+        )
+
+        if not hasattr(model, "base_model_prefix"):
+            raise RuntimeError("Given huggingface model does not have 'base_model_prefix' attribute.")
+
+        for param in getattr(model, model.base_model_prefix).parameters():
+            param.requires_grad = False
+
+        for param in model.parameters():
+            if param.requires_grad:
+                param.data = param.data.to(torch.float32)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            pretrained_model_path,
+            use_cache=False,
+            attn_implementation="sdpa",
+            torch_dtype=torch.float16,
+        )
 
     # Load the tokenizer and add special tokens
     tokenizer = AutoTokenizer.from_pretrained(
@@ -127,7 +146,6 @@ def main(**kwargs):
         model.print_trainable_parameters()
 
     # Get the dataset utils
-    dataset_config = generate_dataset_config(train_config, kwargs)
     dataset_processer = tokenizer
 
     # Load and preprocess the dataset for training and validation
