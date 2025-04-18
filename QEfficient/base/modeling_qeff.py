@@ -300,7 +300,7 @@ class QEFFBaseModel(ABC):
             command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         # Write mdp_config.json file
-        if not mdp_ts_json_path and mdp_ts_num_devices:
+        if not mdp_ts_json_path and mdp_ts_num_devices > 1:
             num_cores = compiler_options.get("aic_num_cores", 16)
             mdp_ts_json = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
             with open(mdp_ts_json, "w") as fp:
