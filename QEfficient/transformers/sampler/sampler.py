@@ -12,7 +12,9 @@ from typing import List, Optional, Tuple, Union
 @dataclass
 class QEffCausalLMOutputWithPast(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
-    logits: torch.FloatTensor | torch.IntTensor = None
+    logits: torch.FloatTensor = None
+    probs: torch.FloatTensor = None
+    next_tokens: torch.IntTensor = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
     attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
@@ -299,7 +301,9 @@ def sampler_forward(
 
     return QEffCausalLMOutputWithPast(
         loss=None,
-        logits=probs if self.return_pdfs else next_tokens,  # Return probabilities or sampled next tokens instead of logits
+        logits=None,  
+        probs=probs if self.return_pdfs else None,  # Return probabilities instead of logits
+        next_tokens=next_tokens,  # Return sampled next tokens instead of logits
         past_key_values=outputs.past_key_values,
         hidden_states=outputs.hidden_states,
         attentions=outputs.attentions,

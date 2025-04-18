@@ -1451,7 +1451,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
                 2: "ctx_len",
             }
-        output_names = ["logits"]
+        output_names = []
+        if self.include_sampler:
+            if self.return_pdfs:
+                output_names.append("probs")
+            else:
+                output_names.append("next_tokens")
+        else:
+            output_names.append("logits")
 
         for i in range(self.num_layers):
             for kv in ["key", "value"]:
