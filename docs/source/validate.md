@@ -33,6 +33,7 @@
 | **Phi3ForCausalLM**     | Phi-3, Phi-3.5     | [microsoft/Phi-3-mini-4k-instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)                                                    | ✔️          |
 | **QwenForCausalLM**     | DeepSeek-R1-Distill-Qwen | [DeepSeek-R1-Distill-Qwen-32B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B)                                                   | ✔️          |
 |                         | Qwen2, Qwen2.5     | [Qwen/Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)                                                            | ✔️          |
+| **LlamaSwiftKVForCausalLM**  | swiftkv            | [Snowflake/Llama-3.1-SwiftKV-8B-Instruct](https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct)                                                  | ✔️          |
 
 ## Embedding Models
 
@@ -60,7 +61,7 @@
 |-----------------------------|--------------|----------------------------------------|
 | **LlavaForConditionalGeneration** | LLaVA-1.5   | [llava-hf/llava-1.5-7b-hf](https://huggingface.co/llava-hf/llava-1.5-7b-hf)               |
 | **MllamaForConditionalGeneration** | Llama 3.2   | [meta-llama/Llama-3.2-11B-Vision Instruct](https://huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct)<br>[meta-llama/Llama-3.2-90B-Vision](https://huggingface.co/meta-llama/Llama-3.2-90B-Vision) |
-
+|**LlavaNextForConditionalGeneration** | Granite Vision | [ibm-granite/granite-vision-3.2-2b](https://huggingface.co/ibm-granite/granite-vision-3.2-2b)
 ### Audio Models
 (Automatic Speech Recognition) - Transcription Task
 **QEff Auto Class:** `QEFFAutoModelForSpeechSeq2Seq`

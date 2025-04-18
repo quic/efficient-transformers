@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -73,6 +73,18 @@ INTERN_CTX_LEN = 4096
 INTERN_PREFILL_SEQ_LEN = INTERN_CTX_LEN - 256  # 4096-256
 INTERN_NUM_CHANNELS = 3
 INTERN_IMG_CONTEXT_TOKEN = 151667
+
+# Granite Vision Constants
+# Fixing the feature size with reference to ibm-granite/granite-vision-3.2-2b
+GRANITEVISION_FEATURE_SIZE = 5239
+GRANITEVISION_NUM_PATCHES = 10
+GRANITEVISION_IMG_SIZE = 384
+GRANITEVISION_IMG_SIZE_HEIGHT = 1109
+GRANITEVISION_IMG_SIZE_WIDTH = 1610
+GRANITEVISION_PIXEL_VALUE_DIM = 5
+GRANITEVISION_PREFIL_SEQ_LEN = GRANITEVISION_SEQ_LEN = 5500
+GRANITEVISION_CTX_LEN = 6000
+GRANITEVISION_NUM_CHANNELS = 3
 
 
 class Constants:
