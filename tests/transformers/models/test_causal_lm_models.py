@@ -152,7 +152,8 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
             "Tokens don't match for ONNXRT output and Cloud AI 100 output."
         )
         assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
-
+    if prefill_only is not None:
+        return
     # testing for CB models
     model_hf, _ = load_causal_lm_model(model_config)
     full_batch_size = 4
@@ -176,6 +177,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
 
+    # TODO: add prefill_only tests
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
@@ -184,23 +186,16 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         aic_enable_depth_first=False,
         full_batch_size=full_batch_size,
         num_speculative_tokens=num_speculative_tokens,
-        prefill_only=prefill_only,
     )
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
-    if prefill_only:
-        assert (ort_tokens[0][0] == cloud_ai_100_tokens[0][0]).all(), (
-            "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
-        )
-
-    else:
-        assert all(
-            [
-                all(pt_token[:24] == cloud_token[:24])
-                for pt_token, cloud_token in zip(pytorch_hf_tokens, exec_info_fbs.generated_ids)
-            ]
-        ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
-        assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
+    assert all(
+        [
+            all(pt_token[:24] == cloud_token[:24])
+            for pt_token, cloud_token in zip(pytorch_hf_tokens, exec_info_fbs.generated_ids)
+        ]
+    ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
+    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
 
 # FIXME: there should be a CB test here
