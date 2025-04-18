@@ -561,7 +561,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     @property
     def qpc_path(self):
-        return [self.vision_model.qpc_path, self.lang_model.qpc_path]
+        if self.vision_model.qpc_path and self.lang_model.qpc_path:
+            return [self.vision_model.qpc_path, self.lang_model.qpc_path]
+        elif self.vision_model.qpc_path:
+            return self.vision_model.qpc_path
+        else:
+            return self.lang_model.qpc_path
 
     def export(
         self,
@@ -600,7 +605,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         num_speculative_tokens: Optional[int] = None,
         enable_qnn: bool = False,
         qnn_config: Optional[str] = None,
-        compile_for: Optional[str] = None,
+        skip_vision: Optional[bool] = False,
+        skip_lang: Optional[bool] = False,
         **compiler_options,
     ) -> str:
         if (
@@ -616,8 +622,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 f"enable_qnn={enable_qnn}, qnn_config={qnn_config}"
             )
 
-        if compile_for not in {"vision", "lang", None}:
-            raise ValueError(f"Expected 'compile_for' to be one of 'vision', 'lang', or None but got: {compile_for}")
+        if skip_lang and skip_vision:
+            raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
 
         output_names = self.model.get_output_names(kv_offload=True)
 
@@ -646,8 +652,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ):
             self.export()
 
-        if compile_for is None or compile_for.lower() == "vision":
-            vision_qpc_path = self.vision_model._compile(
+        if not skip_vision:
+            self.vision_model._compile(
                 compile_dir,
                 compile_only=True,
                 specializations=specializations["vision"],
@@ -659,10 +665,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 **compiler_options,
             )
 
-            if compile_for == "vision":
-                return vision_qpc_path
-
-        if compile_for is None or compile_for.lower() == "lang":
+        if not skip_lang:
             custom_io_lang = {}
             # Inputs
             for output_name in output_names["lang"]:
@@ -674,7 +677,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 if output_name.endswith("_RetainedState"):
                     custom_io_lang[output_name] = kv_cache_dtype
 
-            lang_qpc_path = self.lang_model._compile(
+            self.lang_model._compile(
                 compile_dir,
                 compile_only=True,
                 retained_state=True,
@@ -686,9 +689,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 custom_io=custom_io_lang,
                 **compiler_options,
             )
-            if compile_for == "lang":
-                return lang_qpc_path
-
         return self.qpc_path
 
     def generate(
@@ -725,12 +725,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     ):
         if not self.vision_model.qpc_path or not self.lang_model.qpc_path:
             raise TypeError("Please run compile API for vision and language model first!")
-
-        if not self.vision_model.qpc_path:
-            raise TypeError("Please run compile API for vision model first!")
-
-        if not self.lang_model.qpc_path:
-            raise TypeError("Please run compile API for language model first!")
 
         lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
 
@@ -1482,6 +1476,51 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             export_dir=export_dir,
         )
 
+    def build_prefill_specialization(
+        self,
+        prefill_seq_len: int = 32,
+        ctx_len: int = 128,
+        batch_size: int = 1,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
+    ):
+        spec = {
+            "batch_size": 1 if self.continuous_batching else batch_size,
+            "seq_len": prefill_seq_len,
+            "ctx_len": ctx_len,
+            "num_logits_to_keep": 1 if self.is_tlm else None,
+        }
+        if self.continuous_batching:
+            spec["full_batch_size"] = kv_cache_batch_size
+        else:
+            spec["batch_size"] = kv_cache_batch_size
+        if full_batch_size:
+            spec["full_batch_exec_size"] = full_batch_size
+        return {k: v for k, v in spec.items() if v is not None}
+
+    def build_decode_specialization(
+        self,
+        prefill_seq_len: int = 32,
+        ctx_len: int = 128,
+        batch_size: int = 1,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
+        num_speculative_tokens: Optional[int] = None,
+    ):
+        if prefill_seq_len == 1 and not self.continuous_batching:
+            return None  # Avoid duplication with prefill
+        spec = {
+            "batch_size": full_batch_size if self.continuous_batching else batch_size,
+            "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
+            "ctx_len": ctx_len,
+            "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm else None,
+        }
+        if self.continuous_batching:
+            spec["full_batch_size"] = kv_cache_batch_size
+        else:
+            spec["batch_size"] = kv_cache_batch_size
+        return {k: v for k, v in spec.items() if v is not None}
+
     def compile(
         self,
         onnx_path: Optional[str] = None,
@@ -1559,40 +1598,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # --- Specializations ---
         specializations = []
 
-        def build_prefill_specialization():
-            spec = {
-                "batch_size": 1 if self.continuous_batching else batch_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
-                "num_logits_to_keep": 1 if self.is_tlm else None,
-            }
-            if self.continuous_batching:
-                spec["full_batch_size"] = kv_cache_batch_size
-            else:
-                spec["batch_size"] = kv_cache_batch_size
-            if full_batch_size:
-                spec["full_batch_exec_size"] = full_batch_size
-            return {k: v for k, v in spec.items() if v is not None}
-
-        def build_decode_specialization():
-            if prefill_seq_len == 1 and not self.continuous_batching:
-                return None  # Avoid duplication with prefill
-            spec = {
-                "batch_size": full_batch_size if self.continuous_batching else batch_size,
-                "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
-                "ctx_len": ctx_len,
-                "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm else None,
-            }
-            if self.continuous_batching:
-                spec["full_batch_size"] = kv_cache_batch_size
-            else:
-                spec["batch_size"] = kv_cache_batch_size
-            return {k: v for k, v in spec.items() if v is not None}
-
         if prefill_only is None or prefill_only or prefill_seq_len == 1:
-            specializations.append(build_prefill_specialization())
+            specializations.append(
+                self.build_prefill_specialization(
+                    prefill_seq_len, ctx_len, batch_size, kv_cache_batch_size, full_batch_size
+                )
+            )
         if prefill_only is None or not prefill_only:
-            decode_spec = build_decode_specialization()
+            decode_spec = self.build_decode_specialization(
+                prefill_seq_len, ctx_len, batch_size, kv_cache_batch_size, full_batch_size, num_speculative_tokens
+            )
             if decode_spec:
                 specializations.append(decode_spec)
 
