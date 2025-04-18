@@ -246,8 +246,11 @@ class QEFFBaseModel(ABC):
         qpc_path = compile_dir / "qpc"
         if not onnx_path.is_file():
             raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
-        mdp_ts_json_path = compiler_options.pop("mdp_ts_json_path", None)
         command = constants.COMPILER + [f"-m={onnx_path}"]
+        if mdp_ts_json_path := compiler_options.pop("mdp_ts_json_path", None):
+            mdp_ts_num_devices = None
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
             if isinstance(value, bool):
@@ -262,16 +265,6 @@ class QEFFBaseModel(ABC):
 
         if custom_io is not None:
             compile_hash.update(to_hashable(custom_io))
-
-        if mdp_ts_num_devices > 1:
-            compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
-
-            if mdp_ts_json_path:
-                if os.path.exists(mdp_ts_json_path):
-                    command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
-                    compile_hash = hashlib.sha256(to_hashable(mdp_ts_json_path))
-                else:
-                    raise FileNotFoundError(f"Error: Unable to find the JSON file at {mdp_ts_json_path}")
 
         if num_speculative_tokens:
             compile_hash.update(to_hashable({"num_speculative_tokens": num_speculative_tokens}))
@@ -308,7 +301,7 @@ class QEFFBaseModel(ABC):
             command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         # Write mdp_config.json file
-        if not mdp_ts_json_path:
+        if not mdp_ts_json_path and mdp_ts_num_devices:
             num_cores = compiler_options.get("aic_num_cores", 16)
             mdp_ts_json = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
             with open(mdp_ts_json, "w") as fp:
