@@ -66,6 +66,23 @@ pipeline {
                        }
                    }
                }
+               stage('Run Non-CLI QAIC MultiModal Tests') {
+                   steps {
+                       timeout(time: 60, unit: 'MINUTES') {
+                           sh '''
+                           sudo docker exec ${BUILD_TAG} bash -c "
+                           cd /efficient-transformers &&
+                           . preflight_qeff/bin/activate &&
+                           mkdir -p $PWD/Non_cli_qaic_multimodal &&
+                           export TOKENIZERS_PARALLELISM=false &&
+                           export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
+                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn)' -n 4 --junitxml=tests/tests_log6.xml &&
+                           junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
+                           deactivate"
+                           '''
+                       }
+                   }
+               }
            }
        }
        stage('CLI Tests') {
