@@ -9,7 +9,7 @@ license = { file = "LICENSE" }
 authors = [{ name = "Qualcomm Cloud AI ML Team" }]
 keywords = ["transformers", "Cloud AI 100", "Inference"]
 classifiers = [
-    "Programming Language :: Python :: 3", 
+    "Programming Language :: Python :: 3",
     "Development Status :: 5 - Development/Unstable",
     "Intended Audience :: Developers",
     "Intended Audience :: Education",
@@ -38,6 +38,7 @@ dependencies = [
     "tensorboard",
     "fire",
     "py7zr",
+    "torchmetrics==1.7.0",
     "torch==2.4.1; platform_machine=='aarch64'",
     # Specifying torch cpu package URL per python version, update the list once pytorch releases whl for python>3.11
     "torch@https://download.pytorch.org/whl/cpu/torch-2.4.1%2Bcpu-cp38-cp38-linux_x86_64.whl ; python_version=='3.8' and platform_machine=='x86_64'",
@@ -60,7 +61,7 @@ namespaces = false
 
 [tool.setuptools.dynamic.version]
 attr = "QEfficient.__version__"
- 
+
 [tool.ruff]
 line-length = 120
 # Enable the isort rules.

@@ -6,8 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import datasets
-import torch
-from torch.nn.utils.rnn import pad_sequence
 
 
 def get_preprocessed_samsum(dataset_config, tokenizer, split, context_length=None):
@@ -48,22 +46,3 @@ def get_preprocessed_samsum(dataset_config, tokenizer, split, context_length=Non
     dataset = dataset.map(tokenize_add_label, remove_columns=list(dataset.features))
 
     return dataset
-
-
-def collate_fn(batch):
-    eos_token = batch[0]["input_ids"][-1]
-
-    input_ids = pad_sequence(
-        [torch.tensor(b["input_ids"], dtype=torch.int32) for b in batch], batch_first=True, padding_value=eos_token
-    )
-    attn_mask = pad_sequence(
-        [torch.tensor(b["attention_mask"], dtype=torch.int32) for b in batch], batch_first=True, padding_value=0
-    )
-    labels = pad_sequence(
-        [torch.tensor(b["labels"], dtype=torch.long) for b in batch], batch_first=True, padding_value=eos_token
-    )
-    return {"input_ids": input_ids, "attention_mask": attn_mask, "labels": labels}
-
-
-def get_samsum_collate_fn(dataset_processer, dataset_config):
-    return collate_fn
