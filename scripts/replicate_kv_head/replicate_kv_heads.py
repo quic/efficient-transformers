@@ -15,6 +15,7 @@ from QEfficient.transformers.quantizers.auto import replace_transformers_quantiz
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
 from QEfficient.transformers.quantizers.quantizer_compressed_tensors import FP8DeQuantLinear
+from QEfficient.utils._utils import login_and_download_hf_lm
 
 
 def duplicate_weights_for_linear_layer(
@@ -79,7 +80,9 @@ def main(args):
     model_kwargs = {"attn_implementation": "eager"}
     if args.num_hidden_layers:
         model_kwargs["num_hidden_layers"] = args.num_hidden_layers
-    model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
+
+    pretrained_model_name_or_path = login_and_download_hf_lm(model_name)
+    model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path, **model_kwargs)
 
     # Undo the effect of replace_transformers_quantizers
     undo_transformers_quantizers()
