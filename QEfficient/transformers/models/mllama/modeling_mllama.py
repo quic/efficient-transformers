@@ -55,19 +55,8 @@ class QEffMllamaRotaryEmbedding(MllamaRotaryEmbedding):
     - Add static sin/cos computations.
     """
 
-    def __init__(
-        self,
-        dim=None,
-        max_position_embeddings=2048,
-        base=10000,
-        device=None,
-        scaling_factor=1.0,
-        rope_type="default",
-        config: Optional[MllamaConfig] = None,
-    ):
+    def __init__(self, config: MllamaConfig, device=None):
         super().__init__(config=config)
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device, **self.rope_kwargs)
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
 
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
@@ -868,7 +857,6 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        num_logits_to_keep: int = 0,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -935,7 +923,6 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             output_attentions=output_attentions,
             return_dict=return_dict,
             cache_position=cache_position,
-            num_logits_to_keep=num_logits_to_keep,
         )
 
         return outputs
