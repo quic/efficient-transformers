@@ -393,6 +393,26 @@ def execute_command(process: str, command: str, output_file_path: Optional[str] 
                 print(f"Failed to create {stderr_path}: {e}")
 
 
+def load_yaml(file_path: str) -> Dict[Any, Any]:
+    """
+    Opens the given YAML file, load and return the Dict.
+
+    ``Mandatory`` Args:
+        :file_path (str): YAML File to be opened.
+
+    Return:
+        Dict Object from the given file.
+
+    """
+    try:
+        # Load the YAML config file
+        with open(file_path, "r") as file:
+            config_data = yaml.safe_load(file)
+    except Exception as e:
+        raise ValueError(f"Failed to load YAML object from {file_path}: {e}")
+    return config_data
+
+
 def load_json(file_path: str) -> Dict[Any, Any]:
     """
     Opens the given JSON file, load and return the JSON object.
