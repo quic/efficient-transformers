@@ -145,9 +145,9 @@ def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
     """
     num_chunks = -(input_len // -prefill_seq_len)  # ceil divide without float
     input_len_padded = num_chunks * prefill_seq_len  # Convert input_len to a multiple of prefill_seq_len
-    assert (
-        input_len_padded <= ctx_len
-    ), "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
+    assert input_len_padded <= ctx_len, (
+        "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
+    )
     return input_len_padded
 
 

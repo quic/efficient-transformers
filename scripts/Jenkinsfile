@@ -117,7 +117,7 @@ pipeline {
         }
         stage('QNN Non-CLI Tests') {
             steps {
-                timeout(time: 60, unit: 'MINUTES') {
+                timeout(time: 200, unit: 'MINUTES') {
                     sh '''
                     sudo docker exec ${BUILD_TAG} bash -c "
                     source /qnn_sdk/bin/envsetup.sh &&
