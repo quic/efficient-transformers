@@ -10,11 +10,12 @@ from dataclasses import dataclass
 @dataclass
 class train_config:
     model_name: str = "meta-llama/Llama-3.2-1B"
-    tokenizer_name: str = "meta-llama/Llama-3.2-1B"
+    tokenizer_name: str = None  # if not passed as an argument, it uses the value of model_name
     run_validation: bool = True
     batch_size_training: int = 1
     context_length: int = None
     gradient_accumulation_steps: int = 4
+    gradient_checkpointing: bool = False
     num_epochs: int = 1
     max_train_step: int = 0
     max_eval_step: int = 0
@@ -28,6 +29,7 @@ class train_config:
     use_autocast: bool = True
     val_batch_size: int = 1
     dataset = "samsum_dataset"
+    task_type = "generation"  # "generation" / "seq_classification"
     peft_method: str = "lora"
     use_peft: bool = True  # use parameter efficient fine tuning
     from_peft_checkpoint: str = ""  # if not empty and use_peft=True, will load the peft checkpoint and resume the fine-tuning on that checkpoint

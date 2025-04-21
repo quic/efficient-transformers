@@ -17,7 +17,12 @@ import torch
 import yaml
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
-from transformers import AutoProcessor, AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers import (
+    AutoProcessor,
+    AutoTokenizer,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+)
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants, QnnConstants
 from QEfficient.utils.logging_utils import logger
@@ -461,7 +466,8 @@ def dump_qconfig(func):
             **{
                 k: v
                 for k, v in kwargs.items()
-                if k not in ["specializations", "mdp_ts_num_devices", "num_speculative_tokens", "custom_io"]
+                if k
+                not in ["specializations", "mdp_ts_num_devices", "num_speculative_tokens", "custom_io", "onnx_path"]
             },
         )
         return result

@@ -6,6 +6,7 @@
 ---
 
 *Latest news* :fire: <br>
+- [03/2025] Added support for swiftkv model [Snowflake/Llama-3.1-SwiftKV-8B-Instruct](https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct)
 - [02/2025] [VLMs support](https://github.com/quic/efficient-transformers/pull/267) added for the models [InternVL-1B](https://huggingface.co/OpenGVLab/InternVL2_5-1B), [Llava](https://huggingface.co/llava-hf/llava-1.5-7b-hf) and [Mllama](https://huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct)
 - [01/2025] [FP8 models support](https://huggingface.co/collections/neuralmagic/fp8-llms-for-vllm-666742ed2b78b7ac8df13127) Added support for inference of FP8 models.
 
@@ -16,7 +17,7 @@
 
 <details>
 <summary>More</summary>
-
+- [04/2025] [Granite 3.0 and 3.1 Language MOE Models] (https://huggingface.co/ibm-granite/granite-3.0-1b-a400m-base)
 - [09/2024] [AWQ](https://arxiv.org/abs/2306.00978)/[GPTQ](https://arxiv.org/abs/2210.17323) 4-bit quantized models are supported <br>
 - [09/2024] Now we support [PEFT](https://huggingface.co/docs/peft/index) models
 - [01/2025] Added support for [Ibm-Granite] (https://huggingface.co/ibm-granite/granite-3.1-8b-instruct)
@@ -82,7 +83,7 @@ pip install git+https://github.com/quic/efficient-transformers
 # Or build wheel package using the below command.
 pip install build wheel
 python -m build --wheel --outdir dist
-pip install dist/QEfficient-0.0.1.dev0-py3-none-any.whl
+pip install dist/qefficient-0.0.1.dev0-py3-none-any.whl
 
 ``` 
 

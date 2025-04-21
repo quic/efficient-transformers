@@ -14,7 +14,7 @@ To achieve this, we have 2 levels of APIs, with different levels of abstraction.
 | Feature | Impact |
 | --- | --- |
 | Context Length Specializations (upcoming) | Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text. |
-| Swift KV (upcoming) | Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. |
+| Swift KV [Snowflake/Llama-3.1-SwiftKV-8B-Instruct] | Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. |
 | Block Attention (in progress) | Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG. |
 | [Vision Language Model](QEFFAutoModelForImageTextToText) | Provides support for the AutoModelForImageTextToText class from the transformers library, enabling advanced vision-language tasks. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text_inference.py) for more **details**. |
 | [Speech Sequence to Sequence Model](QEFFAutoModelForSpeechSeq2Seq) | Provides support for the QEFFAutoModelForSpeechSeq2Seq Facilitates speech-to-text sequence models. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/speech_to_text/run_whisper_speech_to_text.py) for more **details**. |
