@@ -68,10 +68,6 @@ class QEffQwen2RotaryEmbedding(Qwen2RotaryEmbedding):
         )
 
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> e4503c5 (Minor fixes)
 def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
@@ -105,13 +101,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
 
-<<<<<<< HEAD
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
-=======
     cos = cos[position_ids].unsqueeze(unsqueeze_dim)
     sin = sin[position_ids].unsqueeze(unsqueeze_dim)
->>>>>>> e4503c5 (Minor fixes)
 
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
@@ -119,10 +110,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
 
-<<<<<<< HEAD
-=======
->>>>>>> d0f7ffd (Ruff check and format)
-=======
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -146,7 +133,6 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
->>>>>>> e4503c5 (Minor fixes)
 class QEffQwen2Attention(Qwen2Attention):
     """
     Copied from Qwen2Attention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen2/modeling_qwen2.py
@@ -177,11 +163,7 @@ class QEffQwen2Attention(Qwen2Attention):
         kv_seq_len = key_states.shape[-2]
 
         kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-<<<<<<< HEAD
-        cos, sin = position_embeddings
-=======
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
->>>>>>> e4503c5 (Minor fixes)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
