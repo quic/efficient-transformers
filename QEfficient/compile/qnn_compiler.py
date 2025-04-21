@@ -40,7 +40,7 @@ class QNN:
         qnn_binary_dir: Optional[str] = None,
         mxint8: Optional[bool] = False,
         compiler_mxint8_mdp_io: Optional[bool] = False,
-        decode_only: Optional[bool] = False,
+        prefill_only: Optional[bool] = False,
         **kwargs,
     ) -> None:
         self.onnx_path = onnx_path
@@ -57,7 +57,7 @@ class QNN:
         self.custom_io_path = custom_io_path
         self.dlc_model_path = os.path.join(qpc_base_path, f"{QnnConstants.MODEL_NAME}.dlc")
         self.qnn_target = qnn_target
-        self.decode_only = decode_only
+        self.prefill_only = prefill_only
         self.qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
         if not self.qnn_sdk_path:
             raise EnvironmentError(
@@ -140,7 +140,7 @@ class QNN:
             "compiler_hardware_version": QnnConstants.COMPILER_HARDWARE_VERSION,
             "compiler_convert_to_FP16": QnnConstants.COMPILER_CONVERT_TO_FP16,
             "compiler_retained_state": QnnConstants.COMPILER_RETAINED_STATE,
-            "graph_names": QnnConstants.GRAPH_NAMES_DECODE_ONLY if self.decode_only else QnnConstants.GRAPH_NAMES,
+            "graph_names": QnnConstants.GRAPH_NAMES_PREFILL_ONLY if self.prefill_only else QnnConstants.GRAPH_NAMES,
             "compiler_enable_depth_first": self.compiler_enable_depth_first,
             "compiler_mxfp6_matmul_weights": self.compiler_mxfp6_matmul_weights,
             "compiler_num_of_cores": self.num_cores,
@@ -382,7 +382,7 @@ def compile(
             f"file {custom_io_file_path} needs to exist in the qpc_base_path for Compilation. Please rerun infer/compile Api"
         )
 
-    decode_only = True if len(specializations) == 1 else False
+    prefill_only = True if len(specializations) == 1 else False
 
     qnn_obj = QNN(
         onnx_path=onnx_path,
@@ -397,7 +397,7 @@ def compile(
         qnn_binary_dir=qnn_binary_dir,
         mxint8=mxint8,
         compiler_mxint8_mdp_io=allow_mxint8_mdp_io,
-        decode_only=decode_only,
+        prefill_only=prefill_only,
     )
 
     compiled_binary_path = qnn_obj.compile()

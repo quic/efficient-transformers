@@ -21,7 +21,7 @@ from QEfficient.utils.constants import Constants, QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
 
-test_models = [
+test_models_qaic = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
     "gpt2",
     "Salesforce/codegen-350M-mono",
@@ -242,7 +242,7 @@ def test_causal_lm_export_with_deprecated_api(model_name):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_name", test_models)
+@pytest.mark.parametrize("model_name", test_models_qaic)
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.

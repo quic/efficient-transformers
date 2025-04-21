@@ -144,7 +144,7 @@ class QnnConstants:
     COMPILER_STATS_BATCH_SIZE = 1
     COMPILER_TIME_PASSES = False
     GRAPH_NAMES = [f"{MODEL_NAME}_configuration_1", f"{MODEL_NAME}_configuration_2"]
-    GRAPH_NAMES_DECODE_ONLY = [f"{MODEL_NAME}"]
+    GRAPH_NAMES_PREFILL_ONLY = [f"{MODEL_NAME}"]
 
     # qnn_config JSON file supported Keys
     CONVERTER_ARGS_EXTENSION_STR = "converter_args_extension"

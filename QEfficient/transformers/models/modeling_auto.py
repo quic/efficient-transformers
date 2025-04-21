@@ -1544,7 +1544,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
             :prefill_only (bool): if ``True`` compile for prefill only and if ``False`` compile for decode only. Defaults to None, which compiles for both ``prefill and ``decode``.
-            :compiler_options (dict, optional): Any other options that the `qaic-exec` takes. ``Defaults to None``.
+            :compiler_options (dict, optional): Pass any compiler option as input. ``Defaults to None``.
+            Following flag can be passed in compiler_options to enable QNN Compilation path.
+                :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False. if not passed.``
+                :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None. if not passed``
+            for QAIC compilation path, any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
+                - aic_num_cores=16 -> -aic-num-cores=16
+                - convert_to_fp16=True -> -convert-to-fp16
 
         Returns:
             :str: Path of the compiled ``qpc`` package.
