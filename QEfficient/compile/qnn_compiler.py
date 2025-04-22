@@ -5,11 +5,14 @@
 #
 # -----------------------------------------------------------------------------
 
+import hashlib
+import json
 import os
 import shutil
 from typing import Dict, List, Optional
 
 from QEfficient.utils._utils import create_json, execute_command, load_json
+from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.generate_qnn_network_specialization_config import (
     generate_data_format_config,
@@ -383,6 +386,47 @@ def compile(
         )
 
     prefill_only = True if len(specializations) == 1 else False
+
+    if qnn_binary_dir is None:
+        compile_hash = hashlib.sha256(to_hashable("qnn"))
+
+        if specializations is not None:
+            compile_hash.update(to_hashable(specializations))
+
+        if custom_io is not None:
+            compile_hash.update(to_hashable(custom_io))
+
+        if qnn_config is not None:
+            qnn_config_values = load_json(qnn_config)
+            compile_hash.update(to_hashable(qnn_config_values))
+
+        if device_group is not None:
+            compile_hash.update(to_hashable({"device_group": device_group}))
+
+        compile_hash.update(to_hashable({"num_cores": num_cores}))
+        compile_hash.update(to_hashable({"mxfp6": mxfp6}))
+        compile_hash.update(to_hashable({"mxint8": mxint8}))
+
+        # Check if already compiled
+        compile_hash = compile_hash.hexdigest()[:16]
+
+        qnn_binary_dir = qpc_base_path / "qpc"
+        qnn_binary_dir = qnn_binary_dir.with_name(qnn_binary_dir.name + "-" + compile_hash)
+        if qnn_binary_dir.is_dir():
+            if (qnn_binary_dir / "programqpc.bin").is_file():
+                return qnn_binary_dir
+            # Probably compilation failure last time, delete directory to start over
+            shutil.rmtree(qnn_binary_dir)
+
+        # Write specializations.json file
+        if specializations is not None:
+            specializations_json = qpc_base_path / "specializations.json"
+            with open(specializations_json, "w") as fp:
+                json.dump(
+                    {"specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]},
+                    fp,
+                    indent=4,
+                )
 
     qnn_obj = QNN(
         onnx_path=onnx_path,

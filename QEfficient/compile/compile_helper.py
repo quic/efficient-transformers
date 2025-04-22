@@ -196,6 +196,7 @@ def compile(
         qpc_path = qnn_compile(
             onnx_path=onnx_path,
             qpc_base_path=qpc_path,
+            qnn_binary_dir=os.path.join(qpc_path, "qpcs"),
             num_cores=num_cores,
             mxfp6=mxfp6,
             mxint8=mxint8,
