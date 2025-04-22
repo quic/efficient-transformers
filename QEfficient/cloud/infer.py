@@ -12,14 +12,15 @@ from typing import List, Optional
 
 import requests
 from PIL import Image
-from transformers import AutoProcessor, PreTrainedModel, TextStreamer
+from transformers import PreTrainedModel, TextStreamer
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
 from QEfficient.base.common import QEFFCommonLoader
-from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
+from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer, load_hf_processor
 from QEfficient.utils.logging_utils import logger
 
 
+# TODO: Remove after adding support for VLM's compile and execute
 def execute_vlm_model(
     qeff_model: PreTrainedModel,
     model_name: str,
@@ -27,6 +28,9 @@ def execute_vlm_model(
     image_path: str,
     prompt: Optional[str] = None,  # type: ignore
     device_group: Optional[List[int]] = None,
+    local_model_dir: Optional[str] = None,
+    cache_dir: Optional[str] = None,
+    hf_token: Optional[str] = None,
     generation_len: Optional[int] = None,
 ):
     """
@@ -39,6 +43,9 @@ def execute_vlm_model(
     ``Optional`` Args:
         :prompt (str): Sample prompt for the model text generation. ``Defaults to None.``
         :device_group (List[int]): Device Ids to be used for compilation. If ``len(device_group) > 1``, multiple Card setup is enabled. ``Defaults to None.``
+        :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
+        :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to None.``
+        :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
         :generation_len (int): Number of tokens to be generated. ``Defaults to None.``
     Returns:
         :dict: Output from the ``AI_100`` runtime.
@@ -47,7 +54,11 @@ def execute_vlm_model(
         raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
     raw_image = Image.open(requests.get(image_url, stream=True).raw) if image_url else Image.open(image_path)
 
-    processor = AutoProcessor.from_pretrained(model_name, use_fast=False)
+    processor = load_hf_processor(
+        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+        cache_dir=cache_dir,
+        hf_token=hf_token,
+    )
 
     # Added for QEff version 1.20 supported VLM models (mllama and llava)
     conversation = [
@@ -197,6 +208,9 @@ def main(
             image_url=image_url,
             image_path=image_path,
             device_group=device_group,
+            local_model_dir=local_model_dir,
+            cache_dir=cache_dir,
+            hf_token=hf_token,
             generation_len=generation_len,
         )
         print(exec_info)

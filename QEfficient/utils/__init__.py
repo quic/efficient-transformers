@@ -18,6 +18,7 @@ from QEfficient.utils._utils import (  # noqa: F401
     get_qpc_dir_path,
     hf_download,
     load_hf_tokenizer,
+    load_hf_processor,
     login_and_download_hf_lm,
     onnx_exists,
     padding_check_and_fix,
