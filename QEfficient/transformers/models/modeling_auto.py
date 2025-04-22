@@ -674,8 +674,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
                     custom_io_lang[output_name[: -len("_RetainedState")]] = (
-                    "float16" if "vision_embeds" in output_name else kv_cache_dtype
-                )
+                        "float16" if "vision_embeds" in output_name else kv_cache_dtype
+                    )
 
             # outputs
             for output_name in output_names["lang"]:
