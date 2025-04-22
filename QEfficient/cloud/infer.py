@@ -34,7 +34,6 @@ def execute_vlm_model(
     ``Mandatory`` Args:
         :qeff_model (PreTrainedModel): QEfficient model object.
         :model_name (str): Hugging Face Model Card name, Example: ``llava-hf/llava-1.5-7b-hf``
-        :num_cores (int): Number of cores to compile model on.
         :image_url (str): Image URL to be used for inference. ``Defaults to None.``
         :image_path (str): Image path to be used for inference. ``Defaults to None.``
     ``Optional`` Args:
