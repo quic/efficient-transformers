@@ -1844,6 +1844,21 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if enable_qnn or qnn_config:
             logger.warning("QNN compile is not yet enabled for AutoModelForSpeechSeq2Seq")
 
+        output_names = self.model.get_output_names()
+
+        kv_cache_dtype = "float16"
+        custom_io = {}
+
+        # Inputs
+        for output_name in output_names:
+            if output_name.endswith("_RetainedState"):
+                custom_io[output_name[: -len("_RetainedState")]] = kv_cache_dtype
+
+        # Outputs
+        for output_name in output_names:
+            if output_name.endswith("_RetainedState"):
+                custom_io[output_name] = kv_cache_dtype
+
         return self._compile(
             onnx_path,
             compile_dir,
@@ -1854,6 +1869,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
+            custom_io=custom_io,
             **compiler_options,
         )
 
@@ -1889,10 +1905,10 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
         # add start token id and initial position ids to inputs
         seq_len = 1
-        inputs["decoder_input_ids"] = (
+        inputs["input_ids"] = (
             torch.ones((self.batch_size, seq_len), dtype=torch.int64) * self.model.config.decoder_start_token_id
         ).numpy()
-        inputs["decoder_position_ids"] = (
+        inputs["position_ids"] = (
             torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1).numpy()
         )
 
@@ -1931,8 +1947,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             if next_token[0][0] == self.model.config.eos_token_id:
                 break
 
-            inputs["decoder_input_ids"] = next_token
-            inputs["decoder_position_ids"] += 1
+            inputs["input_ids"] = next_token
+            inputs["position_ids"] += 1
 
             if streamer:
                 streamer.put(next_token)

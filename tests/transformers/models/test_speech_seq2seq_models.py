@@ -143,8 +143,8 @@ def run_seq2seq_pytorch_with_kv(
 
     model_inputs = dict(
         input_features=input_features,
-        decoder_input_ids=decoder_input_ids,
-        decoder_position_ids=decoder_position_ids,
+        input_ids=decoder_input_ids,
+        position_ids=decoder_position_ids,
         past_key_values=[[] for _ in range(config.num_hidden_layers)],
     )
 
@@ -183,8 +183,8 @@ def run_seq2seq_pytorch_with_kv(
         if next_token[0][0] == processor.tokenizer.eos_token_id:
             break
 
-        model_inputs["decoder_input_ids"] = next_token
-        model_inputs["decoder_position_ids"] += 1
+        model_inputs["input_ids"] = next_token
+        model_inputs["position_ids"] += 1
         model_inputs["past_key_values"] = outputs["past_key_values"]
 
     return generated_ids[0]
@@ -234,8 +234,8 @@ def run_seq2seq_ort(
 
     model_inputs = dict(
         input_features=input_features,
-        decoder_input_ids=decoder_input_ids,
-        decoder_position_ids=decoder_position_ids,
+        input_ids=decoder_input_ids,
+        position_ids=decoder_position_ids,
     )
 
     # prepare dummy past kvs and cross kvs
@@ -280,8 +280,8 @@ def run_seq2seq_ort(
         if next_token[0][0] == processor.tokenizer.eos_token_id:
             break
 
-        model_inputs["decoder_input_ids"] = next_token
-        model_inputs["decoder_position_ids"] += 1
+        model_inputs["input_ids"] = next_token
+        model_inputs["position_ids"] += 1
         for i, name in enumerate(pkv_names):
             model_inputs[name.split("_RetainedState")[0]] = outputs[1 + i]
 
