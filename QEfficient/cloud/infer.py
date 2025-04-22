@@ -16,7 +16,7 @@ from transformers import PreTrainedModel, TextStreamer
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
 from QEfficient.base.common import QEFFCommonLoader
-from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer, load_hf_processor
+from QEfficient.utils import check_and_assign_cache_dir, load_hf_processor, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
 
 
