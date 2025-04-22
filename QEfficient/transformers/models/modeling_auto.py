@@ -1357,6 +1357,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         CustomOpsTransform,
         KVCacheTransform,
         SplitGateUpWeightsTransform,
+        KVCacheModuleMethodMapperTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
