@@ -1183,6 +1183,7 @@ class QEFFAutoModelForImageTextToText:
         :kv_offload (bool): Flag to toggle between single and dual QPC approaches. If set to False, the Single QPC approach will be used; otherwise, the dual QPC approach will be applied. Defaults to True.
 
     .. code-block:: python
+
         import requests
         from PIL import Image
         from transformers import AutoProcessor, TextStreamer
@@ -1196,8 +1197,8 @@ class QEFFAutoModelForImageTextToText:
         image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
 
         ## STEP - 1 Load the Processor and Model, and kv_offload=True/False for dual and single qpc
-        processor = AutoProcessor.from_pretrained(model_name, token=token)
-        model = QEFFAutoModelForImageTextToText.from_pretrained(model_name, token=token, attn_implementation="eager", kv_offload=False)
+        processor = AutoProcessor.from_pretrained(model_name, token=HF_TOKEN)
+        model = QEFFAutoModelForImageTextToText.from_pretrained(model_name, token=HF_TOKEN, attn_implementation="eager", kv_offload=False)
 
         ## STEP - 2 Export & Compile the Model
         model.compile(
@@ -1227,12 +1228,12 @@ class QEFFAutoModelForImageTextToText:
             return_tensors="pt",
             add_special_tokens=False,
             padding="max_length",
-            max_length=prefill_seq_len,
+            max_length=32,
         )
 
         ## STEP - 4 Run Inference on the compiled model
         streamer = TextStreamer(processor.tokenizer)
-        model.generate(inputs=inputs, streamer=streamer, generation_len=generation_len)
+        model.generate(inputs=inputs, streamer=streamer, generation_len=512)
 
     """
 
