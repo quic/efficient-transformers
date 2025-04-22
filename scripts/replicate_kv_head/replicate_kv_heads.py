@@ -14,6 +14,8 @@ from QEfficient import QEFFAutoModelForCausalLM, export
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers, undo_transformers_quantizers
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
+from QEfficient.transformers.quantizers.quantizer_compressed_tensors import FP8DeQuantLinear
+from QEfficient.utils._utils import login_and_download_hf_lm
 
 
 def duplicate_weights_for_linear_layer(
@@ -49,10 +51,23 @@ def duplicate_weights_for_linear_layer(
             1,
         ).view(hidden_size // layer.group_size, new_kv_heads * head_dim)
         layer.out_features = layer.out_features * repeat
+
+    elif isinstance(layer, FP8DeQuantLinear):
+        layer.weight.data = torch.repeat_interleave(
+            layer.weight.data.view(orig_kv_heads, head_dim, hidden_size), repeat, 0
+        ).view(new_kv_heads * head_dim, hidden_size)
+        layer.weight_scale.data = torch.repeat_interleave(
+            layer.weight_scale.data.view(orig_kv_heads, head_dim), repeat, 0
+        ).view(new_kv_heads * head_dim, -1)
+
     else:
         layer.weight.data = torch.repeat_interleave(
             layer.weight.data.view(orig_kv_heads, head_dim, hidden_size), repeat, 0
         ).view(new_kv_heads * head_dim, hidden_size)
+        if layer.bias is not None:
+            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0).view(
+                new_kv_heads * head_dim
+            )
 
 
 def main(args):
@@ -66,7 +81,8 @@ def main(args):
     if args.num_hidden_layers:
         model_kwargs["num_hidden_layers"] = args.num_hidden_layers
 
-    model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
+    pretrained_model_name_or_path = login_and_download_hf_lm(model_name)
+    model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path, **model_kwargs)
 
     # Undo the effect of replace_transformers_quantizers
     undo_transformers_quantizers()
