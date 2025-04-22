@@ -9,12 +9,12 @@ from typing import Optional, Tuple, Union
 
 import torch
 from torch import nn
-from transformers.cache_utils import Cache, StaticCache, EncoderDecoderCache
+from transformers.cache_utils import Cache, EncoderDecoderCache, StaticCache
 from transformers.modeling_outputs import (
     BaseModelOutputWithCrossAttentions,
     BaseModelOutputWithPastAndCrossAttentions,
-    Seq2SeqModelOutput,
     Seq2SeqLMOutput,
+    Seq2SeqModelOutput,
 )
 from transformers.models.whisper.modeling_whisper import (
     WhisperAttention,
@@ -703,6 +703,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
     - Added get_dummy_inputs, get_onnx_dynamic_axes, get_output_names for AutoModel export
     - changed forward inputs decoder_input_ids and decoder_position_ids to input_ids and position_ids
     """
+
     def forward(
         self,
         input_features: Optional[torch.FloatTensor] = None,
@@ -723,18 +724,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple[torch.Tensor], Seq2SeqLMOutput]:
-
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        if labels is not None:
-            if labels.shape[1] > self.max_target_positions:
-                raise ValueError(
-                    f"Labels' sequence length {labels.shape[1]} cannot exceed the maximum allowed length of {self.max_target_positions} tokens."
-                )
-            if decoder_input_ids is None and decoder_inputs_embeds is None:
-                decoder_input_ids = shift_tokens_right(
-                    labels, self.config.pad_token_id, self.config.decoder_start_token_id
-                )
 
         outputs = self.model(
             input_features,
@@ -758,7 +748,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
 
         loss = None
         if labels is not None:
-            loss_fct = CrossEntropyLoss()
+            loss_fct = torch.nn.CrossEntropyLoss()
             # move labels to correct device to enable PP
             labels = labels.to(lm_logits.device)
             loss = loss_fct(lm_logits.view(-1, self.config.vocab_size), labels.reshape(-1))
