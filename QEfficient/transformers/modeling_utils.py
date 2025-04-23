@@ -10,6 +10,7 @@ from typing import Dict, Optional, Tuple, Type
 
 import torch
 import torch.nn as nn
+import transformers.models.auto.modeling_auto as mapping
 from transformers import AutoModelForCausalLM
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
@@ -281,6 +282,15 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
 # Map of model type to config class, Modelling class and transformer model architecture class
 MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS = {
     "llama_swiftkv": [QEffLlamaSwiftKVConfig, QEffLlamaSwiftKVForCausalLM, AutoModelForCausalLM],
+}
+
+
+MODEL_CLASS_MAPPING = {
+    **{architecture: "QEFFAutoModelForCausalLM" for architecture in mapping.MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values()},
+    **{
+        architecture: "QEFFAutoModelForImageTextToText"
+        for architecture in mapping.MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values()
+    },
 }
 
 

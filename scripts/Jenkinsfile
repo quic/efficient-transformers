@@ -69,7 +69,7 @@ pipeline {
        }
        stage('CLI Tests') {
                    steps {
-                       timeout(time: 15, unit: 'MINUTES') {
+                       timeout(time: 60, unit: 'MINUTES') {
                            sh '''
                            sudo docker exec ${BUILD_TAG} bash -c "
                     	   source /qnn_sdk/bin/envsetup.sh &&

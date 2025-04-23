@@ -1257,6 +1257,9 @@ class QEFFAutoModelForImageTextToText:
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
 
+        if kwargs.pop("continuous_batching", None):
+            NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
+
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
         return cls(model, kv_offload=kv_offload, **kwargs)
