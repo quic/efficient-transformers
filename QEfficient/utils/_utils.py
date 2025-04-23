@@ -524,7 +524,7 @@ def create_and_dump_qconfigs(
             },
         },
     }
-    
+
     if enable_qnn:
         # Extract QNN SDK details from YAML file if the environment variable is set
         qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
@@ -535,10 +535,10 @@ def create_and_dump_qconfigs(
         qnn_sdk_yaml_path = os.path.join(qnn_sdk_path, QnnConstants.QNN_SDK_YAML)
         with open(qnn_sdk_yaml_path, "r") as file:
             qnn_sdk_details = yaml.safe_load(file)
-        
+
         qnn_config = {
-        "enable_qnn": enable_qnn,
-        "qnn_config_path": qnn_config_path,
+            "enable_qnn": enable_qnn,
+            "qnn_config_path": qnn_config_path,
         }
         qconfigs["qpc_config"]["qnn_config"] = qnn_config
         if qnn_sdk_details:
@@ -546,7 +546,13 @@ def create_and_dump_qconfigs(
 
     else:
         # Extract QAIC SDK Apps or Platform Version from SDK XML file
-        sdk_xml_file = Constants.SDK_APPS_XML if os.path.exists(Constants.SDK_APPS_XML) else Constants.SDK_PLATFORM_XML if os.path.exists(Constants.SDK_PLATFORM_XML) else None
+        sdk_xml_file = (
+            Constants.SDK_APPS_XML
+            if os.path.exists(Constants.SDK_APPS_XML)
+            else Constants.SDK_PLATFORM_XML
+            if os.path.exists(Constants.SDK_PLATFORM_XML)
+            else None
+        )
         qaic_version = None
         if sdk_xml_file is not None:
             tree = ET.parse(sdk_xml_file)
@@ -554,13 +560,13 @@ def create_and_dump_qconfigs(
             qaic_version = root.find(".//base_version").text
 
         aic_compiler_config = {
-        "apps_sdk_version": qaic_version,
-        "compile_dir": compile_dir,
-        "specializations_file_path": specializations_file_path,
-        "specializations": make_serializable(specializations),
-        "mdp_ts_num_devices": mdp_ts_num_devices,
-        "num_speculative_tokens": num_speculative_tokens,
-        **compiler_options,
+            "aic_sdk_version": qaic_version,
+            "compile_dir": compile_dir,
+            "specializations_file_path": specializations_file_path,
+            "specializations": make_serializable(specializations),
+            "mdp_ts_num_devices": mdp_ts_num_devices,
+            "num_speculative_tokens": num_speculative_tokens,
+            **compiler_options,
         }
         qconfigs["qpc_config"]["aic_compiler_config"] = aic_compiler_config
 
