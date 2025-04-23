@@ -530,7 +530,7 @@ def create_and_dump_qconfigs(
     # Extract QNN SDK details from YAML file if the environment variable is set
     qnn_sdk_details = None
     qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
-    if qnn_sdk_path:
+    if enable_qnn and qnn_sdk_path:
         qnn_sdk_yaml_path = os.path.join(qnn_sdk_path, QnnConstants.QNN_SDK_YAML)
         with open(qnn_sdk_yaml_path, "r") as file:
             qnn_sdk_details = yaml.safe_load(file)
