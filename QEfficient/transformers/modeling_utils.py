@@ -10,6 +10,8 @@ from typing import Dict, Optional, Tuple, Type
 
 import torch
 import torch.nn as nn
+import transformers.models.auto.modeling_auto as mapping
+from transformers import AutoModelForCausalLM
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,
@@ -87,6 +89,12 @@ from transformers.models.whisper.modeling_whisper import (
 )
 
 from QEfficient.customop import CustomRMSNormAIC
+
+# Placeholder for all non-transformer models
+from QEfficient.transformers.models.llama_swiftkv.modeling_llama_swiftkv import (
+    QEffLlamaSwiftKVConfig,
+    QEffLlamaSwiftKVForCausalLM,
+)
 
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
@@ -269,6 +277,20 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     WhisperPositionalEmbedding: QEffWhisperPositionalEmbedding,
     WhisperModel: QEffWhisperModel,
     WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
+}
+
+# Map of model type to config class, Modelling class and transformer model architecture class
+MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS = {
+    "llama_swiftkv": [QEffLlamaSwiftKVConfig, QEffLlamaSwiftKVForCausalLM, AutoModelForCausalLM],
+}
+
+
+MODEL_CLASS_MAPPING = {
+    **{architecture: "QEFFAutoModelForCausalLM" for architecture in mapping.MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values()},
+    **{
+        architecture: "QEFFAutoModelForImageTextToText"
+        for architecture in mapping.MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values()
+    },
 }
 
 

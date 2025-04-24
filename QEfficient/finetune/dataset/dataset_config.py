@@ -18,6 +18,9 @@ from QEfficient.finetune.dataset.grammar_dataset import (
     get_dataset as get_grammar_dataset,
 )
 from QEfficient.finetune.dataset.gsm8k_dataset import get_gsm8k_dataset
+from QEfficient.finetune.dataset.imdb_dataset import (
+    get_preprocessed_imdb as get_imdb_dataset,
+)
 from QEfficient.finetune.dataset.samsum_dataset import (
     get_preprocessed_samsum as get_samsum_dataset,
 )
@@ -28,5 +31,8 @@ DATASET_PREPROC = {
     "samsum_dataset": get_samsum_dataset,
     "gsm8k_dataset": get_gsm8k_dataset,
     "custom_dataset": get_custom_dataset,
+    "imdb_dataset": get_imdb_dataset,
 }
-DATALOADER_COLLATE_FUNC = {"custom_dataset": get_data_collator}
+DATALOADER_COLLATE_FUNC = {
+    "custom_dataset": get_data_collator,
+}

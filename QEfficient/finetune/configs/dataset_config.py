@@ -38,6 +38,14 @@ class gsm8k_dataset:
 
 
 @dataclass
+class imdb_dataset:
+    dataset: str = "imdb_dataset"
+    train_split: str = "train"
+    test_split: str = "test"
+    num_labels: int = 2
+
+
+@dataclass
 class custom_dataset:
     dataset: str = "custom_dataset"
     file: str = "dataset/custom_dataset.py"
