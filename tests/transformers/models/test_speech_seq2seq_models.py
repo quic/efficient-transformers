@@ -7,7 +7,7 @@
 
 import os
 from importlib import reload
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import onnx
@@ -21,8 +21,8 @@ from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForSpeechSeq2Seq
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils import get_padding_shape_from_config, hf_download
-from QEfficient.utils._utils import load_hf_processor
-from QEfficient.utils.constants import Constants
+from QEfficient.utils._utils import create_json, load_hf_processor
+from QEfficient.utils.constants import Constants, QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
 
 test_models = [
@@ -288,6 +288,8 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     ctx_len: int = Constants.CTX_LEN,
     n_layer: int = 1,
+    enable_qnn: Optional[bool] = False,
+    qnn_config: Optional[str] = None,
 ):
     """
     Validate the PyTorch model, the PyTorch model after KV changes, ONNX model and the Cloud AI 100 model
@@ -333,6 +335,8 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
         ctx_len=ctx_len,
         num_cores=16,
         batch_size=batch_size,
+        enable_qnn=enable_qnn,
+        qnn_config=qnn_config,
     )
 
     exec_info = qeff_model.generate(
@@ -354,3 +358,22 @@ def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
     check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=4)
+
+
+@pytest.mark.on_qaic
+@pytest.mark.qnn
+@pytest.mark.skip(reason="Whisper is currently not supported on QNN")
+@pytest.mark.parametrize("model_name", test_models)
+def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
+    """
+    QNN Compilation path test.
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+
+    check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, n_layer=4, enable_qnn=True, qnn_config=qnn_config_json_path
+    )
