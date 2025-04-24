@@ -169,9 +169,7 @@ def run_seq2seq_pytorch_with_kv(
     next_token = logits.argmax(-1)
     generated_ids[:, 1] = next_token.squeeze(1)
 
-    model_inputs["input_features"] = torch.tensor(
-        np.random.randn(batch_size, config.num_mel_bins, 1).astype(np.float32)
-    )
+    model_inputs["input_features"] = torch.tensor(np.zeros((batch_size, config.num_mel_bins, 1)).astype(np.float32))
     model_inputs["past_key_values"] = outputs["past_key_values"]
 
     for num_tokens in range(generation_len):
@@ -263,9 +261,7 @@ def run_seq2seq_ort(
     next_token = logits.argmax(-1)
     generated_ids[:, 1] = next_token.squeeze(1)
 
-    model_inputs["input_features"] = torch.tensor(
-        np.random.randn(batch_size, config.num_mel_bins, 1).astype(np.float32)
-    )
+    model_inputs["input_features"] = torch.tensor(np.zeros((batch_size, config.num_mel_bins, 1)).astype(np.float32))
     for i, name in enumerate(pkv_names):
         model_inputs[name.split("_RetainedState")[0]] = outputs[1 + i]
 

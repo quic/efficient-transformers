@@ -1850,12 +1850,14 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         kv_cache_dtype = "float16"
         custom_io = {}
 
-        # Inputs
+        custom_io["input_features"] = kv_cache_dtype
+
+        # Slice output_names to get input names
         for output_name in output_names:
             if output_name.endswith("_RetainedState"):
                 custom_io[output_name[: -len("_RetainedState")]] = kv_cache_dtype
 
-        # Outputs
+        # Get output names
         for output_name in output_names:
             if output_name.endswith("_RetainedState"):
                 custom_io[output_name] = kv_cache_dtype
@@ -1902,7 +1904,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
-        inputs["input_features"] = inputs["input_features"].numpy().astype(np.float32)
+        inputs["input_features"] = inputs["input_features"].numpy().astype(np.float16)
 
         # add start token id and initial position ids to inputs
         seq_len = 1
@@ -1936,7 +1938,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if streamer:
             streamer.put(next_token)
 
-        inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(np.float32)
+        inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(np.float16)
 
         loop_start = perf_counter()
         for num_tokens in range(generation_len):
