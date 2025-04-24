@@ -43,6 +43,37 @@ from transformers import AutoModelForCausalLM, AutoModelForSequenceClassificatio
 # Suppress all warnings
 warnings.filterwarnings("ignore")
 
+def get_device_map_for_llama_70B(dev0, dev1, dev2, dev3, dev4, dev5):  # total_num_layers, num_stages
+    device_map = {
+      'model.embed_tokens': dev0,
+      'lm_head': dev5,
+      'model.norm': dev5,
+      'model.rotary_emb': dev5
+    }
+    for i in range(80):
+        if i < 14:
+            device_map[f"model.layers.{i}"] = dev0
+        elif i < 28:
+            device_map[f"model.layers.{i}"] = dev1
+        elif i < 42:
+            device_map[f"model.layers.{i}"] = dev2
+        elif i < 56:
+            device_map[f"model.layers.{i}"] = dev3
+        elif i < 70:
+            device_map[f"model.layers.{i}"] = dev4
+        else:
+            device_map[f"model.layers.{i}"] = dev5
+    return device_map
+
+
+def setup_distributed_training():
+    torch_device = torch.device("qaic")
+    assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
+    assert torch_device.index is None, f"DDP requires only device type, got: {torch_device}"
+    dist.init_process_group(backend="qccl")
+    # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
+    #getattr(torch, torch_device.type).set_device(dist.get_rank()*2)
+
 
 def main(**kwargs):
     """
@@ -57,19 +88,6 @@ def main(**kwargs):
     train_config = TRAIN_CONFIG()
     update_config(train_config, **kwargs)
     dataset_config = generate_dataset_config(train_config, kwargs)
-    device = train_config.device
-
-    # dist init
-    if train_config.enable_ddp:
-        # TODO: may have to init qccl backend, next try run with torchrun command
-        torch_device = torch.device(device)
-        assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
-        assert torch_device.index is None, (
-            f"DDP requires specification of device type only, however provided device index as well: {torch_device}"
-        )
-        dist.init_process_group(backend=train_config.dist_backend)
-        # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
-        getattr(torch, torch_device.type).set_device(dist.get_rank())
 
     # Set the seeds for reproducibility
     torch.manual_seed(train_config.seed)
@@ -97,12 +115,17 @@ def main(**kwargs):
             if param.requires_grad:
                 param.data = param.data.to(torch.float32)
     else:
+        rank = dist.get_rank()
+
+        device_map = get_device_map_for_llama_70B(rank*6, rank*6+1, rank*6+2, rank*6+3, rank*6+4, rank*6+5)
         model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_path,
             use_cache=False,
             attn_implementation="sdpa",
             torch_dtype=torch.float16,
+            device_map=device_map,
         )
+        print(model.hf_device_map)
 
     # Load the tokenizer and add special tokens
     tokenizer = AutoTokenizer.from_pretrained(
@@ -213,7 +236,7 @@ def main(**kwargs):
         f"passed context length is {train_config.context_length} and overall model's context length is "
         f"{model.config.max_position_embeddings}"
     )
-    model.to(train_config.device)
+    #model.to(train_config.device)
     optimizer = optim.AdamW(
         model.parameters(),
         lr=train_config.lr,
@@ -223,7 +246,7 @@ def main(**kwargs):
 
     # wrap model with DDP
     if train_config.enable_ddp:
-        model = nn.parallel.DistributedDataParallel(model, device_ids=[dist.get_rank()])
+        model = nn.parallel.DistributedDataParallel(model)#, device_ids=[dist.get_rank()])
 
     _ = train(
         model,
@@ -245,4 +268,5 @@ def main(**kwargs):
 
 
 if __name__ == "__main__":
+    setup_distributed_training()
     fire.Fire(main)
