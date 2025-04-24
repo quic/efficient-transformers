@@ -12,7 +12,6 @@ from typing import List, Optional, Tuple, Union
 @dataclass
 class QEffCausalLMOutputWithPast(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
-    logits: torch.FloatTensor = None
     probs: torch.FloatTensor = None
     next_tokens: torch.IntTensor = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
@@ -226,8 +225,8 @@ def sampler_forward(
         # TODO: Replace scatter_ with CtxScatterFunc; Replace -1 with int_max while exporting on onnx
         # past_repetition_penalty_buffer_selected = CtxScatterFunc.apply(past_repetition_penalty_buffer_selected.unsqueeze(1), input_ids, 1).squeeze(1)
         if position_ids[0, 0] == 0:
-            past_repetition_penalty_buffer_selected = torch.mul(past_repetition_penalty_buffer_selected, 0)
-            past_presence_penalty_buffer_selected = torch.mul(past_presence_penalty_buffer_selected, 0)
+            past_repetition_penalty_buffer_selected = torch.zeros(past_repetition_penalty_buffer_selected.shape, dtype=torch.bool)
+            past_presence_penalty_buffer_selected = torch.zeros(past_presence_penalty_buffer_selected.shape, dtype=torch.bool)
         past_repetition_penalty_buffer_selected.scatter_(1, input_ids, 1)
 
     else:  # Decode phase, update retained states
@@ -244,7 +243,6 @@ def sampler_forward(
     if (temperatures == 0).all() and self.return_pdfs == False:
         return QEffCausalLMOutputWithPast(
             loss=None,
-            logits=None,
             probs=None,
             next_tokens=greedy_samples.reshape(-1, spec_length, 1),  # Return sampled next tokens instead of logits
             past_key_values=outputs.past_key_values,
@@ -317,7 +315,6 @@ def sampler_forward(
 
     return QEffCausalLMOutputWithPast(
         loss=None,
-        logits=None,  
         probs=probs,
         next_tokens=next_tokens,  # Return sampled next tokens instead of logits
         past_key_values=outputs.past_key_values,

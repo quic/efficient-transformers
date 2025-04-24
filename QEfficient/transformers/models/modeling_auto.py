@@ -1457,10 +1457,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             }
         output_names = []
         if self.include_sampler:
-            if self.return_pdfs:
+            if self.model.return_pdfs:
                 output_names.append("probs")
-            else:
-                output_names.append("next_tokens")
+            output_names.append("next_tokens")
         else:
             output_names.append("logits")
 
@@ -1664,7 +1663,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     batch_size=batch_size, 
                     kv_cache_batch_size=kv_cache_batch_size,
                     full_batch_size=full_batch_size,
-                    max_top_k_ids= constants.Constants.MAX_TOP_K_IDS if self.include_sampler else None,
+                    max_top_k_ids=constants.Constants.MAX_TOP_K_IDS if self.include_sampler else None,
                 )
             )
         if prefill_only is None or not prefill_only:
@@ -1675,7 +1674,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 kv_cache_batch_size=kv_cache_batch_size, 
                 full_batch_size=full_batch_size, 
                 num_speculative_tokens=num_speculative_tokens,
-                max_top_k_ids= constants.Constants.MAX_TOP_K_IDS if self.include_sampler else None,
+                max_top_k_ids=constants.Constants.MAX_TOP_K_IDS if self.include_sampler else None,
             )
             if decode_spec:
                 specializations.append(decode_spec)
