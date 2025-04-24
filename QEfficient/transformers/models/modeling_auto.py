@@ -1811,9 +1811,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if num_speculative_tokens:
             logger.warning("Speculative decoding is not yet enabled for AutoModelForSpeechSeq2Seq")
 
-        if enable_qnn or qnn_config:
-            logger.warning("QNN compile is not yet enabled for AutoModelForSpeechSeq2Seq")
-
         output_names = self.model.get_output_names()
 
         kv_cache_dtype = "float16"
