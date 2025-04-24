@@ -38,8 +38,8 @@ from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheModuleMethodMapperTransform,
     KVCacheTransform,
-    SpDTransform,
     SamplerTransform,
+    SpDTransform,
     VlmKVOffloadTransform,
     VlmNoKVOffloadTransform,
 )
@@ -1483,7 +1483,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "num_logits_to_keep"}
 
             example_inputs["past_repetition_penalty_buffer"] = torch.zeros(
-                fbs if self.continuous_batching else bs, self.model.config.vocab_size, dtype=torch.int32)
+                fbs if self.continuous_batching else bs, self.model.config.vocab_size, dtype=torch.bool)
             dynamic_axes["past_repetition_penalty_buffer"] = {
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
             }
@@ -1493,7 +1493,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             dynamic_axes["repetition_penalties"] = {0: "batch_size"}
 
             example_inputs["past_presence_penalty_buffer"] = torch.zeros(
-                fbs if self.continuous_batching else bs, self.model.config.vocab_size, dtype=torch.int32)
+                fbs if self.continuous_batching else bs, self.model.config.vocab_size, dtype=torch.bool)
             dynamic_axes["past_presence_penalty_buffer"] = {
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
             }
