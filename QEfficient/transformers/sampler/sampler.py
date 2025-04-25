@@ -215,23 +215,45 @@ def sampler_forward(
     batch_size, spec_length, vocab_size = logits.shape
 
     # Select relevant rows
-    batch_index_reshaped = batch_index.view(-1)
-    past_repetition_penalty_buffer_selected = past_repetition_penalty_buffer[batch_index_reshaped]
-    past_presence_penalty_buffer_selected = past_presence_penalty_buffer[batch_index_reshaped]
+    # TODO: Do scatter on 3D?
+    # TODO: Avoid index select and two scatters; use scatter once based on batch_index
+    # TODO: If any position_id is -1, don't do anything, no scattering
 
     logits = logits.reshape(-1, vocab_size)  # Reshape tensor to 2D
 
     if input_ids.shape[1] > spec_length:  # Prefill phase, initialize retained states
         # TODO: Replace scatter_ with CtxScatterFunc; Replace -1 with int_max while exporting on onnx
         # past_repetition_penalty_buffer_selected = CtxScatterFunc.apply(past_repetition_penalty_buffer_selected.unsqueeze(1), input_ids, 1).squeeze(1)
-        if position_ids[0, 0] == 0:
-            past_repetition_penalty_buffer_selected = torch.zeros(past_repetition_penalty_buffer_selected.shape, dtype=torch.bool)
-            past_presence_penalty_buffer_selected = torch.zeros(past_presence_penalty_buffer_selected.shape, dtype=torch.bool)
+        # repetition_penalty_retain_state[batch_index_reshaped] = CtxScatterFunc3D.apply(repetition_penalty_retain_state[batch_index_reshaped], input_ids, True)
+        # CtxScatterFunc3D.apply(presence_penalty_retain_state_selected, input_ids, False)
+        # use torch where
+        if position_ids[0, 0] == 0:    # 1x128
+            past_repetition_penalty_buffer_selected = torch.mul(past_repetition_penalty_buffer_selected, 0)
+            past_presence_penalty_buffer_selected = torch.mul(past_presence_penalty_buffer_selected, 0)
         past_repetition_penalty_buffer_selected.scatter_(1, input_ids, 1)
+        
+        # _updated_batch_index = torch.where(position_ids[:,0] > -1, batch_idnex, -1)
+        # _updated_input_ids = 
+        
+        
 
-    else:  # Decode phase, update retained states
-        past_repetition_penalty_buffer_selected.scatter_(1, last_accepted_output_tokens, 1)
-        past_presence_penalty_buffer_selected.scatter_(1, last_accepted_output_tokens, 1)
+    else:  # Decode phase, update retained states        
+        
+        # (compute_batch_size, spec_length) -> (compute_batch_size, spec_length)
+        # BS=2 spec =1  [[4757],[2358],[353]], batch_index = [3,5,7], position_id [9,4,-1]
+        #[[3,4757],[5,2358]]
+        # 
+        # [[[]]]
+        
+        # repetition_penalty_retain_state.scatter()
+        
+        # Create a bigger tensor for last_accepted_output_tokens (compute_batch_size, spec_length, seq_length) and use scatter first on that 
+        # Do not scatter when position id is -1
+        # Make penalty 3d
+        
+        
+        past_repetition_penalty_buffer.scatter_(1, last_accepted_output_tokens, 1)
+        past_presence_penalty_buffer.scatter_(1, last_accepted_output_tokens, 1)
         # TODO: For frequency retain state, first gather and then scatter
 
     # Update relevant rows in original tensors
@@ -252,17 +274,27 @@ def sampler_forward(
             past_presence_penalty_buffer=past_presence_penalty_buffer,
         )
 
+    batch_index_reshaped = batch_index.view(-1)
+    
     # Repetition Penalty
     if (repetition_penalties != 1.).any():
-        repetition_penalties = repetition_penalties.repeat(spec_length, vocab_size)  # (batch_size, 1) -> (batch_size * spec_length, vocab_size)
-        past_repetition_penalty_buffer_selected = past_repetition_penalty_buffer_selected.repeat(spec_length, 1)  # (batch_size, vocab_size) -> (batch_size * spec_length, vocab_size)
-        repetition_penalties[past_repetition_penalty_buffer_selected == 0] = 1.0
-        logits = torch.where(logits > 0, logits / repetition_penalties, logits * repetition_penalties)
+        
+        mask = torch.ones(past_repetition_penalty_buffer_selected.shape)
+        mask[batch_index, past_repetition_penalty_buffer_selected] = repetition_penalties
+        sign = torch.sign(logits)
+        mask = mask ** sign
+        logits *= mask
+        
+        # repetition_penalties = repetition_penalties.repeat(spec_length, vocab_size)  # (batch_size, 1) -> (batch_size * spec_length, vocab_size)
+        # past_repetition_penalty_buffer_selected = past_repetition_penalty_buffer[batch_index_reshaped].repeat(spec_length, 1)  # (batch_size, vocab_size) -> (batch_size * spec_length, vocab_size)
+        # repetition_penalties[past_repetition_penalty_buffer_selected == 0] = 1.0        
+        # logits = torch.where(logits > 0, logits / repetition_penalties, logits * repetition_penalties)
 
     # Presence Penalty
     if (presence_penalties != 0.).any():
+        # todo: CREATE MASK
         presence_penalties = presence_penalties.repeat(spec_length, 1)  # (batch_size, 1) -> (batch_size * spec_length, 1)
-        past_presence_penalty_buffer_selected = past_presence_penalty_buffer_selected.repeat(spec_length, 1)  # (batch_size, vocab_size) -> (batch_size * spec_length, vocab_size)
+        past_presence_penalty_buffer_selected = past_presence_penalty_buffer[batch_index_reshaped].repeat(spec_length, 1)  # (batch_size, vocab_size) -> (batch_size * spec_length, vocab_size)
         logits -= presence_penalties * past_presence_penalty_buffer_selected
 
     # TODO: Frequency Penalty
