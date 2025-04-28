@@ -7,7 +7,7 @@
 
 import random
 import warnings
-from typing import Optional, Any
+from typing import Any, Dict, Optional, Union
 
 import fire
 import numpy as np
@@ -17,19 +17,15 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.utils.data
 from peft import PeftModel, get_peft_model
-from dataclasses import fields
 from torch.optim.lr_scheduler import StepLR
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
-from QEfficient.finetune.configs.peft_config import LoraConfig
 from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.utils.config_utils import (
     generate_dataset_config,
     generate_peft_config,
     get_dataloader_kwargs,
-    load_config_file,
     update_config,
-    validate_config,
 )
 from QEfficient.finetune.utils.dataset_utils import (
     get_custom_data_collator,
@@ -45,7 +41,7 @@ except ImportError as e:
     print(f"Warning: {e}. Proceeding without QAIC modules.")
 
 
-from transformers import AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
+from transformers import AutoModelForSequenceClassification
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
@@ -91,14 +87,21 @@ def setup_seeds(seed: int) -> None:
     np.random.seed(seed)
 
 
-def load_model_and_tokenizer(config: TrainConfig) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
+def load_model_and_tokenizer(
+    train_config: TrainConfig, dataset_config: Any, peft_config_file: str, **kwargs
+) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
     """Load the pre-trained model and tokenizer from Hugging Face.
 
     Args:
         config (TrainConfig): Training configuration object containing model and tokenizer names.
+        dataset_config (Any): A dataclass object representing dataset configuration.
+        peft_config_file (str): Path to PEFT config file used for PEFT finetuning.
+        kwargs: Additional arguments to override PEFT config.
 
     Returns:
-        tuple: A tuple containing the loaded model (AutoModelForCausalLM) and tokenizer (AutoTokenizer).
+        tuple: A tuple of two values.
+            - Model with pretrained weights loaded.
+            - Model's tokenizer (AutoTokenizer).
 
     Notes:
         - Downloads the model if not already cached using login_and_download_hf_lm.
@@ -106,41 +109,81 @@ def load_model_and_tokenizer(config: TrainConfig) -> tuple[AutoModelForCausalLM,
         - Resizes model embeddings if tokenizer vocab size exceeds model embedding size.
         - Sets pad_token_id to eos_token_id if not defined in the tokenizer.
     """
-    pretrained_model_path = login_and_download_hf_lm(config.model_name)
-    model = AutoModelForCausalLM.from_pretrained(
-        pretrained_model_path,
-        use_cache=False,
-        attn_implementation="sdpa",
-        torch_dtype=torch.float16,
-    )
+    pretrained_model_path = login_and_download_hf_lm(train_config.model_name)
+    if train_config.task_type == "seq_classification":
+        model = AutoModelForSequenceClassification.from_pretrained(
+            pretrained_model_path,
+            num_labels=dataset_config.num_labels,
+            attn_implementation="sdpa",
+            torch_dtype=torch.float16,
+        )
+
+        if not hasattr(model, "base_model_prefix"):
+            raise RuntimeError("Given huggingface model does not have 'base_model_prefix' attribute.")
+
+        for param in getattr(model, model.base_model_prefix).parameters():
+            param.requires_grad = False
+
+        for param in model.parameters():
+            if param.requires_grad:
+                param.data = param.data.to(torch.float32)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            pretrained_model_path,
+            use_cache=False,
+            attn_implementation="sdpa",
+            torch_dtype=torch.float16,
+        )
 
     tokenizer = AutoTokenizer.from_pretrained(
-        config.model_name if config.tokenizer_name is None else config.tokenizer_name
+        train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name
     )
     if not tokenizer.pad_token_id:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
+    # If there is a mismatch between tokenizer vocab size and embedding matrix,
+    # throw a warning and then expand the embedding matrix
     if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
         print("WARNING: Resizing embedding matrix to match tokenizer vocab size.")
         model.resize_token_embeddings(len(tokenizer))
+
+    # FIXME (Meet): Cover below line inside the logger once it is implemented.
+    print_model_size(model, train_config)
 
     # Note: Need to call this before calling PeftModel.from_pretrained or get_peft_model.
     # Because, both makes model.is_gradient_checkpointing = True which is used in peft library to
     # apply gradient checkpointing related hooks to the input embeddings. Without this we will get
     # "No inf checks were recorded for this optimizer." error.
     # Enable gradient checkpointing
-    if config.gradient_checkpointing:
+    if train_config.gradient_checkpointing:
         # Note: below attribute and method is only available in HuggingFace Transformer models.
         if hasattr(model, "supports_gradient_checkpointing") and model.supports_gradient_checkpointing:
             model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"preserve_rng_state": False})
         else:
             raise RuntimeError("Given model doesn't support gradient checkpointing. Please disable it and run it.")
-    
+
+    model = apply_peft(model, train_config, peft_config_file, **kwargs)
+
     return model, tokenizer
 
 
-def apply_peft(model: AutoModelForCausalLM, train_config: TrainConfig, lora_config: LoraConfig) -> PeftModel:
-    """Apply Parameter-Efficient Fine-Tuning (PEFT) to the model if enabled."""
+def apply_peft(
+    model: AutoModel, train_config: TrainConfig, peft_config_file: Dict, **kwargs
+) -> Union[AutoModel, PeftModel]:
+    """Apply Parameter-Efficient Fine-Tuning (PEFT) to the model if enabled.
+
+    Args:
+        model (AutoModel): Huggingface model.
+        train_config (TrainConfig): Training configuration object.
+        peft_config_file (str, optional): Path to YAML/JSON file containing
+            PEFT (LoRA) config. Defaults to None.
+        kwargs: Additional arguments to override PEFT config params.
+
+    Returns:
+        Union[AutoModel, PeftModel]: If the use_peft in train_config is True
+            then PeftModel object is returned else original model object
+            (AutoModel) is returned.
+    """
     if not train_config.use_peft:
         return model
 
@@ -150,7 +193,7 @@ def apply_peft(model: AutoModelForCausalLM, train_config: TrainConfig, lora_conf
         peft_config = model.peft_config
     # Generate the peft config and start fine-tuning from original model
     else:
-        peft_config = generate_peft_config(train_config, lora_config)
+        peft_config = generate_peft_config(train_config, peft_config_file, **kwargs)
         model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
 
@@ -158,19 +201,23 @@ def apply_peft(model: AutoModelForCausalLM, train_config: TrainConfig, lora_conf
 
 
 def setup_dataloaders(
-    train_config: TrainConfig, dataset_config, tokenizer: AutoTokenizer, dataset_train, dataset_val
-) -> tuple[torch.utils.data.DataLoader, Optional[torch.utils.data.DataLoader]]:
+    train_config: TrainConfig,
+    dataset_config: Any,
+    tokenizer: AutoTokenizer,
+) -> tuple[torch.utils.data.DataLoader, Optional[torch.utils.data.DataLoader], int]:
     """Set up training and validation DataLoaders.
 
     Args:
         train_config (TrainConfig): Training configuration object.
-        dataset_config: Configuration for the dataset (generated from train_config).
+        dataset_config (Any): Configuration for the dataset (generated from train_config).
         tokenizer (AutoTokenizer): Tokenizer for preprocessing data.
-        dataset_train: Preprocessed training dataset.
-        dataset_val: Preprocessed validation dataset.
 
     Returns:
-        tuple: A tuple of (train_dataloader, eval_dataloader), where eval_dataloader is None if validation is disabled.
+        tuple: A tuple of three values.
+            - First value represents train_dataloader
+            - Second value represents eval_dataloader. It is None if
+              validation is disabled.
+            - Length of longest sequence in the dataset.
 
     Raises:
         ValueError: If validation is enabled but the validation set is too small.
@@ -179,11 +226,33 @@ def setup_dataloaders(
         - Applies a custom data collator if provided by get_custom_data_collator.
         - Configures DataLoader kwargs using get_dataloader_kwargs for train and val splits.
     """
-    custom_data_collator = get_custom_data_collator(tokenizer, dataset_config)
-    train_dl_kwargs = get_dataloader_kwargs(train_config, dataset_train, tokenizer, "train")
+    # Get the dataset utils
+    dataset_processer = tokenizer
+
+    # Load and preprocess the dataset for training and validation
+    dataset_train = get_preprocessed_dataset(
+        dataset_processer, dataset_config, split="train", context_length=train_config.context_length
+    )
+
+    dataset_val = get_preprocessed_dataset(
+        dataset_processer, dataset_config, split="test", context_length=train_config.context_length
+    )
+
+    # TODO: vbaddi, check if its necessary to do this?
+    # dataset_train = ConcatDataset(
+    #             dataset_train, chunk_size=train_config.context_length
+    #         )
+    ##
+    train_dl_kwargs = get_dataloader_kwargs(train_config, dataset_train, dataset_processer, "train")
+    print("length of dataset_train", len(dataset_train))
+
+    # FIXME (Meet): Add custom data collator registration from the outside by the user.
+    custom_data_collator = get_custom_data_collator(dataset_processer, dataset_config)
     if custom_data_collator:
+        print("custom_data_collator is used")
         train_dl_kwargs["collate_fn"] = custom_data_collator
 
+    # Create DataLoaders for the training and validation dataset
     train_dataloader = torch.utils.data.DataLoader(
         dataset_train,
         num_workers=train_config.num_workers_dataloader,
@@ -194,7 +263,12 @@ def setup_dataloaders(
 
     eval_dataloader = None
     if train_config.run_validation:
-        val_dl_kwargs = get_dataloader_kwargs(train_config, dataset_val, tokenizer, "val")
+        # if train_config.batching_strategy == "packing":
+        #     dataset_val = ConcatDataset(
+        #         dataset_val, chunk_size=train_config.context_length
+        #     )
+
+        val_dl_kwargs = get_dataloader_kwargs(train_config, dataset_val, dataset_processer, "val")
         if custom_data_collator:
             val_dl_kwargs["collate_fn"] = custom_data_collator
 
@@ -204,31 +278,29 @@ def setup_dataloaders(
             pin_memory=True,
             **val_dl_kwargs,
         )
-        print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
         if len(eval_dataloader) == 0:
-            raise ValueError("Eval set too small to load even one batch.")
+            raise ValueError(
+                f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"
+            )
+        else:
+            print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
 
-    return train_dataloader, eval_dataloader
+        longest_seq_length, _ = get_longest_seq_length(
+            torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset])
+        )
+    else:
+        longest_seq_length, _ = get_longest_seq_length(train_dataloader.dataset)
+
+    return train_dataloader, eval_dataloader, longest_seq_length
 
 
-def main(
-    model_name: str = None,
-    tokenizer_name: str = None,
-    batch_size_training: int = None,
-    lr: float = None,
-    peft_config_file: str = None,
-    **kwargs,
-) -> None:
+def main(peft_config_file=None, **kwargs) -> None:
     """
     Fine-tune a model on QAIC hardware with configurable training and LoRA parameters.
 
     Args:
-        model_name (str, optional): Override default model name.
-        tokenizer_name (str, optional): Override default tokenizer name.
-        batch_size_training (int, optional): Override default training batch size.
-        lr (float, optional): Override default learning rate.
-        peft_config_file (str, optional): Path to YAML/JSON file containing PEFT (LoRA) config.
-        **kwargs: Additional arguments to override TrainConfig.
+        peft_config_file (str, optional): Path to YAML/JSON file containing PEFT (LoRA) config. Defaults to None.
+        kwargs: Additional arguments to override TrainConfig.
 
     Example:
         .. code-block:: bash
@@ -245,47 +317,22 @@ def main(
                 --lr 5e-4
     """
     train_config = TrainConfig()
-    #  local_args = {k: v for k, v in locals().items() if v is not None and k != "peft_config_file" and k != "kwargs"}
     update_config(train_config, **kwargs)
-
-    lora_config = LoraConfig()
-    if peft_config_file:
-        peft_config_data = load_config_file(peft_config_file)
-        validate_config(peft_config_data, config_type="lora")
-        lora_config = LoraConfig(**peft_config_data)
-    else:
-        lora_config = LoraConfig()
-        
-    update_config(lora_config, **kwargs)
+    dataset_config = generate_dataset_config(train_config.dataset)
+    update_config(dataset_config, **kwargs)
 
     setup_distributed_training(train_config)
     setup_seeds(train_config.seed)
-    model, tokenizer = load_model_and_tokenizer(train_config)
-    print_model_size(model, train_config)
-    model = apply_peft(model, train_config, lora_config)
+    model, tokenizer = load_model_and_tokenizer(train_config, dataset_config, peft_config_file, **kwargs)
 
-    # Pass an empty dict instead of kwargs to avoid irrelevant parameters
-    dataset_config = generate_dataset_config(train_config, kwargs)
-    dataset_train = get_preprocessed_dataset(
-        tokenizer, dataset_config, split="train", context_length=train_config.context_length
-    )
-    dataset_val = get_preprocessed_dataset(
-        tokenizer, dataset_config, split="test", context_length=train_config.context_length
-    )
-    train_dataloader, eval_dataloader = setup_dataloaders(
-        train_config, dataset_config, tokenizer, dataset_train, dataset_val
-    )
-    dataset_for_seq_length = (
-        torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset])
-        if train_config.run_validation
-        else train_dataloader.dataset
-    )
-    longest_seq_length, _ = get_longest_seq_length(dataset_for_seq_length)
+    # Create DataLoaders for the training and validation dataset
+    train_dataloader, eval_dataloader, longest_seq_length = setup_dataloaders(train_config, dataset_config, tokenizer)
     print(
-        f"Longest sequence length: {longest_seq_length}, "
-        f"Context length: {train_config.context_length}, "
-        f"Model max context: {model.config.max_position_embeddings}"
+        f"The longest sequence length in the train data is {longest_seq_length}, "
+        f"passed context length is {train_config.context_length} and overall model's context length is "
+        f"{model.config.max_position_embeddings}"
     )
+
     model.to(train_config.device)
     optimizer = optim.AdamW(model.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
@@ -293,16 +340,13 @@ def main(
         model = nn.parallel.DistributedDataParallel(model, device_ids=[dist.get_rank()])
     results = train(
         model,
+        tokenizer,
         train_dataloader,
         eval_dataloader,
-        tokenizer,
         optimizer,
         scheduler,
-        train_config.gradient_accumulation_steps,
         train_config,
-        train_config.device,
         dist.get_rank() if train_config.enable_ddp else None,
-        None,
     )
     if train_config.enable_ddp:
         dist.destroy_process_group()

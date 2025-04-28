@@ -27,6 +27,7 @@ configs = [pytest.param("meta-llama/Llama-3.2-1B", 10, 20, 1, None, True, True, 
 
 
 @pytest.mark.on_qaic
+@pytest.mark.finetune
 @pytest.mark.parametrize(
     "model_name,max_eval_step,max_train_step,intermediate_step_save,context_length,run_validation,use_peft,device",
     configs,
@@ -66,9 +67,9 @@ def test_finetune(
 
     results = finetune(**kwargs)
 
-    assert np.allclose(results["avg_train_prep"], 1.002326, atol=1e-5), "Train perplexity is not matching."
+    assert np.allclose(results["avg_train_metric"], 1.002326, atol=1e-5), "Train metric is not matching."
     assert np.allclose(results["avg_train_loss"], 0.00232327, atol=1e-5), "Train loss is not matching."
-    assert np.allclose(results["avg_eval_prep"], 1.0193923, atol=1e-5), "Eval perplexity is not matching."
+    assert np.allclose(results["avg_eval_metric"], 1.0193923, atol=1e-5), "Eval metric is not matching."
     assert np.allclose(results["avg_eval_loss"], 0.0192067, atol=1e-5), "Eval loss is not matching."
     assert results["avg_epoch_time"] < 60, "Training should complete within 60 seconds."
 
@@ -114,3 +115,6 @@ def test_finetune(
     clean_up(train_config.output_dir)
     clean_up("runs")
     clean_up(train_config.dump_root_dir)
+
+
+# TODO (Meet): Add seperate tests for BERT FT and LLama FT

@@ -18,11 +18,10 @@ from peft import (
     PrefixTuningConfig,
 )
 from peft import LoraConfig as PeftLoraConfig
-from transformers import default_data_collator
 from transformers.data import DataCollatorForSeq2Seq
 
 import QEfficient.finetune.configs.dataset_config as datasets
-from QEfficient.finetune.configs.peft_config import LoraConfig
+from QEfficient.finetune.configs.peft_config import LoraConfig, PrefixConfig
 from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.data.sampler import DistributedLengthBasedBatchSampler
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
@@ -54,10 +53,11 @@ def update_config(config, **kwargs):
                         raise ValueError(f"Config '{config_name}' does not have parameter: '{param_name}'")
             else:
                 config_type = type(config).__name__
+                # FIXME (Meet): Once logger is available put this in debug level.
                 print(f"[WARNING]: Unknown parameter '{k}' for config type '{config_type}'")
 
 
-def generate_peft_config(train_config: TrainConfig, custom_config: Any) -> Any:
+def generate_peft_config(train_config: TrainConfig, peft_config_file: str = None, **kwargs) -> Any:
     """Generate a PEFT-compatible configuration from a custom config based on peft_method.
 
     Args:
@@ -70,34 +70,37 @@ def generate_peft_config(train_config: TrainConfig, custom_config: Any) -> Any:
     Raises:
         RuntimeError: If the peft_method is not supported.
     """
-    # Define supported PEFT methods and their corresponding configs
-    method_to_configs = {
-        "lora": (LoraConfig, PeftLoraConfig),
-        "adaption_prompt": (None, AdaptionPromptConfig),  # Placeholder; add custom config if needed
-        "prefix_tuning": (None, PrefixTuningConfig),  # Placeholder; add custom config if needed
-    }
+    if peft_config_file:
+        peft_config_data = load_config_file(peft_config_file)
+        validate_config(peft_config_data, config_type="lora")
+        peft_config = PeftLoraConfig(**peft_config_data)
+    else:
+        config_map = {
+            "lora": (LoraConfig, PeftLoraConfig),
+            "prefix": (PrefixConfig, PrefixTuningConfig),
+            "adaption_prompt": (None, AdaptionPromptConfig),
+        }
 
-    peft_method = train_config.peft_method.lower()
-    if peft_method not in method_to_configs:
-        raise RuntimeError(f"PEFT config not found for method: {train_config.peft_method}")
+        if train_config.peft_method not in config_map:
+            raise RuntimeError(f"Peft config not found: {train_config.peft_method}")
 
-    custom_config_class, peft_config_class = method_to_configs[peft_method]
+        config_cls, peft_config_cls = config_map[train_config.peft_method]()
+        if config_cls is None:
+            params = kwargs
+        else:
+            config = config_cls()
+            update_config(config, **kwargs)
+            params = asdict(config)
 
-    # Use the provided custom_config (e.g., LoraConfig instance)
-    config = custom_config
-    params = asdict(config)
-
-    # Create the PEFT-compatible config
-    peft_config = peft_config_class(**params)
+        peft_config = peft_config_cls(**params)
     return peft_config
 
 
-def generate_dataset_config(train_config: TrainConfig, kwargs: Dict[str, Any] = None) -> Any:
-    """Generate a dataset configuration based on the specified dataset in train_config.
+def generate_dataset_config(dataset_name: str) -> Any:
+    """Generate a dataset configuration based on the specified dataset.
 
     Args:
-        train_config (TrainConfig): Training configuration with dataset name.
-        kwargs (Dict[str, Any], optional): Additional arguments (currently unused).
+        dataset_name (str): Name of the dataset to be used for finetuning.
 
     Returns:
         Any: A dataset configuration object.
@@ -105,9 +108,10 @@ def generate_dataset_config(train_config: TrainConfig, kwargs: Dict[str, Any] = 
     Raises:
         AssertionError: If the dataset name is not recognized.
     """
-    names = tuple(DATASET_PREPROC.keys())
-    assert train_config.dataset in names, f"Unknown dataset: {train_config.dataset}"
-    dataset_config = {k: v for k, v in inspect.getmembers(datasets)}[train_config.dataset]()
+    supported_datasets = DATASET_PREPROC.keys()
+    assert dataset_name in supported_datasets, f"Given dataset '{dataset_name}' is not supported."
+    # FIXME (Meet): Replace below logic by creating using auto registry of datasets.
+    dataset_config = {k: v for k, v in inspect.getmembers(datasets)}[dataset_name]()
     return dataset_config
 
 

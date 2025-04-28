@@ -34,6 +34,6 @@ class LoraConfig:
 
 # CAUTION prefix tuning is currently not supported
 @dataclass
-class prefix_config:
+class PrefixConfig:
     num_virtual_tokens: int = 30
     task_type: str = "CAUSAL_LM"
