@@ -84,7 +84,7 @@ def generate_peft_config(train_config: TrainConfig, peft_config_file: str = None
         if train_config.peft_method not in config_map:
             raise RuntimeError(f"Peft config not found: {train_config.peft_method}")
 
-        config_cls, peft_config_cls = config_map[train_config.peft_method]()
+        config_cls, peft_config_cls = config_map[train_config.peft_method]
         if config_cls is None:
             params = kwargs
         else:

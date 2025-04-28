@@ -66,11 +66,10 @@ def test_finetune(
     }
 
     results = finetune(**kwargs)
-
-    assert np.allclose(results["avg_train_metric"], 1.002326, atol=1e-5), "Train metric is not matching."
     assert np.allclose(results["avg_train_loss"], 0.00232327, atol=1e-5), "Train loss is not matching."
-    assert np.allclose(results["avg_eval_metric"], 1.0193923, atol=1e-5), "Eval metric is not matching."
-    assert np.allclose(results["avg_eval_loss"], 0.0192067, atol=1e-5), "Eval loss is not matching."
+    assert np.allclose(results["avg_train_metric"], 1.002326, atol=1e-5), "Train metric is not matching."
+    assert np.allclose(results["avg_eval_loss"], 0.0206124, atol=1e-5), "Eval loss is not matching."
+    assert np.allclose(results["avg_eval_metric"], 1.020826, atol=1e-5), "Eval metric is not matching."
     assert results["avg_epoch_time"] < 60, "Training should complete within 60 seconds."
 
     train_config_spy.assert_called_once()
@@ -86,8 +85,8 @@ def test_finetune(
     assert get_preprocessed_dataset_spy.call_count == 2
 
     args, kwargs = train_spy.call_args
-    train_dataloader = args[1]
-    eval_dataloader = args[2]
+    train_dataloader = args[2]
+    eval_dataloader = args[3]
     optimizer = args[4]
 
     batch = next(iter(train_dataloader))

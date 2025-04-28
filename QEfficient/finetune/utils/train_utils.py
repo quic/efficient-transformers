@@ -458,7 +458,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     # Print evaluation metrics
     print(f" {eval_metric.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
 
-    return eval_metric, eval_epoch_loss, val_step_loss, val_step_metric
+    return eval_epoch_loss, eval_metric, val_step_loss, val_step_metric
 
 
 def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:

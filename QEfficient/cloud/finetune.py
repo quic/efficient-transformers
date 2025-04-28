@@ -294,7 +294,7 @@ def setup_dataloaders(
     return train_dataloader, eval_dataloader, longest_seq_length
 
 
-def main(peft_config_file=None, **kwargs) -> None:
+def main(peft_config_file: str = None, **kwargs) -> None:
     """
     Fine-tune a model on QAIC hardware with configurable training and LoRA parameters.
 
