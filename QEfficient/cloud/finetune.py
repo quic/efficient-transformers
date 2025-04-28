@@ -8,7 +8,6 @@
 import random
 import warnings
 
-import fire
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -29,6 +28,7 @@ from QEfficient.finetune.utils.dataset_utils import (
     get_custom_data_collator,
     get_preprocessed_dataset,
 )
+from QEfficient.finetune.utils.parser import get_finetune_parser
 from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
 from QEfficient.utils._utils import login_and_download_hf_lm
 
@@ -118,9 +118,6 @@ def main(**kwargs):
         model.resize_token_embeddings(len(tokenizer))
 
     print_model_size(model, train_config)
-
-    # print the datatype of the model parameters
-    # print(get_parameter_dtypes(model))
 
     # Note: Need to call this before calling PeftModel.from_pretrained or get_peft_model.
     # Because, both makes model.is_gradient_checkpointing = True which is used in peft library to
@@ -245,4 +242,6 @@ def main(**kwargs):
 
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    parser = get_finetune_parser()
+    args = parser.parse_args()
+    main(**args.__dict__)

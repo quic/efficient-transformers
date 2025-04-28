@@ -72,7 +72,7 @@ def generate_dataset_config(train_config, kwargs):
 
 def get_dataloader_kwargs(train_config, dataset, dataset_processer, mode):
     kwargs = {}
-    batch_size = train_config.batch_size_training if mode == "train" else train_config.val_batch_size
+    batch_size = train_config.train_batch_size if mode == "train" else train_config.val_batch_size
     if train_config.enable_ddp:
         if train_config.enable_sorting_for_ddp:
             if train_config.context_length:

@@ -472,14 +472,6 @@ def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
     return longest_seq_length, longest_seq_ix
 
 
-def get_parameter_dtypes(model):
-    """Get the data types of model parameters"""
-    parameter_dtypes = {}
-    for name, parameter in model.named_parameters():
-        parameter_dtypes[name] = parameter.dtype
-    return parameter_dtypes
-
-
 def print_model_size(model, config) -> None:
     """
     Print model name, the number of trainable parameters and initialization time.
