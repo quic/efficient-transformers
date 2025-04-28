@@ -47,11 +47,11 @@ from transformers import AutoModelForSequenceClassification
 warnings.filterwarnings("ignore")
 
 
-def setup_distributed_training(config: TrainConfig) -> None:
+def setup_distributed_training(train_config: TrainConfig) -> None:
     """Initialize distributed training environment if enabled.
 
     Args:
-        config (TrainConfig): Training configuration object.
+        train_config (TrainConfig): Training configuration object.
 
     Notes:
         - If distributed data parallel (DDP) is disabled, this function does nothing.
@@ -61,14 +61,14 @@ def setup_distributed_training(config: TrainConfig) -> None:
     Raises:
         AssertionError: If device is CPU or includes an index with DDP enabled.
     """
-    if not config.enable_ddp:
+    if not train_config.enable_ddp:
         return
 
-    torch_device = torch.device(config.device)
+    torch_device = torch.device(train_config.device)
     assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
     assert torch_device.index is None, f"DDP requires only device type, got: {torch_device}"
 
-    dist.init_process_group(backend=config.dist_backend)
+    dist.init_process_group(backend=train_config.dist_backend)
     # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
     getattr(torch, torch_device.type).set_device(dist.get_rank())
 

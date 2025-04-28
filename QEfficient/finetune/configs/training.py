@@ -19,6 +19,7 @@ class TrainConfig:
         batch_size_training (int): Batch size for training (default: 1).
         context_length (Optional[int]): Maximum sequence length for inputs (default: None).
         gradient_accumulation_steps (int): Steps for gradient accumulation (default: 4).
+        gradient checkpointing (bool): Enable gradient checkpointing to save the memory by compromising the speed. (default: False).
         num_epochs (int): Number of training epochs (default: 1).
         max_train_step (int): Maximum training steps (default: 0, unlimited if 0).
         max_eval_step (int): Maximum evaluation steps (default: 0, unlimited if 0).
@@ -32,6 +33,7 @@ class TrainConfig:
         use_autocast (bool): Use autocast for mixed precision (default: True).
         val_batch_size (int): Batch size for validation (default: 1).
         dataset (str): Dataset name for training (default: "samsum_dataset").
+        task_type (str): Type of task for which the finetuning is to be done. Options: "generation" and "seq_classification". (default: "generation")
         peft_method (str): Parameter-efficient fine-tuning method (default: "lora").
         use_peft (bool): Whether to use PEFT (default: True).
         from_peft_checkpoint (str): Path to PEFT checkpoint (default: "").

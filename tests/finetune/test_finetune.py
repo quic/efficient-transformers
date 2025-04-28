@@ -23,7 +23,19 @@ def clean_up(path):
         shutil.rmtree(path)
 
 
-configs = [pytest.param("meta-llama/Llama-3.2-1B", 10, 20, 1, None, True, True, "qaic", id="llama_config")]
+configs = [
+    pytest.param(
+        "meta-llama/Llama-3.2-1B",  # model_name
+        10,  # max_eval_step
+        20,  # max_train_step
+        1,  # intermediate_step_save
+        None,  # context_length
+        True,  # run_validation
+        True,  # use_peft
+        "qaic",  # device
+        id="llama_config",  # config name
+    )
+]
 
 
 @pytest.mark.on_qaic
@@ -105,7 +117,8 @@ def test_finetune(
     args, kwargs = update_config_spy.call_args_list[0]
     train_config = args[0]
     assert max_train_step >= train_config.gradient_accumulation_steps, (
-        "Total training step should be more than 4 which is gradient accumulation steps."
+        "Total training step should be more than "
+        f"{train_config.gradient_accumulation_steps} which is gradient accumulation steps."
     )
 
     saved_file = os.path.join(train_config.output_dir, "complete_epoch_1/adapter_model.safetensors")
