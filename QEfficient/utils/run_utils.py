@@ -135,7 +135,8 @@ class ApiRunner:
 
         pt_outputs = model(**inputs)
         for _ in range(1, self.gen_len):
-            generated_ids.append(pt_outputs["logits"].argmax(-1).reshape(-1, 1))
+            logits = pt_outputs["logits"].detach()
+            generated_ids.append(logits.argmax(-1).reshape(-1, 1))
             inputs = self.input_handler.update_pytorch_inputs(inputs, pt_outputs)
             pt_outputs = model(**inputs)
 

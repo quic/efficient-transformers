@@ -103,10 +103,11 @@ class InputHandler:
             :Dict: Updated input_ids, position_ids and past_key_values
         """
         updated_inputs = {}
+        logits = pt_outputs.logits.detach()
+        input_ids = logits.argmax(-1)
         if self.full_batch_size:
             batch_index = torch.arange(1).view(-1, 1)
 
-            input_ids = pt_outputs.logits.detach().argmax(2)
             updated_inputs["input_ids"] = torch.full((self.full_batch_size, 1), self.tokenizer.pad_token_id)
             updated_inputs["input_ids"][batch_index.view(-1)] = input_ids
 
@@ -117,7 +118,7 @@ class InputHandler:
             updated_inputs["batch_index"] = torch.arange(self.full_batch_size).view(-1, 1)
 
         else:
-            updated_inputs["input_ids"] = pt_outputs["logits"].argmax(-1).reshape(-1, 1)
+            updated_inputs["input_ids"] = input_ids.reshape(-1, 1)
             updated_inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
 
         updated_inputs["past_key_values"] = tuple(

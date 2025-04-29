@@ -21,7 +21,7 @@ def filter_hidden_states(
     Filter hidden states based on whether this is a TLM SpD model
 
     ``Mandatory`` Args:
-        :hidden_states (torch.Tensor): Hidden states tensor.
+        :hidden_states (torch.Tensor): Last hidden state tensor.
         :position_ids (torch.Tensor): Position ids tensor.
     ``Optional`` Args:
         :num_logits_to_keep (int, optional): Number of speculative tokens, specified only for TLM SpD model
@@ -49,6 +49,24 @@ def filter_hidden_states(
     hidden_states = torch.gather(hidden_states, dim=1, index=indices)  # shape: [bsz, k, d_model]
     return hidden_states
 
+def project_hidden_states(hidden_states, hidden_size_projections):
+    """
+    Filter hidden states based on whether this is a TLM SpD model
+    ``Mandatory`` Args:
+        :hidden_states (torch.Tensor): Last hidden state tensor.
+        :hidden_size_projections (torch.nn.ModuleList): Position ids tensor.
+    ``Optional`` Args:
+        :num_logits_to_keep (int, optional): Number of speculative tokens, specified only for TLM SpD model
+    Returns:
+        :torch.Tensor: Filtered hidden states.
+    """
+    proj_hidden_states = [hidden_states]
+    num_projs = len(hidden_size_projections)
+    for i in range(num_projs):
+        hidden_states_i = hidden_size_projections[i](hidden_states)
+        proj_hidden_states.append(hidden_states_i)
+    hidden_states = torch.stack(proj_hidden_states, dim=2)  # shape: [bsz, seq_len, num_projs, d_model]
+    return hidden_states
 
 def tlm_forward(
     self,
@@ -113,7 +131,10 @@ def tlm_forward(
     )
 
     hidden_states = filter_hidden_states(outputs[0], position_ids, num_logits_to_keep)
-    if self.config.pretraining_tp > 1:
+    hidden_size_projections = getattr(self, "projections", None)
+    if hidden_size_projections:
+        hidden_states = project_hidden_states(hidden_states, hidden_size_projections)
+    if hasattr(self.config, "pretraining_tp") and self.config.pretraining_tp > 1:
         lm_head_slices = self.lm_head.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
         logits = [F.linear(hidden_states, lm_head_slices[i]) for i in range(self.config.pretraining_tp)]
         logits = torch.cat(logits, dim=-1)
