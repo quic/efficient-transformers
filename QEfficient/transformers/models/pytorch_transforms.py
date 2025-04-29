@@ -200,14 +200,9 @@ from QEfficient.transformers.models.granite.modeling_granite import (
     QEffGraniteForCausalLM,
     QEffGraniteModel,
 )
-from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
-    QEffGraniteMoeAttention,
-    QEffGraniteMoeForCausalLM,
-    QEffGraniteMoeModel,
-    QEffGraniteMoeMoE,
-    QEffGraniteMoeParallelExperts,
-    QEffGraniteMoeRotaryEmbedding,
-    QEffGraniteMoeTopKGating,
+from QEfficient.transformers.models.internvl.modeling_internvl import (
+    QEffInternVisionEmbeddings,
+    QEffInternVLModel,
 )
 from QEfficient.transformers.models.grok_1.modeling_grok1 import (
     QEFFGrok1CustomRMSNormAIC,
