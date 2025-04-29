@@ -15,9 +15,21 @@ from transformers.modeling_outputs import (
 )
 from transformers.models.llama.modeling_llama import repeat_kv
 
+from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models.llama.modeling_llama import qeff_apply_rotary_pos_emb
+
+
+class QEFFGrok1CustomRMSNormAIC(nn.Module):
+    """
+    RMSNorm module that works by replacing the current module with compiler known custom-op.
+    """
+
+    def forward(self, hidden_states):
+        return CustomRMSNormFunc.apply(
+            hidden_states, self.scale, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
+        )
 
 
 class QEffGrok1MultiHeadAttention(nn.Module):
@@ -91,39 +103,27 @@ class QEffGrok1MultiHeadAttention(nn.Module):
 
 
 class QEffGrok1MoeBlock(nn.Module):
-    def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor]:
-        batch_size, sequence_length, hidden_dim = hidden_states.shape
-        hidden_states = hidden_states.view(-1, hidden_dim)
-        # router_logits: (batch * sequence_length, n_experts)
-        router_logits = self.gate(hidden_states)
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        B, S, D = hidden_states.shape  # [1, 8, 2304]
+        hidden_states = hidden_states.reshape(-1, D)  # [8, 2304]
+        T = hidden_states.size(0)  # 8 tokens
+        router_logits = self.gate(hidden_states)  # [8, 8]
+        probs = F.softmax(router_logits, dim=-1)  # [8, 8]
 
-        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
-        routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-        # we cast back to the input dtype
-        routing_weights = routing_weights.to(hidden_states.dtype)
+        topk_scores, topk_indices = torch.topk(probs, self.top_k, dim=-1)  # [8, top_k] → topk_k is 2 for Grok1
+        topk_scores = topk_scores / topk_scores.sum(dim=-1, keepdim=True)  # normalize per-token
+        topk_scores = topk_scores.to(hidden_states.dtype)  # [8, top_k]
+        route = torch.zeros((T, self.num_experts), dtype=hidden_states.dtype)
+        route.scatter_(1, topk_indices, topk_scores)  # [8, num_experts]
+        final_output = torch.zeros_like(hidden_states)  # [8, 2304]
 
-        final_hidden_states = torch.zeros(
-            (batch_size * sequence_length, hidden_dim),
-            dtype=hidden_states.dtype,
-            device=hidden_states.device,
-        )
-        # One hot encode the selected experts to create an expert mask
-        # this will be used to easily index which expert is going to be sollicitated
-        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
-
-        # Loop over all available experts in the model and perform the computation on each expert
-        for expert_idx in range(self.num_experts):
-            expert_layer = self.experts[expert_idx]
-            expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
-            current_hidden_states = expert_layer(hidden_states) * (((routing_weights * expert_mask_tr).sum(1))[:, None])
-            current_hidden_states = torch.where(
-                (routing_weights * expert_mask_tr).sum(1).to(torch.bool)[:, None],
-                current_hidden_states,
-                torch.tensor(0.0),
-            )
-            final_hidden_states = final_hidden_states + current_hidden_states
-        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-        return final_hidden_states, router_logits
+        for e, expert in enumerate(self.experts):
+            scores = route[:, e].unsqueeze(1)  # [8, 1]
+            masked_out = torch.where(
+                scores > 0, expert(hidden_states) * scores, 0.0
+            )  # # [8, 2304] × [8, 1] → [8, 2304]
+            final_output += masked_out  # accumulate expert outputs
+        return final_output.reshape(B, S, D), router_logits  # ([1, 8, 2304], [8, num_experts])
 
 
 class QEffGrok1DecoderLayer(nn.Module):
