@@ -39,4 +39,3 @@ def get_speculative_weights(pretrained_model_name_or_path, **kwargs) -> str:
     else:
         weights_path = hf_hub_download(pretrained_model_name_or_path, filename=turbo_weights_file, **hf_hub_kwargs)
     return str(weights_path)
-    
