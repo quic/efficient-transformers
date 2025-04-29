@@ -190,6 +190,7 @@ from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
     QEffGraniteMoeTopKGating,
 )
 from QEfficient.transformers.models.grok_1.modeling_grok1 import (
+    QEFFGrok1CustomRMSNormAIC,
     QEffGrok1DecoderLayer,
     QEffGrok1Model,
     QEffGrok1ModelForCausalLM,
@@ -492,7 +493,7 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
             "get_qeff_language_decoder": QEffInternVLModel.get_qeff_language_decoder,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
-        # #Mapping for grok1 model
+        # Mapping for grok1 model
         "Grok1ModelForCausalLM": {"forward": QEffGrok1ModelForCausalLM.forward},
         "Grok1Model": {
             "forward": QEffGrok1Model.forward,
@@ -502,6 +503,9 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
         "MoeBlock": {"forward": QEffGrok1MoeBlock.forward},
         "MultiHeadAttention": {
             "forward": QEffGrok1MultiHeadAttention.forward,
+        },
+        "RMSNorm": {
+            "forward": QEFFGrok1CustomRMSNormAIC.forward,
         },
     }
 
