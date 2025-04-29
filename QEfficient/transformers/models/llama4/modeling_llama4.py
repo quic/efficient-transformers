@@ -10,9 +10,9 @@ from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
-from transformers.cache_utils import Cache
+from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_outputs import (
-    BaseModelOutput,
+    BaseModelOutput
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
@@ -311,11 +311,7 @@ class QEffLlama4TextRotaryEmbedding(nn.Module):
         self.rope_type = "llama3" if config.rope_scaling is not None else "default"
         self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
-        # self.max_seq_len_cached = config.max_position_embeddings
-        # TODO: vbaddi Shouldn't for rope, the max posision_embeddings be original embeddings for rope,
-        # chunk size 8192 always? and Revisit when >8K Chunked attention is enabled.
-        self.max_seq_len_cached = config.rope_scaling["original_max_position_embeddings"]
-        # self.max_seq_len_cached = config.max_position_embeddings
+        self.max_seq_len_cached = config.max_position_embeddings
 
         # Get inverse frequency and scaling function (handles yarn/etc)
         inv_freq, self.attention_scaling = self.rope_init_fn(config, device)

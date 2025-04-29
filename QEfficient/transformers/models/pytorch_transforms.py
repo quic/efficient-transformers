@@ -8,6 +8,7 @@
 from types import MethodType
 from typing import Optional, Tuple
 
+import transformers
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
@@ -49,16 +50,6 @@ from transformers.models.granite.modeling_granite import (
     GraniteModel,
     GraniteRMSNorm,
 )
-from transformers.models.granitemoe.modeling_granitemoe import (
-    GraniteMoeAttention,
-    GraniteMoeForCausalLM,
-    GraniteMoeModel,
-    GraniteMoeMoE,
-    GraniteMoeParallelExperts,
-    GraniteMoeRMSNorm,
-    GraniteMoeRotaryEmbedding,
-    GraniteMoeTopKGating,
-)
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
@@ -80,9 +71,6 @@ from transformers.models.llama4.modeling_llama4 import (
 )
 from transformers.models.llava.modeling_llava import (
     LlavaForConditionalGeneration,
-)
-from transformers.models.llava_next.modeling_llava_next import (
-    LlavaNextForConditionalGeneration,
 )
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
@@ -145,6 +133,7 @@ from transformers.models.whisper.modeling_whisper import (
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QeffCodeGenBlock,
@@ -192,14 +181,9 @@ from QEfficient.transformers.models.granite.modeling_granite import (
     QEffGraniteForCausalLM,
     QEffGraniteModel,
 )
-from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
-    QEffGraniteMoeAttention,
-    QEffGraniteMoeForCausalLM,
-    QEffGraniteMoeModel,
-    QEffGraniteMoeMoE,
-    QEffGraniteMoeParallelExperts,
-    QEffGraniteMoeRotaryEmbedding,
-    QEffGraniteMoeTopKGating,
+from QEfficient.transformers.models.internvl.modeling_internvl import (
+    QEffInternVisionEmbeddings,
+    QEffInternVLModel,
 )
 from QEfficient.transformers.models.internvl.modeling_internvl import (
     QEffInternVisionEmbeddings,
@@ -224,9 +208,6 @@ from QEfficient.transformers.models.llama4.modeling_llama4 import (
 )
 from QEfficient.transformers.models.llava.modeling_llava import (
     QEffLlavaForConditionalGeneration,
-)
-from QEfficient.transformers.models.llava_next.modeling_llava_next import (
-    QEffLlavaNextForConditionalGeneration,
 )
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
@@ -310,7 +291,6 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen2RMSNorm: CustomRMSNormAIC,
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
-        GraniteMoeRMSNorm: CustomRMSNormAIC,
     }
 
 
@@ -353,8 +333,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Llama4TextExperts: QEffLlama4TextExperts,
         # Llava
         LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
-        # Llava Next
-        LlavaNextForConditionalGeneration: QEffLlavaNextForConditionalGeneration,
         # Gemma
         GemmaAttention: QEffGemmaAttention,
         GemmaDecoderLayer: QEffGemmaDecoderLayer,
@@ -369,14 +347,6 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
         GraniteAttention: QEffGraniteAttention,
-        # GraniteMoe
-        GraniteMoeModel: QEffGraniteMoeModel,
-        GraniteMoeForCausalLM: QEffGraniteMoeForCausalLM,
-        GraniteMoeAttention: QEffGraniteMoeAttention,
-        GraniteMoeRotaryEmbedding: QEffGraniteMoeRotaryEmbedding,
-        GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
-        GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
-        GraniteMoeMoE: QEffGraniteMoeMoE,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
@@ -441,6 +411,8 @@ class KVCacheTransform(ModuleMappingTransform):
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
+        # FIXME: see if we can merge into _module_mapping dict
+        transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update
         return model, transformed
 
 
