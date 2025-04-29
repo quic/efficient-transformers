@@ -192,52 +192,16 @@ class QEffLlama4TextMoe(Llama4TextMoe):
     # def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     #     """
     #     Implements expert routing and computation as in original LLaMA 4 MoE.
-
-    #     Stages:
-    #     - Input: [T, d_model]
-    #     - Router: top-k logits masking + sigmoid (not softmax)
-    #     - Routing mask: [T, E] with weights in (0, 1) (sparse but dense-shaped)
-    #     - Expert MLP: run for all tokens, zero-out unrouted via `torch.where`
-    #     - Shared MLP: runs for all tokens
-    #     - Final: expert_output + shared_output, reshaped to [B, S, H]
-
-    #     Returns:
-    #         final: final output of MoE block → [B, S, H]
-    #         router_logits: raw logits before sigmoid → [T, E] for analysis/debug
     #     """
-
-    #     # -----------------------------------------------------------
-    #     # : Flatten input from [B, S, H] to [T, H]
-    #     # -----------------------------------------------------------
     #     batch, seq_len, hidden_dim = hidden_states.shape         # B = batch, S = seq_len, H = hidden
     #     T = batch * seq_len                                      # T = total number of tokens
     #     hidden_states_flat = hidden_states.view(T, hidden_dim)   # [T, H] = token-wise input
 
-    #     # -----------------------------------------------------------
-    #     # : Compute router logits → [T, E]
-    #     # Route each token to its top-k preferred experts
-    #     # -----------------------------------------------------------
     #     router_logits = self.router(hidden_states_flat)          # [T, E] where E = num_experts
 
-    #     # -----------------------------------------------------------
-    #     # Top-K selection → get topk expert scores and indices
-    #     # Select k experts per token. This reduces compute and bandwidth.
-    #     # -----------------------------------------------------------
     #     topk_values, topk_indices = torch.topk(router_logits, self.top_k, dim=1)  # both [T, K]
-
-    #     # -----------------------------------------------------------
-    #     # : Build sparse routing matrix with -inf mask
-    #     # Initialize as -inf everywhere (which → sigmoid ≈ 0 later)
-    #     # Then scatter the top-k values in — others remain -inf
-    #     # -----------------------------------------------------------
     #     masked_logits = torch.full_like(router_logits, float("-inf"))  # [T, E]
     #     masked_logits.scatter_(1, topk_indices, topk_values)           # Set only top-k logits
-
-    #     # -----------------------------------------------------------
-    #     # : Sigmoid routing weights [T, E]
-    #     # This gives per-token-per-expert gating signal ∈ (0, 1)
-    #     # Unlike softmax, this does not normalize — each expert acts independently.
-    #     # -----------------------------------------------------------
     #     routing_weights = torch.sigmoid(masked_logits.float()).to(hidden_states.dtype)  # [T, E]
 
     #     # -----------------------------------------------------------
@@ -245,30 +209,15 @@ class QEffLlama4TextMoe(Llama4TextMoe):
     #     # Each expert contributes selectively into this output
     #     # -----------------------------------------------------------
     #     expert_output = torch.zeros_like(hidden_states_flat)  # [T, H]
-
-    #     # -----------------------------------------------------------
-    #     # : Per-expert routing and computation loop
-    #     # For each expert e ∈ [0, E-1]:
-    #     #   - Run MLP
-    #     #   - Scale output with routing weight
-    #     #   - Apply `torch.where` to zero-out tokens not routed to e
-    #     #   - Accumulate into final expert output
-    #     # -----------------------------------------------------------
     #     for expert_idx in range(self.num_experts):
-    #         # 1. Apply expert-specific gate and up projections (W_e): [T, 2I]
     #         gate_up = hidden_states_flat @ self.experts.gate_up_proj[expert_idx]  # [T, 2I]
-
-    #         # 2. Split into gate and up branches (standard LLaMA4 MLP design)
     #         gate, up = gate_up.chunk(2, dim=-1)                                   # [T, I], [T, I]
     #         activated = self.experts.act_fn(gate) * up                            # [T, I]
 
-    #         # 3. Down projection: convert expert activation to output dim
     #         expert_out = activated @ self.experts.down_proj[expert_idx]           # [T, H]
-
-    #         # 4. Get routing weights for this expert: [T, 1]
     #         routing_weight = routing_weights[:, expert_idx].unsqueeze(-1)         # [T, 1]
 
-    #         # 5. Conditionally apply expert output
+    #         # Conditionally apply expert output
     #         #    : cond ? X * w : 0 → ONNX-safe execution
     #         #    Only routed tokens contribute non-zero values
     #         masked_out = torch.where(
@@ -277,18 +226,9 @@ class QEffLlama4TextMoe(Llama4TextMoe):
     #             torch.zeros_like(expert_out)            # fallback = 0
     #         )
 
-    #         # 6. Accumulate into total expert output
     #         expert_output += masked_out  # [T, H]
 
-    #     # -----------------------------------------------------------
-    #     # : Shared expert path (non-sparse MLP)
-    #     # Always applied to every token — acts as a residual path
-    #     # -----------------------------------------------------------
     #     shared_output = self.shared_expert(hidden_states_flat)  # [T, H]
-
-    #     # -----------------------------------------------------------
-    #     # : Final output = shared + expert → reshape back to [B, S, H]
-    #     # -----------------------------------------------------------
     #     final = expert_output + shared_output                   # [T, H]
     #     final = final.view(batch, seq_len, hidden_dim)          # [B, S, H]
 
