@@ -66,7 +66,9 @@ pipeline {
                        }
                    }
                }
-               stage('Run Non-CLI QAIC MultiModal Tests') {
+           }
+       }
+       stage('QAIC MultiModal Tests') {
                    steps {
                        timeout(time: 60, unit: 'MINUTES') {
                            sh '''
@@ -82,9 +84,7 @@ pipeline {
                            '''
                        }
                    }
-               }
-           }
-       }
+        }
        stage('CLI Tests') {
                    steps {
                        timeout(time: 60, unit: 'MINUTES') {

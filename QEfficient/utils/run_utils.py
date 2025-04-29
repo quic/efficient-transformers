@@ -371,8 +371,8 @@ class ApiRunnerVlm:
             ort_outputs = self.input_handler_vlm.update_vlm_ort_outputs(ort_outputs)
             for _ in range(1, self.gen_len):
                 generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
-                inputs = self.input_handler_vlm.update_vlm_ort_inputs(lang_inputs, ort_outputs)
-                ort_outputs = self.run_ort_session(inputs, decoder_session)
+                lang_inputs = self.input_handler_vlm.update_vlm_ort_inputs(lang_inputs, ort_outputs)
+                ort_outputs = self.run_ort_session(lang_inputs, decoder_session)
                 ort_outputs = self.input_handler_vlm.update_vlm_ort_outputs(ort_outputs)
             generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
             generated_ids = np.concatenate(generated_ids, axis=1)

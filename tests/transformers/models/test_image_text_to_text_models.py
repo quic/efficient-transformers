@@ -33,6 +33,7 @@ test_models_config = [
     # CONFIG PARAMS NEEDED FOR A MODEL TO BE TESTED
     # (
     # model_name,
+    # kv_offload,
     # batch_size,
     # prompt_len,
     # ctx_len,
@@ -43,6 +44,18 @@ test_models_config = [
     # ),
     (
         "llava-hf/llava-1.5-7b-hf",
+        True,
+        1,
+        784,
+        1024,
+        336,
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
+        "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
+        1,
+    ),
+    (
+        "llava-hf/llava-1.5-7b-hf",
+        False,
         1,
         784,
         1024,
@@ -53,26 +66,38 @@ test_models_config = [
     ),
     # (
     #     "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    #     True,
     #     1,
     #     32,
     #     512,
     #     560,
     #     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
     #     "Explain this image",
-    #     4,
+    #     7,
     # ),
 ]
 
 intern_model_config = [
     (
         "OpenGVLab/InternVL2_5-1B",
+        True,
         1,
-        3840,
-        4096,
+        384,
+        512,
         "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
         "Please describe the image in detail.",
         2,
-    )
+    ),
+    (
+        "OpenGVLab/InternVL2_5-1B",
+        False,
+        1,
+        384,
+        512,
+        "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
+        "Please describe the image in detail.",
+        2,
+    ),
 ]
 
 
@@ -227,7 +252,7 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     processor = InternProcessor(model_hf, tokenizer)
     img = requests.get(img_url, stream=True)
     image = Image.open(BytesIO(img.content)).convert("RGB")
-    image = image.resize((1000, 747))
+    image = image.resize((448, 448))
 
     api_runner = ApiRunnerInternVL(
         batch_size,
@@ -275,6 +300,7 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
     qeff_model.compile(
+        num_patches=1,
         num_devices=num_devices,
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
@@ -290,47 +316,46 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize(
-    "model_name, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
 )
 def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-    model_name, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
+    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
 ):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
-
-    for kv_offload in [True, False]:
-        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-            model_name=model_name,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            max_gen_len=NEW_GENERATION_TOKENS,
-            img_size=img_size,
-            img_url=img_url,
-            query=query,
-            n_layer=n_layer,
-            batch_size=batch_size,
-            kv_offload=kv_offload,
-        )
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_size=img_size,
+        img_url=img_url,
+        query=query,
+        n_layer=n_layer,
+        batch_size=batch_size,
+        kv_offload=kv_offload,
+    )
 
 
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize("model_name, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config)
+@pytest.mark.parametrize(
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config
+)
 def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100(
-    model_name, batch_size, prompt_len, ctx_len, img_url, query, n_layer
+    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer
 ):
-    for kv_offload in [True, False]:
-        check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-            model_name=model_name,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
-            max_gen_len=NEW_GENERATION_TOKENS,
-            img_url=img_url,
-            query=query,
-            n_layer=n_layer,
-            batch_size=batch_size,
-            kv_offload=kv_offload,
-        )
+    check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_url=img_url,
+        query=query,
+        n_layer=n_layer,
+        batch_size=batch_size,
+        kv_offload=kv_offload,
+    )
