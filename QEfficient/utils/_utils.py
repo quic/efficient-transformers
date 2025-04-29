@@ -393,6 +393,26 @@ def execute_command(process: str, command: str, output_file_path: Optional[str] 
                 print(f"Failed to create {stderr_path}: {e}")
 
 
+def load_yaml(file_path: str) -> Dict[Any, Any]:
+    """
+    Opens the given YAML file, load and return the Dict.
+
+    ``Mandatory`` Args:
+        :file_path (str): YAML File to be opened.
+
+    Return:
+        Dict Object from the given file.
+
+    """
+    try:
+        # Load the YAML config file
+        with open(file_path, "r") as file:
+            config_data = yaml.safe_load(file)
+    except Exception as e:
+        raise ValueError(f"Failed to load YAML object from {file_path}: {e}")
+    return config_data
+
+
 def load_json(file_path: str) -> Dict[Any, Any]:
     """
     Opens the given JSON file, load and return the JSON object.
@@ -510,7 +530,7 @@ def create_and_dump_qconfigs(
     # Extract QNN SDK details from YAML file if the environment variable is set
     qnn_sdk_details = None
     qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
-    if qnn_sdk_path:
+    if enable_qnn and qnn_sdk_path:
         qnn_sdk_yaml_path = os.path.join(qnn_sdk_path, QnnConstants.QNN_SDK_YAML)
         with open(qnn_sdk_yaml_path, "r") as file:
             qnn_sdk_details = yaml.safe_load(file)

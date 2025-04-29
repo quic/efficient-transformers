@@ -17,6 +17,7 @@ from QEfficient.utils._utils import (  # noqa: F401
     get_padding_shape_from_config,
     get_qpc_dir_path,
     hf_download,
+    load_hf_processor,
     load_hf_tokenizer,
     login_and_download_hf_lm,
     onnx_exists,

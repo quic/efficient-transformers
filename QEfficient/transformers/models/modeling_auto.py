@@ -603,23 +603,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
-        enable_qnn: bool = False,
-        qnn_config: Optional[str] = None,
         skip_vision: Optional[bool] = False,
         skip_lang: Optional[bool] = False,
         **compiler_options,
     ) -> str:
-        if (
-            any(
-                param is not None
-                for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens, qnn_config]
-            )
-            or enable_qnn
-        ):
+        if any(param is not None for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens]):
             raise ValueError(
-                f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens', and 'qnn_config' to be None, and 'enable_qnn' to be False but got: "
+                f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens' to be None but got: "
                 f"full_batch_size={full_batch_size}, kv_cache_batch_size={kv_cache_batch_size}, num_speculative_tokens={num_speculative_tokens}, "
-                f"enable_qnn={enable_qnn}, qnn_config={qnn_config}"
             )
 
         if skip_lang and skip_vision:
@@ -638,9 +629,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         custom_io_vision = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
-        custom_io_vision["pixel_values"] = kv_cache_dtype
+        custom_io_vision["pixel_values"] = "float16"
         for output_name in output_names["vision"]:
-            custom_io_vision[output_name] = kv_cache_dtype
+            if output_name.startswith("past_"):
+                custom_io_vision[output_name] = kv_cache_dtype
+            else:
+                custom_io_vision[output_name] = "float16"
 
         if vision_onnx_path:
             self.vision_model.onnx_path = vision_onnx_path
@@ -662,6 +656,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
                 custom_io=custom_io_vision,
+                mxint8_kv_cache=mxint8_kv_cache,
                 **compiler_options,
             )
 
@@ -670,12 +665,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             # Inputs
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
-                    custom_io_lang[output_name[: -len("_RetainedState")]] = kv_cache_dtype
+                    custom_io_lang[output_name[: -len("_RetainedState")]] = (
+                        "float16" if "vision_embeds" in output_name else kv_cache_dtype
+                    )
 
             # outputs
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
-                    custom_io_lang[output_name] = kv_cache_dtype
+                    custom_io_lang[output_name] = "float16" if "vision_embeds" in output_name else kv_cache_dtype
 
             self.lang_model._compile(
                 compile_dir,
@@ -687,6 +684,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
                 custom_io=custom_io_lang,
+                mxint8_kv_cache=mxint8_kv_cache,
                 **compiler_options,
             )
         return self.qpc_path
@@ -930,21 +928,12 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
-        enable_qnn: bool = False,
-        qnn_config: Optional[str] = None,
         **compiler_options,
     ) -> str:
-        if (
-            any(
-                param is not None
-                for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens, qnn_config]
-            )
-            or enable_qnn
-        ):
+        if any(param is not None for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens]):
             raise ValueError(
-                f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens', and 'qnn_config' to be None, and 'enable_qnn' to be False but got: "
+                f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens' to be None but got: "
                 f"full_batch_size={full_batch_size}, kv_cache_batch_size={kv_cache_batch_size}, num_speculative_tokens={num_speculative_tokens}, "
-                f"enable_qnn={enable_qnn}, qnn_config={qnn_config}"
             )
 
         output_names = self.model.get_output_names()
@@ -964,12 +953,14 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         # inputs
         for input_name in output_names:
             if input_name.endswith("_RetainedState"):
-                custom_io[input_name[: -len("_RetainedState")]] = kv_cache_dtype
+                custom_io[input_name[: -len("_RetainedState")]] = (
+                    "float16" if "pixel_values" in input_name else kv_cache_dtype
+                )
 
         # outputs
         for output_name in output_names:
             if output_name.endswith("_RetainedState"):
-                custom_io[output_name] = kv_cache_dtype
+                custom_io[output_name] = "float16" if "pixel_values" in output_name else kv_cache_dtype
 
         self._compile(
             onnx_path,
@@ -982,6 +973,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
+            mxint8_kv_cache=mxint8_kv_cache,
             **compiler_options,
         )
         return self.qpc_path
@@ -1176,6 +1168,7 @@ class QEFFAutoModelForImageTextToText:
         :kv_offload (bool): Flag to toggle between single and dual QPC approaches. If set to False, the Single QPC approach will be used; otherwise, the dual QPC approach will be applied. Defaults to True.
 
     .. code-block:: python
+
         import requests
         from PIL import Image
         from transformers import AutoProcessor, TextStreamer
@@ -1189,8 +1182,8 @@ class QEFFAutoModelForImageTextToText:
         image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
 
         ## STEP - 1 Load the Processor and Model, and kv_offload=True/False for dual and single qpc
-        processor = AutoProcessor.from_pretrained(model_name, token=token)
-        model = QEFFAutoModelForImageTextToText.from_pretrained(model_name, token=token, attn_implementation="eager", kv_offload=False)
+        processor = AutoProcessor.from_pretrained(model_name, token=HF_TOKEN)
+        model = QEFFAutoModelForImageTextToText.from_pretrained(model_name, token=HF_TOKEN, attn_implementation="eager", kv_offload=False)
 
         ## STEP - 2 Export & Compile the Model
         model.compile(
@@ -1220,12 +1213,12 @@ class QEFFAutoModelForImageTextToText:
             return_tensors="pt",
             add_special_tokens=False,
             padding="max_length",
-            max_length=prefill_seq_len,
+            max_length=32,
         )
 
         ## STEP - 4 Run Inference on the compiled model
         streamer = TextStreamer(processor.tokenizer)
-        model.generate(inputs=inputs, streamer=streamer, generation_len=generation_len)
+        model.generate(inputs=inputs, streamer=streamer, generation_len=512)
 
     """
 
@@ -1255,6 +1248,9 @@ class QEFFAutoModelForImageTextToText:
 
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
+
+        if kwargs.pop("continuous_batching", None):
+            NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
@@ -1537,8 +1533,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
-        enable_qnn: bool = False,
-        qnn_config: Optional[str] = None,
         prefill_only: Optional[bool] = None,
         **compiler_options,
     ) -> str:
@@ -1561,10 +1555,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
-            :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
-            :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
             :prefill_only (bool): if ``True`` compile for prefill only and if ``False`` compile for decode only. Defaults to None, which compiles for both ``prefill and ``decode``.
-            :compiler_options (dict, optional): Any other options that the `qaic-exec` takes. ``Defaults to None``.
+            :compiler_options (dict, optional): Pass any compiler option as input. ``Defaults to None``.
+            Following flag can be passed in compiler_options to enable QNN Compilation path.
+                :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False. if not passed.``
+                :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None. if not passed``
+            for QAIC compilation path, any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
+                - aic_num_cores=16 -> -aic-num-cores=16
+                - convert_to_fp16=True -> -convert-to-fp16
 
         Returns:
             :str: Path of the compiled ``qpc`` package.
@@ -1613,48 +1611,29 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 specializations.append(decode_spec)
 
         # --- Compilation ---
-        if enable_qnn:
-            if compiler_options:
-                logger.warning("Extra arguments to QNN compilation are ignored. Use `qnn_config.json`.")
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        custom_io = {}
 
-            qpc_path = self._qnn_compile(
-                onnx_path=onnx_path,
-                compile_dir=compile_dir,
-                specializations=specializations,
-                prefill_seq_len=prefill_seq_len,
-                ctx_len=ctx_len,
-                batch_size=batch_size,
-                full_batch_size=full_batch_size,
-                mdp_ts_num_devices=num_devices,
-                num_cores=num_cores,
-                mxfp6_matmul=mxfp6_matmul,
-                mxint8_kv_cache=mxint8_kv_cache,
-                qnn_config=qnn_config,
-                kv_cache_batch_size=kv_cache_batch_size,
-            )
-        else:
-            kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
-            custom_io = {}
+        for suffix in ["", "_RetainedState"]:
+            for i in range(self.num_layers):
+                for kv in ["key", "value"]:
+                    custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
 
-            for suffix in ["", "_RetainedState"]:
-                for i in range(self.num_layers):
-                    for kv in ["key", "value"]:
-                        custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
-
-            qpc_path = self._compile(
-                onnx_path=onnx_path,
-                compile_dir=compile_dir,
-                compile_only=True,
-                retained_state=True,
-                specializations=specializations,
-                convert_to_fp16=True,
-                mxfp6_matmul=mxfp6_matmul,
-                custom_io=custom_io,
-                mdp_ts_num_devices=num_devices,
-                num_speculative_tokens=num_speculative_tokens,
-                aic_num_cores=num_cores,
-                **compiler_options,
-            )
+        qpc_path = self._compile(
+            onnx_path=onnx_path,
+            compile_dir=compile_dir,
+            compile_only=True,
+            retained_state=True,
+            specializations=specializations,
+            convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            custom_io=custom_io,
+            mdp_ts_num_devices=num_devices,
+            num_speculative_tokens=num_speculative_tokens,
+            aic_num_cores=num_cores,
+            mxint8_kv_cache=mxint8_kv_cache,
+            **compiler_options,
+        )
 
         return qpc_path
 
@@ -1799,8 +1778,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
-        enable_qnn: bool = False,
-        qnn_config: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -1842,8 +1819,22 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if num_speculative_tokens:
             logger.warning("Speculative decoding is not yet enabled for AutoModelForSpeechSeq2Seq")
 
-        if enable_qnn or qnn_config:
-            logger.warning("QNN compile is not yet enabled for AutoModelForSpeechSeq2Seq")
+        output_names = self.model.get_output_names()
+
+        kv_cache_dtype = "float16"
+        custom_io = {}
+
+        custom_io["input_features"] = kv_cache_dtype
+
+        # Slice output_names to get input names
+        for output_name in output_names:
+            if output_name.endswith("_RetainedState"):
+                custom_io[output_name[: -len("_RetainedState")]] = kv_cache_dtype
+
+        # Get output names
+        for output_name in output_names:
+            if output_name.endswith("_RetainedState"):
+                custom_io[output_name] = kv_cache_dtype
 
         return self._compile(
             onnx_path,
@@ -1855,6 +1846,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
+            custom_io=custom_io,
             **compiler_options,
         )
 
@@ -1886,14 +1878,14 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
-        inputs["input_features"] = inputs["input_features"].numpy().astype(np.float32)
+        inputs["input_features"] = inputs["input_features"].numpy().astype(np.float16)
 
         # add start token id and initial position ids to inputs
         seq_len = 1
-        inputs["decoder_input_ids"] = (
+        inputs["input_ids"] = (
             torch.ones((self.batch_size, seq_len), dtype=torch.int64) * self.model.config.decoder_start_token_id
         ).numpy()
-        inputs["decoder_position_ids"] = (
+        inputs["position_ids"] = (
             torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1).numpy()
         )
 
@@ -1920,7 +1912,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if streamer:
             streamer.put(next_token)
 
-        inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(np.float32)
+        inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(np.float16)
 
         loop_start = perf_counter()
         for num_tokens in range(generation_len):
@@ -1932,8 +1924,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             if next_token[0][0] == self.model.config.eos_token_id:
                 break
 
-            inputs["decoder_input_ids"] = next_token
-            inputs["decoder_position_ids"] += 1
+            inputs["input_ids"] = next_token
+            inputs["position_ids"] += 1
 
             if streamer:
                 streamer.put(next_token)
