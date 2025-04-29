@@ -25,7 +25,7 @@ configs = [
         32,  # prefill_seq_len
         128,  # ctx_len
         1,  # prefill_bsz
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # target_model_name
+        "JackFram/llama-68m",  # target_model_name
         1,  # full_batch_size
         3,  # max_ngram_size
         id="CB llama",
@@ -247,8 +247,9 @@ def test_pld_spec_decode_inference(
 
     # export_and_compile tlm and dlm
     continuous_batching = full_batch_size is not None
+    qaic_config = dict(speculative_model_type="target")
     target_model = AutoModelForCausalLM.from_pretrained(
-        target_model_name, continuous_batching=continuous_batching, is_tlm=True
+        target_model_name, continuous_batching=continuous_batching, qaic_config=qaic_config
     )
 
     num_devices = len(device_group)
