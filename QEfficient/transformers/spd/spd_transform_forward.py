@@ -50,7 +50,7 @@ def filter_hidden_states(
     return hidden_states
 
 
-def project_hidden_states(hidden_states, hidden_size_projections):
+def project_hidden_states(hidden_states: torch.Tensor, hidden_size_projections: torch.nn.ModuleList) -> torch.Tensor:
     """
     Filter hidden states based on whether this is a TLM SpD model
     ``Mandatory`` Args:

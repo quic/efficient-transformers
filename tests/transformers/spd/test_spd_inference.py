@@ -25,8 +25,8 @@ configs = [
         32,  # prefill_seq_len
         128,  # ctx_len
         1,  # prefill_bsz
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # draft_model_name
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # target_model_name
+        "JackFram/llama-160m",  # draft_model_name
+        "JackFram/llama-160m",  # target_model_name
         1,  # full_batch_size
         id="CB llama",
     ),
@@ -282,7 +282,7 @@ def test_spec_decode_inference(
             accepted_tokens = num_tokens_selected[bi]
             num_tokens_to_append = min(accepted_tokens, max_gen_len[bi] - len(generated_ids[bi]))
             generated_ids[bi].extend(target_tokens[bi, :num_tokens_to_append].tolist())
-            if len(generated_ids[bi]) >= max_gen_len[bi]:
+            if len(generated_ids[bi]) + num_logits_to_keep >= max_gen_len[bi]:
                 valid_batch_indices[bi] = False
         # check if all generations are done
         if not valid_batch_indices.any():
