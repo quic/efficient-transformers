@@ -495,6 +495,23 @@ def dump_qconfig(func):
     return wrapper
 
 
+def get_qaic_sdk_version():
+    # Extract QAIC SDK Apps or Platform Version from SDK XML file
+    sdk_xml_file = (
+        Constants.SDK_APPS_XML
+        if os.path.exists(Constants.SDK_APPS_XML)
+        else Constants.SDK_PLATFORM_XML
+        if os.path.exists(Constants.SDK_PLATFORM_XML)
+        else None
+    )
+    qaic_version = None
+    if sdk_xml_file is not None:
+        tree = ET.parse(sdk_xml_file)
+        root = tree.getroot()
+        qaic_version = root.find(".//base_version").text
+    return qaic_version
+
+
 def create_and_dump_qconfigs(
     qpc_path,
     onnx_path,
@@ -511,16 +528,13 @@ def create_and_dump_qconfigs(
     Such as huggingface configs, QEff transforms, QAIC sdk version, QNN sdk, compilation dir, qpc dir and
     many other compilation options.
     """
-    qnn_config = compiler_options["qnn_config"] if "qnn_config" in compiler_options else None
-    enable_qnn = True if "qnn_config" in compiler_options else False
-
+    enable_qnn = compiler_options.get("enable_qnn", None)
+    qnn_config = compiler_options.get("qnn_config", None)
     qconfig_file_path = os.path.join(os.path.dirname(qpc_path), "qconfig.json")
     onnx_path = str(onnx_path)
     specializations_file_path = str(os.path.join(os.path.dirname(qpc_path), "specializations.json"))
     compile_dir = str(os.path.dirname(qpc_path))
-    qnn_config_path = (
-        (qnn_config if qnn_config is not None else "QEfficient/compile/qnn_config.json") if enable_qnn else None
-    )
+    qnn_config_path = qnn_config if qnn_config is not None else "QEfficient/compile/qnn_config.json"
 
     # Ensure all objects in the configs dictionary are JSON serializable
     def make_serializable(obj):
@@ -546,16 +560,15 @@ def create_and_dump_qconfigs(
     }
 
     if enable_qnn:
-        # Extract QNN SDK details from YAML file if the environment variable is set
         qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
         if not qnn_sdk_path:
             raise EnvironmentError(
                 f"QNN_SDK_PATH {qnn_sdk_path} is not set. Please set {QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME}"
             )
         qnn_sdk_yaml_path = os.path.join(qnn_sdk_path, QnnConstants.QNN_SDK_YAML)
-        with open(qnn_sdk_yaml_path, "r") as file:
-            qnn_sdk_details = yaml.safe_load(file)
-
+        qnn_sdk_details = load_yaml(
+            qnn_sdk_yaml_path
+        )  # Extract QNN SDK details from YAML file if the environment variable is set
         qnn_config = {
             "enable_qnn": enable_qnn,
             "qnn_config_path": qnn_config_path,
@@ -565,20 +578,7 @@ def create_and_dump_qconfigs(
             qconfigs["qpc_config"]["qnn_config"].update(qnn_sdk_details)
 
     else:
-        # Extract QAIC SDK Apps or Platform Version from SDK XML file
-        sdk_xml_file = (
-            Constants.SDK_APPS_XML
-            if os.path.exists(Constants.SDK_APPS_XML)
-            else Constants.SDK_PLATFORM_XML
-            if os.path.exists(Constants.SDK_PLATFORM_XML)
-            else None
-        )
-        qaic_version = None
-        if sdk_xml_file is not None:
-            tree = ET.parse(sdk_xml_file)
-            root = tree.getroot()
-            qaic_version = root.find(".//base_version").text
-
+        qaic_version = get_qaic_sdk_version()
         aic_compiler_config = {
             "aic_sdk_version": qaic_version,
             "compile_dir": compile_dir,
