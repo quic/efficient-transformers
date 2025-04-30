@@ -165,7 +165,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     )
     config = set_num_layers(config, n_layer=n_layer)
     model_hf, _ = load_image_text_to_text_model(config)
-    processor = AutoProcessor.from_pretrained(model_name, token=HF_TOKEN, trust_remote_code=True, padding=True)
+    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
 
     n_layer = get_num_layers_vlm(config)
     image = Image.open(requests.get(img_url, stream=True).raw)
