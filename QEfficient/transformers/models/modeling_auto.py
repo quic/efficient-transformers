@@ -156,10 +156,11 @@ class QEFFAutoModel(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, **kwargs):
+    def __init__(self, model: nn.Module, model_name: str, **kwargs):
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
+        self.model.model_name = model_name
 
     @classmethod
     @with_replaced_quantizers
@@ -226,6 +227,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
+        mhash.update(to_hashable(self.model.model_name))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -533,7 +535,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.config = model.config
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model)
-
         self.input_shapes, self.output_names = None, None
 
     @property
@@ -1299,6 +1300,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model: nn.Module,
         continuous_batching: bool = False,
         is_tlm: bool = False,
+        model_name: str = None,
         **kwargs,
     ):
         model_class_name = model.__class__.__name__
@@ -1324,6 +1326,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
+        self.model.model_name = model_name
 
         if is_tlm:
             # TODO: It is possible to always apply this transform and make value of indices as last indices by default in PyTorch
@@ -1406,6 +1409,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
         mhash.update(to_hashable({"is_tlm": self.is_tlm}))
         mhash.update(to_hashable(self._transform_names()))
+        mhash.update(to_hashable(self.model.model_name))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -1718,7 +1722,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, KVCacheTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, **kwargs):
+    def __init__(self, model: nn.Module, model_name, **kwargs):
         model_class_name = model.__class__.__name__
         if not (model_class_name.endswith("ForConditionalGeneration")):
             raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
@@ -1726,6 +1730,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
+        self.model.model_name = model_name
 
     @property
     def model_hash(self) -> str:
@@ -1739,6 +1744,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
+        mhash.update(to_hashable(self.model.mode))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
