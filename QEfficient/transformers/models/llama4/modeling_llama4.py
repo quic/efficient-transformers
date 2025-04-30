@@ -30,6 +30,7 @@ from transformers.models.llama4.modeling_llama4 import (
     Llama4VisionModel,
     logger,
     repeat_kv,
+    reshape_for_broadcast,
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
@@ -988,6 +989,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         vision_inputs = {}
         lang_inputs = {}
         vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        vision_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
         lang_inputs["position_ids"] = (
