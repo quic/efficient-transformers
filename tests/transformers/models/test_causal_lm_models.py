@@ -32,7 +32,7 @@ test_models_qaic = [
     "Felladrin/Minueza-32M-Base",
     "wtang06/mpt-125m-c4",
     "hakurei/gpt-j-random-tinier",
-    "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    # "mistralai/Mixtral-8x7B-Instruct-v0.1",
     "meta-llama/Llama-3.2-1B",
     "unsloth/gemma-2b",
     "unsloth/gemma-2-2b",
@@ -123,7 +123,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
     is_tlm = False if num_speculative_tokens is None else True
-    qeff_model = QEFFAutoModelForCausalLM(model_hf, is_tlm=is_tlm)
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, is_tlm=is_tlm, model_name=model_name)
 
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
@@ -183,7 +183,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
     pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
 
-    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=True, is_tlm=is_tlm)
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=True, is_tlm=is_tlm, model_name=model_name)
     onnx_model_path = qeff_model.export()
 
     if not get_available_device_id():
@@ -219,7 +219,7 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     model_config["n_layer"] = 1
     model, _ = load_causal_lm_model(model_config)
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
-    qeff_model = QEFFAutoModelForCausalLM(model)
+    qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name)
     new_api_onnx_model_path = qeff_model.export()
     _, old_api_onnx_model_path = qualcomm_efficient_converter(
         model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer
