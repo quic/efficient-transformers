@@ -65,6 +65,8 @@ from transformers.models.llama4.modeling_llama4 import (
     Llama4TextModel,
     Llama4TextMoe,
     Llama4TextRMSNorm,
+    Llama4VisionAttention,
+    Llama4VisionModel,
 )
 from transformers.models.llava.modeling_llava import (
     LlavaForConditionalGeneration,
@@ -195,6 +197,8 @@ from QEfficient.transformers.models.llama4.modeling_llama4 import (
     QEffLlama4TextDecoderLayer,
     QEffLlama4TextModel,
     QEffLlama4TextMoe,
+    QEffLlama4VisionAttention,
+    QEffLlama4VisionModel,
 )
 from QEfficient.transformers.models.llava.modeling_llava import (
     QEffLlavaForConditionalGeneration,
@@ -318,6 +322,8 @@ class KVCacheTransform(ModuleMappingTransform):
         Llama4TextModel: QEffLlama4TextModel,
         Llama4TextMoe: QEffLlama4TextMoe,
         Llama4ForConditionalGeneration: QEffLlama4ForConditionalGeneration,
+        Llama4VisionAttention: QEffLlama4VisionAttention,
+        Llama4VisionModel: QEffLlama4VisionModel,
         # Llava
         LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
         # Gemma

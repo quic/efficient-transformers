@@ -5,12 +5,14 @@
 #
 # -----------------------------------------------------------------------------
 
+import math
 from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_outputs import (
+    BaseModelOutput,
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
@@ -23,13 +25,287 @@ from transformers.models.llama4.modeling_llama4 import (
     Llama4TextDecoderLayer,
     Llama4TextModel,
     Llama4TextMoe,
+    Llama4VisionAttention,
+    Llama4VisionModel,
     logger,
     repeat_kv,
+    reshape_for_broadcast,
 )
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
+
+
+def eager_attention_forward_vision(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    dropout: float = 0.0,
+    **kwargs,
+):
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) / math.sqrt(module.head_dim)
+    if attention_mask is not None:
+        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+        attn_weights = attn_weights + causal_mask
+    if attention_mask is not None:
+        attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+
+    attn_weights = nn.functional.softmax(attn_weights.float(), dim=-1).to(query.dtype)
+    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+    attn_output = torch.matmul(attn_weights, value_states)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output, attn_weights
+
+
+def qeff_vision_apply_rotary_emb(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    freqs_ci: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    query_ = query.float().reshape(*query.shape[:-1], -1, 2)
+    key_ = key.float().reshape(*key.shape[:-1], -1, 2)
+    # import ipdb; ipdb.set_trace()
+    freqs_ci[..., 0] = reshape_for_broadcast(freqs_ci=freqs_ci[..., 0], query=query_[..., 0])
+    freqs_ci[..., 1] = reshape_for_broadcast(freqs_ci=freqs_ci[..., 1], query=query_[..., 1])
+    freqs_ci = freqs_ci.to(query_.device)
+
+    def complex_mul(a, b):
+        real = a[..., 0] * b[..., 0] - a[..., 1] * b[..., 1]
+        imag = a[..., 0] * b[..., 1] + a[..., 1] * b[..., 0]
+        return torch.stack((real, imag), dim=-1).flatten(3)
+
+    query_out = complex_mul(query_, freqs_ci)
+    key_out = complex_mul(key_, freqs_ci)
+    return query_out.type_as(query), key_out.type_as(key)
+
+
+class QEffLlama4VisionRotaryEmbedding(nn.Module):
+    """
+    Vision RoPE that
+    • caches (cos, sin) tables as a real-valued buffer --► folds into an ONNX initializer
+    • grows automatically if you feed larger images
+    """
+
+    def __init__(self, config):
+        super().__init__()
+
+        self.config = config
+        self.hidden_size = config.hidden_size
+        self.n_heads = config.num_attention_heads
+        self.theta = config.rope_theta
+        self.patch_size = config.patch_size
+
+        # Build the initial cache for the reference image resolution
+        n_patches = (config.image_size // self.patch_size) ** 2
+        self._build_cache(n_patches)  # registers `freqs_cis`
+        self.max_tokens_cached = n_patches + 1  # +1 for CLS row
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """
+        hidden_states: [B, S, H]   (S = CLS + patches)
+        Returns:      [S, H/num_heads, 2]  (cos,sin).
+        """
+        #    import ipdb; ipdb.set_trace()
+        #    seq_len = hidden_states.shape[1]
+        #    if seq_len > self.max_tokens_cached:               # automatic grow
+        #        self._build_cache(seq_len - 1)
+        #        self.max_tokens_cached = seq_len
+
+        return self.freqs_cis.unsqueeze(1).to(hidden_states.device)
+
+    def _build_cache(self, n_patches: int) -> None:
+        """
+        Pre-compute cos/sin for every patch plus the CLS token.
+        Produces buffer `freqs_cis`:  [(n_patches+1), head_dim, 2]
+        """
+        # -- 2-D grid coordinates ---------------------------------------- #
+        side = int(math.sqrt(n_patches))
+        assert side * side == n_patches, "Vision RoPE expects a square grid of patches"
+
+        coords = torch.arange(side)
+        y, x = torch.meshgrid(coords, coords, indexing="ij")
+        x = x.reshape(-1, 1)  # [n_patches,1]
+        y = y.reshape(-1, 1)
+
+        # -- rotary base frequencies ------------------------------------- #
+        head_dim = self.hidden_size // self.n_heads // 2  # real+imag split
+        rope_freq = 1.0 / (self.theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
+
+        # angles along x / y; repeat_interleave = [freq0,freq0,freq1,freq1,…]
+        ang_x = ((x + 1) * rope_freq).repeat_interleave(2, dim=-1)
+        ang_y = ((y + 1) * rope_freq).repeat_interleave(2, dim=-1)
+        freqs = torch.cat([ang_x, ang_y], dim=-1).float()[..., ::2]  # [n_patches, head_dim]
+
+        # -- add CLS row = zeros  ---------------------------------------- #
+        freqs = torch.cat([freqs, freqs.new_zeros((1, freqs.shape[1]))], dim=0)
+
+        # -- stack real/imag → shape [tokens, head_dim, 2] --------------- #
+        real, imag = torch.cos(freqs), torch.sin(freqs)
+        freqs_cis = torch.stack([real, imag], dim=-1)
+
+        #    freqs_cis = torch.view_as_complex(freqs_cis.contiguous())
+
+        # store as non-persistent buffer
+        self.register_buffer("freqs_cis", freqs_cis, persistent=False)
+
+
+class QEffLlama4VisionAttention(Llama4VisionAttention):
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        freqs_ci: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Cache] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
+
+        query_states = self.q_proj(hidden_states).view(hidden_shape)
+        key_states = self.k_proj(hidden_states).view(hidden_shape)
+        value_states = self.v_proj(hidden_states).view(hidden_shape)
+
+        query_states, key_states = qeff_vision_apply_rotary_emb(query_states, key_states, freqs_ci=freqs_ci)
+
+        query_states = query_states.transpose(1, 2)
+        key_states = key_states.transpose(1, 2)
+        value_states = value_states.transpose(1, 2)
+
+        attention_interface: Callable = eager_attention_forward_vision
+
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            None,
+            dropout=0.0 if not self.training else self.attention_dropout,
+            scaling=None,
+            is_causal=False,  # HAS TO BE ENFORCED
+            **kwargs,
+        )
+
+        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+        attn_output = self.o_proj(attn_output)
+        return attn_output, attn_weights
+
+
+class QEffLlama4VisionModel(Llama4VisionModel):
+    def __init__(self, config):
+        super().__init__(config)
+        # Define the general __qeff_init__() for any changes in the init calls
+        # Set the init in the module mapping pytorch transforms
+        self.config = config
+        self.__qeff_init__()
+
+    def __qeff_init__(self):
+        self.rotary_embedding = QEffLlama4VisionRotaryEmbedding(config=self.config)
+
+    def forward(
+        self,
+        pixel_values: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[BaseModelOutput, Tuple[torch.Tensor, ...]]:
+        r"""
+
+        Example:
+
+        ```python
+        >>> from PIL import Image
+        >>> import requests
+        >>> from transformers import AutoProcessor, MllamaVisionModel
+
+        >>> checkpoint = "meta-llama/Llama-3.2-11B-Vision"
+        >>> model = MllamaVisionModel.from_pretrained(checkpoint)
+        >>> processor = AutoProcessor.from_pretrained(checkpoint)
+
+        >>> url = "https://www.ilankelman.org/stopsigns/australia.jpg"
+        >>> image = Image.open(requests.get(url, stream=True).raw)
+        >>> inputs = processor(images=image, return_tensors="pt")
+
+        >>> output = model(**inputs)
+
+        >>> print(output.last_hidden_state.shape)
+        torch.Size([1, 1, 4, 1025, 7680])
+        ```
+        """
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        # num_concurrent_media and num_chunks are both currently 1
+        batch_size_times_num_tiles, num_channels, height, width = pixel_values.shape
+        num_concurrent_media = 1
+        num_chunks = 1
+        hidden_state = self.patch_embedding(pixel_values)
+        _, num_patches, hidden_dim = hidden_state.shape
+
+        # Add cls token
+        hidden_state = hidden_state.reshape(
+            batch_size_times_num_tiles * num_concurrent_media * num_chunks, num_patches, hidden_dim
+        )
+        class_embedding = self.class_embedding.expand(hidden_state.shape[0], 1, hidden_state.shape[-1])
+        hidden_state = torch.cat([hidden_state, class_embedding], dim=1)
+        num_patches += 1
+
+        # Position embeddings
+        hidden_state = hidden_state.reshape(
+            batch_size_times_num_tiles * num_concurrent_media, num_chunks, num_patches, hidden_dim
+        )
+        positional_embedding = self.positional_embedding_vlm.to(dtype=hidden_state.dtype, device=hidden_state.device)
+        hidden_state = hidden_state + positional_embedding
+
+        hidden_state = self.layernorm_pre(hidden_state)
+
+        hidden_state = hidden_state.view(batch_size_times_num_tiles, -1, hidden_dim)
+        freqs_ci = self.rotary_embedding(pixel_values)
+        # import ipdb; ipdb.set_trace()
+
+        # import ipdb; ipdb.set_trace()
+        output = self.model(
+            hidden_state,
+            attention_mask=None,
+            output_hidden_states=output_hidden_states,
+            output_attentions=output_attentions,
+            freqs_ci=freqs_ci,
+        )
+
+        hidden_state = output.last_hidden_state
+
+        hidden_state = self.layernorm_post(hidden_state)
+
+        hidden_state = hidden_state[:, :-1, :]
+
+        # now, we use Llama4VisionPixelShuffle + mlp to project embeddings
+        hidden_state = self.vision_adapter(hidden_state)
+
+        hidden_states = output.hidden_states if output_hidden_states else None
+
+        if output_attentions:
+            attentions = output[2]
+        else:
+            attentions = None
+
+        if not return_dict:
+            return tuple(v for v in [hidden_state, hidden_states, attentions] if v is not None)
+
+        return BaseModelOutput(
+            last_hidden_state=hidden_state,
+            hidden_states=hidden_states,
+            attentions=attentions,
+        )
 
 
 class QEffLlama4TextRotaryEmbedding(nn.Module):
@@ -551,9 +827,24 @@ class QEffLlama4EncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
 
-    def forward(self, pixel_values):
-        vision_outputs = self.model.vision_model(pixel_values=pixel_values)
-        return vision_outputs.last_hidden_state
+    def forward(self, input_ids, pixel_values):
+        inputs_embeds = self.model.get_input_embeddings()(input_ids)
+        vision_feature_layer = self.model.config.vision_config.vision_feature_layer
+        vision_feature_select_strategy = self.model.config.vision_config.vision_feature_select_strategy
+        image_features = self.model.get_image_features(
+            pixel_values=pixel_values,
+            vision_feature_layer=vision_feature_layer,
+            vision_feature_select_strategy=vision_feature_select_strategy,
+            image_sizes=None,
+        )
+        vision_flat = image_features.view(-1, image_features.size(-1))
+        projected_vision_flat = self.model.multi_modal_projector(vision_flat)
+        selected = input_ids == self.model.config.image_token_index
+        indices1 = selected.to(torch.int64).cumsum(1) - 1
+        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+        image_features_expanded = projected_vision_flat.unsqueeze(0)[indices0, indices1]
+        image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+        return image_input_embeds
 
 
 class QEffLlama4DecoderWrapper(nn.Module):
@@ -561,22 +852,16 @@ class QEffLlama4DecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.language_model = self.model.language_model
+        self.config = self.model.config
 
-    def forward(self, input_ids, vit_embeds, position_ids, past_key_values):
-        input_embeds = self.model.language_model.get_input_embeddings()(input_ids)
-        B, N, C = input_embeds.shape
-        image_input_embeds = input_embeds.reshape(B * N, C)
-        image_input_ids = input_ids.reshape(B * N)
-        selected = image_input_ids == 200092  # Llama4 Image Token Index
-        indices1 = selected.unsqueeze(0).to(torch.int64).cumsum(1) - 1
-        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-        image_features_expanded = vit_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
-        image_input_embeds = torch.where(selected.unsqueeze(0).unsqueeze(-1), image_features_expanded, input_embeds)
-        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), input_embeds, image_input_embeds)
+    def forward(self, input_ids, vision_embeds, position_ids, past_key_values):
+        image_embeds = vision_embeds[:, : input_ids.shape[1], :]
+        inputs_embeds = self.model.language_model.get_input_embeddings()(input_ids)
+        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_embeds)
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
-        return outputs.logits, vit_embeds, outputs.past_key_values
+        return outputs.logits, vision_embeds, outputs.past_key_values
 
 
 class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
@@ -603,7 +888,11 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             )
             batch_size_times_num_tiles = 17
 
-        prefill_seq_len = 3952  # FIXME based on the feature size
+        vision_seq_len = compiler_options.pop("vision_seq_len", None)
+        if vision_seq_len is None:
+            vision_seq_len = 2560
+
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
             img_size = getattr(self.config.vision_config, "image_size")
@@ -613,9 +902,10 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
         vision = [
             {
+                "batch_size": batch_size,
                 "batch_size_times_num_tiles": batch_size_times_num_tiles,
                 "img_size": img_size,
-                "seq_len": prefill_seq_len,
+                "seq_len": vision_seq_len,
                 "ctx_len": ctx_len,
             }
         ]
@@ -626,6 +916,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "batch_size_times_num_tiles": batch_size_times_num_tiles,
                 "img_size": img_size,
+                "chunk_length": prefill_seq_len,
             },
             {
                 "batch_size": batch_size,
@@ -633,6 +924,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "batch_size_times_num_tiles": batch_size_times_num_tiles,
                 "img_size": img_size,
+                "chunk_length": prefill_seq_len,
             },
         ]
 
@@ -651,8 +943,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         lang_dynamic_axes = {}
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
-        lang_dynamic_axes["vit_embeds"] = {0: "batch_size_times_num_tiles"}
+        lang_dynamic_axes["vision_embeds"] = {0: "batch_size", 1: "chunk_length"}
         vision_dynamic_axes["pixel_values"] = {0: "batch_size_times_num_tiles", 2: "img_size", 3: "img_size"}
+        vision_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
 
         pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
         for i in range(self.language_model.config.num_hidden_layers):
@@ -668,7 +961,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         return dynamic_axes
 
     def get_output_names(self, kv_offload: bool = False):
-        vision_output_names = ["vit_embeds"]
+        vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
@@ -676,7 +969,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
         output_names = {}
         if kv_offload:
-            lang_output_names.insert(1, "vit_embeds_RetainedState")
+            lang_output_names.insert(1, "vision_embeds_RetainedState")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
@@ -704,9 +997,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         # Define shapes
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-        inputs_shapes["vit_embeds"] = (
-            17,  # constants.INTERN_NUM_PATCHES,
-            14,  # constants.INTERN_FEATURE_SIZE,
+        inputs_shapes["vision_embeds"] = (
+            1,  # constants.INTERN_NUM_PATCHES,
+            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,  # constants.INTERN_FEATURE_SIZE,
             self.language_model.config.hidden_size,  # 5120
         )
         inputs_shapes["position_ids"] = (
@@ -724,8 +1017,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         vision_inputs = {}
         lang_inputs = {}
         vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        vision_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["vit_embeds"] = torch.zeros((inputs_shapes["vit_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
         lang_inputs["position_ids"] = (
             torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
             .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
@@ -749,7 +1043,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             inputs["vision"] = vision_inputs
             inputs["lang"] = lang_inputs
         else:
-            lang_inputs.pop("vit_embeds")
+            lang_inputs.pop("vision_embeds")
             inputs = {**vision_inputs, **lang_inputs}
 
         return inputs
