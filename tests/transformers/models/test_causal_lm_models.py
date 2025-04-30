@@ -32,7 +32,7 @@ test_models_qaic = [
     "Felladrin/Minueza-32M-Base",
     "wtang06/mpt-125m-c4",
     "hakurei/gpt-j-random-tinier",
-    # "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    "mistralai/Mixtral-8x7B-Instruct-v0.1",
     "meta-llama/Llama-3.2-1B",
     "unsloth/gemma-2b",
     "unsloth/gemma-2-2b",
