@@ -403,7 +403,7 @@ def test_pld_spec_decode_inference(
             all_ids[bi, prompt_plus_gen_idx[bi] : prompt_plus_gen_idx[bi] + num_tokens_to_append] = gen_ids
             prompt_plus_gen_idx[bi] += num_tokens_to_append
             generated_ids[bi].extend(gen_ids.tolist())
-            if len(generated_ids[bi]) >= max_gen_len[bi]:
+            if len(generated_ids[bi]) + num_logits_to_keep >= max_gen_len[bi]:
                 valid_batch_indices[bi] = False
         # check if all generations are done
         if not valid_batch_indices.any():
