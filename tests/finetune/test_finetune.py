@@ -38,6 +38,7 @@ configs = [
 ]
 
 
+@pytest.mark.cli
 @pytest.mark.on_qaic
 @pytest.mark.finetune
 @pytest.mark.parametrize(
