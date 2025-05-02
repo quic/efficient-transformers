@@ -58,7 +58,7 @@ def load_all_split_gate_up_weights(
         if delete_fused_key:
             del sd[fused_key]  # prevents extra / unexpected key msg
 
-        print(f"[layer {layer_idx:02d}] loaded gate_proj & up_proj " f"from fused tensor  (shape {fused.shape})")
+        print(f"[layer {layer_idx:02d}] loaded gate_proj & up_proj from fused tensor  (shape {fused.shape})")
 
 
 model_id = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
