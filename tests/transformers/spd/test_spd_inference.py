@@ -142,7 +142,7 @@ def test_spec_decode_inference(
 
     num_devices = len(device_group)
     target_model_qpc_path: str = target_model.compile(
-        num_cores=11,
+        num_cores=6,
         num_devices=num_devices,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
@@ -151,7 +151,7 @@ def test_spec_decode_inference(
         num_speculative_tokens=num_speculative_tokens,
     )
     draft_model_qpc_path: str = draft_model.compile(
-        num_cores=5,
+        num_cores=2,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         aic_enable_depth_first=True,

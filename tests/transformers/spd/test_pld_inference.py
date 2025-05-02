@@ -254,7 +254,7 @@ def test_pld_spec_decode_inference(
 
     num_devices = len(device_group)
     target_model_qpc_path: str = target_model.compile(
-        num_cores=16,
+        num_cores=8,
         num_devices=num_devices,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
