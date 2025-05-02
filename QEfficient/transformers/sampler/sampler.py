@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
-from QEfficient.customop import CtxScatterFuncCB3D
+from QEfficient.customop import CtxScatterFuncCB3D, CtxScatterFunc3D
 from QEfficient.utils.constants import Constants
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import CausalLMOutputWithPast, ModelOutput
@@ -270,7 +270,7 @@ def sampler_forward(
     batch_index_reshaped = batch_index.view(-1)
     # Repetition Penalty
     if (repetition_penalties != 1.).any():
-        past_repetition_penalty_buffer_selected = past_repetition_penalty_buffer[batch_index_reshaped].repeat(spec_length, 1)  # (batch_size, vocab_size) -> (batch_size * spec_length, vocab_size)
+        past_repetition_penalty_buffer_selected = past_repetition_penalty_buffer[batch_index_reshaped].repeat(spec_length, 1)  # (batch_size * spec_length, vocab_size)
         repetition_penalties_mask = torch.where(past_repetition_penalty_buffer_selected, repetition_penalties, 1.)
         logits *= (repetition_penalties_mask ** (-torch.sign(logits)))
 
