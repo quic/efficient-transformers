@@ -23,6 +23,7 @@ from transformers.models.llama4.modeling_llama4 import (
     Llama4TextAttention,
     Llama4TextConfig,
     Llama4TextDecoderLayer,
+    Llama4TextExperts,
     Llama4TextModel,
     Llama4TextMoe,
     Llama4VisionAttention,
@@ -112,12 +113,6 @@ class QEffLlama4VisionRotaryEmbedding(nn.Module):
         hidden_states: [B, S, H]   (S = CLS + patches)
         Returns:      [S, H/num_heads, 2]  (cos,sin).
         """
-        #    import ipdb; ipdb.set_trace()
-        #    seq_len = hidden_states.shape[1]
-        #    if seq_len > self.max_tokens_cached:               # automatic grow
-        #        self._build_cache(seq_len - 1)
-        #        self.max_tokens_cached = seq_len
-
         return self.freqs_cis.unsqueeze(1).to(hidden_states.device)
 
     def _build_cache(self, n_patches: int) -> None:
@@ -394,76 +389,84 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
+class QEffLlama4TextExperts(Llama4TextExperts):
+    def __qeff_init__(self):
+        self.gate_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, self.expert_dim))
+        self.up_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, self.expert_dim))
+
+
 class QEffLlama4TextMoe(Llama4TextMoe):
+    def forward(self, hidden: torch.Tensor):
+        B, S, H = hidden.shape
+        T = B * S
+        x = hidden.view(T, H)
+
+        router_logits = self.router(x)
+
+        # *top-k = 1*  → LLama4
+        top_w, top_i = torch.topk(router_logits, self.top_k, dim=-1)  # both [T, K]
+        masked_logits = torch.full_like(router_logits, float("-inf"))
+        masked_logits.scatter_(1, top_i, top_w)
+
+        # ── Book-keeping: create one boolean mask per expert once  ───────────────
+        # routing_weights[e]  ==  True where token routed to that expert. Shape [E, T]
+        routing_weights = torch.sigmoid(masked_logits.float()).to(hidden.dtype)
+
+        # ────────────────── allocate the two big tensors ─────
+        ffn_dim = self.experts.intermediate_size  # = 8/3 · H
+        upgate = x.new_zeros((T, ffn_dim))
+        expert_out = x.new_zeros((T, H))  # accum-out buffer
+
+        # ───────────────────────── Stage-1 : Up-Gate ─────────────────────────────
+        # Loop over experts
+        for e in range(self.num_experts):
+            W_g, W_u = self.experts.gate_proj[e], self.experts.up_proj[e]
+            routing_weight = routing_weights[:, e].unsqueeze(-1)
+            masked_up = torch.where(
+                routing_weights[:, e].unsqueeze(-1) > 0,
+                ((self.experts.act_fn(x @ W_g)) * (x @ W_u)),
+                torch.zeros_like(upgate),
+            )
+            upgate += masked_up
+
+        # At this point  upgate[t]  holds   UpGate(x_t)   for that token’s expert,
+        # and arbitrary (zeros) data for tokens not routed to that expert.
+        # ───────────────────────── Stage-2 : Down ────────────────────────────────
+        for e in range(self.num_experts):
+            routing_weight = routing_weights[:, e].unsqueeze(-1)
+            masked_down = torch.where(
+                routing_weight > 0, (upgate @ self.experts.down_proj[e]) * routing_weight, torch.zeros_like(expert_out)
+            )
+            expert_out += masked_down
+
+        # ───────────────────────── Stage-3 : Shared expert ───────────────────────
+        shared_out = self.shared_expert(x)  # [T, H]
+        final = shared_out + expert_out  # restore [B,S,H]
+        return final.view(B, S, H), router_logits
+
     # ------------------- Gather based, weights as activation approach ---------------
-    def forward(self, hidden_states):
-        bs, seq_len, _ = hidden_states.shape
-        hidden_states = hidden_states.view(bs * seq_len, self.hidden_dim)
-        router_logits = self.router(hidden_states).transpose(0, 1)
-        router_top_value, router_indices = torch.topk(router_logits.transpose(0, 1), self.top_k, dim=1)
+    # def forward(self, hidden_states):
+    #     bs, seq_len, _ = hidden_states.shape
+    #     hidden_states = hidden_states.view(bs * seq_len, self.hidden_dim)
+    #     router_logits = self.router(hidden_states).transpose(0, 1)
+    #     router_top_value, router_indices = torch.topk(router_logits.transpose(0, 1), self.top_k, dim=1)
 
-        # GATHER
-        gate_up_proj = self.experts.gate_up_proj[router_indices.flatten()]
-        down_proj = self.experts.down_proj[router_indices.flatten()]
+    #     # GATHER
+    #     gate_up_proj = self.experts.gate_up_proj[router_indices.flatten()]
+    #     down_proj = self.experts.down_proj[router_indices.flatten()]
 
-        # apply router top value
-        expert_in = hidden_states * torch.sigmoid(router_top_value)
-        ######################
-        # Apply Chosen Experts
-        ######################
-        expert_in = expert_in.view(bs * seq_len, 1, self.hidden_dim)
-        gateup = torch.bmm(expert_in, gate_up_proj)
-        gate, up = gateup.chunk(2, dim=-1)
-        experts_out = torch.bmm((up * self.experts.act_fn(gate)), down_proj).view(bs * seq_len, self.hidden_dim)
-        shared_out = self.shared_expert(hidden_states)
-        out = shared_out + experts_out
-        return out, router_logits
-
-    # --------------------- New Method, Avoid IO Communication -------------
-    # def forward(self, hidden: torch.Tensor):
-    #     B, S, H = hidden.shape
-    #     T = B * S
-    #     x = hidden.view(T, H)
-
-    #     router_logits = self.router(x)
-
-    #     # *top-k = 1*  → LLama4
-    #     top_w, top_i = torch.topk(router_logits, self.top_k, dim=-1)  # both [T, K]
-    #     masked_logits = torch.full_like(router_logits, float("-inf"))
-    #     masked_logits.scatter_(1, top_i, top_w)
-
-    #     # ── Book-keeping: create one boolean mask per expert once  ───────────────
-    #     # mask_e[e]  ==  True where token routed to that expert. Shape [E, T]
-    #     routing_weights = torch.sigmoid(masked_logits.float()).to(hidden.dtype)
-
-    #     # ────────────────── allocate the two big tensors ─────
-    #     I = self.experts.intermediate_size                # = 8/3 · H
-    #     upgate     = x.new_zeros((T, I))
-    #     expert_out = x.new_zeros((T, H))                  # accum-out buffer
-
-    #     # ───────────────────────── Stage-1 : Up-Gate ─────────────────────────────
-    #     # Loop over experts — weight matrices are already sharded per-expert
-    #     for e in range(self.num_experts):
-    #         W_g, W_u = self.experts.weights_for(e)
-    #         upgate = torch.where(routing_weights[:, e].unsqueeze(-1) > 0,
-    #                              (self.experts.act_fn(x @ W_g)) *  (x @ W_u),
-    #                              upgate)
-
-    #     # At this point  upgate[t]  holds   UpGate(x_t)   for that token’s expert,
-    #     # and arbitrary (zeros) data for tokens not routed to that expert.
-    #     # ───────────────────────── Stage-2 : Down ────────────────────────────────
-    #     for e in range(self.num_experts):
-    #         routing_weight = routing_weights[:, e].unsqueeze(-1)
-    #         # Predicated accumulate into expert_out
-    #         masked_out = torch.where(routing_weight > 0,
-    #                                 (upgate @ self.experts.down_proj[e]) * routing_weight,
-    #                                 torch.zeros_like(expert_out))
-    #         expert_out  += masked_out
-
-    #     # ───────────────────────── Stage-3 : Shared expert ───────────────────────
-    #     shared_out = self.shared_expert(x)                # [T, H]
-    #     final = shared_out + expert_out  # restore [B,S,H]
-    #     return final.view(B, S, H), router_logits
+    #     # apply router top value
+    #     expert_in = hidden_states * torch.sigmoid(router_top_value)
+    #     ######################
+    #     # Apply Chosen Experts
+    #     ######################
+    #     expert_in = expert_in.view(bs * seq_len, 1, self.hidden_dim)
+    #     gateup = torch.bmm(expert_in, gate_up_proj)
+    #     gate, up = gateup.chunk(2, dim=-1)
+    #     experts_out = torch.bmm((up * self.experts.act_fn(gate)), down_proj).view(bs * seq_len, self.hidden_dim)
+    #     shared_out = self.shared_expert(hidden_states)
+    #     out = shared_out + experts_out
+    #     return out, router_logits
 
     # def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     #     """
