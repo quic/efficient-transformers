@@ -19,8 +19,8 @@ classifiers = [
 ]
 requires-python = ">=3.8,<3.11"
 dependencies = [
-    "transformers==4.50.0",
-    "huggingface-hub==0.27.0",
+    "transformers==4.51.0",
+    "huggingface-hub==0.30.0",
     "hf_transfer==0.1.9",
     "peft==0.13.2",
     "datasets==2.20.0",
