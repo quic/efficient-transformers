@@ -1648,6 +1648,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "KV caching requires continuous batching. Please set `full_batch_size` and "
                 "enable `continuous_batching=True` in `from_pretrained`."
             )
+        
+        if self.include_sampler and num_speculative_tokens > 0:
+            raise ValueError("Currently, sampler does not support `num_speculative_tokens` > 0.")
 
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
