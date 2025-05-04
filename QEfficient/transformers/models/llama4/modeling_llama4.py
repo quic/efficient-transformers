@@ -30,7 +30,6 @@ from transformers.models.llama4.modeling_llama4 import (
     Llama4VisionModel,
     logger,
     repeat_kv,
-    reshape_for_broadcast,
 )
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -65,26 +64,33 @@ def eager_attention_forward_vision(
     return attn_output, attn_weights
 
 
+def complex_mul_onnx_safe(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    a_real, a_imag = a.unbind(dim=-1)
+    b_real, b_imag = b.unbind(dim=-1)
+
+    real = a_real * b_real - a_imag * b_imag
+    imag = a_real * b_imag + a_imag * b_real
+
+    return torch.stack((real, imag), dim=-1)
+
+
 def qeff_vision_apply_rotary_emb(
-    query: torch.Tensor,
-    key: torch.Tensor,
-    freqs_ci: torch.Tensor,
+    query: torch.Tensor, key: torch.Tensor, freqs_ci: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    query_ = query.float().reshape(*query.shape[:-1], -1, 2)
-    key_ = key.float().reshape(*key.shape[:-1], -1, 2)
-    # import ipdb; ipdb.set_trace()
-    freqs_ci[..., 0] = reshape_for_broadcast(freqs_ci=freqs_ci[..., 0], query=query_[..., 0])
-    freqs_ci[..., 1] = reshape_for_broadcast(freqs_ci=freqs_ci[..., 1], query=query_[..., 1])
-    freqs_ci = freqs_ci.to(query_.device)
+    query_in = query.view(*query.shape[:-1], -1, 2)
+    key_in = key.view(*key.shape[:-1], -1, 2)
 
-    def complex_mul(a, b):
-        real = a[..., 0] * b[..., 0] - a[..., 1] * b[..., 1]
-        imag = a[..., 0] * b[..., 1] + a[..., 1] * b[..., 0]
-        return torch.stack((real, imag), dim=-1).flatten(3)
+    # freqs_ci: [L, 1, D, 2] => [1, 1, L, D, 2] (broadcasted to query shape)
+    freqs_ci = freqs_ci.unsqueeze(0).unsqueeze(0)  # [1,1,L,D,2]
 
-    query_out = complex_mul(query_, freqs_ci)
-    key_out = complex_mul(key_, freqs_ci)
-    return query_out.type_as(query), key_out.type_as(key)
+    # Apply rotary: elementwise complex multiplication
+    query_out = complex_mul_onnx_safe(query_in, freqs_ci)
+    key_out = complex_mul_onnx_safe(key_in, freqs_ci)
+
+    query_out = query_out.reshape(*query.shape)
+    key_out = key_out.reshape(*key.shape)
+
+    return query_out, key_out
 
 
 class QEffLlama4VisionRotaryEmbedding(nn.Module):
@@ -349,21 +355,17 @@ def qeff_apply_rotary_emb(
     xk: torch.Tensor,
     freqs_cis: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    xq_ = xq.float().reshape(*xq.shape[:-1], -1, 2)
-    xk_ = xk.float().reshape(*xk.shape[:-1], -1, 2)
+    xq_ = xq.view(*xq.shape[:-1], -1, 2)
+    xk_ = xk.view(*xk.shape[:-1], -1, 2)
+
     # freqs_cis is already in [..., 2] form (real, imag)
-    freqs_cis_exp = freqs_cis[:, :, None, :]  # expand to match shape for broadcast
+    freqs_cis_exp = freqs_cis.unsqueeze(2)  # [1,1,L,D,2]
 
-    def complex_mul(a, b):
-        real = a[..., 0] * b[..., 0] - a[..., 1] * b[..., 1]
-        imag = a[..., 0] * b[..., 1] + a[..., 1] * b[..., 0]
-        return torch.stack([real, imag], dim=-1)
-
-    xq_out = complex_mul(xq_, freqs_cis_exp)
-    xk_out = complex_mul(xk_, freqs_cis_exp)
-    xq_out = xq_out.reshape(*xq_out.shape[:-2], -1)
-    xk_out = xk_out.reshape(*xk_out.shape[:-2], -1)
-    return xq_out.type_as(xq), xk_out.type_as(xk)
+    xq_out = complex_mul_onnx_safe(xq_, freqs_cis_exp)
+    xk_out = complex_mul_onnx_safe(xk_, freqs_cis_exp)
+    xq_out = xq_out.reshape(*xq.shape)
+    xk_out = xk_out.reshape(*xk.shape)
+    return xq_out, xk_out
 
 
 def eager_attention_forward(
