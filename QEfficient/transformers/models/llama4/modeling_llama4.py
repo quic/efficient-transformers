@@ -30,7 +30,6 @@ from transformers.models.llama4.modeling_llama4 import (
     Llama4VisionModel,
     logger,
     repeat_kv,
-    reshape_for_broadcast,
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
