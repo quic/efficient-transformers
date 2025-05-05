@@ -25,10 +25,21 @@ configs = [
         32,  # prefill_seq_len
         128,  # ctx_len
         1,  # prefill_bsz
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # draft_model_name
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # target_model_name
+        "JackFram/llama-160m",  # draft_model_name
+        "JackFram/llama-160m",  # target_model_name
         1,  # full_batch_size
         id="CB llama",
+    ),
+    pytest.param(
+        Constants.INPUT_STR,  # prompts
+        4,  # num_speculative_tokens
+        32,  # prefill_seq_len
+        128,  # ctx_len
+        1,  # prefill_bsz
+        "Qwen/Qwen2-0.5B",  # draft_model_name
+        "Qwen/Qwen2-0.5B",  # target_model_name
+        1,  # full_batch_size
+        id="CB qwen",
     ),
 ]
 
@@ -94,7 +105,6 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.skip()  # remove when the SDK 1.20.0 issue solved for compiling this model
 @pytest.mark.parametrize(
     "prompts, num_speculative_tokens, prefill_seq_len, ctx_len, prefill_bsz, draft_model_name, target_model_name, full_batch_size",
     configs,
@@ -119,18 +129,20 @@ def test_spec_decode_inference(
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
     vocab_size = len(tokenizer)
+    if target_model_name == "Qwen/Qwen2-0.5B":
+        vocab_size = 151936
 
     # export_and_compile tlm and dlm
     continuous_batching = full_batch_size is not None
+    qaic_config = dict(speculative_model_type="target")
     target_model = AutoModelForCausalLM.from_pretrained(
-        target_model_name, continuous_batching=continuous_batching, is_tlm=True
+        target_model_name, continuous_batching=continuous_batching, qaic_config=qaic_config
     )
     draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, continuous_batching=continuous_batching)
 
-    num_devices = len(device_group)
     target_model_qpc_path: str = target_model.compile(
-        num_cores=11,
-        num_devices=num_devices,
+        num_cores=6,
+        num_devices=1,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         aic_enable_depth_first=True,
@@ -138,7 +150,7 @@ def test_spec_decode_inference(
         num_speculative_tokens=num_speculative_tokens,
     )
     draft_model_qpc_path: str = draft_model.compile(
-        num_cores=5,
+        num_cores=2,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         aic_enable_depth_first=True,
@@ -169,6 +181,7 @@ def test_spec_decode_inference(
         p_tok: dict = tokenizer(p, return_tensors="np", padding="max_length", max_length=input_len_padded)
         position_ids = np.where(p_tok.pop("attention_mask"), np.arange(input_len_padded), -1)
         p_tok["position_ids"] = position_ids
+        p_tok["num_logits_to_keep"] = np.zeros((1, 1), dtype=np.int64)
         prompts_tokenized.append(p_tok)
     # create caches to hold generated ids and input prompt lengths
     generated_ids = [[] for i in range(decode_batch_size)]
@@ -181,13 +194,14 @@ def test_spec_decode_inference(
         np.array(np.arange(decode_batch_size), np.int64), (decode_batch_size, 1)
     )
     # mock input key "logits" to store the first batch of output logits
+    num_logits_to_keep = num_speculative_tokens + 1
     tlm_precode_inputs = dict(
         input_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
         position_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
         batch_index=np.arange(decode_batch_size, dtype=np.int64).reshape(-1, 1),
+        num_logits_to_keep=np.zeros((num_logits_to_keep, 1), dtype=np.int64),
     )
     max_gen_len = [ctx_len] * decode_batch_size
-    num_logits_to_keep = num_speculative_tokens + 1
     # setup buffers
     tlm_prefill_logits_ph = np.zeros((prefill_bsz, 1, vocab_size), dtype=np.float32)
     dlm_prefill_logits_ph = np.zeros((prefill_bsz, 1, vocab_size), dtype=np.float32)
@@ -267,7 +281,7 @@ def test_spec_decode_inference(
             accepted_tokens = num_tokens_selected[bi]
             num_tokens_to_append = min(accepted_tokens, max_gen_len[bi] - len(generated_ids[bi]))
             generated_ids[bi].extend(target_tokens[bi, :num_tokens_to_append].tolist())
-            if len(generated_ids[bi]) >= max_gen_len[bi]:
+            if len(generated_ids[bi]) + num_logits_to_keep >= max_gen_len[bi]:
                 valid_batch_indices[bi] = False
         # check if all generations are done
         if not valid_batch_indices.any():

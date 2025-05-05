@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import inspect
 import json
 import os
 import subprocess
@@ -626,3 +627,16 @@ def create_and_dump_qconfigs(
         qconfigs["qpc_config"]["aic_compiler_config"] = aic_compiler_config
 
     create_json(qconfig_file_path, qconfigs)
+
+
+def filter_kwargs(func, kwargs):
+    """
+    Filter a dictionary of keyword arguments to only include the valid arguments of a function.
+    Args:
+        func: The function to check the arguments for.
+        kwargs: The dictionary of keyword arguments to filter.
+    Returns:
+        A new dictionary containing only the valid keyword arguments.
+    """
+    valid_args = inspect.signature(func).parameters
+    return {key: value for key, value in kwargs.items() if key in valid_args}
