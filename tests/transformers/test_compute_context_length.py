@@ -116,8 +116,8 @@ def test_causal_lm_hash(config, cb):
 def test_causal_lm_export(config, cb, tmp_path):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
-    comp_ctx_lengths=[512,1024,2048]
-    qeff_model.export(comp_ctx_lengths,tmp_path)
+    comp_ctx_lengths = [512, 1024, 2048]
+    qeff_model.export(comp_ctx_lengths, tmp_path)
     model_path = tmp_path.with_name(tmp_path.name + "-" + qeff_model.model_hash)
     assert model_path.is_dir()
     assert qeff_model.onnx_path.is_file()
@@ -148,7 +148,7 @@ def tmp_cache(tmp_path, monkeypatch):
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_causal_lm_compile(config, cb, tmp_cache):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
-    comp_ctx_lengths=[8,12,16]
+    comp_ctx_lengths = [8, 12, 16]
     qeff_model = QEFFAutoModelForCausalLM(model, cb, comp_ctx_lengths=comp_ctx_lengths)
     compile_params = {"prefill_seq_len": 8, "ctx_len": 16}
     if cb:

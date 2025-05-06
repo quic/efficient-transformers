@@ -8,15 +8,18 @@
 ## In this example, you can run a model for static and continuous batching with different Compute-Context-Length (CCL) inputs. ##
 
 from transformers import AutoTokenizer
+
 from QEfficient import QEFFAutoModelForCausalLM
 
 ## Using optional variable comp_ctx_lengths variable you can pass a list of context lengths. It will run the model with default context length if comp_ctx_lengths=None. ##
 ##       - The first number in this list is the context length that will be used during prefilling. ##
 ##       - During the decoding process, based on the position_id or cache index it will work with the specific compute-context-length in the list. It will start from a proper compute-context-length in the list based on input prompt length and will gradually increase the compute-context-length if the cache index passes the current compute-context-length. ##
-comp_ctx_lengths = [128,256,512] #None
+comp_ctx_lengths = [128, 256, 512]  # None
 
 model_name = "meta-llama/Llama-3.2-1B-Instruct"
-model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True, comp_ctx_lengths=comp_ctx_lengths)
+model = QEFFAutoModelForCausalLM.from_pretrained(
+    model_name, continuous_batching=True, comp_ctx_lengths=comp_ctx_lengths
+)
 # model = QEFFAutoModelForCausalLM.from_pretrained(model_name, comp_ctx_lengths=comp_ctx_lengths)
 
 # model compilation for either continuous or static batching. For continuous batching full_batch_size is needed.
