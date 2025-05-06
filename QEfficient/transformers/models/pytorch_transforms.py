@@ -36,6 +36,13 @@ from transformers.models.gemma2.modeling_gemma2 import (
     Gemma2Model,
     Gemma2RMSNorm,
 )
+from transformers.models.gemma3.modeling_gemma3 import (
+    Gemma3Attention,
+    Gemma3DecoderLayer,
+    Gemma3ForCausalLM,
+    Gemma3RMSNorm,
+    Gemma3TextModel,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -170,6 +177,13 @@ from QEfficient.transformers.models.gemma2.modeling_gemma2 import (
     QEffGemma2DecoderLayer,
     QEffGemma2ForCausalLM,
     QEffGemma2Model,
+)
+from QEfficient.transformers.models.gemma3.modeling_gemma3 import (
+    QEffGemma3Attention,
+    QEffGemma3CustomRMSNormAIC,
+    QEffGemma3DecoderLayer,
+    QEffGemma3ForCausalLMModel,
+    QEffGemma3TextModel,
 )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
@@ -319,11 +333,17 @@ class CustomOpsTransform(ModuleMappingTransform):
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
         GraniteMoeRMSNorm: CustomRMSNormAIC,
+        Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
     }
 
 
 class KVCacheTransform(ModuleMappingTransform):
     _module_mapping = {
+        # Gemma3
+        Gemma3Attention: QEffGemma3Attention,
+        Gemma3DecoderLayer: QEffGemma3DecoderLayer,
+        Gemma3TextModel: QEffGemma3TextModel,
+        Gemma3ForCausalLM: QEffGemma3ForCausalLMModel,
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
         CodeGenBlock: QeffCodeGenBlock,
