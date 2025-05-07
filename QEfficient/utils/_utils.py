@@ -542,21 +542,31 @@ def dump_qconfig(func):
     return wrapper
 
 
-def get_qaic_sdk_version():
-    # Extract QAIC SDK Apps or Platform Version from SDK XML file
-    sdk_xml_file = (
-        Constants.SDK_APPS_XML
-        if os.path.exists(Constants.SDK_APPS_XML)
-        else Constants.SDK_PLATFORM_XML
-        if os.path.exists(Constants.SDK_PLATFORM_XML)
-        else None
-    )
-    qaic_version = None
-    if sdk_xml_file is not None:
-        tree = ET.parse(sdk_xml_file)
-        root = tree.getroot()
-        qaic_version = root.find(".//base_version").text
-    return qaic_version
+def get_qaic_sdk_version(qaic_sdk_xml_path: str) -> Optional[str]:
+    """
+    Extracts the QAIC SDK version from the given SDK XML file.
+
+    Args:
+        qaic_sdk_xml_path (str): Path to the SDK XML file.
+    Returns:
+        The SDK version as a string if found, otherwise None.
+    """
+    qaic_sdk_version = None
+
+    # Check and extract version from the given SDK XML file
+    if os.path.exists(qaic_sdk_xml_path):
+        try:
+            tree = ET.parse(qaic_sdk_xml_path)
+            root = tree.getroot()
+            base_version_element = root.find(".//base_version")
+            if base_version_element is not None:
+                qaic_sdk_version = base_version_element.text
+        except ET.ParseError as e:
+            print(f"Error parsing XML file {qaic_sdk_xml_path}: {e}")
+        except Exception as e:
+            print(f"An unexpected error occurred while processing {qaic_sdk_xml_path}: {e}")
+
+    return qaic_sdk_version
 
 
 def create_and_dump_qconfigs(
@@ -581,7 +591,7 @@ def create_and_dump_qconfigs(
     onnx_path = str(onnx_path)
     specializations_file_path = str(os.path.join(os.path.dirname(qpc_path), "specializations.json"))
     compile_dir = str(os.path.dirname(qpc_path))
-    qnn_config_path = qnn_config if qnn_config is not None else "QEfficient/compile/qnn_config.json"
+    qnn_config_path = qnn_config if qnn_config is not None else QnnConstants.QNN_DEFAULT_CONFIG_PATH
 
     # Ensure all objects in the configs dictionary are JSON serializable
     def make_serializable(obj):
@@ -625,9 +635,11 @@ def create_and_dump_qconfigs(
             qconfigs["qpc_config"]["qnn_config"].update(qnn_sdk_details)
 
     else:
-        qaic_version = get_qaic_sdk_version()
+        qaic_apps_version = get_qaic_sdk_version(Constants.SDK_APPS_XML)
+        qaic_platform_version = get_qaic_sdk_version(Constants.SDK_PLATFORM_XML)
         aic_compiler_config = {
-            "aic_sdk_version": qaic_version,
+            "aic_apps_sdk_version": qaic_apps_version,
+            "aic_platform_sdk_version": qaic_platform_version,
             "compile_dir": compile_dir,
             "specializations_file_path": specializations_file_path,
             "specializations": make_serializable(specializations),
