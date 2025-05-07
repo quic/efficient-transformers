@@ -130,7 +130,7 @@ pipeline {
                             mkdir -p $PWD/Qnn_cli &&
                             export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_HOME=$PWD/Qnn_cli &&
-                            pytest tests -m '(cli and qnn)' --ignore tests/vllm -n 2 --junitxml=tests/tests_log4.xml &&
+                            pytest tests -m '(cli and qnn)' --ignore tests/vllm --junitxml=tests/tests_log4.xml &&
                             junitparser merge tests/tests_log4.xml tests/tests_log.xml &&
                             deactivate"
                             '''
@@ -149,7 +149,7 @@ pipeline {
                             mkdir -p $PWD/Qnn_non_cli &&
                             export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_HOME=$PWD/Qnn_non_cli &&
-                            pytest tests -m '(not cli) and (qnn) and (on_qaic)' --ignore tests/vllm -n 2 --junitxml=tests/tests_log5.xml &&
+                            pytest tests -m '(not cli) and (qnn) and (on_qaic)' --ignore tests/vllm --junitxml=tests/tests_log5.xml &&
                             junitparser merge tests/tests_log5.xml tests/tests_log.xml &&
                             deactivate"
                             '''
