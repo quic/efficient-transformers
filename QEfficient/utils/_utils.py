@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import inspect
 import json
 import os
 import subprocess
@@ -357,6 +358,52 @@ def get_num_layers_from_config(config):
     return n_layer
 
 
+def get_num_layers_vlm(config):
+    """
+    Gets number of layers from model config of VLM
+    --------
+
+    :config: AutoConfig from pretrained model.
+
+    Return:
+        number of layers of text and vision part
+    """
+
+    if hasattr(config, "llm_config") and hasattr(config, "vision_config"):  # Intern
+        n_layers_text = config.llm_config.num_hidden_layers
+        n_layers_vision = config.vision_config.num_hidden_layers
+    elif hasattr(config, "text_config") and hasattr(config, "vision_config"):  # Llava, Mllama
+        n_layers_text = config.text_config.num_hidden_layers
+        n_layers_vision = config.vision_config.num_hidden_layers
+
+    return (n_layers_text, n_layers_vision)
+
+
+def get_padding_shape_vlm(config, ctx_len, batch_size=1):
+    """
+    Gets padding dims for VLM models- number of kv heads and d_head
+    and returns padding shape - (batch_size, number of kv heads, seq_len, hidden size)
+    required for initialization of past_key_values
+    --------
+
+    :config: AutoConfig from pretrained model.
+    :batch_size: int. number of input prompts used to create inputs
+    :seq_len: int. sequence length to run the model for.
+
+    Return:
+        List[int, int, int, int]
+    """
+    if hasattr(config, "text_config"):
+        n_heads = config.text_config.num_key_value_heads
+        d_head = config.text_config.hidden_size // config.text_config.num_attention_heads
+        padding_shape = [batch_size, n_heads, ctx_len, d_head]
+    elif hasattr(config, "llm_config"):
+        n_heads = config.llm_config.num_key_value_heads
+        d_head = config.llm_config.hidden_size // config.llm_config.num_attention_heads
+        padding_shape = [batch_size, n_heads, ctx_len, d_head]
+    return padding_shape
+
+
 def execute_command(process: str, command: str, output_file_path: Optional[str] = None):
     """
     Executes the give command using subprocess.
@@ -391,6 +438,26 @@ def execute_command(process: str, command: str, output_file_path: Optional[str] 
                     file.write(result.stderr)
             except Exception as e:
                 print(f"Failed to create {stderr_path}: {e}")
+
+
+def load_yaml(file_path: str) -> Dict[Any, Any]:
+    """
+    Opens the given YAML file, load and return the Dict.
+
+    ``Mandatory`` Args:
+        :file_path (str): YAML File to be opened.
+
+    Return:
+        Dict Object from the given file.
+
+    """
+    try:
+        # Load the YAML config file
+        with open(file_path, "r") as file:
+            config_data = yaml.safe_load(file)
+    except Exception as e:
+        raise ValueError(f"Failed to load YAML object from {file_path}: {e}")
+    return config_data
 
 
 def load_json(file_path: str) -> Dict[Any, Any]:
@@ -510,7 +577,7 @@ def create_and_dump_qconfigs(
     # Extract QNN SDK details from YAML file if the environment variable is set
     qnn_sdk_details = None
     qnn_sdk_path = os.getenv(QnnConstants.QNN_SDK_PATH_ENV_VAR_NAME)
-    if qnn_sdk_path:
+    if enable_qnn and qnn_sdk_path:
         qnn_sdk_yaml_path = os.path.join(qnn_sdk_path, QnnConstants.QNN_SDK_YAML)
         with open(qnn_sdk_yaml_path, "r") as file:
             qnn_sdk_details = yaml.safe_load(file)
@@ -560,3 +627,16 @@ def create_and_dump_qconfigs(
         qconfigs["qpc_config"]["aic_compiler_config"] = aic_compiler_config
 
     create_json(qconfig_file_path, qconfigs)
+
+
+def filter_kwargs(func, kwargs):
+    """
+    Filter a dictionary of keyword arguments to only include the valid arguments of a function.
+    Args:
+        func: The function to check the arguments for.
+        kwargs: The dictionary of keyword arguments to filter.
+    Returns:
+        A new dictionary containing only the valid keyword arguments.
+    """
+    valid_args = inspect.signature(func).parameters
+    return {key: value for key, value in kwargs.items() if key in valid_args}

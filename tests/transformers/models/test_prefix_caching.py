@@ -14,6 +14,7 @@ from transformers import AutoTokenizer
 from QEfficient.generation.text_generation_inference import TextGeneration
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils._utils import create_json
+from QEfficient.utils.constants import QnnConstants
 
 test_models = ["gpt2"]
 
@@ -39,18 +40,8 @@ def test_simple_prefix_caching(model_name):
 @pytest.mark.parametrize("model_name", test_models)
 def test_simple_prefix_caching_qnn(model_name):
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True)
-    qnn_config = {
-        "converter_args_extension": "",
-        "context_binary_generator_args_extension": "--log_level debug",
-        "qnn_compilation_backend": {
-            "compiler_enable_depth_first": True,
-            "compiler_printDDRStats": False,
-            "compiler_printPerfMetrics": False,
-        },
-        "SKIP_QNN_CONVERTER_STEP": False,
-    }
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, qnn_config)
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
     qeff_model.compile(
         prefill_seq_len=128,
