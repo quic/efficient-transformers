@@ -20,6 +20,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
     Gemma3Config,
     Gemma3DecoderLayer,
     Gemma3ForCausalLM,
+    Gemma3ForConditionalGeneration,
     Gemma3TextModel,
     logger,
     repeat_kv,
@@ -29,6 +30,8 @@ from transformers.models.gemma3.modeling_gemma3 import (
 from QEfficient.customop.rms_norm import CustomRMSNorm
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils import constants
+from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 
 
 class GemmaRMSNormFunc(torch.autograd.Function):
@@ -549,3 +552,213 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+
+class QEffGemma3EncoderWrapper(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.model.vision_model = self.model.vision_tower
+
+    def forward(self, input_ids, pixel_values):
+        inputs_embeds = self.model.get_input_embeddings()(input_ids)
+        B, N, C = inputs_embeds.shape
+        image_features = self.model.get_image_features(pixel_values=pixel_values)
+        selected = input_ids == self.model.config.image_token_index
+        indices1 = selected.to(torch.int64).cumsum(1) - 1
+        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+        image_features_expanded = image_features.reshape(-1, C).unsqueeze(0)[indices0, indices1]
+        image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+        return image_input_embeds
+
+
+class QEffGemma3DecoderWrapper(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.language_model = self.model.language_model
+        self.config = self.model.config
+
+    def forward(self, input_ids, vision_embeds, position_ids, past_key_values):
+        image_embeds = vision_embeds[:, : input_ids.shape[1], :]
+        inputs_embeds = self.model.language_model.get_input_embeddings()(input_ids)
+        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_embeds)
+        outputs = self.model.language_model(
+            inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
+        )
+        return outputs.logits, vision_embeds, outputs.past_key_values
+
+
+class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
+    def get_qeff_vision_encoder(self):
+        return QEffGemma3EncoderWrapper(self)
+
+    def get_qeff_language_decoder(self):
+        return QEffGemma3DecoderWrapper(self)
+
+    def get_specializations(
+        self,
+        batch_size: int,
+        prefill_seq_len: int,
+        ctx_len: int,
+        img_size: int,
+        kv_offload: bool = False,
+        **compiler_options,
+    ):
+        vision_seq_len = compiler_options.pop("vision_seq_len", None)
+        if vision_seq_len is None:
+            # TODO: Check properly for Gemma3, Not verified yet.
+            vision_seq_len = 2560  # for Gemma3 Vision feature shape is (1, 4096, 1152) --> 1152 is hidden size)
+
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
+        ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
+        if img_size is None and hasattr(self.config.vision_config, "image_size"):
+            img_size = getattr(self.config.vision_config, "image_size")
+        elif img_size is None:
+            img_size = 896  # FIXME based on gemma3 Image size
+            logger.warning("Setting img_size to be 336, as it was neither passed nor found in vision_config")
+
+        vision = [
+            {
+                "batch_size": batch_size,
+                "img_size": img_size,
+                "seq_len": vision_seq_len,
+                "ctx_len": ctx_len,
+            }
+        ]
+        lang = [
+            {
+                "batch_size": batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "img_size": img_size,
+                "chunk_length": prefill_seq_len,
+            },
+            {
+                "batch_size": batch_size,
+                "seq_len": "1",
+                "ctx_len": ctx_len,
+                "img_size": img_size,
+                "chunk_length": prefill_seq_len,
+            },
+        ]
+
+        specializations = {}
+
+        if kv_offload:
+            specializations["vision"] = vision
+            specializations["lang"] = lang
+            return specializations, compiler_options
+        else:
+            return lang, compiler_options
+
+    def get_onnx_dynamic_axes(self, kv_offload: bool = False):
+        # Define dynamic axes
+        vision_dynamic_axes = {}
+        lang_dynamic_axes = {}
+        lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
+        lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
+        lang_dynamic_axes["vision_embeds"] = {0: "batch_size", 1: "chunk_length"}
+        vision_dynamic_axes["pixel_values"] = {0: "batch_size", 2: "img_size", 3: "img_size"}
+        vision_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
+
+        pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
+        for i in range(self.language_model.config.num_hidden_layers):
+            for kv in ["key", "value"]:
+                lang_dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+
+        dynamic_axes = {}
+        if kv_offload:
+            dynamic_axes["vision"] = vision_dynamic_axes
+            dynamic_axes["lang"] = lang_dynamic_axes
+        else:
+            dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
+        return dynamic_axes
+
+    def get_output_names(self, kv_offload: bool = False):
+        vision_output_names = ["vision_embeds"]
+        lang_output_names = ["logits"]
+        for i in range(self.language_model.config.num_hidden_layers):
+            for kv in ["key", "value"]:
+                lang_output_names.append(f"past_{kv}.{i}_RetainedState")
+
+        output_names = {}
+        if kv_offload:
+            lang_output_names.insert(1, "vision_embeds_RetainedState")
+            output_names["vision"] = vision_output_names
+            output_names["lang"] = lang_output_names
+        else:
+            lang_output_names.insert(1, "pixel_values_RetainedState")
+            return lang_output_names
+        return output_names
+
+    def get_dummy_inputs(self, kv_offload: bool = False):
+        if vis_cfg := getattr(self.config, "vision_config", None):
+            img_size = getattr(vis_cfg, "image_size", 896)
+        else:
+            img_size = 896
+
+        # Define shapes
+        inputs_shapes = {}
+        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+        inputs_shapes["vision_embeds"] = (
+            1,  # constants.INTERN_NUM_PATCHES,
+            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,  # constants.INTERN_FEATURE_SIZE,
+            self.language_model.config.hidden_size,  # 5120
+        )
+        inputs_shapes["position_ids"] = (
+            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+        )
+        inputs_shapes["pixel_values"] = (
+            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            constants.INTERN_NUM_CHANNELS,
+            img_size,
+            img_size,
+        )
+
+        # Define inputs
+        vision_inputs = {}
+        lang_inputs = {}
+        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        vision_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
+        lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
+        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
+        lang_inputs["position_ids"] = (
+            torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
+            .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+            .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
+        )
+
+        # Add data for KV
+        kv_cache_shape = get_padding_shape_from_config(
+            config=self.language_model.config,
+            batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+        )
+
+        lang_inputs["past_key_values"] = [[] for _ in range(self.language_model.config.num_hidden_layers)]
+        for i in range(self.language_model.config.num_hidden_layers):
+            for kv in ["key", "value"]:
+                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+
+        inputs = {}
+        if kv_offload:
+            inputs["vision"] = vision_inputs
+            inputs["lang"] = lang_inputs
+        else:
+            lang_inputs.pop("vision_embeds")
+            inputs = {**vision_inputs, **lang_inputs}
+
+        return inputs
+
+    def get_inputs_info(self):
+        return [
+            IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
+            IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
+            IOInfo(
+                name="pixel_values",
+                datatype=torch.float32,
+                shape=("batch_size", 3, "img_size", "img_size"),
+            ),
+        ]
