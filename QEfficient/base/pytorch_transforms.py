@@ -9,6 +9,8 @@ from typing import Callable, Dict, Tuple, Type
 
 from torch import nn
 
+from QEfficient.utils.logging_utils import logger
+
 
 class PytorchTransform:
     """
@@ -157,7 +159,7 @@ class SplitGateUpWeightsTransform(PytorchTransform):
             if delete_fused_key:
                 del sd[fused_key]
 
-            print(f"[layer {layer_idx:02d}] loaded gate_proj & up_proj from fused tensor  (shape {fused.shape})")
+            logger.info(f"[layer {layer_idx:02d}] loaded gate_proj & up_proj from fused tensor  (shape {fused.shape})")
             transformed = True
         return model, transformed
 
