@@ -60,7 +60,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     _hf_auto_class: type
 
-    def __init__(self, model: nn.Module) -> None:
+    def __init__(self, model: nn.Module, qaic_config: Optional[dict] = None) -> None:
         if (
             hasattr(model, "config")
             and hasattr(model.config, "quantization_config")
