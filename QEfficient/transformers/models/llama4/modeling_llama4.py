@@ -907,6 +907,12 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
+        chunk_ctx_len = (
+            self.config.text_config.attention_chunk_size
+            if hasattr(self, "config")
+            else constants.LLAMA4_ATTENTION_CHUNK_SIZE
+        )
+
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
             img_size = getattr(self.config.vision_config, "image_size")
         elif img_size is None:
@@ -930,6 +936,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 "batch_size_times_num_tiles": batch_size_times_num_tiles,
                 "img_size": img_size,
                 "chunk_length": prefill_seq_len,
+                "chunk_ctx_len": chunk_ctx_len,
             },
             {
                 "batch_size": batch_size,
@@ -938,6 +945,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 "batch_size_times_num_tiles": batch_size_times_num_tiles,
                 "img_size": img_size,
                 "chunk_length": prefill_seq_len,
+                "chunk_ctx_len": chunk_ctx_len,
             },
         ]
 
@@ -960,8 +968,14 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         vision_dynamic_axes["pixel_values"] = {0: "batch_size_times_num_tiles", 2: "img_size", 3: "img_size"}
         vision_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
 
-        pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
+        pkv_dynamic_axes = {0: "batch_size"}
         for i in range(self.language_model.config.num_hidden_layers):
+            # switch between chunk_ctx_len and ctx_len for RoPE and NoPE layers.
+            if int((i + 1) % 4 != 0):
+                pkv_dynamic_axes[2] = "chunk_ctx_len"
+            else:
+                pkv_dynamic_axes[2] = "ctx_len"
+
             for kv in ["key", "value"]:
                 lang_dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
 
