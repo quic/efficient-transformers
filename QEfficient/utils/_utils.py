@@ -521,22 +521,25 @@ class IOInfo:
 def dump_qconfig(func):
     def wrapper(self, *args, **kwargs):
         result = func(self, *args, **kwargs)
-        create_and_dump_qconfigs(
-            self.qpc_path,
-            self.onnx_path,
-            self.get_model_config,
-            [cls.__name__ for cls in self._pytorch_transforms],
-            [cls.__name__ for cls in self._onnx_transforms],
-            kwargs.get("specializations"),
-            kwargs.get("mdp_ts_num_devices", 1),
-            kwargs.get("num_speculative_tokens"),
-            **{
-                k: v
-                for k, v in kwargs.items()
-                if k
-                not in ["specializations", "mdp_ts_num_devices", "num_speculative_tokens", "custom_io", "onnx_path"]
-            },
-        )
+        try:
+            create_and_dump_qconfigs(
+                self.qpc_path,
+                self.onnx_path,
+                self.get_model_config,
+                [cls.__name__ for cls in self._pytorch_transforms],
+                [cls.__name__ for cls in self._onnx_transforms],
+                kwargs.get("specializations"),
+                kwargs.get("mdp_ts_num_devices", 1),
+                kwargs.get("num_speculative_tokens"),
+                **{
+                    k: v
+                    for k, v in kwargs.items()
+                    if k
+                    not in ["specializations", "mdp_ts_num_devices", "num_speculative_tokens", "custom_io", "onnx_path"]
+                },
+            )
+        except Exception as e:
+            print(f"An unexpected error occurred while dumping the qconfig: {e}")
         return result
 
     return wrapper
@@ -585,7 +588,7 @@ def create_and_dump_qconfigs(
     Such as huggingface configs, QEff transforms, QAIC sdk version, QNN sdk, compilation dir, qpc dir and
     many other compilation options.
     """
-    enable_qnn = compiler_options.get("enable_qnn", None)
+    enable_qnn = compiler_options.get("enable_qnn", False)
     qnn_config_path = compiler_options.get("qnn_config", None)
     qconfig_file_path = os.path.join(os.path.dirname(qpc_path), "qconfig.json")
     onnx_path = str(onnx_path)
@@ -612,6 +615,19 @@ def create_and_dump_qconfigs(
                 "onnx_transforms": make_serializable(onnx_transforms),
                 "onnx_path": onnx_path,
             },
+            "compiler_config": {
+                "enable_qnn": enable_qnn,
+                "compile_dir": compile_dir,
+                "specializations_file_path": specializations_file_path,
+                "specializations": make_serializable(specializations),
+                "mdp_ts_num_devices": mdp_ts_num_devices,
+                "num_speculative_tokens": num_speculative_tokens,
+                **compiler_options,
+            },
+            "aic_sdk_config": {
+                "qaic_apps_version": get_qaic_sdk_version(Constants.SDK_APPS_XML),
+                "qaic_platform_version": get_qaic_sdk_version(Constants.SDK_PLATFORM_XML),
+            },
         },
     }
 
@@ -626,27 +642,11 @@ def create_and_dump_qconfigs(
             qnn_sdk_yaml_path
         )  # Extract QNN SDK details from YAML file if the environment variable is set
         qnn_config = {
-            "enable_qnn": enable_qnn,
             "qnn_config_path": qnn_config_path,
         }
         qconfigs["qpc_config"]["qnn_config"] = qnn_config
         if qnn_sdk_details:
             qconfigs["qpc_config"]["qnn_config"].update(qnn_sdk_details)
-
-    else:
-        qaic_apps_version = get_qaic_sdk_version(Constants.SDK_APPS_XML)
-        qaic_platform_version = get_qaic_sdk_version(Constants.SDK_PLATFORM_XML)
-        aic_compiler_config = {
-            "aic_apps_sdk_version": qaic_apps_version,
-            "aic_platform_sdk_version": qaic_platform_version,
-            "compile_dir": compile_dir,
-            "specializations_file_path": specializations_file_path,
-            "specializations": make_serializable(specializations),
-            "mdp_ts_num_devices": mdp_ts_num_devices,
-            "num_speculative_tokens": num_speculative_tokens,
-            **compiler_options,
-        }
-        qconfigs["qpc_config"]["aic_compiler_config"] = aic_compiler_config
 
     create_json(qconfig_file_path, qconfigs)
 
