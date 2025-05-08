@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 from types import MethodType
-from typing import Tuple
+from typing import Optional, Tuple
 
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
@@ -266,8 +266,11 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
 )
+from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
-from QEfficient.transformers.spd.causal_lm_forward import tlm_forward
+from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
+
+SPD_TARGET = "target"
 
 class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
@@ -423,19 +426,33 @@ class SpDTransform:
     _module_mapping = {
         # Llama
         QEffLlamaForCausalLM,
+        QEffQwen2ForCausalLM,
     }
 
     @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
         transformed = False
-        if (model_class := model.__class__) in cls._module_mapping:
+        if qaic_config is None or (speculative_model_type := qaic_config.get("speculative_model_type")) is None:
+            return model, transformed
+        elif speculative_model_type not in (
+            supported_spd_model_types := [SPD_TARGET] + list(model_type_registry.keys())
+        ):
+            raise ValueError(
+                f"Specualtive model type {speculative_model_type} is not supported. we currently only support {supported_spd_model_types}"
+            )
+        elif (model_class := model.__class__) in cls._module_mapping:
             model.forward = MethodType(tlm_forward, model)
+            if speculative_model_type != SPD_TARGET:
+                # build and attach draft mlp
+                pretrained_model_name_or_path = qaic_config["pretrained_model_name_or_path"]
+                model = build_and_attach_mlp(
+                    model, pretrained_model_name_or_path, speculative_model_type=speculative_model_type, **kwargs
+                )
             transformed = True
         else:
             raise NotImplementedError(
                 f"model class {model_class} does not yet support returning multiple logits to keep."
             )
-
         return model, transformed
 
 
@@ -456,16 +473,18 @@ class SamplerTransform:
     }
 
     @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
         transformed = False
-        if (model_class := model.__class__) in cls._module_mapping:
+        if qaic_config is None or (include_sampler := qaic_config.get("include_sampler")) is None:
+            return model, transformed
+        elif (model_class := model.__class__) in cls._module_mapping:
             model.forward = MethodType(sampler_forward, model)
+            model.return_pdfs = qaic_config.get("return_pdfs", False)
             transformed = True
         else:
             raise NotImplementedError(
                 f"model class {model_class} does not yet support returning multiple logits to keep."
             )
-
         return model, transformed
     
 
