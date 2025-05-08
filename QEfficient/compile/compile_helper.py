@@ -109,12 +109,12 @@ def compile_kv_model_on_cloud_ai_100(
             json.dump(mdp_ts_config, file, indent=4)
         command.append(f"-mdp-load-partition-config={mdp_ts_config_path}")
     for key, value in kwargs.items():
-            option = "-" + key.replace("_", "-")
-            if isinstance(value, bool):
-                if value:
-                    command.append(option)
-                continue
-            command.append(f"{option}={value}")
+        option = "-" + key.replace("_", "-")
+        if isinstance(value, bool):
+            if value:
+                command.append(option)
+            continue
+        command.append(f"{option}={value}")
     print("Running AI 100 compiler:", " ".join(command))
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
@@ -228,7 +228,9 @@ def compile(
             **kwargs,
         )
         if kwargs.get("io_encrypt", None):
-            logger.warning(f"Compilation for IO-Encrypt has been successfully completed at path: {qpc_path}. However, Efficient-Transformers do not support IO-Encrypt. Please run the execution separately")
+            logger.warning(
+                f"Compilation for IO-Encrypt has been successfully completed at path: {qpc_path}. However, Efficient-Transformers do not support IO-Encrypt. Please run the execution separately"
+            )
         else:
             logger.info(f"Compiled QPC files can be found here: {qpc_path}")
 

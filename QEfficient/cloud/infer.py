@@ -199,7 +199,7 @@ def main(
 
     #  If the io-encrypt flag is passed we will exit after QPC generation.
     if kwargs.get("io_encrypt", None):
-       exit()
+        exit()
 
     #########
     # Execute
