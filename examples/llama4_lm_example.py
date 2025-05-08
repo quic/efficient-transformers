@@ -13,15 +13,11 @@ from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.run_utils import ApiRunner
 
-torch.manual_seed(42)
-
 model_id = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
 model = Llama4ForCausalLM.from_pretrained(
     model_id, torch_dtype=torch.float32, use_cache=True, attn_implementation="eager"
 )
 model.eval()
-
-original_sd = model.state_dict()
 
 tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_id)
 config = model.config
@@ -37,7 +33,6 @@ api_runner = ApiRunner(
 
 qeff_model = QEFFAutoModelForCausalLM(model)
 
-onnx_model_path = qeff_model.export()
 qpc_path = qeff_model.compile(
     prefill_seq_len=128,
     ctx_len=2048,
