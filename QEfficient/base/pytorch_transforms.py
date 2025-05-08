@@ -110,3 +110,51 @@ class ModuleMethodMapperTransform(PytorchTransform):
                     transformed = True
 
         return model, transformed
+
+
+class SplitGateUpWeightsTransform(PytorchTransform):
+    """
+    split fused Gate+Up weights and copy into the model
+
+    For every transformer layer inside `model`:
+      • expects   <PREFIX>.experts.gate_up_proj   in the *source* `sd`
+      • copies halves into
+            <PREFIX>.experts.gate_proj     <-- Gate   [E,H,I]
+            <PREFIX>.experts.up_proj       <-- Up     [E,H,I]
+    """
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        transformed = False
+        model = model.language_model
+        num_layers = len(model.model.layers)
+        delete_fused_key = True
+        sd = model.state_dict()
+        for layer_idx in range(num_layers):
+            # ---- build the textual prefix once per layer ----------
+            prefix = f"model.layers.{layer_idx}.feed_forward.experts."
+
+            fused_key = prefix + "gate_up_proj"
+            gate_key = prefix + "gate_proj"
+            up_key = prefix + "up_proj"
+
+            # ---- split  [E,H,2I] → two  [E,H,I]  tensors ----------------------
+            fused = sd[fused_key]  # [E, H, 2I]  (no .weight here)
+            E, H, two_I = fused.shape
+            ffn_dim = two_I // 2
+            gate, up = fused.split(ffn_dim, dim=-1)  # views – no copy
+
+            experts = model.model.layers[layer_idx].feed_forward.experts
+            experts.gate_proj.data.copy_(gate)
+            experts.up_proj.data.copy_(up)
+
+            # ---- update the state-dict so load_state_dict sees the right keys
+            sd[gate_key] = gate
+            sd[up_key] = up
+
+            if delete_fused_key:
+                del sd[fused_key]
+
+            print(f"[layer {layer_idx:02d}] loaded gate_proj & up_proj from fused tensor  (shape {fused.shape})")
+            transformed = True
+        return model, transformed
