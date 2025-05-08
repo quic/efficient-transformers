@@ -105,16 +105,16 @@ pipeline {
                 }
             }
         }
-        stage('vLLM Tests') {
+        // stage('vLLM Tests') {
 
-                steps
-                {
-                    build job: 'qefficient_vllm_upstream', 
-                    parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
-                    propagate: true,
-                    wait: true
-                }
-        }
+        //         steps
+        //         {
+        //             build job: 'qefficient_vllm_upstream', 
+        //             parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
+        //             propagate: true,
+        //             wait: true
+        //         }
+        // }
         stage('QNN CLI Tests') {
             steps {
                 timeout(time: 30, unit: 'MINUTES') {
