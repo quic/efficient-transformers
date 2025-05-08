@@ -29,7 +29,7 @@ dependencies = [
     "urllib3<2",
     "sentencepiece==0.2.0",
     "onnx==1.17.0",
-    "onnxruntime==1.21.1",
+    "onnxruntime==1.21.0",
     "numpy==1.26.4",
     "protobuf==3.20.2",
     "onnxscript==0.2.5",
