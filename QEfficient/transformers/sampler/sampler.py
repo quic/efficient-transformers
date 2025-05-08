@@ -227,12 +227,7 @@ def sampler_forward(
             past_presence_penalty_buffer *= mul_value
 
         # Mask out-of-bounds or invalid position_ids or input_ids
-        input_ids = torch.where(position_ids == -1, -1, input_ids)
-        input_ids = torch.where(
-            (input_ids < 0) | (input_ids >= vocab_size),
-            torch.iinfo(torch.int32).max,
-            input_ids,
-        )
+        input_ids = torch.where(position_ids == -1, torch.iinfo(torch.int32).max, input_ids)
 
         # Chunked input, so update retain states
         past_repetition_penalty_buffer = CtxScatterFuncCB3D.apply(
@@ -245,12 +240,7 @@ def sampler_forward(
     # --- Decode ---
     else:
         # Mask out-of-bounds or invalid position_ids or last_accepted_output_tokens
-        last_accepted_output_tokens = torch.where(position_ids == -1, -1, last_accepted_output_tokens)
-        last_accepted_output_tokens = torch.where(
-            (last_accepted_output_tokens < 0) | (last_accepted_output_tokens >= vocab_size),
-            torch.iinfo(torch.int32).max,
-            last_accepted_output_tokens,
-        )
+        last_accepted_output_tokens = torch.where(position_ids == -1, torch.iinfo(torch.int32).max, last_accepted_output_tokens)
 
         # Update retained states
         scatter_values = torch.ones(last_accepted_output_tokens.shape, dtype=torch.bool)
