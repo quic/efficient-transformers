@@ -1707,6 +1707,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             mxint8_kv_cache=mxint8_kv_cache,
             **compiler_options,
         )
+
+        if compiler_options.get("io_encrypt", None):
+            logger.warning(
+                "Compilation for IO-Encrypt has been successfully completed. However, Efficient-Transformers do not support IO-Encrypt execution. Please run the execution separately with QPC compiled without io-encrypt."
+            )
+
         return qpc_path
 
     # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate
