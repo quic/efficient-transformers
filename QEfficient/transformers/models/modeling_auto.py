@@ -1637,7 +1637,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if compiler_options.get("io_encrypt", None):
             logger.warning(
-                "Compilation for IO-Encrypt has been successfully completed. However, Efficient-Transformers do not support IO-Encrypt. Please run the execution separately with QPC compiled without io-encrypt."
+                "Compilation for IO-Encrypt has been successfully completed. However, Efficient-Transformers do not support IO-Encrypt execution. Please run the execution separately with QPC compiled without io-encrypt."
             )
 
         return qpc_path

@@ -229,7 +229,7 @@ def compile(
         )
         if kwargs.get("io_encrypt", None):
             logger.warning(
-                f"Compilation for IO-Encrypt has been successfully completed at path: {qpc_path}. However, Efficient-Transformers do not support IO-Encrypt. Please run the execution separately"
+                f"Compilation for IO-Encrypt has been successfully completed at path: {qpc_path}. However, Efficient-Transformers do not support IO-Encrypt execution. Please run the execution separately"
             )
         else:
             logger.info(f"Compiled QPC files can be found here: {qpc_path}")
