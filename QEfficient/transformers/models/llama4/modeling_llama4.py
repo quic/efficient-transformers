@@ -490,8 +490,13 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         key_states = key_states.transpose(1, 2)
 
         if past_key_value is not None:
+            chunk_postion_ids = position_ids
+
+            if self.use_rope:
+                chunk_postion_ids = chunk_postion_ids % self.config.attention_chunk_size
+
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {"batch_index": batch_index, "position_ids": chunk_postion_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
@@ -638,9 +643,8 @@ class QEffLlama4TextModel(Llama4TextModel):
 
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
 
-        _, chunk_causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
-        )
+        chunked_position_ids = position_ids % self.config.attention_chunk_size
+        chunk_causal_mask = _create_causal_mask(position_ids=chunked_position_ids, target_length=past_seen_tokens)
 
         # embed positions
         hidden_states = inputs_embeds
