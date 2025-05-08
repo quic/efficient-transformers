@@ -6,10 +6,8 @@
 # -----------------------------------------------------------------------------
 
 import math
-from asyncio.log import logger
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-import numpy as np
 import torch
 from torch import nn
 from transformers import PretrainedConfig, PreTrainedModel
@@ -72,56 +70,7 @@ class QEffPlamoConfig(PretrainedConfig):  # type: ignore
         )
 
 
-# Copied from transformers.models.bart.modeling_bart._make_causal_mask
-def _make_causal_mask(
-    input_ids_shape: Tuple[int, int], dtype: torch.dtype, device: torch.device, past_key_values_length: int = 0
-) -> torch.Tensor:
-    """
-    Make causal mask used for bi-directional self-attention.
-    """
-    bsz, tgt_len = input_ids_shape
-    mask = torch.full((tgt_len, tgt_len), torch.finfo(dtype).min, device=device)
-    mask_cond = torch.arange(mask.size(-1), device=device)
-    mask.masked_fill_(mask_cond < (mask_cond + 1).view(mask.size(-1), 1), 0)
-    mask = mask.to(dtype)
-
-    if past_key_values_length > 0:
-        mask = torch.cat([torch.zeros(tgt_len, past_key_values_length, dtype=dtype, device=device), mask], dim=-1)
-    return mask[None, None, :, :].expand(bsz, 1, tgt_len, tgt_len + past_key_values_length)
-
-
-# Copied from transformers.models.bart.modeling_bart._expand_mask
-def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] = None) -> torch.Tensor:
-    """
-    Expands attention_mask from `[bsz, seq_len]` to `[bsz, 1, tgt_seq_len, src_seq_len]`.
-    """
-    bsz, src_len = mask.size()
-    tgt_len = tgt_len if tgt_len is not None else src_len
-
-    expanded_mask = mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len).to(dtype)
-
-    inverted_mask = 1.0 - expanded_mask
-
-    return inverted_mask.masked_fill(inverted_mask.to(torch.bool), torch.finfo(dtype).min)  # type: ignore
-
-
 class QEffPlamoRotaryEmbedding(torch.nn.Module):
-    def __init__(
-        self, dim: int, max_position_embeddings: int = 2048, base: int = 10000, device: Optional[torch.device] = None
-    ) -> None:
-        super().__init__()
-
-        self.dim = dim
-        self.max_position_embeddings = max_position_embeddings
-        self.base = base
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim))
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-
-        # Build here to make `torch.jit.trace` work.
-        self._set_cos_sin_cache(
-            seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=torch.get_default_dtype()
-        )
-
     def _set_cos_sin_cache(self, seq_len: int, device: Any, dtype: Any) -> None:
         self.max_seq_len_cached = seq_len
         t = torch.arange(self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)  # type: ignore
@@ -160,43 +109,7 @@ def _rotary_pos_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, posit
     return x_embed
 
 
-def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
-    """Applies Rotary Position Embedding to the query and key tensors.
-
-    Args:
-        q (`torch.Tensor`): The query tensor.
-        k (`torch.Tensor`): The key tensor.
-        cos (`torch.Tensor`): The cosine part of the rotary embedding.
-        sin (`torch.Tensor`): The sine part of the rotary embedding.
-        position_ids (`torch.Tensor`):
-            The position indices of the tokens corresponding to the query and key tensors. For example, this can be
-            used to pass offsetted position ids when working with a KV-cache.
-        unsqueeze_dim (`int`, *optional*, defaults to 1):
-            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
-            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
-            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
-            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
-            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
-            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
-    Returns:
-        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
-    """
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
-
-    # Apply rotation
-    q_embed = (q * cos) + (_rotate_half(q) * sin)
-    k_embed = (k * cos) + (_rotate_half(k) * sin)
-    # Cast back to original dtype
-    return q_embed.to(q.dtype), k_embed.to(k.dtype)
-
-
 class QEffPlamoRMSNorm(nn.Module):
-    def __init__(self, hidden_size: int, eps: float = 1e-6) -> None:
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
-
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
@@ -227,23 +140,6 @@ def eager_attention_forward(
 
 
 class QEffPlamoAttention(torch.nn.Module):
-    def __init__(self, config: QEffPlamoConfig, layer_idx: Optional[int] = None) -> None:
-        super().__init__()
-        self.config = config
-        self.hidden_size = config.hidden_size
-        head_dim = self.hidden_size // config.num_attention_heads
-        self.max_position_embeddings = config.max_position_embeddings
-
-        self.q_num_heads = config.num_attention_heads
-        self.qk_dim = self.v_dim = head_dim
-        self.k_num_heads = self.v_num_heads = int(np.ceil(self.q_num_heads / config.n_shared_head))
-
-        self.q_proj = nn.Linear(self.hidden_size, self.q_num_heads * self.qk_dim, bias=False)
-        self.k_proj = nn.Linear(self.hidden_size, self.k_num_heads * self.qk_dim, bias=False)
-        self.v_proj = nn.Linear(self.hidden_size, self.v_num_heads * self.v_dim, bias=False)
-        self.o_proj = nn.Linear(self.q_num_heads * self.v_dim, self.hidden_size, bias=False)
-        self.rotary_emb = QEffPlamoRotaryEmbedding(self.qk_dim, max_position_embeddings=self.max_position_embeddings)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -312,29 +208,11 @@ class QEffPlamoAttention(torch.nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, config: QEffPlamoConfig) -> None:
-        super().__init__()
-        self.config = config
-        self.hidden_size = config.hidden_size
-        self.intermediate_size = config.intermediate_size
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
-        self.act_fn = torch.nn.functional.silu
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))  # type: ignore
 
 
 class QEffPlamoDecoderLayer(torch.nn.Module):
-    def __init__(self, config: QEffPlamoConfig, layer_idx: int) -> None:
-        super().__init__()
-        self.config = config
-        self.hidden_size = config.hidden_size
-        self.self_attn = QEffPlamoAttention(config, layer_idx)
-        self.mlp = MLP(config)
-        self.norm = QEffPlamoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-
     def __qeff_init__(
         self,
     ):
@@ -388,12 +266,6 @@ class QEffPlamoDecoderLayer(torch.nn.Module):
 
 
 class QEffPlamoDecoder(torch.nn.Module):
-    def __init__(self, config: QEffPlamoConfig) -> None:
-        super().__init__()
-        self.layers = torch.nn.ModuleList(
-            [QEffPlamoDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
-        )
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -416,29 +288,16 @@ class QEffPlamoDecoder(torch.nn.Module):
                 assert all_hidden_states is not None
                 all_hidden_states += (hidden_states,)
 
-            if batch_index is not None:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    past_key_value=past_key_values,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                    layer_idx=idx,
-                    batch_index=batch_index,
-                    cache_position=cache_position,
-                )
-            else:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    past_key_value=past_key_values,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                    layer_idx=idx,
-                    cache_position=cache_position,
-                )
+            layer_outputs = decoder_layer(
+                hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_values,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                layer_idx=idx,
+                cache_position=cache_position,
+            )
 
             hidden_states = layer_outputs[0]
 
@@ -481,29 +340,10 @@ class QEffPlamoPreTrainedModel(PreTrainedModel):  # type: ignore
 
 
 class QEffPlamoModel(QEffPlamoPreTrainedModel):
-    def __init__(self, config: QEffPlamoConfig):
-        super().__init__(config)
-        self.padding_idx = config.pad_token_id
-        self.vocab_size = config.vocab_size
-
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.layers = QEffPlamoDecoder(config)  # type: ignore
-        self.norm = QEffPlamoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-
-        self.gradient_checkpointing = False
-        # Initialize weights and apply final processing
-        self.post_init()
-
     def __qeff_init__(
         self,
     ):
         self.norm = CustomRMSNorm(self.config.hidden_size, eps=self.config.rms_norm_eps)
-
-    def get_input_embeddings(self) -> torch.nn.Embedding:
-        return self.embed_tokens
-
-    def set_input_embeddings(self, value: torch.nn.Embedding) -> None:
-        self.embed_tokens = value
 
     def forward(
         self,
@@ -529,12 +369,8 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # retrieve input_ids and inputs_embeds
-        if input_ids is not None and inputs_embeds is not None:
+        if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You cannot specify both decoder_input_ids and decoder_inputs_embeds at the same time")
-        elif input_ids is not None:
-            batch_size, seq_length = input_ids.shape
-        else:
-            raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -543,15 +379,7 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            if past_key_values is None:
-                past_key_values = QEffDynamicCache()
-            else:
-                past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
-                logger.warning_once(
-                    "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
-                    "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
-                    "(https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)"
-                )
+            past_key_values = QEffDynamicCache()
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -612,33 +440,6 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
 
 
 class QEffPlamoForCausalLM(QEffPlamoPreTrainedModel):
-    def __init__(self, config: PretrainedConfig) -> None:
-        super().__init__(config)
-        self.model = QEffPlamoModel(config)
-
-        self.lm_head: torch.nn.Module = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    def get_input_embeddings(self) -> torch.nn.Embedding:
-        return self.model.embed_tokens
-
-    def set_input_embeddings(self, value: torch.nn.Embedding) -> None:
-        self.model.embed_tokens = value
-
-    def get_output_embeddings(self) -> torch.nn.Module:
-        return self.lm_head
-
-    def set_output_embeddings(self, new_embeddings: torch.nn.Module) -> None:
-        self.lm_head = new_embeddings
-
-    def set_decoder(self, decoder: QEffPlamoModel) -> None:
-        self.model = decoder
-
-    def get_decoder(self) -> QEffPlamoModel:
-        return self.model
-
     def forward(  # type: ignore
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -684,25 +485,8 @@ class QEffPlamoForCausalLM(QEffPlamoPreTrainedModel):
         logits = self.lm_head(hidden_states)
         logits = logits.float()
 
-        loss = None
-        if labels is not None:
-            # Shift so that tokens < n predict n
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
-            loss_fct = nn.CrossEntropyLoss()
-            shift_logits = shift_logits.view(-1, self.config.vocab_size)
-            shift_labels = shift_labels.view(-1)
-            # Enable model parallelism
-            shift_labels = shift_labels.to(shift_logits.device)
-            loss = loss_fct(shift_logits, shift_labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[1:]
-            return (loss,) + output if loss is not None else output
-
         return CausalLMOutputWithPast(
-            loss=loss,
+            loss=None,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
