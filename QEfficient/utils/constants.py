@@ -108,7 +108,6 @@ class QnnConstants:
     # QNN PATH to be read from environment variable.
     QNN_SDK_PATH_ENV_VAR_NAME = "QNN_SDK_ROOT"
     QNN_SDK_YAML = "sdk.yaml"
-    QNN_DEFAULT_CONFIG_PATH = "QEfficient/compile/qnn_config.json"
 
     # QNN Compilation tools
     QAIRT_CONVERTER = "{}/bin/{}/qairt-converter"

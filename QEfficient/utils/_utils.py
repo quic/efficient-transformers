@@ -586,12 +586,11 @@ def create_and_dump_qconfigs(
     many other compilation options.
     """
     enable_qnn = compiler_options.get("enable_qnn", None)
-    qnn_config = compiler_options.get("qnn_config", None)
+    qnn_config_path = compiler_options.get("qnn_config", None)
     qconfig_file_path = os.path.join(os.path.dirname(qpc_path), "qconfig.json")
     onnx_path = str(onnx_path)
     specializations_file_path = str(os.path.join(os.path.dirname(qpc_path), "specializations.json"))
     compile_dir = str(os.path.dirname(qpc_path))
-    qnn_config_path = qnn_config if qnn_config is not None else QnnConstants.QNN_DEFAULT_CONFIG_PATH
 
     # Ensure all objects in the configs dictionary are JSON serializable
     def make_serializable(obj):
