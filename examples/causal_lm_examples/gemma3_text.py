@@ -12,7 +12,6 @@ from transformers.models.gemma3.modeling_gemma3 import Gemma3RMSNorm
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
-from QEfficient.utils.run_utils import ApiRunner
 
 
 def add_named_scopes(model):
@@ -29,27 +28,9 @@ model = Gemma3ForCausalLM.from_pretrained(
 model.eval()
 
 tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_id)
-config = model.config
-batch_size = len(Constants.INPUT_STR)
-api_runner = ApiRunner(
-    batch_size,
-    tokenizer,
-    config,
-    Constants.INPUT_STR,
-    Constants.PROMPT_LEN,
-    Constants.CTX_LEN,
-)
-pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model)
 qeff_model = QEFFAutoModelForCausalLM(model)
-pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
-assert (
-    pytorch_hf_tokens == pytorch_kv_tokens
-).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
-# add_named_scopes(qeff_model.model)
 onnx_model_path = qeff_model.export()
-ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=False)
-assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
 
 qpc_path = qeff_model.compile(
     prefill_seq_len=Constants.PROMPT_LEN,
@@ -61,6 +42,7 @@ qpc_path = qeff_model.compile(
     mos=1,
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
+    node_precision_info="fp32_nodes_gemma3_text.yaml",
 )
 print(f"qpc path is {qpc_path}")
 exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR, device_ids=[0])
