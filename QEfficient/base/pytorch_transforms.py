@@ -126,7 +126,9 @@ class SplitGateUpWeightsTransform(PytorchTransform):
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         transformed = False
-        model = model.language_model
+
+        model = model.language_model if hasattr(model, "language_model") else model
+
         num_layers = len(model.model.layers)
         delete_fused_key = True
         sd = model.state_dict()
@@ -158,3 +160,16 @@ class SplitGateUpWeightsTransform(PytorchTransform):
             print(f"[layer {layer_idx:02d}] loaded gate_proj & up_proj from fused tensor  (shape {fused.shape})")
             transformed = True
         return model, transformed
+
+
+VLM_SPLIT_GATE_UP_WEIGHTS = ["Llama4ForConditionalGeneration", "Llama4TextModel"]
+
+
+def append_tranform(func):
+    def wrapper(*args, **kwargs):
+        model_class = args[1].model.__class__.__name__ if hasattr(args[1], "model") else args[1].__class__.__name__
+        if model_class in VLM_SPLIT_GATE_UP_WEIGHTS:
+            args[0]._pytorch_transforms.append(SplitGateUpWeightsTransform)
+        return func(*args, **kwargs)
+
+    return wrapper

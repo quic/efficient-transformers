@@ -384,6 +384,3 @@ def _create_causal_mask(
         attention_mask = attention_mask.unsqueeze(1)
 
     return attention_mask
-
-
-VLM_SPLIT_GATE_UP_WEIGHTS = ["Llama4ForConditionalGeneration"]
