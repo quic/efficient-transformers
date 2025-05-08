@@ -197,9 +197,9 @@ def main(
         **kwargs,
     )
 
+    #  If the io-encrypt flag is passed we will exit after QPC generation.
     if kwargs.get("io_encrypt", None):
-        logger.warning("Compilation for io-encrypt flag is done, but it is not yet supported for execution.")
-        exit()
+       exit()
 
     #########
     # Execute
