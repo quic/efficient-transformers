@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import math
 import random
 import warnings
 
@@ -30,7 +31,7 @@ from QEfficient.finetune.utils.dataset_utils import (
     get_preprocessed_dataset,
 )
 from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
-from QEfficient.utils._utils import login_and_download_hf_lm
+from QEfficient.utils._utils import get_num_layers_from_config, login_and_download_hf_lm
 
 try:
     import torch_qaic  # noqa: F401
@@ -38,41 +39,36 @@ except ImportError as e:
     print(f"Warning: {e}. Moving ahead without these qaic modules.")
 
 
-from transformers import AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
 
-def get_device_map_for_llama_70B(dev0, dev1, dev2, dev3, dev4, dev5):  # total_num_layers, num_stages
+
+def get_device_map(rank, num_pp_stages, num_layers):
     device_map = {
-      'model.embed_tokens': dev0,
-      'lm_head': dev5,
-      'model.norm': dev5,
-      'model.rotary_emb': dev5
+        "model.embed_tokens": rank * num_pp_stages,
+        "lm_head": rank * num_pp_stages,
+        "model.norm": rank * num_pp_stages + (num_pp_stages - 1),
+        "model.rotary_emb": rank * num_pp_stages + (num_pp_stages - 1),
     }
-    for i in range(80):
-        if i < 14:
-            device_map[f"model.layers.{i}"] = dev0
-        elif i < 28:
-            device_map[f"model.layers.{i}"] = dev1
-        elif i < 42:
-            device_map[f"model.layers.{i}"] = dev2
-        elif i < 56:
-            device_map[f"model.layers.{i}"] = dev3
-        elif i < 70:
-            device_map[f"model.layers.{i}"] = dev4
-        else:
-            device_map[f"model.layers.{i}"] = dev5
+    n_layer_per_stage = math.ceil(num_layers / num_pp_stages)  # number of layers per device 80/6 = 13.3 ~ 14
+    for j in range(num_pp_stages):
+        for i in range(n_layer_per_stage * j, n_layer_per_stage * (j + 1)):
+            if i < num_layers:
+                device_map[f"model.layers.{i}"] = rank * num_pp_stages + j
+
     return device_map
 
 
-def setup_distributed_training():
-    torch_device = torch.device("qaic")
+def setup_distributed_training(train_config):
+    torch_device = torch.device(train_config.device)
     assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
     assert torch_device.index is None, f"DDP requires only device type, got: {torch_device}"
-    dist.init_process_group(backend="qccl")
-    # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
-    #getattr(torch, torch_device.type).set_device(dist.get_rank()*2)
+    dist.init_process_group(backend=train_config.dist_backend)
+    if not train_config.enable_pp:
+        # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
+        getattr(torch, torch_device.type).set_device(dist.get_rank())
 
 
 def main(**kwargs):
@@ -87,6 +83,13 @@ def main(**kwargs):
     # update the configuration for the training process
     train_config = TRAIN_CONFIG()
     update_config(train_config, **kwargs)
+
+    if train_config.enable_ddp or train_config.enable_pp:
+        setup_distributed_training(train_config)
+    if train_config.enable_pp:
+        assert dist.get_world_size() % train_config.num_pp_stages == 0, (
+            "total available devices should be multiple of number of pipeline stages"
+        )
     dataset_config = generate_dataset_config(train_config, kwargs)
 
     # Set the seeds for reproducibility
@@ -95,7 +98,7 @@ def main(**kwargs):
     np.random.seed(train_config.seed)
 
     # Load the pre-trained model and setup its configuration
-    # config = AutoConfig.from_pretrained(train_config.model_name)
+    model_config = AutoConfig.from_pretrained(train_config.model_name)
     pretrained_model_path = login_and_download_hf_lm(train_config.model_name)
     if train_config.task_type == "seq_classification":
         model = AutoModelForSequenceClassification.from_pretrained(
@@ -115,9 +118,12 @@ def main(**kwargs):
             if param.requires_grad:
                 param.data = param.data.to(torch.float32)
     else:
-        rank = dist.get_rank()
-
-        device_map = get_device_map_for_llama_70B(rank*6, rank*6+1, rank*6+2, rank*6+3, rank*6+4, rank*6+5)
+        if train_config.enable_pp and train_config.enable_ddp:
+            rank = dist.get_rank()
+            num_layers = get_num_layers_from_config(model_config)
+            device_map = get_device_map(rank, train_config.num_pp_stages, num_layers)
+        else:
+            device_map = "auto"
         model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_path,
             use_cache=False,
@@ -236,7 +242,7 @@ def main(**kwargs):
         f"passed context length is {train_config.context_length} and overall model's context length is "
         f"{model.config.max_position_embeddings}"
     )
-    #model.to(train_config.device)
+    # model.to(train_config.device)
     optimizer = optim.AdamW(
         model.parameters(),
         lr=train_config.lr,
@@ -246,7 +252,7 @@ def main(**kwargs):
 
     # wrap model with DDP
     if train_config.enable_ddp:
-        model = nn.parallel.DistributedDataParallel(model)#, device_ids=[dist.get_rank()])
+        model = nn.parallel.DistributedDataParallel(model)  # , device_ids=[dist.get_rank()])
 
     _ = train(
         model,
@@ -268,5 +274,4 @@ def main(**kwargs):
 
 
 if __name__ == "__main__":
-    setup_distributed_training()
     fire.Fire(main)
