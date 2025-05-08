@@ -197,6 +197,10 @@ def main(
         **kwargs,
     )
 
+    if kwargs.get("io_encrypt", None):
+        logger.warning("Compilation for encrypt-io is done, but not supported for execution yet.")
+        exit()
+
     #########
     # Execute
     #########
