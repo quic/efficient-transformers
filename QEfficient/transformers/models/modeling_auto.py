@@ -35,6 +35,7 @@ from QEfficient.generation.text_generation_inference import (
     calculate_latency,
     get_compilation_dims,
 )
+from QEfficient.transformers.modeling_utils import VLM_SPLIT_GATE_UP_WEIGHTS
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
@@ -514,6 +515,9 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model):
+        if model.config.architectures[0] in VLM_SPLIT_GATE_UP_WEIGHTS:
+            self._pytorch_transforms.append(SplitGateUpWeightsTransform)
+
         super().__init__(model)
         self.model = model.get_qeff_language_decoder()
 
