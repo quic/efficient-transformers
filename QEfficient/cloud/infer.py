@@ -198,7 +198,7 @@ def main(
     )
 
     if kwargs.get("io_encrypt", None):
-        logger.warning("Compilation for encrypt-io is done, but not supported for execution yet.")
+        logger.warning("Compilation for io-encrypt flag is done, but it is not yet supported for execution.")
         exit()
 
     #########
