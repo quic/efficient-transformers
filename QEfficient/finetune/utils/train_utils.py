@@ -18,7 +18,7 @@ import torchmetrics
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from QEfficient.finetune.configs.training import train_config as TRAIN_CONFIG
+from QEfficient.finetune.configs.training import TrainConfig
 
 try:
     import torch_qaic  # noqa: F401
@@ -34,34 +34,31 @@ from torch.amp import GradScaler
 
 def train(
     model,
+    tokenizer,
     train_dataloader,
     eval_dataloader,
-    tokenizer,
     optimizer,
     lr_scheduler,
-    gradient_accumulation_steps,
-    train_config: TRAIN_CONFIG,
-    device,
+    train_config: TrainConfig,
     local_rank=None,
-    rank=None,
 ):
     """
     Trains the model on the given dataloader
 
     Args:
         model: The model to be trained
+        tokenizer: tokenizer used in the eval for decoding the predicitons
         train_dataloader: The dataloader containing the training data
+        eval_dataloader: The dataloader containing the eval data
         optimizer: The optimizer used for training
         lr_scheduler: The learning rate scheduler
-        gradient_accumulation_steps: The number of steps to accumulate gradients before performing a backward/update operation
-        num_epochs: The number of epochs to train for
-        local_rank: The rank of the current node in a distributed setting
         train_config: The training configuration
-        eval_dataloader: The dataloader containing the eval data
-        tokenizer: tokenizer used in the eval for decoding the predicitons
+        local_rank: The rank of the current node in a distributed setting
 
     Returns: results dictionary containing average training and validation perplexity and loss
     """
+    device = train_config.device
+
     train_metric = []
     train_loss = []
     val_metric = []
@@ -461,7 +458,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     # Print evaluation metrics
     print(f" {eval_metric.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
 
-    return eval_metric, eval_epoch_loss, val_step_loss, val_step_metric
+    return eval_epoch_loss, eval_metric, val_step_loss, val_step_metric
 
 
 def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
