@@ -20,8 +20,8 @@ class QEffInternEncoderWrapper(nn.Module):
         self.model = model
 
     def forward(self, pixel_values):
-        vit_embeds = self.model.extract_feature(pixel_values)
-        return vit_embeds
+        vision_embeds = self.model.extract_feature(pixel_values)
+        return vision_embeds
 
 
 class QEffInternDecoderWrapper(nn.Module):
@@ -31,7 +31,7 @@ class QEffInternDecoderWrapper(nn.Module):
         self.config = self.model.language_model.config
         self.language_model = self.model.language_model
 
-    def forward(self, input_ids, vit_embeds, position_ids, past_key_values):
+    def forward(self, input_ids, vision_embeds, position_ids, past_key_values):
         input_embeds = self.model.language_model.get_input_embeddings()(input_ids)
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
@@ -39,13 +39,13 @@ class QEffInternDecoderWrapper(nn.Module):
         selected = image_input_ids == constants.INTERN_IMG_CONTEXT_TOKEN
         indices1 = selected.unsqueeze(0).to(torch.int64).cumsum(1) - 1
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-        image_features_expanded = vit_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
+        image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(0).unsqueeze(-1), image_features_expanded, input_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), input_embeds, image_input_embeds)
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
-        return outputs.logits, vit_embeds, outputs.past_key_values
+        return outputs.logits, vision_embeds, outputs.past_key_values
 
 
 class QEffInternVLModel(nn.Module):
@@ -122,7 +122,7 @@ class QEffInternVLModel(nn.Module):
         lang_dynamic_axes = {}
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
-        lang_dynamic_axes["vit_embeds"] = {0: "num_patches"}
+        lang_dynamic_axes["vision_embeds"] = {0: "num_patches"}
         vision_dynamic_axes["pixel_values"] = {0: "num_patches", 2: "img_size", 3: "img_size"}
 
         pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
@@ -139,7 +139,7 @@ class QEffInternVLModel(nn.Module):
         return dynamic_axes
 
     def get_output_names(self, kv_offload: bool = False):
-        vision_output_names = ["vit_embeds"]
+        vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
@@ -147,7 +147,7 @@ class QEffInternVLModel(nn.Module):
 
         output_names = {}
         if kv_offload:
-            lang_output_names.insert(1, "vit_embeds_RetainedState")
+            lang_output_names.insert(1, "vision_embeds_RetainedState")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
@@ -175,7 +175,7 @@ class QEffInternVLModel(nn.Module):
         # Define shapes
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-        inputs_shapes["vit_embeds"] = (
+        inputs_shapes["vision_embeds"] = (
             constants.INTERN_NUM_PATCHES,
             constants.INTERN_FEATURE_SIZE,
             self.language_model.config.hidden_size,
@@ -196,7 +196,7 @@ class QEffInternVLModel(nn.Module):
         lang_inputs = {}
         vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["vit_embeds"] = torch.zeros((inputs_shapes["vit_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
         lang_inputs["position_ids"] = (
             torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
             .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
@@ -220,21 +220,21 @@ class QEffInternVLModel(nn.Module):
             inputs["vision"] = vision_inputs
             inputs["lang"] = lang_inputs
         else:
-            lang_inputs.pop("vit_embeds")
+            lang_inputs.pop("vision_embeds")
             inputs = {**vision_inputs, **lang_inputs}
 
         return inputs
 
     def forward(self, input_ids, pixel_values, position_ids, past_key_values):
         input_embeds = self.language_model.get_input_embeddings()(input_ids)
-        vit_embeds = self.extract_feature(pixel_values)
+        vision_embeds = self.extract_feature(pixel_values)
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
         image_input_ids = input_ids.reshape(B * N)
         selected = image_input_ids == constants.INTERN_IMG_CONTEXT_TOKEN
         indices1 = selected.unsqueeze(0).to(torch.int64).cumsum(1) - 1
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-        image_features_expanded = vit_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
+        image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(0).unsqueeze(-1), image_features_expanded, input_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), input_embeds, image_input_embeds)
         outputs = self.language_model(

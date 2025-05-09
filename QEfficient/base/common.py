@@ -16,10 +16,9 @@ import os
 from typing import Any
 
 from transformers import AutoConfig
-from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.transformers.modeling_utils import MODEL_CLASS_MAPPING
 from QEfficient.utils import login_and_download_hf_lm
 
 
@@ -44,8 +43,10 @@ class QEFFCommonLoader:
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path)
         architecture = config.architectures[0] if config.architectures else None
 
-        if architecture in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
-            model_class = QEFFAutoModelForCausalLM
+        class_name = MODEL_CLASS_MAPPING.get(architecture)
+        if class_name:
+            module = __import__("QEfficient.transformers.models.modeling_auto")
+            model_class = getattr(module, class_name)
         else:
             raise NotImplementedError(
                 f"Unknown architecture={architecture}, either use specific auto model class for loading the model or raise an issue for support!"

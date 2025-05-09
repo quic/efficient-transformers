@@ -25,7 +25,7 @@ configs = [
         32,  # prefill_seq_len
         128,  # ctx_len
         1,  # prefill_bsz
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # draft_model_name
+        "JackFram/llama-68m",  # target_model_name
         1,  # full_batch_size
         3,  # max_ngram_size
         id="CB llama",
@@ -145,9 +145,9 @@ def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
     """
     num_chunks = -(input_len // -prefill_seq_len)  # ceil divide without float
     input_len_padded = num_chunks * prefill_seq_len  # Convert input_len to a multiple of prefill_seq_len
-    assert (
-        input_len_padded <= ctx_len
-    ), "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
+    assert input_len_padded <= ctx_len, (
+        "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
+    )
     return input_len_padded
 
 
@@ -247,14 +247,14 @@ def test_pld_spec_decode_inference(
 
     # export_and_compile tlm and dlm
     continuous_batching = full_batch_size is not None
+    qaic_config = dict(speculative_model_type="target")
     target_model = AutoModelForCausalLM.from_pretrained(
-        target_model_name, continuous_batching=continuous_batching, is_tlm=True
+        target_model_name, continuous_batching=continuous_batching, qaic_config=qaic_config
     )
 
-    num_devices = len(device_group)
     target_model_qpc_path: str = target_model.compile(
-        num_cores=16,
-        num_devices=num_devices,
+        num_cores=8,
+        num_devices=1,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         aic_enable_depth_first=True,
@@ -262,7 +262,7 @@ def test_pld_spec_decode_inference(
         num_speculative_tokens=num_speculative_tokens,
     )
     # init qaic session
-    target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=device_group)
+    target_model_session = QAICInferenceSession(target_model_qpc_path)
     draft_model_session = None
 
     # skip inputs/outputs buffers
@@ -402,7 +402,7 @@ def test_pld_spec_decode_inference(
             all_ids[bi, prompt_plus_gen_idx[bi] : prompt_plus_gen_idx[bi] + num_tokens_to_append] = gen_ids
             prompt_plus_gen_idx[bi] += num_tokens_to_append
             generated_ids[bi].extend(gen_ids.tolist())
-            if len(generated_ids[bi]) >= max_gen_len[bi]:
+            if len(generated_ids[bi]) + num_logits_to_keep >= max_gen_len[bi]:
                 valid_batch_indices[bi] = False
         # check if all generations are done
         if not valid_batch_indices.any():
@@ -453,7 +453,7 @@ def test_pld_spec_decode_inference(
     del draft_model_session
     generated_ids = np.asarray(generated_ids[0]).flatten()
     gen_len = generated_ids.shape[0]
-    exec_info = target_model.generate(tokenizer, Constants.INPUT_STR, device_group)
+    exec_info = target_model.generate(tokenizer, Constants.INPUT_STR)
     cloud_ai_100_tokens = exec_info.generated_ids[0][
         :gen_len
     ]  # Because we always run for single input and single batch size
