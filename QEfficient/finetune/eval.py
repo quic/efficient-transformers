@@ -11,7 +11,6 @@ import warnings
 import fire
 import numpy as np
 import torch
-from configs.training import train_config as TRAIN_CONFIG
 from peft import AutoPeftModelForCausalLM
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from utils.config_utils import (
@@ -24,6 +23,8 @@ from utils.dataset_utils import (
     get_preprocessed_dataset,
 )
 from utils.train_utils import evaluation, print_model_size
+
+from QEfficient.finetune.configs.training import TrainConfig
 
 try:
     import torch_qaic  # noqa: F401
@@ -39,7 +40,7 @@ warnings.filterwarnings("ignore")
 
 def main(**kwargs):
     # update the configuration for the training process
-    train_config = TRAIN_CONFIG()
+    train_config = TrainConfig()
     update_config(train_config, **kwargs)
 
     # Set the seeds for reproducibility

@@ -8,6 +8,7 @@
 import math
 import random
 import warnings
+from typing import Any, Dict, Optional, Union
 
 import fire
 import numpy as np
@@ -18,8 +19,9 @@ import torch.optim as optim
 import torch.utils.data
 from peft import PeftModel, get_peft_model
 from torch.optim.lr_scheduler import StepLR
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
 
-from QEfficient.finetune.configs.training import train_config as TRAIN_CONFIG
+from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.utils.config_utils import (
     generate_dataset_config,
     generate_peft_config,
@@ -33,72 +35,111 @@ from QEfficient.finetune.utils.dataset_utils import (
 from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
 from QEfficient.utils._utils import get_num_layers_from_config, login_and_download_hf_lm
 
+# Try importing QAIC-specific module, proceed without it if unavailable
 try:
     import torch_qaic  # noqa: F401
 except ImportError as e:
-    print(f"Warning: {e}. Moving ahead without these qaic modules.")
+    print(f"Warning: {e}. Proceeding without QAIC modules.")
 
-
-from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
 
 
 def get_device_map(rank, num_pp_stages, num_layers):
+    """Returns device map for model layers and given process rank based on number of pipeline stages.
+
+    Args:
+        rank (int): process rank
+        num_pp_stages (int): number of stages in pipeline
+        num_layers (int): total number of layers in the models
+
+    Returns:
+        Dict: A dictionary of layers and corresponding device id.
+
+    Notes:
+        - This device map structure is verified for llama models only.
+    """
     device_map = {
         "model.embed_tokens": rank * num_pp_stages,
         "lm_head": rank * num_pp_stages,
         "model.norm": rank * num_pp_stages + (num_pp_stages - 1),
         "model.rotary_emb": rank * num_pp_stages + (num_pp_stages - 1),
     }
-    n_layer_per_stage = math.ceil(num_layers / num_pp_stages)  # number of layers per device 80/6 = 13.3 ~ 14
+    n_layer_per_stage = math.ceil(num_layers / num_pp_stages)
     for j in range(num_pp_stages):
-        for i in range(n_layer_per_stage * j, n_layer_per_stage * (j + 1)):
-            if i < num_layers:
-                device_map[f"model.layers.{i}"] = rank * num_pp_stages + j
-
+        for i in range(n_layer_per_stage * j, min(n_layer_per_stage * (j + 1), num_layers)):
+            device_map[f"model.layers.{i}"] = rank * num_pp_stages + j
     return device_map
 
 
-def setup_distributed_training(train_config):
+def setup_distributed_training(train_config: TrainConfig) -> None:
+    """Initialize distributed training environment if enabled.
+
+    Args:
+        train_config (TrainConfig): Training configuration object.
+
+    Notes:
+        - If distributed data parallel (DDP) is disabled, this function does nothing.
+        - Ensures the device is not CPU and does not specify an index for DDP compatibility.
+        - Initializes the process group using the specified distributed backend.
+
+    Raises:
+        AssertionError: If device is CPU or includes an index with DDP enabled.
+    """
+    if not train_config.enable_ddp:
+        return
+
     torch_device = torch.device(train_config.device)
     assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
     assert torch_device.index is None, f"DDP requires only device type, got: {torch_device}"
+
     dist.init_process_group(backend=train_config.dist_backend)
-    if not train_config.enable_pp:
-        # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
-        getattr(torch, torch_device.type).set_device(dist.get_rank())
-
-
-def main(**kwargs):
-    """
-    Helper function to finetune the model on QAic.
-
-    .. code-block:: bash
-
-        python -m QEfficient.cloud.finetune OPTIONS
-
-    """
-    # update the configuration for the training process
-    train_config = TRAIN_CONFIG()
-    update_config(train_config, **kwargs)
-
-    if train_config.enable_ddp or train_config.enable_pp:
-        setup_distributed_training(train_config)
     if train_config.enable_pp:
         assert dist.get_world_size() % train_config.num_pp_stages == 0, (
             "total available devices should be multiple of number of pipeline stages"
         )
-    dataset_config = generate_dataset_config(train_config, kwargs)
+    else:
+        # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
+        getattr(torch, torch_device.type).set_device(dist.get_rank())
 
-    # Set the seeds for reproducibility
-    torch.manual_seed(train_config.seed)
-    random.seed(train_config.seed)
-    np.random.seed(train_config.seed)
 
-    # Load the pre-trained model and setup its configuration
-    model_config = AutoConfig.from_pretrained(train_config.model_name)
+def setup_seeds(seed: int) -> None:
+    """Set random seeds across libraries for reproducibility.
+
+    Args:
+        seed (int): Seed value to set for random number generators.
+
+    Notes:
+        - Sets seeds for PyTorch, Python's random module, and NumPy.
+    """
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
+
+def load_model_and_tokenizer(
+    train_config: TrainConfig, dataset_config: Any, peft_config_file: str, **kwargs
+) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
+    """Load the pre-trained model and tokenizer from Hugging Face.
+
+    Args:
+        config (TrainConfig): Training configuration object containing model and tokenizer names.
+        dataset_config (Any): A dataclass object representing dataset configuration.
+        peft_config_file (str): Path to PEFT config file used for PEFT finetuning.
+        kwargs: Additional arguments to override PEFT config.
+
+    Returns:
+        tuple: A tuple of two values.
+            - Model with pretrained weights loaded.
+            - Model's tokenizer (AutoTokenizer).
+
+    Notes:
+        - Downloads the model if not already cached using login_and_download_hf_lm.
+        - Configures the model with FP16 precision and disables caching for training.
+        - Resizes model embeddings if tokenizer vocab size exceeds model embedding size.
+        - Sets pad_token_id to eos_token_id if not defined in the tokenizer.
+    """
     pretrained_model_path = login_and_download_hf_lm(train_config.model_name)
     if train_config.task_type == "seq_classification":
         model = AutoModelForSequenceClassification.from_pretrained(
@@ -118,22 +159,30 @@ def main(**kwargs):
             if param.requires_grad:
                 param.data = param.data.to(torch.float32)
     else:
-        if train_config.enable_pp and train_config.enable_ddp:
-            rank = dist.get_rank()
-            num_layers = get_num_layers_from_config(model_config)
-            device_map = get_device_map(rank, train_config.num_pp_stages, num_layers)
+        if train_config.enable_pp:
+            if train_config.enable_ddp:
+                rank = dist.get_rank()
+                model_config = AutoConfig.from_pretrained(train_config.model_name)
+                num_layers = get_num_layers_from_config(model_config)
+                device_map = get_device_map(rank, train_config.num_pp_stages, num_layers)
+            else:
+                device_map = "auto"
+            model = AutoModelForCausalLM.from_pretrained(
+                pretrained_model_path,
+                use_cache=False,
+                attn_implementation="sdpa",
+                torch_dtype=torch.float16,
+                device_map=device_map,
+            )
+            print(model.hf_device_map)
         else:
-            device_map = "auto"
-        model = AutoModelForCausalLM.from_pretrained(
-            pretrained_model_path,
-            use_cache=False,
-            attn_implementation="sdpa",
-            torch_dtype=torch.float16,
-            device_map=device_map,
-        )
-        print(model.hf_device_map)
+            model = AutoModelForCausalLM.from_pretrained(
+                pretrained_model_path,
+                use_cache=False,
+                attn_implementation="sdpa",
+                torch_dtype=torch.float16,
+            )
 
-    # Load the tokenizer and add special tokens
     tokenizer = AutoTokenizer.from_pretrained(
         train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name
     )
@@ -143,13 +192,11 @@ def main(**kwargs):
     # If there is a mismatch between tokenizer vocab size and embedding matrix,
     # throw a warning and then expand the embedding matrix
     if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
-        print("WARNING: Resizing the embedding matrix to match the tokenizer vocab size.")
+        print("WARNING: Resizing embedding matrix to match tokenizer vocab size.")
         model.resize_token_embeddings(len(tokenizer))
 
+    # FIXME (Meet): Cover below line inside the logger once it is implemented.
     print_model_size(model, train_config)
-
-    # print the datatype of the model parameters
-    # print(get_parameter_dtypes(model))
 
     # Note: Need to call this before calling PeftModel.from_pretrained or get_peft_model.
     # Because, both makes model.is_gradient_checkpointing = True which is used in peft library to
@@ -163,17 +210,70 @@ def main(**kwargs):
         else:
             raise RuntimeError("Given model doesn't support gradient checkpointing. Please disable it and run it.")
 
-    if train_config.use_peft:
-        # Load the pre-trained peft model checkpoint and setup its configuration
-        if train_config.from_peft_checkpoint:
-            model = PeftModel.from_pretrained(model, train_config.from_peft_checkpoint, is_trainable=True)
-            peft_config = model.peft_config
-        # Generate the peft config and start fine-tuning from original model
-        else:
-            peft_config = generate_peft_config(train_config, kwargs)
-            model = get_peft_model(model, peft_config)
-        model.print_trainable_parameters()
+    model = apply_peft(model, train_config, peft_config_file, **kwargs)
 
+    return model, tokenizer
+
+
+def apply_peft(
+    model: AutoModel, train_config: TrainConfig, peft_config_file: Dict, **kwargs
+) -> Union[AutoModel, PeftModel]:
+    """Apply Parameter-Efficient Fine-Tuning (PEFT) to the model if enabled.
+
+    Args:
+        model (AutoModel): Huggingface model.
+        train_config (TrainConfig): Training configuration object.
+        peft_config_file (str, optional): Path to YAML/JSON file containing
+            PEFT (LoRA) config. Defaults to None.
+        kwargs: Additional arguments to override PEFT config params.
+
+    Returns:
+        Union[AutoModel, PeftModel]: If the use_peft in train_config is True
+            then PeftModel object is returned else original model object
+            (AutoModel) is returned.
+    """
+    if not train_config.use_peft:
+        return model
+
+    # Load the pre-trained peft model checkpoint and setup its configuration
+    if train_config.from_peft_checkpoint:
+        model = PeftModel.from_pretrained(model, train_config.from_peft_checkpoint, is_trainable=True)
+        peft_config = model.peft_config
+    # Generate the peft config and start fine-tuning from original model
+    else:
+        peft_config = generate_peft_config(train_config, peft_config_file, **kwargs)
+        model = get_peft_model(model, peft_config)
+    model.print_trainable_parameters()
+
+    return model
+
+
+def setup_dataloaders(
+    train_config: TrainConfig,
+    dataset_config: Any,
+    tokenizer: AutoTokenizer,
+) -> tuple[torch.utils.data.DataLoader, Optional[torch.utils.data.DataLoader], int]:
+    """Set up training and validation DataLoaders.
+
+    Args:
+        train_config (TrainConfig): Training configuration object.
+        dataset_config (Any): Configuration for the dataset (generated from train_config).
+        tokenizer (AutoTokenizer): Tokenizer for preprocessing data.
+
+    Returns:
+        tuple: A tuple of three values.
+            - First value represents train_dataloader
+            - Second value represents eval_dataloader. It is None if
+              validation is disabled.
+            - Length of longest sequence in the dataset.
+
+    Raises:
+        ValueError: If validation is enabled but the validation set is too small.
+
+    Notes:
+        - Applies a custom data collator if provided by get_custom_data_collator.
+        - Configures DataLoader kwargs using get_dataloader_kwargs for train and val splits.
+    """
     # Get the dataset utils
     dataset_processer = tokenizer
 
@@ -193,6 +293,8 @@ def main(**kwargs):
     ##
     train_dl_kwargs = get_dataloader_kwargs(train_config, dataset_train, dataset_processer, "train")
     print("length of dataset_train", len(dataset_train))
+
+    # FIXME (Meet): Add custom data collator registration from the outside by the user.
     custom_data_collator = get_custom_data_collator(dataset_processer, dataset_config)
     if custom_data_collator:
         print("custom_data_collator is used")
@@ -237,40 +339,71 @@ def main(**kwargs):
     else:
         longest_seq_length, _ = get_longest_seq_length(train_dataloader.dataset)
 
+    return train_dataloader, eval_dataloader, longest_seq_length
+
+
+def main(peft_config_file: str = None, **kwargs) -> None:
+    """
+    Fine-tune a model on QAIC hardware with configurable training and LoRA parameters.
+
+    Args:
+        peft_config_file (str, optional): Path to YAML/JSON file containing PEFT (LoRA) config. Defaults to None.
+        kwargs: Additional arguments to override TrainConfig.
+
+    Example:
+        .. code-block:: bash
+
+            # Using a YAML config file for PEFT
+            python -m QEfficient.cloud.finetune \\
+                --model_name "meta-llama/Llama-3.2-1B" \\
+                --lr 5e-4 \\
+                --peft_config_file "lora_config.yaml"
+
+            # Using default LoRA config
+            python -m QEfficient.cloud.finetune \\
+                --model_name "meta-llama/Llama-3.2-1B" \\
+                --lr 5e-4
+    """
+    train_config = TrainConfig()
+    update_config(train_config, **kwargs)
+    dataset_config = generate_dataset_config(train_config.dataset)
+    update_config(dataset_config, **kwargs)
+
+    setup_distributed_training(train_config)
+    setup_seeds(train_config.seed)
+    model, tokenizer = load_model_and_tokenizer(train_config, dataset_config, peft_config_file, **kwargs)
+
+    # Create DataLoaders for the training and validation dataset
+    train_dataloader, eval_dataloader, longest_seq_length = setup_dataloaders(train_config, dataset_config, tokenizer)
     print(
         f"The longest sequence length in the train data is {longest_seq_length}, "
         f"passed context length is {train_config.context_length} and overall model's context length is "
         f"{model.config.max_position_embeddings}"
     )
-    # model.to(train_config.device)
+    if not train_config.enable_pp:
+        model.to(train_config.device)
     optimizer = optim.AdamW(
         model.parameters(),
         lr=train_config.lr,
         weight_decay=train_config.weight_decay,
     )
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
-
-    # wrap model with DDP
     if train_config.enable_ddp:
         model = nn.parallel.DistributedDataParallel(model)  # , device_ids=[dist.get_rank()])
 
-    _ = train(
+    results = train(
         model,
+        tokenizer,
         train_dataloader,
         eval_dataloader,
-        tokenizer,
         optimizer,
         scheduler,
-        train_config.gradient_accumulation_steps,
         train_config,
-        train_config.device,
         dist.get_rank() if train_config.enable_ddp else None,
-        None,
     )
-
-    # finalize torch distributed
     if train_config.enable_ddp:
         dist.destroy_process_group()
+    return results
 
 
 if __name__ == "__main__":
