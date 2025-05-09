@@ -92,9 +92,9 @@ def get_custom_dataset(dataset_config, tokenizer, split, context_length=None):
     
     # define prompt
     # call apply_prompt_template() for each data point:
-    # data = data.map(apply_prompt_template ,<other args>)
+    # dataset = dataset.map(apply_prompt_template ,<other args>)
     # call tokenize() for each data point:
-    # data = data.map(tokenize, <other args>)
+    # dataset = dataset.map(tokenize, <other args>)
     
     return dataset
 ```
