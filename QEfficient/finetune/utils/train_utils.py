@@ -19,6 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.utils.logging_utils import logger
 
 try:
     import torch_qaic  # noqa: F401
@@ -27,7 +28,7 @@ try:
     import torch_qaic.utils as qaic_utils  # noqa: F401
     from torch.qaic.amp import GradScaler as QAicGradScaler
 except ImportError as e:
-    print(f"Warning: {e}. Moving ahead without these qaic modules.")
+    logger.warning(f"{e}. Moving ahead without these qaic modules.")
 
 from torch.amp import GradScaler
 
@@ -113,12 +114,12 @@ def train(
     for epoch in range(train_config.num_epochs):
         if loss_0_counter.item() == train_config.convergence_counter:
             if train_config.enable_ddp:
-                print(
+                logger.info(
                     f"Not proceeding with epoch {epoch + 1} on device {local_rank} since loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps."
                 )
                 break
             else:
-                print(
+                logger.info(
                     f"Not proceeding with epoch {epoch + 1} since loss value has been <= {train_config.convergence_loss}  for last {loss_0_counter.item()} steps."
                 )
                 break
@@ -126,13 +127,13 @@ def train(
         if train_config.use_peft and train_config.from_peft_checkpoint:
             intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
             if epoch < intermediate_epoch:
-                print(f"Skipping epoch {epoch + 1} since fine tuning has already completed for it.")
+                logger.info(f"Skipping epoch {epoch + 1} since fine tuning has already completed for it.")
                 # to bring the count of train_step in sync with where it left off
                 total_train_steps += len(train_dataloader)
                 continue
 
-        print(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
-        print(f"train_config.max_train_step: {train_config.max_train_step}")
+        logger.info(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
+        logger.info(f"train_config.max_train_step: {train_config.max_train_step}")
         # stop when the maximum number of training steps is reached
         if max_steps_reached:
             break
@@ -159,7 +160,7 @@ def train(
                 # to bring the count of train_step in sync with where it left off
                 if epoch == intermediate_epoch and step == 0:
                     total_train_steps += intermediate_step
-                    print(
+                    logger.info(
                         f"skipping first {intermediate_step} steps for epoch {epoch + 1}, since fine tuning has already completed for them."
                     )
                 if epoch == intermediate_epoch and step < intermediate_step:
@@ -194,7 +195,7 @@ def train(
                             labels = batch["labels"][:, 0]
                             preds = torch.nn.functional.softmax(logits, dim=-1)
                             acc_helper.forward(preds, labels)
-                    print("Mismatches detected:", verifier.get_perop_mismatch_count())
+                    logger.info("Mismatches detected:", verifier.get_perop_mismatch_count())
                 else:
                     model_outputs = model(**batch)
                     loss = model_outputs.loss  # Forward call
@@ -276,13 +277,13 @@ def train(
                 )
             if train_config.enable_ddp:
                 if loss_0_counter.item() == train_config.convergence_counter:
-                    print(
+                    logger.info(
                         f"Loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps. Hence, stopping the fine tuning on device {local_rank}."
                     )
                     break
             else:
                 if loss_0_counter.item() == train_config.convergence_counter:
-                    print(
+                    logger.info(
                         f"Loss value has been  <= {train_config.convergence_loss}  for last {loss_0_counter.item()} steps. Hence, stopping the fine tuning."
                     )
                     break
@@ -344,15 +345,15 @@ def train(
         if train_config.run_validation:
             if eval_epoch_loss < best_val_loss:
                 best_val_loss = eval_epoch_loss
-                print(f"best eval loss on epoch {epoch + 1} is {best_val_loss}")
+                logger.info(f"best eval loss on epoch {epoch + 1} is {best_val_loss}")
             val_loss.append(float(eval_epoch_loss))
             val_metric.append(float(eval_metric))
         if train_config.task_type == "seq_classification":
-            print(
+            logger.info(
                 f"Epoch {epoch + 1}: train_acc={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
             )
         else:
-            print(
+            logger.info(
                 f"Epoch {epoch + 1}: train_metric={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
             )
 
@@ -456,7 +457,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
         eval_metric = torch.exp(eval_epoch_loss)
 
     # Print evaluation metrics
-    print(f" {eval_metric.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
+    logger.info(f" {eval_metric.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
 
     return eval_epoch_loss, eval_metric, val_step_loss, val_step_metric
 
@@ -486,9 +487,9 @@ def print_model_size(model, config) -> None:
         model_name (str): Name of the model.
     """
 
-    print(f"--> Model {config.model_name}")
+    logger.info(f"--> Model {config.model_name}")
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"\n--> {config.model_name} has {total_params / 1e6} Million params\n")
+    logger.info(f"\n--> {config.model_name} has {total_params / 1e6} Million params\n")
 
 
 def save_to_json(
