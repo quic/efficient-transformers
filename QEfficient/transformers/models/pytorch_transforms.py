@@ -267,10 +267,10 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperPositionalEmbedding,
 )
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
+from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
 
 SPD_TARGET = "target"
-
 
 class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
@@ -455,6 +455,40 @@ class SpDTransform:
             )
         return model, transformed
 
+
+class SamplerTransform:
+    """
+    ``Mandatory`` Args:
+        :model (nn.Module): PyTorch model.
+
+    Returns:
+        :model (nn.Module): PyTorch model.
+        :transformed (bool): whether transformation was applied successfully.
+    """
+
+    # supported architectures
+    _module_mapping = {
+        # Llama
+        QEffLlamaForCausalLM,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+        transformed = False
+        if qaic_config is None or (include_sampler := qaic_config.get("include_sampler")) is None:
+            return model, transformed
+        elif not include_sampler:
+            return model, transformed
+        elif (model_class := model.__class__) in cls._module_mapping:
+            model.forward = MethodType(sampler_forward, model)
+            model.return_pdfs = qaic_config.get("return_pdfs", False)
+            transformed = True
+        else:
+            raise NotImplementedError(
+                f"model class {model_class} does not yet support returning multiple logits to keep."
+            )
+        return model, transformed
+    
 
 class VlmKVOffloadTransform(ModuleMappingTransform):
     # supported architectures
