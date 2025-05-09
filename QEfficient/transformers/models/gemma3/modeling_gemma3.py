@@ -608,7 +608,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         vision_seq_len = compiler_options.pop("vision_seq_len", None)
         if vision_seq_len is None:
             # TODO: Check properly for Gemma3, Not verified yet.
-            vision_seq_len = 2560  # for Gemma3 Vision feature shape is (1, 4096, 1152) --> 1152 is hidden size)
+            vision_seq_len = 512  # for Gemma3 Vision feature shape is (1, 4096, 1152) --> 1152 is hidden size)
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
