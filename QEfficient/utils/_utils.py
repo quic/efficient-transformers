@@ -496,10 +496,12 @@ def create_and_dump_qconfigs(
         (qnn_config if qnn_config is not None else "QEfficient/compile/qnn_config.json") if enable_qnn else None
     )
 
-    # Extract QAIC SDK Apps Version from SDK XML file
-    tree = ET.parse(Constants.SDK_APPS_XML)
-    root = tree.getroot()
-    qaic_version = root.find(".//base_version").text
+    qaic_version = None
+    if os.path.exists(Constants.SDK_APPS_XML):
+        # Extract QAIC SDK Apps Version from SDK XML file
+        tree = ET.parse(Constants.SDK_APPS_XML)
+        root = tree.getroot()
+        qaic_version = root.find(".//base_version").text
 
     # Extract QNN SDK details from YAML file if the environment variable is set
     qnn_sdk_details = None
