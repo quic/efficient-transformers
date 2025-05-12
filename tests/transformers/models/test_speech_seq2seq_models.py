@@ -314,7 +314,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 
     pytorch_hf_tokens = run_seq2seq_pytorch_hf(model_hf, processor, data, sample_rate, ctx_len)
 
-    qeff_model = QEFFAutoModelForSpeechSeq2Seq(model_hf, model_name)
+    qeff_model = QEFFAutoModelForSpeechSeq2Seq(model_hf, pretrained_model_name_or_path=model_name)
 
     pytorch_kv_tokens = run_seq2seq_pytorch_with_kv(qeff_model, processor, data, sample_rate, ctx_len)
 
