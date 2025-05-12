@@ -9,6 +9,7 @@ import hashlib
 import inspect
 import json
 import logging
+import os
 import shutil
 import subprocess
 import warnings
@@ -202,6 +203,35 @@ class QEFFBaseModel(ABC):
 
             onnx.save(model, onnx_path)
             logger.info("Transformed onnx saved")
+
+            if hasattr(self, "enable_qnn") and self.enable_qnn:
+                # Creating a temporary export directory to store the existing Onnx and weights files.
+                tmp_export_dir = export_dir / "export_tmp"
+                tmp_export_dir.mkdir(parents=True, exist_ok=True)
+
+                # Move all files and folders from the export directory to the temporary export directory
+                for item_name in os.listdir(export_dir):
+                    item_path = os.path.join(export_dir, item_name)
+                    # Ensure we don't move the newly created subfolder into itself
+                    if item_name != tmp_export_dir:
+                        shutil.move(item_path, tmp_export_dir)
+
+                tmp_onnx_path = tmp_export_dir / f"{self.model_name}.onnx"
+
+                onnx.checker.check_model(tmp_onnx_path, full_check=True)
+                loaded_model = onnx.load(tmp_onnx_path)
+
+                onnx.save_model(
+                    loaded_model,
+                    onnx_path,
+                    save_as_external_data=True,
+                    all_tensors_to_one_file=True,
+                    location=f"{self.model_name}.onnxweights.data",
+                    size_threshold=1024,
+                    convert_attribute=False,
+                )
+                onnx.checker.check_model(onnx_path, full_check=True)
+                shutil.rmtree(tmp_export_dir, ignore_errors=True)
 
         except Exception as e:
             logger.error(f"ONNX export (or) ONNXTransforms failed: {e}")
