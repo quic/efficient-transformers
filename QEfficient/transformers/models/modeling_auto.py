@@ -1300,7 +1300,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model: nn.Module,
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
-        is_tlm: bool = False,
         **kwargs,
     ):
         model_class_name = model.__class__.__name__
