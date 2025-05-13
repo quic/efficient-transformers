@@ -642,9 +642,12 @@ class QEffLlama4TextModel(Llama4TextModel):
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
+        chunk_causal_mask = None
 
-        chunked_position_ids = position_ids % self.config.attention_chunk_size
-        chunk_causal_mask = _create_causal_mask(position_ids=chunked_position_ids, target_length=past_seen_tokens)
+        if past_seen_tokens > self.config.attention_chunk_size:
+            chunked_position_ids = position_ids % self.config.attention_chunk_size
+            target_length = min(past_seen_tokens, torch.tensor(self.config.attention_chunk_size))
+            chunk_causal_mask = _create_causal_mask(position_ids=chunked_position_ids, target_length=target_length)
 
         # embed positions
         hidden_states = inputs_embeds
