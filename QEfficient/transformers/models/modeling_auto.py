@@ -1321,7 +1321,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
 
         super().__init__(model)
-        # breakpoint()
         # Set use_cache=True to get KV values as output during ONNX export
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
@@ -1329,11 +1328,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         self.is_tlm = transformed
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
-
-        if is_tlm:
-            # TODO: It is possible to always apply this transform and make value of indices as last indices by default in PyTorch
-            self.model, transformed = SpDTransform.apply(self.model)
-        self.is_tlm = is_tlm
 
     @property
     def model_name(self) -> str:
