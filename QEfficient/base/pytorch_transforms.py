@@ -107,6 +107,10 @@ class ModuleMethodMapperTransform(PytorchTransform):
             ):
                 for orig_method_name, mapped_method in repl_method_map.items():
                     setattr(module, orig_method_name, MethodType(mapped_method, module))
+
+                    if hasattr(module, "__qeff_init__"):
+                        module.__qeff_init__()
+
                     transformed = True
 
         return model, transformed
