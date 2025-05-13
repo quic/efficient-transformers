@@ -43,6 +43,7 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
+        layers_start_end_indices: Optional[List[int]] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -56,6 +57,12 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         kv_seq_len = key_states.shape[-2]
+        layer_idx = (
+            layer_idx % (layers_start_end_indices[1] - layers_start_end_indices[0])
+            if layers_start_end_indices is not None
+            else layer_idx
+        )
+
         if past_key_value is not None:
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, layer_idx)
 
@@ -103,27 +110,50 @@ class QEffGrok1MultiHeadAttention(nn.Module):
 
 
 class QEffGrok1MoeBlock(nn.Module):
-    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        B, S, D = hidden_states.shape  # [1, 8, 2304]
-        hidden_states = hidden_states.reshape(-1, D)  # [8, 2304]
-        T = hidden_states.size(0)  # 8 tokens
-        router_logits = self.gate(hidden_states)  # [8, 8]
-        probs = F.softmax(router_logits, dim=-1)  # [8, 8]
+    def forward(self, hidden: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        B, S, H = hidden.shape
+        T = B * S
+        x = hidden.view(T, H)
 
-        topk_scores, topk_indices = torch.topk(probs, self.top_k, dim=-1)  # [8, top_k] → topk_k is 2 for Grok1
-        topk_scores = topk_scores / topk_scores.sum(dim=-1, keepdim=True)  # normalize per-token
-        topk_scores = topk_scores.to(hidden_states.dtype)  # [8, top_k]
-        route = torch.zeros((T, self.num_experts), dtype=hidden_states.dtype)
-        route.scatter_(1, topk_indices, topk_scores)  # [8, num_experts]
-        final_output = torch.zeros_like(hidden_states)  # [8, 2304]
+        router_logits = self.gate(x)  # [T, E]
+        prob = F.softmax(router_logits, -1, dtype=torch.float)
+        top_w, top_i = torch.topk(prob, self.top_k, -1)
+        top_w = top_w.to(x.dtype)
 
-        for e, expert in enumerate(self.experts):
-            scores = route[:, e].unsqueeze(1)  # [8, 1]
-            masked_out = torch.where(
-                scores > 0, expert(hidden_states) * scores, 0.0
-            )  # # [8, 2304] × [8, 1] → [8, 2304]
-            final_output += masked_out  # accumulate expert outputs
-        return final_output.reshape(B, S, D), router_logits  # ([1, 8, 2304], [8, num_experts])
+        expert1_idx, expert2_idx = top_i[:, 0], top_i[:, 1]  # [T]
+        weight1, weight2 = top_w[:, 0], top_w[:, 1]  # [T]
+
+        # I = self.config.ffn_dim
+        I = 32768  # TODO: Find a way to identify from config
+        upgate1 = x.new_zeros((T, I))
+        upgate2 = x.new_zeros((T, I))
+        expert_out1 = x.new_zeros((T, H))
+        expert_out2 = x.new_zeros((T, H))
+
+        for e in range(self.num_experts):
+            exp = self.experts[e]
+            mask1 = (expert1_idx == e).unsqueeze(1)  # [T, 1]
+            mask2 = (expert2_idx == e).unsqueeze(1)  # [T, 1]
+
+            hidden_gate = (exp.act_fn(exp.linear(x))) * exp.linear_v(x)
+            # Accumulate weighted contributions
+            upgate1 += torch.where(mask1, hidden_gate, torch.zeros_like(upgate1))
+            upgate2 += torch.where(mask2, hidden_gate, torch.zeros_like(upgate2))
+
+        for e in range(self.num_experts):
+            exp = self.experts[e]
+            mask1 = (expert1_idx == e).unsqueeze(1)
+            mask2 = (expert2_idx == e).unsqueeze(1)
+
+            expert_out1 += torch.where(
+                mask1, exp.linear_1(upgate1) * weight1.unsqueeze(1), torch.zeros_like(expert_out1)
+            )
+            expert_out2 += torch.where(
+                mask2, exp.linear_1(upgate2) * weight2.unsqueeze(1), torch.zeros_like(expert_out2)
+            )
+
+        expert_out = expert_out1 + expert_out2
+        return expert_out.view(B, S, H), router_logits
 
 
 class QEffGrok1DecoderLayer(nn.Module):
@@ -137,6 +167,7 @@ class QEffGrok1DecoderLayer(nn.Module):
         output_attentions: Optional[bool] = False,
         output_router_logits: Optional[bool] = False,
         use_cache: Optional[bool] = False,
+        layers_start_end_indices: Optional[List[int]] = None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
@@ -150,6 +181,7 @@ class QEffGrok1DecoderLayer(nn.Module):
             batch_index=batch_index,
             output_attentions=output_attentions,
             use_cache=use_cache,
+            layers_start_end_indices=layers_start_end_indices,
         )
         hidden_states = self.post_attn_norm(hidden_states)
         hidden_states = residual + hidden_states
@@ -178,16 +210,17 @@ class QEffGrok1Model(nn.Module):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         batch_index: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         output_router_logits: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        layers_start_end_indices: Optional[List[int]] = None,
     ) -> Union[Tuple, MoeModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -206,6 +239,16 @@ class QEffGrok1Model(nn.Module):
             batch_size, seq_length = inputs_embeds.shape[:2]
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
+
+        if layers_start_end_indices is not None:
+            if layers_start_end_indices[0] != 0:
+                assert inputs_embeds is not None and input_ids is None, (
+                    "got input_ids or did not get inputs_embeds, expected input_ids to be None or inputs_embeds to be not None"
+                )
+            else:
+                assert input_ids is not None and inputs_embeds is None, (
+                    "got input_embeds or did not get inputs_ids, expected input_ids to be not None or inputs_embeds to be None"
+                )
 
         seq_length_with_past = seq_length
         past_key_values_length = 0
@@ -230,7 +273,9 @@ class QEffGrok1Model(nn.Module):
         all_router_logits = () if output_router_logits else None
         next_decoder_cache = () if use_cache else None
 
-        for idx, decoder_layer in enumerate(self.layers):
+        start_idx = layers_start_end_indices[0] if layers_start_end_indices is not None else 0
+        end_idx = layers_start_end_indices[1] if layers_start_end_indices is not None else len(self.layers)
+        for idx, decoder_layer in enumerate(self.layers[start_idx:end_idx]):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -242,6 +287,7 @@ class QEffGrok1Model(nn.Module):
                 batch_index=batch_index,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
+                layers_start_end_indices=layers_start_end_indices,
             )
 
             hidden_states = layer_outputs[0]
@@ -255,7 +301,10 @@ class QEffGrok1Model(nn.Module):
             if output_router_logits:
                 all_router_logits += (layer_outputs[-1],)
 
-        hidden_states = self.norm(hidden_states)
+        if layers_start_end_indices is not None and layers_start_end_indices[1] != len(self.layers):
+            pass
+        else:
+            hidden_states = self.norm(hidden_states)
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
@@ -276,11 +325,11 @@ class QEffGrok1ModelForCausalLM(nn.Module):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         batch_index: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -298,7 +347,7 @@ class QEffGrok1ModelForCausalLM(nn.Module):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
+        layers_start_end_indices = getattr(self, "layers_start_end_indices", None)
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
             input_ids=input_ids,
@@ -312,8 +361,11 @@ class QEffGrok1ModelForCausalLM(nn.Module):
             output_hidden_states=output_hidden_states,
             output_router_logits=output_router_logits,
             return_dict=return_dict,
+            layers_start_end_indices=layers_start_end_indices,
             **kwargs,
         )
+        if layers_start_end_indices is not None and layers_start_end_indices[1] != len(self.model.layers):
+            return outputs[0], outputs.past_key_values
 
         # Cast to int32 to avoid ONNXRT issue
         logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)

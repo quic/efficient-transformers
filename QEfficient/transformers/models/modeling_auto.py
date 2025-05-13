@@ -1423,7 +1423,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     def get_model_config(self) -> dict:
         return self.model.config.__dict__
 
-    def export(self, export_dir: Optional[str] = None) -> str:
+    def export(self, export_dir: Optional[str] = None, layers_start_end_indices: Optional[List[int]] = None) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
@@ -1439,32 +1439,80 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
-        example_inputs = {
-            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
-            "past_key_values": [[] for _ in range(self.num_layers)],
-        }
-        dynamic_axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "position_ids": {0: "batch_size", 1: "seq_len"},
-        }
-        if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
-            pkv_dynamic_axes = {
-                0: "full_batch_size" if self.continuous_batching else "batch_size",
-                1: "ctx_len",
-            }
-        else:  # pkv is 4d
-            pkv_dynamic_axes = {
-                0: "full_batch_size" if self.continuous_batching else "batch_size",
-                2: "ctx_len",
-            }
-        output_names = ["logits"]
+        if layers_start_end_indices is not None:
+            if layers_start_end_indices[0] == 0:
+                example_inputs = {
+                    "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+                    "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+                    "past_key_values": [[] for _ in range(layers_start_end_indices[0], layers_start_end_indices[1])],
+                }
+                dynamic_axes = {
+                    "input_ids": {0: "batch_size", 1: "seq_len"},
+                    "position_ids": {0: "batch_size", 1: "seq_len"},
+                }
+            else:
+                example_inputs = {
+                    "inputs_embeds": torch.zeros((bs, seq_len, self.model.config.hidden_size), dtype=torch.float32),
+                    "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+                    "past_key_values": [[] for _ in range(layers_start_end_indices[0], layers_start_end_indices[1])],
+                }
+                dynamic_axes = {
+                    "inputs_embeds": {0: "batch_size", 1: "seq_len"},
+                    "position_ids": {0: "batch_size", 1: "seq_len"},
+                }
+            if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
+                pkv_dynamic_axes = {
+                    0: "full_batch_size" if self.continuous_batching else "batch_size",
+                    1: "ctx_len",
+                }
+            else:  # pkv is 4d
+                pkv_dynamic_axes = {
+                    0: "full_batch_size" if self.continuous_batching else "batch_size",
+                    2: "ctx_len",
+                }
+            output_names = ["logits"] if layers_start_end_indices[1] == self.num_layers else ["hidden_states"]
+            for i in range(layers_start_end_indices[1] - layers_start_end_indices[0]):
+                for kv in ["key", "value"]:
+                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
 
-        for i in range(self.num_layers):
-            for kv in ["key", "value"]:
-                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
-                output_names.append(f"past_{kv}.{i}_RetainedState")
+            for i in range(layers_start_end_indices[0], layers_start_end_indices[1]):
+                for kv in ["key", "value"]:
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                    output_names.append(f"past_{kv}.{i}_RetainedState")
+            return self._export(
+                example_inputs,
+                output_names,
+                dynamic_axes,
+                export_dir=export_dir,
+                layers_start_end_indices=layers_start_end_indices,
+            )
+        else:
+            example_inputs = {
+                "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+                "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+                "past_key_values": [[] for _ in range(self.num_layers)],
+            }
+            dynamic_axes = {
+                "input_ids": {0: "batch_size", 1: "seq_len"},
+                "position_ids": {0: "batch_size", 1: "seq_len"},
+            }
+            if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
+                pkv_dynamic_axes = {
+                    0: "full_batch_size" if self.continuous_batching else "batch_size",
+                    1: "ctx_len",
+                }
+            else:  # pkv is 4d
+                pkv_dynamic_axes = {
+                    0: "full_batch_size" if self.continuous_batching else "batch_size",
+                    2: "ctx_len",
+                }
+            output_names = ["logits"]
+
+            for i in range(self.num_layers):
+                for kv in ["key", "value"]:
+                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                    output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -1543,6 +1591,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mxint8_kv_cache: bool = False,
         num_speculative_tokens: Optional[int] = None,
         prefill_only: Optional[bool] = None,
+        layers_start_end_indices: Optional[List[int]] = None,
         **compiler_options,
     ) -> str:
         """
@@ -1620,6 +1669,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 for kv in ["key", "value"]:
                     custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
 
+        start_idx, end_idx = (
+            (layers_start_end_indices[0], layers_start_end_indices[1])
+            if layers_start_end_indices
+            else (0, self.num_layers)
+        )
+        custom_io = {"inputs_embeds": "float16"} if start_idx != 0 else {}
+        kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        for suffix in ["", "_RetainedState"]:
+            for i in range(start_idx, end_idx):
+                for kv in ["key", "value"]:
+                    custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+        if end_idx != len(self.model.model.layers):
+            custom_io["hidden_states"] = "float16"
+
         qpc_path = self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
@@ -1633,6 +1696,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             num_speculative_tokens=num_speculative_tokens,
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
+            layers_start_end_indices=layers_start_end_indices,
             **compiler_options,
         )
 

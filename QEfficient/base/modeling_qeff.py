@@ -123,6 +123,7 @@ class QEFFBaseModel(ABC):
         export_kwargs: Optional[Dict[str, any]] = None,
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
+        layers_start_end_indices: Optional[List[int]] = None,
     ) -> str:
         """
         Export the Pytorch model to ONNX.
@@ -136,7 +137,12 @@ class QEFFBaseModel(ABC):
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
         """
         export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
-        export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
+        mhas = (
+            self.model_hash + f"_{str(layers_start_end_indices[0])}_{str(layers_start_end_indices[1])}"
+            if layers_start_end_indices is not None
+            else self.model_hash
+        )
+        export_dir = export_dir.with_name(export_dir.name + mhas)
         onnx_path = export_dir / f"{self.model_name}.onnx"
         if onnx_path.is_file():
             self.onnx_path = onnx_path
@@ -147,12 +153,17 @@ class QEFFBaseModel(ABC):
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
 
         # Create input_names from example_inputs
+        start_idx, end_idx = (
+            (layers_start_end_indices[0], layers_start_end_indices[1])
+            if layers_start_end_indices is not None
+            else (0, len(example_inputs["past_key_values"]))
+        )
 
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
                 if param == "past_key_values":
-                    for i in range(len(example_inputs["past_key_values"])):
+                    for i in range(start_idx, end_idx):
                         if len(example_inputs["past_key_values"][0]) == 2:
                             input_names.extend([f"past_key.{i}", f"past_value.{i}"])
                         elif len(example_inputs["past_key_values"][0]) == 4:
@@ -173,6 +184,7 @@ class QEFFBaseModel(ABC):
 
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
+            setattr(self.model, "layers_start_end_indices", layers_start_end_indices)
             torch.onnx.export(
                 self.model,
                 (example_inputs,),
@@ -227,6 +239,7 @@ class QEFFBaseModel(ABC):
         num_speculative_tokens: Optional[int] = None,
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
+        layers_start_end_indices: Optional[List[int]] = None,
         **compiler_options,
     ) -> str:
         """
@@ -247,7 +260,7 @@ class QEFFBaseModel(ABC):
                 - convert_to_fp16=True -> -convert-to-fp16
         """
         if onnx_path is None and self.onnx_path is None:
-            self.export()
+            self.export(layers_start_end_indices=layers_start_end_indices)
 
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
