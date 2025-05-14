@@ -28,7 +28,7 @@ class train_config:
     use_fp16: bool = True
     use_autocast: bool = True
     val_batch_size: int = 1
-    dataset = "samsum_dataset"
+    dataset = "alpaca_dataset"
     task_type = "generation"  # "generation" / "seq_classification"
     peft_method: str = "lora"
     use_peft: bool = True  # use parameter efficient fine tuning
