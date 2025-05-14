@@ -97,10 +97,7 @@ class Constants:
     MAX_QPC_LIMIT = 30
     MAX_RETRIES = 10  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
     NUM_SPECULATIVE_TOKENS = 2
-    SDK_APPS_XML = "/opt/qti-aic/versions/apps.xml"  # This xml file is parsed to find out the SDK apps version.
-    SDK_PLATFORM_XML = (
-        "/opt/qti-aic/versions/platform.xml"  # This xml file is parsed to find out the SDK platform version.
-    )
+    SDK_APPS_XML = "/opt/qti-aic/versions/apps.xml"  # This xml file is parsed to find out the SDK version.
 
 
 @dataclass
