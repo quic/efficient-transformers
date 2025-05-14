@@ -863,10 +863,13 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
-        chunk_ctx_len = (
-            self.config.text_config.attention_chunk_size
-            if hasattr(self, "config")
-            else constants.LLAMA4_ATTENTION_CHUNK_SIZE
+        chunk_ctx_len = min(
+            ctx_len,
+            (
+                self.config.text_config.attention_chunk_size
+                if hasattr(self, "config")
+                else constants.LLAMA4_ATTENTION_CHUNK_SIZE
+            ),
         )
 
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
