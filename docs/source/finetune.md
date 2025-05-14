@@ -69,7 +69,7 @@ tensorboard --logdir runs/<file> --bind_all
 
 To run fine tuning for any user specific dataset, prepare the dataset using the following steps:
 
-    1) Create a  directory named 'dataset' inside efficient-transformers. 
+    1) Create a directory named 'dataset' inside efficient-transformers. 
     2) Inside this directory, create a file named 'custom_dataset.py'. This is different than the custom_dataset.py present at efficient-transformers/QEfficient/finetune/dataset.
     3) Inside the newly created efficient-transformers/dataset/custom_dataset.py, define a function named 'get_custom_dataset'. 
     4) get_custom_dataset() should have following 4 parameters:  dataset_config, tokenizer, split, context_length. This function gets called twice through Qefficient/cloud/finetune.py with the name get_preprocessed_dataset. 
@@ -87,10 +87,12 @@ def get_custom_dataset(dataset_config, tokenizer, split, context_length=None):
     # based on split, retrieve only the specific portion of the dataset (train or eval) either here or at the last
     
     def apply_prompt_template():
+        # transform the passed datapoint by applying the prompt on it 
     
     def tokenize():
+        # tokenize the passed datapoint
     
-    # define prompt
+    # define the prompt
     # call apply_prompt_template() for each data point:
     # dataset = dataset.map(apply_prompt_template ,<other args>)
     # call tokenize() for each data point:
