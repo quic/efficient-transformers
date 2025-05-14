@@ -64,9 +64,6 @@ def compile_kv_model_on_cloud_ai_100(
         DeprecationWarning,
         stacklevel=2,
     )
-    if kwargs:
-        # FIXME
-        raise NotImplementedError("Can't handle extra compilation args now!")
     aic_binary_dir = os.path.join(base_path, "qpcs")
 
     if os.path.isdir(aic_binary_dir):
@@ -111,6 +108,13 @@ def compile_kv_model_on_cloud_ai_100(
         with open(mdp_ts_config_path, "w") as file:
             json.dump(mdp_ts_config, file, indent=4)
         command.append(f"-mdp-load-partition-config={mdp_ts_config_path}")
+    for key, value in kwargs.items():
+        option = "-" + key.replace("_", "-")
+        if isinstance(value, bool):
+            if value:
+                command.append(option)
+            continue
+        command.append(f"{option}={value}")
     print("Running AI 100 compiler:", " ".join(command))
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
@@ -221,6 +225,13 @@ def compile(
             allow_mxint8_mdp_io=allow_mxint8_mdp_io,
             mos=mos,
             device_group=device_group,
+            **kwargs,
         )
-        logger.info(f"Compiled QPC files can be found here: {qpc_path}")
+        if kwargs.get("io_encrypt", None):
+            logger.warning(
+                f"Compilation for IO-Encrypt has been successfully completed at path: {qpc_path}. However, Efficient-Transformers do not support IO-Encrypt execution. Please run the execution separately"
+            )
+        else:
+            logger.info(f"Compiled QPC files can be found here: {qpc_path}")
+
     return qpc_path
