@@ -6,10 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import inspect
-import json
-import os
 from dataclasses import asdict
-from typing import Any, Dict
 
 import yaml
 from peft import LoraConfig as PeftLoraConfig
@@ -21,15 +18,6 @@ from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
 
 
 def update_config(config, **kwargs):
-    """Update the attributes of a config object based on provided keyword arguments.
-
-    Args:
-        config: The configuration object (e.g., TrainConfig, LoraConfig) or a list/tuple of such objects.
-        **kwargs: Keyword arguments representing attributes to update.
-
-    Raises:
-        ValueError: If an unknown parameter is provided and the config type doesn't support nested updates.
-    """
     if isinstance(config, (tuple, list)):
         for c in config:
             update_config(c, **kwargs)
@@ -38,27 +26,27 @@ def update_config(config, **kwargs):
             if hasattr(config, k):
                 setattr(config, k, v)
             elif "." in k:
-                config_name, param_name = k.split(".", 1)
-                if type(config).__name__.lower() == config_name.lower():
+                # allow --some_config.some_param=True
+                config_name, param_name = k.split(".")
+                if type(config).__name__ == config_name:
                     if hasattr(config, param_name):
                         setattr(config, param_name, v)
                     else:
-                        raise ValueError(f"Config '{config_name}' does not have parameter: '{param_name}'")
-            else:
-                config_type = type(config).__name__
-                # FIXME (Meet): Once logger is available put this in debug level.
-                print(f"[WARNING]: Unknown parameter '{k}' for config type '{config_type}'")
+                        # In case of specialized config we can warn user
+                        assert False, f"Warning: {config_name} does not accept parameter: {k}"
+            elif isinstance(config, train_config):
+                assert False, f"Warning: unknown parameter {k}"
 
 
-def generate_peft_config(train_config: TrainConfig, peft_config_file: str = None, **kwargs) -> Any:
-    """Generate a PEFT-compatible configuration from a custom config based on peft_method.
+def generate_peft_config(train_config, kwargs):
+    configs = (lora_config, prefix_config)
+    peft_configs = (LoraConfig, AdaptionPromptConfig, PrefixTuningConfig)
+    names = tuple(c.__name__.rstrip("_config") for c in configs)
 
-    Args:
-        train_config (TrainConfig): Training configuration with peft_method.
-        custom_config: Custom configuration object (e.g., LoraConfig).
+    if train_config.peft_method not in names:
+        raise RuntimeError(f"Peft config not found: {train_config.peft_method}")
 
-    Returns:
-        Any: A PEFT-specific configuration object (e.g., PeftLoraConfig).
+    config = configs[names.index(train_config.peft_method)]()
 
     Raises:
         RuntimeError: If the peft_method is not supported.
@@ -84,22 +72,11 @@ def generate_peft_config(train_config: TrainConfig, peft_config_file: str = None
     return peft_config
 
 
-def generate_dataset_config(dataset_name: str) -> Any:
-    """Generate a dataset configuration based on the specified dataset.
-
-    Args:
-        dataset_name (str): Name of the dataset to be used for finetuning.
-
-    Returns:
-        Any: A dataset configuration object.
-
-    Raises:
-        AssertionError: If the dataset name is not recognized.
-    """
-    supported_datasets = DATASET_PREPROC.keys()
-    assert dataset_name in supported_datasets, f"Given dataset '{dataset_name}' is not supported."
-    # FIXME (Meet): Replace below logic by creating using auto registry of datasets.
-    dataset_config = {k: v for k, v in inspect.getmembers(datasets)}[dataset_name]()
+def generate_dataset_config(train_config, kwargs):
+    names = tuple(DATASET_PREPROC.keys())
+    assert train_config.dataset in names, f"Unknown dataset: {train_config.dataset}"
+    dataset_config = {k: v for k, v in inspect.getmembers(datasets)}[train_config.dataset]()
+    update_config(dataset_config, **kwargs)
     return dataset_config
 
 

@@ -7,7 +7,6 @@
 
 import random
 import warnings
-from typing import Any, Dict, Optional, Union
 
 import numpy as np
 import torch
@@ -17,9 +16,8 @@ import torch.optim as optim
 import torch.utils.data
 from peft import PeftModel, get_peft_model
 from torch.optim.lr_scheduler import StepLR
-from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
-from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.finetune.configs.training import train_config as TRAIN_CONFIG
 from QEfficient.finetune.utils.config_utils import (
     generate_dataset_config,
     generate_peft_config,
@@ -30,82 +28,55 @@ from QEfficient.finetune.utils.parser import get_finetune_parser
 from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
 from QEfficient.utils._utils import login_and_download_hf_lm
 
-# Try importing QAIC-specific module, proceed without it if unavailable
 try:
     import torch_qaic  # noqa: F401
 except ImportError as e:
-    print(f"Warning: {e}. Proceeding without QAIC modules.")
+    print(f"Warning: {e}. Moving ahead without these qaic modules.")
 
 
-from transformers import AutoModelForSequenceClassification
+from transformers import AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
 
 
-def setup_distributed_training(train_config: TrainConfig) -> None:
-    """Initialize distributed training environment if enabled.
-
-    Args:
-        train_config (TrainConfig): Training configuration object.
-
-    Notes:
-        - If distributed data parallel (DDP) is disabled, this function does nothing.
-        - Ensures the device is not CPU and does not specify an index for DDP compatibility.
-        - Initializes the process group using the specified distributed backend.
-
-    Raises:
-        AssertionError: If device is CPU or includes an index with DDP enabled.
+def main(**kwargs):
     """
-    if not train_config.enable_ddp:
-        return
+    Helper function to finetune the model on QAic.
 
-    torch_device = torch.device(train_config.device)
-    assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
-    assert torch_device.index is None, f"DDP requires only device type, got: {torch_device}"
+    .. code-block:: bash
 
     dist_backend_map = {"cpu": "gloo", "qaic": "qccl", "cuda": "gloo"}
     dist.init_process_group(backend=dist_backend_map[torch_device.type])
     # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
     getattr(torch, torch_device.type).set_device(dist.get_rank())
 
-
-def setup_seeds(seed: int) -> None:
-    """Set random seeds across libraries for reproducibility.
-
-    Args:
-        seed (int): Seed value to set for random number generators.
-
-    Notes:
-        - Sets seeds for PyTorch, Python's random module, and NumPy.
     """
-    torch.manual_seed(seed)
-    random.seed(seed)
-    np.random.seed(seed)
+    # update the configuration for the training process
+    train_config = TRAIN_CONFIG()
+    update_config(train_config, **kwargs)
+    dataset_config = generate_dataset_config(train_config, kwargs)
+    device = train_config.device
 
+    # dist init
+    if train_config.enable_ddp:
+        # TODO: may have to init qccl backend, next try run with torchrun command
+        torch_device = torch.device(device)
+        assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
+        assert torch_device.index is None, (
+            f"DDP requires specification of device type only, however provided device index as well: {torch_device}"
+        )
+        dist.init_process_group(backend=train_config.dist_backend)
+        # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
+        getattr(torch, torch_device.type).set_device(dist.get_rank())
 
-def load_model_and_tokenizer(
-    train_config: TrainConfig, dataset_config: Any, peft_config_file: str, **kwargs
-) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
-    """Load the pre-trained model and tokenizer from Hugging Face.
+    # Set the seeds for reproducibility
+    torch.manual_seed(train_config.seed)
+    random.seed(train_config.seed)
+    np.random.seed(train_config.seed)
 
-    Args:
-        config (TrainConfig): Training configuration object containing model and tokenizer names.
-        dataset_config (Any): A dataclass object representing dataset configuration.
-        peft_config_file (str): Path to PEFT config file used for PEFT finetuning.
-        kwargs: Additional arguments to override PEFT config.
-
-    Returns:
-        tuple: A tuple of two values.
-            - Model with pretrained weights loaded.
-            - Model's tokenizer (AutoTokenizer).
-
-    Notes:
-        - Downloads the model if not already cached using login_and_download_hf_lm.
-        - Configures the model with FP16 precision and disables caching for training.
-        - Resizes model embeddings if tokenizer vocab size exceeds model embedding size.
-        - Sets pad_token_id to eos_token_id if not defined in the tokenizer.
-    """
+    # Load the pre-trained model and setup its configuration
+    # config = AutoConfig.from_pretrained(train_config.model_name)
     pretrained_model_path = login_and_download_hf_lm(train_config.model_name)
     if train_config.task_type == "seq_classification":
         model = AutoModelForSequenceClassification.from_pretrained(
@@ -132,6 +103,7 @@ def load_model_and_tokenizer(
             torch_dtype=torch.float16,
         )
 
+    # Load the tokenizer and add special tokens
     tokenizer = AutoTokenizer.from_pretrained(
         train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name
     )
@@ -141,11 +113,13 @@ def load_model_and_tokenizer(
     # If there is a mismatch between tokenizer vocab size and embedding matrix,
     # throw a warning and then expand the embedding matrix
     if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
-        print("WARNING: Resizing embedding matrix to match tokenizer vocab size.")
+        print("WARNING: Resizing the embedding matrix to match the tokenizer vocab size.")
         model.resize_token_embeddings(len(tokenizer))
 
-    # FIXME (Meet): Cover below line inside the logger once it is implemented.
     print_model_size(model, train_config)
+
+    # print the datatype of the model parameters
+    # print(get_parameter_dtypes(model))
 
     # Note: Need to call this before calling PeftModel.from_pretrained or get_peft_model.
     # Because, both makes model.is_gradient_checkpointing = True which is used in peft library to
@@ -159,7 +133,16 @@ def load_model_and_tokenizer(
         else:
             raise RuntimeError("Given model doesn't support gradient checkpointing. Please disable it and run it.")
 
-    model = apply_peft(model, train_config, peft_config_file, **kwargs)
+    if train_config.use_peft:
+        # Load the pre-trained peft model checkpoint and setup its configuration
+        if train_config.from_peft_checkpoint:
+            model = PeftModel.from_pretrained(model, train_config.from_peft_checkpoint, is_trainable=True)
+            peft_config = model.peft_config
+        # Generate the peft config and start fine-tuning from original model
+        else:
+            peft_config = generate_peft_config(train_config, kwargs)
+            model = get_peft_model(model, peft_config)
+        model.print_trainable_parameters()
 
     return model, tokenizer
 
@@ -285,25 +268,35 @@ def main(peft_config_file: str = None, **kwargs) -> None:
         f"passed context length is {train_config.context_length} and overall model's context length is "
         f"{model.config.max_position_embeddings}"
     )
-
     model.to(train_config.device)
-    optimizer = optim.AdamW(model.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=train_config.lr,
+        weight_decay=train_config.weight_decay,
+    )
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
+
+    # wrap model with DDP
     if train_config.enable_ddp:
         model = nn.parallel.DistributedDataParallel(model, device_ids=[dist.get_rank()])
-    results = train(
+
+    _ = train(
         model,
-        tokenizer,
         train_dataloader,
         eval_dataloader,
+        tokenizer,
         optimizer,
         scheduler,
+        train_config.gradient_accumulation_steps,
         train_config,
+        train_config.device,
         dist.get_rank() if train_config.enable_ddp else None,
+        None,
     )
+
+    # finalize torch distributed
     if train_config.enable_ddp:
         dist.destroy_process_group()
-    return results
 
 
 if __name__ == "__main__":
