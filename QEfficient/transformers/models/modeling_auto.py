@@ -409,7 +409,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         super().__init__(model)
         self.model = model.get_qeff_vision_encoder()
 
-
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
 
@@ -444,7 +443,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable(self.model.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEffVisionEncoderForTextImageToTextModel": True}))
-        breakpoint()
         mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
         return mhash
@@ -509,7 +507,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEffCausalLMForTextImageToTextModel": True}))
-        breakpoint()
         mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
         return mhash
@@ -538,11 +535,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         self.model = model
         self.config = model.config
-        self.model.pretrained_model_name_or_path=kwargs.get("pretrained_model_name_or_path",None)
+        self.model.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model)
         self.input_shapes, self.output_names = None, None
-        
 
     @property
     def model_name(self) -> str:
@@ -561,7 +557,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path,**kwargs)
+        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
 
     @property
     def onnx_path(self):
@@ -908,7 +904,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config.vision_config.use_flash_attn = "false"
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path,**kwargs)
+        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
 
     def export(
         self,
@@ -1262,7 +1258,7 @@ class QEFFAutoModelForImageTextToText:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        return cls(model, kv_offload=kv_offload, pretrained_model_name_or_path=pretrained_model_name_or_path,**kwargs)
+        return cls(model, kv_offload=kv_offload, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
 
 
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoModelForImageTextToText}
