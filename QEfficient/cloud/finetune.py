@@ -96,8 +96,8 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
 
     dist.init_process_group(backend=train_config.dist_backend)
     if train_config.enable_pp:
-        assert dist.get_world_size() % train_config.num_pp_stages == 0, (
-            "total available devices should be multiple of number of pipeline stages"
+        assert dist.get_world_size() * train_config.num_pp_stages == getattr(torch, torch_device.type).device_count(), (
+            "Total available devices should be multiple of number of pipeline stages."
         )
     else:
         # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
