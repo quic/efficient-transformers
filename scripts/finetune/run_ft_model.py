@@ -12,7 +12,7 @@ import torch
 from peft import AutoPeftModelForCausalLM
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.finetune.configs.training import train_config as TRAIN_CONFIG
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
@@ -25,7 +25,7 @@ except ImportError as e:
     print(f"Warning: {e}. Moving ahead without these qaic modules.")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-train_config = TrainConfig()
+train_config = TRAIN_CONFIG()
 model = AutoModelForCausalLM.from_pretrained(
     train_config.model_name,
     use_cache=False,
