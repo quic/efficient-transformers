@@ -219,6 +219,7 @@ class QEFFBaseModel(ABC):
         self,
         onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
         *,
         mxint8_kv_cache: bool = False,
         specializations: Optional[List[Dict[str, int]]] = None,
@@ -247,7 +248,7 @@ class QEFFBaseModel(ABC):
                 - convert_to_fp16=True -> -convert-to-fp16
         """
         if onnx_path is None and self.onnx_path is None:
-            self.export()
+            self.export(comp_ctx_lengths)
 
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
