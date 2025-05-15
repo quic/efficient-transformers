@@ -60,7 +60,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     _hf_auto_class: type
 
-    def __init__(self, model: nn.Module) -> None:
+    def __init__(self, model: nn.Module, **kwargs) -> None:
         if (
             hasattr(model, "config")
             and hasattr(model.config, "quantization_config")
@@ -75,7 +75,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -85,7 +85,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model, is_tlm=is_tlm)
+        return cls(model)
 
     @property
     def model_name(self) -> str:
@@ -1268,7 +1268,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     ``Mandatory`` Args:
         :model (nn.Module):  PyTorch model
         :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
-        :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
+        :qaic_config (Optional[dict]): Qaic config with supported keys of `speculative_model_type` to specify speculative decoding TLM models.
 
 
     .. code-block:: python
@@ -1355,7 +1355,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Args:
             :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
             :continuous_batching (bool): Whether this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
-            :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
+
+            :qaic_config (Optional[dict]): Qaic config with supported keys of `speculative_model_type` to specify speculative decoding TLM models.
             :args, kwargs: Additional arguments to pass to transformers.AutoModelForCausalLM.
 
         .. code-block:: python
@@ -1690,7 +1691,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 )
             num_speculative_tokens = num_speculative_tokens_
         elif num_speculative_tokens is None:
-            raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` is True.")
+            raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` instance variable is True.")
 
         if not isinstance(num_speculative_tokens, int) and num_speculative_tokens < 2:
             ValueError(
