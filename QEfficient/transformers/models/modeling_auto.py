@@ -6,6 +6,7 @@
 # ----------------------------------------------------------------------------
 
 import hashlib
+import time
 import warnings
 from pathlib import Path
 from time import perf_counter
@@ -375,7 +376,12 @@ class QEFFAutoModel(QEFFTransformersBase):
             ),
         }
         self.qpc_session.set_buffers(outputs)
+        start_time = time.perf_counter()
         outputs = self.qpc_session.run(inputs)
+        time_taken = time.perf_counter() - start_time
+        inference_per_sec = 1 / time_taken
+        print("Inference per second: ", inference_per_sec)
+
         outputs = outputs["output"][:, :input_ids_len, :]
         return outputs
 
