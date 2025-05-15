@@ -9,7 +9,6 @@ import random
 import warnings
 from typing import Any, Dict, Optional, Union
 
-import fire
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -31,6 +30,7 @@ from QEfficient.finetune.utils.dataset_utils import (
     get_custom_data_collator,
     get_preprocessed_dataset,
 )
+from QEfficient.finetune.utils.parser import get_finetune_parser
 from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
 from QEfficient.utils._utils import login_and_download_hf_lm
 
@@ -354,4 +354,6 @@ def main(peft_config_file: str = None, **kwargs) -> None:
 
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    parser = get_finetune_parser()
+    args = parser.parse_args()
+    main(**args.__dict__)
