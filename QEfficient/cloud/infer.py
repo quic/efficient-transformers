@@ -102,6 +102,7 @@ def main(
     full_batch_size: Optional[int] = None,
     prompt_len: int = 32,
     ctx_len: int = 128,
+    comp_ctx_lengths: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
     mxfp6: bool = False,
     mxint8: bool = False,
@@ -163,6 +164,7 @@ def main(
         cache_dir=cache_dir,
         hf_token=hf_token,
         full_batch_size=full_batch_size,
+        comp_ctx_lengths=comp_ctx_lengths,
         local_model_dir=local_model_dir,
     )
 
@@ -257,6 +259,12 @@ if __name__ == "__main__":
         "--prompt-len", "--prompt_len", default=32, type=int, help="Sequence length for text generation."
     )
     parser.add_argument("--ctx-len", "--ctx_len", default=128, type=int, help="Context length for text generation.")
+    parser.add_argument(
+        "--comp_ctx_lengths",
+        "--comp_ctx_lengths",
+        type=lambda comp_ctx_lengths: [int(x) for x in comp_ctx_lengths.strip("[]").split(",")],
+        help="Compute Context length for text generation (comma-separated) e.g. [512,1024,2048]  ",
+    )
     parser.add_argument(
         "--mxfp6",
         "--mxfp6_matmul",
