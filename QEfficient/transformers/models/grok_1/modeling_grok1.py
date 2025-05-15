@@ -103,27 +103,53 @@ class QEffGrok1MultiHeadAttention(nn.Module):
 
 
 class QEffGrok1MoeBlock(nn.Module):
-    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        B, S, D = hidden_states.shape  # [1, 8, 2304]
-        hidden_states = hidden_states.reshape(-1, D)  # [8, 2304]
-        T = hidden_states.size(0)  # 8 tokens
-        router_logits = self.gate(hidden_states)  # [8, 8]
-        probs = F.softmax(router_logits, dim=-1)  # [8, 8]
+    def forward(self, hidden: torch.Tensor):
+        B, S, H = hidden.shape
+        T = B * S
+        x = hidden.view(T, H)
 
-        topk_scores, topk_indices = torch.topk(probs, self.top_k, dim=-1)  # [8, top_k] → topk_k is 2 for Grok1
-        topk_scores = topk_scores / topk_scores.sum(dim=-1, keepdim=True)  # normalize per-token
-        topk_scores = topk_scores.to(hidden_states.dtype)  # [8, top_k]
-        route = torch.zeros((T, self.num_experts), dtype=hidden_states.dtype)
-        route.scatter_(1, topk_indices, topk_scores)  # [8, num_experts]
-        final_output = torch.zeros_like(hidden_states)  # [8, 2304]
+        router_logits = self.gate(x)  # [T, E]
+        prob = F.softmax(router_logits, -1, dtype=torch.float)
+        top_w, top_i = torch.topk(prob, self.top_k, -1)
+        # if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
+        #     top_w /= top_w.sum(-1, keepdim=True)
+        top_w = top_w.to(x.dtype)
 
-        for e, expert in enumerate(self.experts):
-            scores = route[:, e].unsqueeze(1)  # [8, 1]
-            masked_out = torch.where(
-                scores > 0, expert(hidden_states) * scores, 0.0
-            )  # # [8, 2304] × [8, 1] → [8, 2304]
-            final_output += masked_out  # accumulate expert outputs
-        return final_output.reshape(B, S, D), router_logits  # ([1, 8, 2304], [8, num_experts])
+        # Create 2 expert idx based on the topk
+        expert1_idx, expert2_idx = top_i[:, 0], top_i[:, 1]  # [T]
+        weight1, weight2 = top_w[:, 0], top_w[:, 1]  # [T]
+
+        # I = self.config.ffn_dim
+        I = 32768  # TODO: Find a way to identify from config # Intermediate Size
+        upgate1 = x.new_zeros((T, I))
+        upgate2 = x.new_zeros((T, I))
+        expert_out1 = x.new_zeros((T, H))
+        expert_out2 = x.new_zeros((T, H))
+
+        for e in range(self.num_experts):
+            exp = self.experts[e]
+            mask1 = (expert1_idx == e).unsqueeze(1)  # [T, 1]
+            mask2 = (expert2_idx == e).unsqueeze(1)  # [T, 1]
+
+            hidden_gate = (exp.act_fn(exp.linear_v(x))) * exp.linear(x)
+            # Accumulate weighted contributions
+            upgate1 += torch.where(mask1, hidden_gate, torch.zeros_like(upgate1))
+            upgate2 += torch.where(mask2, hidden_gate, torch.zeros_like(upgate2))
+
+        for e in range(self.num_experts):
+            exp = self.experts[e]
+            mask1 = (expert1_idx == e).unsqueeze(1)
+            mask2 = (expert2_idx == e).unsqueeze(1)
+
+            expert_out1 += torch.where(
+                mask1, exp.linear_1(upgate1) * weight1.unsqueeze(1), torch.zeros_like(expert_out1)
+            )
+            expert_out2 += torch.where(
+                mask2, exp.linear_1(upgate2) * weight2.unsqueeze(1), torch.zeros_like(expert_out2)
+            )
+
+        expert_out = expert_out1 + expert_out2
+        return expert_out.view(B, S, H), router_logits
 
 
 class QEffGrok1DecoderLayer(nn.Module):
