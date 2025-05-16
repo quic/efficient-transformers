@@ -54,7 +54,7 @@ def update_config(config, **kwargs):
                         raise ValueError(f"Config '{config_name}' does not have parameter: '{param_name}'")
             else:
                 config_type = type(config).__name__
-                logger.warning(f"Unknown parameter '{k}' for config type '{config_type}'")
+                logger.debug(f"Unknown parameter '{k}' for config type '{config_type}'")
 
 
 def generate_peft_config(train_config: TrainConfig, peft_config_file: str = None, **kwargs) -> Any:

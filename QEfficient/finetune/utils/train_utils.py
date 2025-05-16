@@ -19,7 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from QEfficient.finetune.configs.training import TrainConfig
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import ft_logger as logger
 
 try:
     import torch_qaic  # noqa: F401
@@ -85,10 +85,7 @@ def train(
     device_type = device.split(":")[0]
 
     tensorboard_updates = None
-    if train_config.enable_ddp:
-        if local_rank == 0:
-            tensorboard_updates = SummaryWriter()
-    else:
+    if (not train_config.enable_ddp) or (train_config.enable_ddp and local_rank == 0):
         tensorboard_updates = SummaryWriter()
 
     if train_config.grad_scaler:
@@ -113,14 +110,9 @@ def train(
     # Start the training loop
     for epoch in range(train_config.num_epochs):
         if loss_0_counter.item() == train_config.convergence_counter:
-            if train_config.enable_ddp:
+            if (not train_config.enable_ddp) or (train_config.enable_ddp and local_rank == 0):
                 logger.info(
-                    f"Not proceeding with epoch {epoch + 1} on device {local_rank} since loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps."
-                )
-                break
-            else:
-                logger.info(
-                    f"Not proceeding with epoch {epoch + 1} since loss value has been <= {train_config.convergence_loss}  for last {loss_0_counter.item()} steps."
+                    f"Skipping epoch {epoch + 1} since loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps."
                 )
                 break
 
@@ -161,7 +153,7 @@ def train(
                 if epoch == intermediate_epoch and step == 0:
                     total_train_steps += intermediate_step
                     logger.info(
-                        f"skipping first {intermediate_step} steps for epoch {epoch + 1}, since fine tuning has already completed for them."
+                        f"Skipping first {intermediate_step} steps for epoch {epoch + 1}, since fine tuning has already completed for it."
                     )
                 if epoch == intermediate_epoch and step < intermediate_step:
                     total_train_steps += 1
@@ -221,10 +213,7 @@ def train(
                 else:
                     loss_0_counter = torch.tensor([0]).to(device)
 
-            if train_config.enable_ddp:
-                if local_rank == 0:
-                    tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
-            else:
+            if (not train_config.enable_ddp) or (train_config.enable_ddp and local_rank == 0):
                 tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
 
             if train_config.save_metrics:
@@ -275,16 +264,10 @@ def train(
                     val_step_metric,
                     val_metric,
                 )
-            if train_config.enable_ddp:
+            if (not train_config.enable_ddp) or (train_config.enable_ddp and local_rank == 0):
                 if loss_0_counter.item() == train_config.convergence_counter:
                     logger.info(
-                        f"Loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps. Hence, stopping the fine tuning on device {local_rank}."
-                    )
-                    break
-            else:
-                if loss_0_counter.item() == train_config.convergence_counter:
-                    logger.info(
-                        f"Loss value has been  <= {train_config.convergence_loss}  for last {loss_0_counter.item()} steps. Hence, stopping the fine tuning."
+                        f"Loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps.Hence,stopping the fine tuning."
                     )
                     break
 
@@ -457,7 +440,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
         eval_metric = torch.exp(eval_epoch_loss)
 
     # Print evaluation metrics
-    logger.info(f" {eval_metric.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
+    logger.info(f"{eval_metric.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
 
     return eval_epoch_loss, eval_metric, val_step_loss, val_step_metric
 
@@ -487,9 +470,9 @@ def print_model_size(model, config) -> None:
         model_name (str): Name of the model.
     """
 
-    logger.info(f"--> Model {config.model_name}")
+    logger.info(f"Model : {config.model_name}")
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"\n--> {config.model_name} has {total_params / 1e6} Million params\n")
+    logger.info(f"{config.model_name} has {total_params / 1e6} Million params\n")
 
 
 def save_to_json(

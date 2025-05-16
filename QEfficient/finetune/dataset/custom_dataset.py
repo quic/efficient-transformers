@@ -8,7 +8,7 @@
 import importlib
 from pathlib import Path
 
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import ft_logger as logger
 
 
 def load_module_from_py_file(py_file: str) -> object:

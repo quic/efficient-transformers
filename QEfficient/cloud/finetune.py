@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 import random
 import warnings
 from typing import Any, Dict, Optional, Union
@@ -18,7 +19,7 @@ import torch.optim as optim
 import torch.utils.data
 from peft import PeftModel, get_peft_model
 from torch.optim.lr_scheduler import StepLR
-from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModel, AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
 
 from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.utils.config_utils import (
@@ -33,7 +34,7 @@ from QEfficient.finetune.utils.dataset_utils import (
 )
 from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
 from QEfficient.utils._utils import login_and_download_hf_lm
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import ft_logger as logger
 
 # Try importing QAIC-specific module, proceed without it if unavailable
 try:
@@ -41,8 +42,8 @@ try:
 except ImportError as e:
     logger.warning(f"{e}. Moving ahead without these qaic modules.")
 
+logger.setLevel(logging.INFO)
 
-from transformers import AutoModelForSequenceClassification
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
@@ -245,7 +246,7 @@ def setup_dataloaders(
     #         )
     ##
     train_dl_kwargs = get_dataloader_kwargs(train_config, dataset_train, dataset_processer, "train")
-    logger.info("length of dataset_train", len(dataset_train))
+    logger.info(f"length of dataset_train = {len(dataset_train)}")
 
     # FIXME (Meet): Add custom data collator registration from the outside by the user.
     custom_data_collator = get_custom_data_collator(dataset_processer, dataset_config)
@@ -260,7 +261,7 @@ def setup_dataloaders(
         pin_memory=True,
         **train_dl_kwargs,
     )
-    logger.info(f"--> Num of Training Set Batches loaded = {len(train_dataloader)}")
+    logger.info(f"Num of Training Set Batches loaded = {len(train_dataloader)}")
 
     eval_dataloader = None
     if train_config.run_validation:
@@ -284,7 +285,7 @@ def setup_dataloaders(
                 f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"
             )
         else:
-            logger.info(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
+            logger.info(f"Num of Validation Set Batches loaded = {len(eval_dataloader)}")
 
         longest_seq_length, _ = get_longest_seq_length(
             torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset])
