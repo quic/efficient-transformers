@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 import random
 import warnings
 from typing import Any, Dict, Optional, Union
@@ -18,7 +19,7 @@ import torch.optim as optim
 import torch.utils.data
 from peft import PeftModel, get_peft_model
 from torch.optim.lr_scheduler import StepLR
-from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModel, AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
 
 from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.utils.config_utils import (
@@ -33,15 +34,16 @@ from QEfficient.finetune.utils.dataset_utils import (
 )
 from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
 from QEfficient.utils._utils import login_and_download_hf_lm
+from QEfficient.utils.logging_utils import ft_logger as logger
 
 # Try importing QAIC-specific module, proceed without it if unavailable
 try:
     import torch_qaic  # noqa: F401
 except ImportError as e:
-    print(f"Warning: {e}. Proceeding without QAIC modules.")
+    logger.warning(f"{e}. Moving ahead without these qaic modules.")
 
+logger.setLevel(logging.INFO)
 
-from transformers import AutoModelForSequenceClassification
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
@@ -144,7 +146,7 @@ def load_model_and_tokenizer(
     # If there is a mismatch between tokenizer vocab size and embedding matrix,
     # throw a warning and then expand the embedding matrix
     if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
-        print("WARNING: Resizing embedding matrix to match tokenizer vocab size.")
+        logger.warning("Resizing the embedding matrix to match the tokenizer vocab size.")
         model.resize_token_embeddings(len(tokenizer))
 
     # FIXME (Meet): Cover below line inside the logger once it is implemented.
@@ -244,12 +246,12 @@ def setup_dataloaders(
     #         )
     ##
     train_dl_kwargs = get_dataloader_kwargs(train_config, dataset_train, dataset_processer, "train")
-    print("length of dataset_train", len(dataset_train))
+    logger.info(f"length of dataset_train = {len(dataset_train)}")
 
     # FIXME (Meet): Add custom data collator registration from the outside by the user.
     custom_data_collator = get_custom_data_collator(dataset_processer, dataset_config)
     if custom_data_collator:
-        print("custom_data_collator is used")
+        logger.info("custom_data_collator is used")
         train_dl_kwargs["collate_fn"] = custom_data_collator
 
     # Create DataLoaders for the training and validation dataset
@@ -259,7 +261,7 @@ def setup_dataloaders(
         pin_memory=True,
         **train_dl_kwargs,
     )
-    print(f"--> Num of Training Set Batches loaded = {len(train_dataloader)}")
+    logger.info(f"Num of Training Set Batches loaded = {len(train_dataloader)}")
 
     eval_dataloader = None
     if train_config.run_validation:
@@ -283,7 +285,7 @@ def setup_dataloaders(
                 f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"
             )
         else:
-            print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
+            logger.info(f"Num of Validation Set Batches loaded = {len(eval_dataloader)}")
 
         longest_seq_length, _ = get_longest_seq_length(
             torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset])
@@ -327,7 +329,7 @@ def main(peft_config_file: str = None, **kwargs) -> None:
 
     # Create DataLoaders for the training and validation dataset
     train_dataloader, eval_dataloader, longest_seq_length = setup_dataloaders(train_config, dataset_config, tokenizer)
-    print(
+    logger.info(
         f"The longest sequence length in the train data is {longest_seq_length}, "
         f"passed context length is {train_config.context_length} and overall model's context length is "
         f"{model.config.max_position_embeddings}"

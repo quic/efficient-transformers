@@ -8,6 +8,8 @@
 import importlib
 from pathlib import Path
 
+from QEfficient.utils.logging_utils import ft_logger as logger
+
 
 def load_module_from_py_file(py_file: str) -> object:
     """
@@ -40,7 +42,7 @@ def get_custom_dataset(dataset_config, tokenizer, split: str):
     try:
         return getattr(module, func_name)(dataset_config, tokenizer, split)
     except AttributeError as e:
-        print(
+        logger.error(
             f"It seems like the given method name ({func_name}) is not present in the dataset .py file ({module_path.as_posix()})."
         )
         raise e
@@ -63,6 +65,6 @@ def get_data_collator(dataset_processer, dataset_config):
     try:
         return getattr(module, func_name)(dataset_processer)
     except AttributeError:
-        print(f"Can not find the custom data_collator in the dataset.py file ({module_path.as_posix()}).")
-        print("Using the default data_collator instead.")
+        logger.info(f"Can not find the custom data_collator in the dataset.py file ({module_path.as_posix()}).")
+        logger.info("Using the default data_collator instead.")
         return None
