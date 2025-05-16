@@ -227,7 +227,9 @@ class QEFFAutoModel(QEFFTransformersBase):
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
+
         mhash.update(to_hashable(self.pretrained_model_name_or_path))
+
         mhash = mhash.hexdigest()[:16]
         return mhash
 
