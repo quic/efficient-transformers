@@ -566,8 +566,15 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         key_states = key_states.transpose(1, 2)
 
         if past_key_value is not None:
+            chunk_postion_ids = position_ids
+
+            if self.use_rope:
+                chunk_postion_ids = torch.where(
+                    chunk_postion_ids != -1, chunk_postion_ids % self.config.attention_chunk_size, chunk_postion_ids
+                )
+
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {"batch_index": batch_index, "position_ids": chunk_postion_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
@@ -713,10 +720,15 @@ class QEffLlama4TextModel(Llama4TextModel):
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
+        chunk_causal_mask = None
 
-        _, chunk_causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
-        )
+        if past_seen_tokens > self.config.attention_chunk_size:
+            # chunked_position_ids = position_ids % self.config.attention_chunk_size
+            chunked_position_ids = torch.where(
+                position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
+            )
+            target_length = min(past_seen_tokens, torch.tensor(self.config.attention_chunk_size))
+            chunk_causal_mask = _create_causal_mask(position_ids=chunked_position_ids, target_length=target_length)
 
         # embed positions
         hidden_states = inputs_embeds
@@ -903,6 +915,15 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
+        chunk_ctx_len = min(
+            ctx_len,
+            (
+                self.config.text_config.attention_chunk_size
+                if hasattr(self, "config")
+                else constants.LLAMA4_ATTENTION_CHUNK_SIZE
+            ),
+        )
+
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
             img_size = getattr(self.config.vision_config, "image_size")
         elif img_size is None:
@@ -926,6 +947,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 "batch_size_times_num_tiles": batch_size_times_num_tiles,
                 "img_size": img_size,
                 "chunk_length": prefill_seq_len,
+                "chunk_ctx_len": chunk_ctx_len,
             },
             {
                 "batch_size": batch_size,
@@ -934,6 +956,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 "batch_size_times_num_tiles": batch_size_times_num_tiles,
                 "img_size": img_size,
                 "chunk_length": prefill_seq_len,
+                "chunk_ctx_len": chunk_ctx_len,
             },
         ]
 
@@ -956,8 +979,14 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         vision_dynamic_axes["pixel_values"] = {0: "batch_size_times_num_tiles", 2: "img_size", 3: "img_size"}
         vision_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
 
-        pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
+        pkv_dynamic_axes = {0: "batch_size"}
         for i in range(self.language_model.config.num_hidden_layers):
+            # switch between chunk_ctx_len and ctx_len for RoPE and NoPE layers.
+            if int((i + 1) % 4 != 0):
+                pkv_dynamic_axes[2] = "chunk_ctx_len"
+            else:
+                pkv_dynamic_axes[2] = "ctx_len"
+
             for kv in ["key", "value"]:
                 lang_dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
 
