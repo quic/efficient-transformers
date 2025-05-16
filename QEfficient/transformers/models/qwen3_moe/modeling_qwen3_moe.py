@@ -112,28 +112,6 @@ def eager_attention_forward(
 
 class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        # # breakpoint()
-        # B, S, D = hidden_states.shape  # [1, 8, 2304]
-        # hidden_states = hidden_states.reshape(-1, D)  # [8, 2304]
-        # T = hidden_states.size(0)  # 8 tokens
-        # router_logits = self.gate(hidden_states)  # [8, 8]
-        # probs = F.softmax(router_logits, dim=-1)  # [8, 8]
-
-        # topk_scores, topk_indices = torch.topk(probs, self.top_k, dim=-1)  # [8, top_k] → topk_k is 2 for Grok1
-        # topk_scores = topk_scores / topk_scores.sum(dim=-1, keepdim=True)  # normalize per-token
-        # topk_scores = topk_scores.to(hidden_states.dtype)  # [8, top_k]
-        # route = torch.zeros((T, self.num_experts), dtype=hidden_states.dtype)
-        # route.scatter_(1, topk_indices, topk_scores)  # [8, num_experts]
-        # final_output = torch.zeros_like(hidden_states)  # [8, 2304]
-
-        # for e, expert in enumerate(self.experts):
-        #     scores = route[:, e].unsqueeze(1)  # [8, 1]
-        #     masked_out = torch.where(
-        #         scores > 0, expert(hidden_states) * scores, 0.0
-        #     )  # # [8, 2304] × [8, 1] → [8, 2304]
-        #     final_output += masked_out  # accumulate expert outputs
-        # return final_output.reshape(B, S, D), router_logits  # ([1, 8, 2304], [8, num_experts])
-
         B, S, H = hidden_states.shape
         T = B * S
         x = hidden_states.view(T, H)
@@ -145,119 +123,40 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
             top_w /= top_w.sum(-1, keepdim=True)
         top_w = top_w.to(x.dtype)
 
-        # Create 2 expert idx based on the topk
-        expert1_idx, expert2_idx, expert3_idx, expert4_idx, expert5_idx, expert6_idx, expert7_idx, expert8_idx = (
-            top_i[:, 0],
-            top_i[:, 1],
-            top_i[:, 2],
-            top_i[:, 3],
-            top_i[:, 4],
-            top_i[:, 5],
-            top_i[:, 6],
-            top_i[:, 7],
-        )  # [T]
-        weight1, weight2, weight3, weight4, weight5, weight6, weight7, weight8 = (
-            top_w[:, 0],
-            top_w[:, 1],
-            top_w[:, 2],
-            top_w[:, 3],
-            top_w[:, 4],
-            top_w[:, 5],
-            top_w[:, 6],
-            top_w[:, 7],
-        )  # [T]
+        expert_idx = []
+        weights = []
+        for i in range(self.top_k):
+            expert_idx.append(top_i[:, i])
+            weights.append(top_w[:, i])
 
-        Inter = 768
-        upgate1 = x.new_zeros((T, Inter))
-        upgate2 = x.new_zeros((T, Inter))
-        upgate3 = x.new_zeros((T, Inter))
-        upgate4 = x.new_zeros((T, Inter))
-        upgate5 = x.new_zeros((T, Inter))
-        upgate6 = x.new_zeros((T, Inter))
-        upgate7 = x.new_zeros((T, Inter))
-        upgate8 = x.new_zeros((T, Inter))
-
-        expert_out1 = x.new_zeros((T, H))
-        expert_out2 = x.new_zeros((T, H))
-        expert_out3 = x.new_zeros((T, H))
-        expert_out4 = x.new_zeros((T, H))
-        expert_out5 = x.new_zeros((T, H))
-        expert_out6 = x.new_zeros((T, H))
-        expert_out7 = x.new_zeros((T, H))
-        expert_out8 = x.new_zeros((T, H))
+        # I = self.config.ffn_dim
+        Inter = 768  # TODO: Find a way to identify from config # Intermediate Size
+        upgate = []
+        expert_out = []
+        for i in range(self.top_k):
+            upgate.append(x.new_zeros((T, Inter)))
+            expert_out.append(x.new_zeros((T, H)))
 
         for e in range(self.num_experts):
             exp = self.experts[e]
-            mask1 = (expert1_idx == e).unsqueeze(1)  # [T, 1]
-            mask2 = (expert2_idx == e).unsqueeze(1)  # [T, 1]
-            mask3 = (expert3_idx == e).unsqueeze(1)  # [T, 1]
-            mask4 = (expert4_idx == e).unsqueeze(1)  # [T, 1]
-            mask5 = (expert5_idx == e).unsqueeze(1)  # [T, 1]
-            mask6 = (expert6_idx == e).unsqueeze(1)  # [T, 1]
-            mask7 = (expert7_idx == e).unsqueeze(1)  # [T, 1]
-            mask8 = (expert8_idx == e).unsqueeze(1)  # [T, 1]
-
-            # breakpoint()
+            mask = []
+            for i in range(self.top_k):
+                mask.append((expert_idx[i] == e).unsqueeze(1))
             hidden_gate = (exp.act_fn(exp.gate_proj(x))) * exp.up_proj(x)
-            # hidden_gate=exp.down_proj(hidden_gate)
-
-            # Accumulate weighted contributions
-            upgate1 += torch.where(mask1, hidden_gate, torch.zeros_like(upgate1))
-            upgate2 += torch.where(mask2, hidden_gate, torch.zeros_like(upgate2))
-            upgate3 += torch.where(mask3, hidden_gate, torch.zeros_like(upgate3))
-            upgate4 += torch.where(mask4, hidden_gate, torch.zeros_like(upgate4))
-            upgate5 += torch.where(mask5, hidden_gate, torch.zeros_like(upgate5))
-            upgate6 += torch.where(mask6, hidden_gate, torch.zeros_like(upgate6))
-            upgate7 += torch.where(mask7, hidden_gate, torch.zeros_like(upgate7))
-            upgate8 += torch.where(mask8, hidden_gate, torch.zeros_like(upgate8))
+            for i in range(self.top_k):
+                upgate[i] += torch.where(mask[i], hidden_gate, torch.zeros_like(upgate[i]))
 
         for e in range(self.num_experts):
             exp = self.experts[e]
-            mask1 = (expert1_idx == e).unsqueeze(1)
-            mask2 = (expert2_idx == e).unsqueeze(1)
-            mask3 = (expert3_idx == e).unsqueeze(1)  # [T, 1]
-            mask4 = (expert4_idx == e).unsqueeze(1)  # [T, 1]
-            mask5 = (expert5_idx == e).unsqueeze(1)  # [T, 1]
-            mask6 = (expert6_idx == e).unsqueeze(1)  # [T, 1]
-            mask7 = (expert7_idx == e).unsqueeze(1)  # [T, 1]
-            mask8 = (expert8_idx == e).unsqueeze(1)
-            # breakpoint()
-            expert_out1 += torch.where(
-                mask1, exp.down_proj(upgate1) * weight1.unsqueeze(1), torch.zeros_like(expert_out1)
-            )
-            expert_out2 += torch.where(
-                mask2, exp.down_proj(upgate2) * weight2.unsqueeze(1), torch.zeros_like(expert_out2)
-            )
-            expert_out3 += torch.where(
-                mask3, exp.down_proj(upgate3) * weight3.unsqueeze(1), torch.zeros_like(expert_out3)
-            )
-            expert_out4 += torch.where(
-                mask4, exp.down_proj(upgate4) * weight4.unsqueeze(1), torch.zeros_like(expert_out4)
-            )
-            expert_out5 += torch.where(
-                mask5, exp.down_proj(upgate5) * weight5.unsqueeze(1), torch.zeros_like(expert_out5)
-            )
-            expert_out6 += torch.where(
-                mask6, exp.down_proj(upgate6) * weight6.unsqueeze(1), torch.zeros_like(expert_out6)
-            )
-            expert_out7 += torch.where(
-                mask7, exp.down_proj(upgate7) * weight7.unsqueeze(1), torch.zeros_like(expert_out7)
-            )
-            expert_out8 += torch.where(
-                mask8, exp.down_proj(upgate8) * weight8.unsqueeze(1), torch.zeros_like(expert_out8)
-            )
+            mask = []
+            for i in range(self.top_k):
+                mask.append((expert_idx[i] == e).unsqueeze(1))
+                expert_out[i] += torch.where(
+                    mask[i], exp.down_proj(upgate[i]) * (weights[i].unsqueeze(1)), torch.zeros_like(expert_out[i])
+                )
 
-        expert_out = (
-            expert_out1
-            + expert_out2
-            + expert_out3
-            + expert_out4
-            + expert_out5
-            + expert_out6
-            + expert_out7
-            + expert_out8
-        )
-        return expert_out.view(B, S, H), router_logits
+        expert_out_sum = sum(expert_out)
+        return expert_out_sum.view(B, S, H), router_logits
 
 
 class QEffQwen3MoeAttention(Qwen3MoeAttention):
