@@ -103,53 +103,52 @@ class QEffGrok1MultiHeadAttention(nn.Module):
 
 
 class QEffGrok1MoeBlock(nn.Module):
-    def forward(self, hidden: torch.Tensor):
-        B, S, H = hidden.shape
-        T = B * S
-        x = hidden.view(T, H)
+    def forward(self, hidden_states: torch.Tensor):
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        hidden_states = hidden_states.view(-1, hidden_dim)
+        router_logits = self.gate(hidden_states)
 
-        router_logits = self.gate(x)  # [T, E]
-        prob = F.softmax(router_logits, -1, dtype=torch.float)
-        top_w, top_i = torch.topk(prob, self.top_k, -1)
-        # if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
-        #     top_w /= top_w.sum(-1, keepdim=True)
-        top_w = top_w.to(x.dtype)
+        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
+        routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
+        # Creating experts mask and routing weights masked
+        awesome_experts_mask_1 = (
+            torch.nn.functional.one_hot(selected_experts[:, 0], num_classes=self.num_experts).bool().T.unsqueeze(-1)
+        )
+        awesome_experts_mask_2 = (
+            torch.nn.functional.one_hot(selected_experts[:, 1], num_classes=self.num_experts).bool().T.unsqueeze(-1)
+        )
 
-        # Create 2 expert idx based on the topk
-        expert1_idx, expert2_idx = top_i[:, 0], top_i[:, 1]  # [T]
-        weight1, weight2 = top_w[:, 0], top_w[:, 1]  # [T]
-
-        # I = self.config.ffn_dim
-        I = 32768  # TODO: Find a way to identify from config # Intermediate Size
-        upgate1 = x.new_zeros((T, I))
-        upgate2 = x.new_zeros((T, I))
-        expert_out1 = x.new_zeros((T, H))
-        expert_out2 = x.new_zeros((T, H))
-
-        for e in range(self.num_experts):
-            exp = self.experts[e]
-            mask1 = (expert1_idx == e).unsqueeze(1)  # [T, 1]
-            mask2 = (expert2_idx == e).unsqueeze(1)  # [T, 1]
-
-            hidden_gate = (exp.act_fn(exp.linear_v(x))) * exp.linear(x)
-            # Accumulate weighted contributions
-            upgate1 += torch.where(mask1, hidden_gate, torch.zeros_like(upgate1))
-            upgate2 += torch.where(mask2, hidden_gate, torch.zeros_like(upgate2))
-
-        for e in range(self.num_experts):
-            exp = self.experts[e]
-            mask1 = (expert1_idx == e).unsqueeze(1)
-            mask2 = (expert2_idx == e).unsqueeze(1)
-
-            expert_out1 += torch.where(
-                mask1, exp.linear_1(upgate1) * weight1.unsqueeze(1), torch.zeros_like(expert_out1)
+        gateupout1 = torch.zeros(hidden_states.shape[0], 32768)  # T, hs
+        gateupout2 = torch.zeros(hidden_states.shape[0], 32768)  # T, hs
+        for expert_idx in range(self.num_experts):
+            expert_layer = self.experts[expert_idx]
+            current_expert_output = expert_layer.act_fn(expert_layer.linear(hidden_states)) * expert_layer.linear_v(
+                hidden_states
             )
-            expert_out2 += torch.where(
-                mask2, exp.linear_1(upgate2) * weight2.unsqueeze(1), torch.zeros_like(expert_out2)
+            gateupout1 += torch.where(
+                awesome_experts_mask_1[expert_idx], current_expert_output, torch.zeros_like(gateupout1)
+            )
+            gateupout2 += torch.where(
+                awesome_experts_mask_2[expert_idx], current_expert_output, torch.zeros_like(gateupout2)
             )
 
-        expert_out = expert_out1 + expert_out2
-        return expert_out.view(B, S, H), router_logits
+        downout1 = torch.zeros_like(hidden_states)
+        downout2 = torch.zeros_like(hidden_states)
+        concat_mask = torch.cat((awesome_experts_mask_1.unsqueeze(0), awesome_experts_mask_2.unsqueeze(0)), dim=0)
+        concat_down = torch.cat((downout1.unsqueeze(0), downout2.unsqueeze(0)), dim=0)
+        concat_gateout = torch.cat((gateupout1.unsqueeze(0), gateupout2.unsqueeze(0)), dim=0)
+        for expert_idx in range(self.num_experts):
+            expert_layer = self.experts[expert_idx]
+            concat_down += torch.where(
+                concat_mask[:, expert_idx, :], expert_layer.linear_1(concat_gateout), torch.zeros_like(concat_down)
+            )
+
+        downout1, downout2 = concat_down[0], concat_down[1]
+        hidden_states = (
+            downout1 * routing_weights[:, 0].unsqueeze(-1) + downout2 * routing_weights[:, 1].unsqueeze(-1)
+        ).reshape(batch_size, sequence_length, hidden_dim)
+
+        return hidden_states, router_logits
 
 
 class QEffGrok1DecoderLayer(nn.Module):
