@@ -29,7 +29,6 @@ pipeline {
                '''
            }
        }
-
        stage('Non CLI Tests') {
            parallel {
                stage('Run Non-CLI Non-QAIC Tests') {
@@ -105,14 +104,14 @@ pipeline {
                    }
         }
         stage('vLLM Tests') {
-
-                steps
-                {
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
                     build job: 'qefficient_vllm_upstream', 
                     parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
                     propagate: true,
                     wait: true
                 }
+            }
         }
         stage('QNN CLI Tests') {
             steps {
