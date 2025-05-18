@@ -405,14 +405,16 @@ class QEffLlama4TextMoe(Llama4TextMoe):
     def forward(self, hidden: torch.Tensor):
         B, S, H = hidden.shape
         T = B * S
-        x = hidden.view(T, H)
+        hidden = hidden.view(T, H)
 
-        router_logits = self.router(x)
-
+        router_logits = self.router(hidden)
         # *top-k = 1*  → LLama4
         top_w, top_i = torch.topk(router_logits, self.top_k, dim=-1)  # both [T, K]
         masked_logits = torch.full_like(router_logits, float("-inf"))
         masked_logits.scatter_(1, top_i, top_w)
+
+        # Here we multiply by scores before experts, different only for Llama4
+        x = hidden * torch.sigmoid(top_w.float())
 
         # ── Book-keeping: create one boolean mask per expert once  ───────────────
         # routing_weights[e]  ==  True where token routed to that expert. Shape [E, T]
@@ -441,12 +443,12 @@ class QEffLlama4TextMoe(Llama4TextMoe):
         for e in range(self.num_experts):
             routing_weight = routing_weights[:, e].unsqueeze(-1)
             masked_down = torch.where(
-                routing_weight > 0, (upgate @ self.experts.down_proj[e]) * routing_weight, torch.zeros_like(expert_out)
+                routing_weight > 0, (upgate @ self.experts.down_proj[e]), torch.zeros_like(expert_out)
             )
             expert_out += masked_down
 
         # ───────────────────────── Stage-3 : Shared expert ───────────────────────
-        shared_out = self.shared_expert(x)  # [T, H]
+        shared_out = self.shared_expert(hidden)  # [T, H]
         final = shared_out + expert_out  # restore [B,S,H]
         return final.view(B, S, H), router_logits
 
