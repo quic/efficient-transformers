@@ -745,7 +745,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         # Skip inputs/outputs
         lang_session.skip_buffers(
-            [x for x in lang_session.input_names + lang_session.output_names if x.startswith("past_")]
+            [
+                x
+                for x in lang_session.input_names + lang_session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
         )
 
         # Read prompt and ctx len from session
@@ -762,8 +766,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         input_len = inputs["attention_mask"].sum(1, keepdims=True)
         input_ids_length = inputs["input_ids"].shape[1]
         num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
-        # padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
-        padded_len = vision_session.bindings[0].dims[1]
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+
         if generation_len is None:
             generation_len = ctx_len - input_len.max()
         assert generation_len > 0, "generation length should be greater than zero"
@@ -791,24 +795,23 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         }
 
         vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
-        vision_inputs["input_ids"] = inputs["input_ids"]
         vision_start = perf_counter()
 
         vision_outputs = vision_session.run(vision_inputs)
         vision_end = perf_counter()
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
-        lang_inputs["input_ids"] = inputs["input_ids"]
         lang_inputs["position_ids"] = np.where(
             lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
         )  # Need to use -1 as position_ids for invalid tokens
-
+        lang_inputs["index"] = np.array([[0]])
         vision_session.deactivate()
         lang_session.activate()
 
-        # lang_session.set_buffers(vision_outputs)
-        lang_inputs["vision_embeds"] = vision_outputs["vision_embeds"]
+        lang_session.set_buffers(vision_outputs)
+
         # Prepare inputs for prefill
+        chunk_inputs = lang_inputs.copy()
         prefill_start = perf_counter()
 
         # Run prefill
@@ -818,16 +821,17 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][
                 :, i * prefill_seq_len : (i + 1) * prefill_seq_len
             ]
-            chunk_inputs["vision_embeds"] = lang_inputs["vision_embeds"][
-                :, i * prefill_seq_len : (i + 1) * prefill_seq_len
-            ]
             outputs = lang_session.run(chunk_inputs)
+            chunk_inputs["index"] = outputs["index_output"]
 
         prefill_time = perf_counter() - prefill_start + vision_end - vision_start
         # Skip inputs/outputs again
-        lang_inputs["vision_embeds"] = lang_inputs["vision_embeds"][:, :prefill_seq_len]
         lang_session.skip_buffers(
-            [x for x in lang_session.input_names + lang_session.output_names if x.startswith("past_")]
+            [
+                x
+                for x in lang_session.input_names + lang_session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
         )
 
         # Get first token
