@@ -543,7 +543,7 @@ class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
         residual = hidden_states
 
         # use local attention mask for ROPE layers
-        if self.use_chunked_attention and chunk_causal_mask is not None:
+        if self.use_chunked_attention:
             attention_mask = chunk_causal_mask
 
         hidden_states = self.input_layernorm(hidden_states)
@@ -643,16 +643,15 @@ class QEffLlama4TextModel(Llama4TextModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
-        chunk_causal_mask = None
-
-        if past_seen_tokens > self.config.attention_chunk_size:
-            # chunked_position_ids = position_ids % self.config.attention_chunk_size
-            chunked_position_ids = torch.where(
-                position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
-            )
-            target_length = min(past_seen_tokens, torch.tensor(self.config.attention_chunk_size))
-            chunk_causal_mask = _create_causal_mask(position_ids=chunked_position_ids, target_length=target_length)
+        causal_mask = _create_causal_mask(
+            position_ids=position_ids, target_length=past_key_values.key_cache[3].shape[-2]
+        )
+        # chunked_position_ids = position_ids % self.config.attention_chunk_size
+        chunked_position_ids = torch.where(
+            position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
+        )
+        target_length = min(past_seen_tokens, torch.tensor(self.config.attention_chunk_size))
+        chunk_causal_mask = _create_causal_mask(position_ids=chunked_position_ids, target_length=target_length)
 
         # embed positions
         hidden_states = inputs_embeds
