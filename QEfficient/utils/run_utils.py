@@ -103,16 +103,7 @@ class ApiRunner:
             :numpy.ndarray: Generated output tokens
         """
         input_ids = self.input_handler.tokenizer.encode(self.input_handler.prompt[0], return_tensors="pt")
-
-        input_ids_len = len(input_ids[0])
-
-        for _ in range(self.gen_len):
-            outputs = model_hf(input_ids)
-            logits = outputs.logits[:, -1, :]
-            predicted_token_id = torch.argmax(logits, dim=-1)
-            input_ids = torch.cat([input_ids, predicted_token_id.unsqueeze(1)], dim=-1)
-
-        generated_ids = input_ids[0][input_ids_len:].detach().numpy()
+        generated_ids = model_hf.generate(input_ids, max_new_tokens=self.gen_len, do_sample=False)[0][len(input_ids[0]:]
         generated_text = self.input_handler.tokenizer.decode(generated_ids, skip_special_tokens=True)
         print("Original HF Model Outputs (Torch CPU): \n")
         print("Prompt:", repr(self.input_handler.prompt))
