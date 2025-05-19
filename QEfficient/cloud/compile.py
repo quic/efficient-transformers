@@ -85,17 +85,29 @@ if __name__ == "__main__":
     parser.add_argument(
         "--enable_qnn",
         "--enable-qnn",
-        action="store_true",
+        nargs="?",
+        const=True,
+        type=str,
         default=False,
         help="Enables QNN. Optionally, a configuration file can be provided with [--enable_qnn CONFIG_FILE].\
              If not provided, the default configuration will be used.\
              Sample Config: QEfficient/compile/qnn_config.json",
     )
-    parser.add_argument(
-        "qnn_config",
-        nargs="?",
-        type=str,
-    )
-    # FIXME(ochougul): Allow extra compilation arguments
-    args = parser.parse_args()
-    QEfficient.compile(**vars(args))
+
+    args, compiler_options = parser.parse_known_args()
+
+    if isinstance(args.enable_qnn, str):
+        args.qnn_config = args.enable_qnn
+        args.enable_qnn = True
+
+    compiler_options_dict = {}
+    for i in range(0, len(compiler_options)):
+        if compiler_options[i].startswith("--"):
+            key = compiler_options[i].lstrip("-").replace("-", "_")
+            value = (
+                compiler_options[i + 1]
+                if i + 1 < len(compiler_options) and not compiler_options[i + 1].startswith("-")
+                else True
+            )
+            compiler_options_dict[key] = value
+    QEfficient.compile(**args.__dict__, **compiler_options_dict)

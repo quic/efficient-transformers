@@ -11,9 +11,10 @@ import numpy as np
 import onnx
 import onnxruntime
 import torch
+from transformers import TextStreamer
 
 from QEfficient.generation.text_generation_inference import TextGeneration
-from QEfficient.utils.generate_inputs import InputHandler
+from QEfficient.utils.generate_inputs import InputHandler, InputHandlerInternVL, InputHandlerVLM
 
 
 # TODO: Deprecate this class and encourage the use of `QeffAutoModel...` classes
@@ -243,3 +244,201 @@ class ApiRunner:
         print("Prompt:", repr(self.input_handler.prompt))
         print("Completion:", repr(predicted_string))
         return execinfo.generated_ids
+
+
+class ApiRunnerVlm:
+    """
+    ApiRunnerVlm class is responsible for running Vision models:
+    ---------
+
+    1. HuggingFace ``PyTorch`` model
+    2. Transformed KV Pytorch Model
+    3. ``ONNX`` model on ONNXRT
+    4. ``ONNX`` model on Cloud AI 100
+    """
+
+    def __init__(
+        self, batch_size, processor, config, image, conversation, prompt, prompt_len, ctx_len, max_gen_len, n_layer
+    ):
+        """ """
+        self.input_handler_vlm = InputHandlerVLM(
+            batch_size=batch_size,
+            prompt_len=prompt_len,
+            ctx_len=ctx_len,
+            max_gen_len=max_gen_len,
+            config=config,
+            image=image,
+            conversation=conversation,
+            processor=processor,
+            n_layer=n_layer,
+            prompt=prompt,
+        )
+        self.processor = processor
+        self.ctx_len = ctx_len
+        self.prompt_len = prompt_len
+        self.batch_size = batch_size
+        self.config = config
+        self.gen_len = max_gen_len
+
+    @torch.no_grad()
+    def run_vlm_hf_model_on_pytorch(self, model, inputs):
+        output = model.generate(**inputs, max_new_tokens=self.gen_len, do_sample=False)
+        offset_output = output[0, inputs["input_ids"].shape[1] :]
+        py_output = self.processor.tokenizer.decode(offset_output).strip()
+        print("Original HF Model Outputs (Torch CPU):")
+        print("Completion:", repr(py_output))
+        return offset_output
+
+    @torch.no_grad()
+    def run_vlm_kv_model_on_pytorch(self, model):
+        generation_len = self.gen_len
+        generated_ids = torch.full((self.batch_size, generation_len), self.processor.tokenizer.pad_token_id)
+        inputs = self.input_handler_vlm.prepare_pytorch_inputs()
+
+        outputs = model(**inputs)
+        inputs["input_ids"] = outputs[0].argmax(2)
+        if "cross_attention_mask" in inputs:
+            bs, _, num_images, img_tiles = inputs["cross_attention_mask"].shape
+            inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64)
+
+        generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
+        finished_sequences = inputs["input_ids"] == self.processor.tokenizer.eos_token_id
+        inputs["position_ids"] = inputs["position_ids"].max(1, keepdim=True).values + 1
+
+        print("QEFF Model Outputs (Torch CPU):")
+        streamer = TextStreamer(self.processor.tokenizer)
+        streamer.put(inputs["input_ids"])
+        for num_token in range(1, self.gen_len):
+            outputs = model(**inputs)
+            inputs["input_ids"] = outputs[0].argmax(2)
+            inputs["position_ids"] += 1
+            streamer.put(inputs["input_ids"])
+            generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
+            finished_sequences |= inputs["input_ids"] == self.processor.tokenizer.eos_token_id
+            if finished_sequences.all():
+                break
+        streamer.end()
+        return generated_ids[0]
+
+    def run_ort_session(self, inputs, session) -> dict:
+        output_names = [x.name for x in session.get_outputs()]
+        session_input_names = [x.name for x in session.get_inputs()]
+        session_inputs = {}
+        for inp_name in session_input_names:
+            if inp_name in inputs.keys():
+                session_inputs[inp_name] = inputs[inp_name]
+        outputs_data = session.run(output_names, session_inputs)
+        ort_outputs = dict(zip(output_names, outputs_data))
+        return ort_outputs
+
+    def setup_ort_session(self, model_path):
+        m = onnx.load(model_path, load_external_data=False)
+        # NOTE: OrtValue objects should be kept around until the session is run, hence this dict is required
+        added_initializers = {}
+        for node in m.graph.node:
+            if node.op_type == "Constant":
+                np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t, os.path.dirname(model_path))
+                if len(np_tensor.shape) == 0 and np_tensor.item() == 2147483647:
+                    added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(
+                        np.array(0, np_tensor.dtype)
+                    )
+        session_options = onnxruntime.SessionOptions()
+        for name, value in added_initializers.items():
+            session_options.add_initializer(name, value)
+        session = onnxruntime.InferenceSession(model_path, session_options)
+
+        return added_initializers, session
+
+    def run_vlm_kv_model_on_ort(self, model_path):
+        vision_inputs, lang_inputs = self.input_handler_vlm.prepare_vlm_ort_inputs()
+        # TODO: Make a DAG based parser to compile and run N ONNX files with dependencies
+        ### If kv_offload was `True`
+        if isinstance(model_path, list):
+            encoder_path = model_path[0]
+            decoder_path = model_path[1]
+
+            added_initializers, encoder_session = self.setup_ort_session(encoder_path)
+
+            encoder_ort_outputs = self.run_ort_session(vision_inputs, session=encoder_session)
+            lang_inputs.update(encoder_ort_outputs)
+            del added_initializers
+            ### TEXT COMPONENT RUNNING
+
+            added_initializers, decoder_session = self.setup_ort_session(decoder_path)
+            generated_ids = []
+
+            ort_outputs = self.run_ort_session(lang_inputs, session=decoder_session)
+            ort_outputs = self.input_handler_vlm.update_vlm_ort_outputs(ort_outputs)
+            for _ in range(1, self.gen_len):
+                generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
+                lang_inputs = self.input_handler_vlm.update_vlm_ort_inputs(lang_inputs, ort_outputs)
+                ort_outputs = self.run_ort_session(lang_inputs, decoder_session)
+                ort_outputs = self.input_handler_vlm.update_vlm_ort_outputs(ort_outputs)
+            generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
+            generated_ids = np.concatenate(generated_ids, axis=1)
+            predicted_string = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+            print("ORT KV_OFFLOAD Session Outputs:")
+            print("Completion:", repr(predicted_string))
+            del added_initializers
+
+        ### IF MODELPATH IS A SINGLE POSIXPATH
+        else:
+            added_initializers, session = self.setup_ort_session(model_path)
+            generated_ids = []
+            inputs = {**vision_inputs, **lang_inputs}
+            ort_outputs = self.run_ort_session(inputs, session=session)
+            ort_outputs = self.input_handler_vlm.update_vlm_ort_outputs(ort_outputs)
+            for _ in range(1, self.gen_len):
+                generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
+                inputs = self.input_handler_vlm.update_vlm_ort_inputs(inputs, ort_outputs)
+                ort_outputs = self.run_ort_session(inputs, session)
+                ort_outputs = self.input_handler_vlm.update_vlm_ort_outputs(ort_outputs)
+            generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
+            generated_ids = np.concatenate(generated_ids, axis=1)
+            predicted_string = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+            print("ORT Session Outputs:")
+            print("Completion:", repr(predicted_string))
+            del added_initializers
+        return generated_ids
+
+
+class ApiRunnerInternVL(ApiRunnerVlm):
+    """
+    ApiRunner for InternVL Vision models:
+    ---------
+
+    1. HuggingFace ``PyTorch`` model
+    2. Transformed KV Pytorch Model
+    3. ``ONNX`` model on ONNXRT
+    4. ``ONNX`` model on Cloud AI 100
+    """
+
+    def __init__(self, batch_size, processor, config, image, prompt, prompt_len, ctx_len, max_gen_len, n_layer):
+        """ """
+        self.input_handler_vlm = InputHandlerInternVL(
+            batch_size=batch_size,
+            prompt_len=prompt_len,
+            ctx_len=ctx_len,
+            max_gen_len=max_gen_len,
+            config=config,
+            image=image,
+            processor=processor,
+            n_layer=n_layer,
+            prompt=prompt,
+        )
+        self.processor = processor
+        self.ctx_len = ctx_len
+        self.prompt_len = prompt_len
+        self.batch_size = batch_size
+        self.config = config
+        self.gen_len = max_gen_len
+
+    @torch.no_grad()
+    def run_vlm_hf_model_on_pytorch(self, model, inputs, generation_config):
+        outputs = model.generate(**inputs, **generation_config)
+        generated_ids = outputs[0].detach().numpy()
+
+        py_output = self.processor.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+        print("Original HF Model Outputs (Torch CPU):")
+        print("Completion:", repr(py_output))
+        return generated_ids
