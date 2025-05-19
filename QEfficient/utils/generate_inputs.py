@@ -8,7 +8,12 @@
 import numpy as np
 import torch
 
-from QEfficient.utils import get_num_layers_from_config, get_padding_shape_from_config, padding_check_and_fix
+from QEfficient.utils import (
+    get_num_layers_from_config,
+    get_padding_shape_from_config,
+    get_sliding_window_shapes,
+    padding_check_and_fix,
+)
 
 
 class InputHandler:
@@ -37,6 +42,12 @@ class InputHandler:
         #     config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
         # )
         self.past_key_values = get_padding_shape_from_config(
+            config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
+        )
+        self.is_chunked_attention = torch.tensor(
+            [bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool
+        )
+        self.global_shape, self.sliding_shape = get_sliding_window_shapes(
             config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
         )
 
@@ -152,9 +163,16 @@ class InputHandler:
             axis=1,
         ).astype(np.int64)
 
+        # for i in range(self.n_layer):
+        #     inputs["past_key." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
+        #     inputs["past_value." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
+
         for i in range(self.n_layer):
-            inputs["past_key." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
-            inputs["past_value." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
+            cache_shape = self.global_shape if not self.is_chunked_attention[i] else self.sliding_shape
+            inputs["past_key." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
+            inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
+
+        return inputs
 
         return inputs
 
