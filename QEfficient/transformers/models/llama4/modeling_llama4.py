@@ -865,6 +865,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         elif img_size is None:
             img_size = 336  # FIXME based on llama4 Image size
             logger.warning("Setting img_size to be 336, as it was neither passed nor found in vision_config")
+        vision_size = 144 * batch_size_times_num_tiles
 
         downsample_ratio = int(round(1.0 / (self.config.vision_config.pixel_shuffle_ratio**2)))
         num_features_per_tile = int(
@@ -990,7 +991,6 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         vision_inputs = {}
         lang_inputs = {}
         vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
-        vision_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
         lang_inputs["position_ids"] = (
