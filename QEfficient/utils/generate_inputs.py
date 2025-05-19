@@ -33,7 +33,10 @@ class InputHandler:
         self.ctx_len = ctx_len
         self.full_batch_size = full_batch_size
         self.n_layer = get_num_layers_from_config(config)
-        self.padding_shape = get_padding_shape_from_config(
+        # self.padding_shape = get_padding_shape_from_config(
+        #     config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
+        # )
+        self.past_key_values = get_padding_shape_from_config(
             config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
         )
 
@@ -76,13 +79,14 @@ class InputHandler:
             inputs["position_ids"] = torch.arange(input_len).view(1, input_len)
             inputs["batch_index"] = torch.arange(1).view(-1, 1)
 
-        past_key_values = []
-        for i in range(self.n_layer):
-            past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
-            past_value = torch.zeros((self.padding_shape), dtype=torch.float32)
-            pkv = (past_key, past_value)
-            past_key_values.append(pkv)
-        inputs["past_key_values"] = tuple(past_key_values)
+        # past_key_values = []
+        # for i in range(self.n_layer):
+        #     past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
+        #     past_value = torch.zeros((self.padding_shape), dtype=torch.float32)
+        #     pkv = (past_key, past_value)
+        #     past_key_values.append(pkv)
+        # inputs["past_key_values"] = tuple(past_key_values)
+        inputs["past_key_values"] = tuple(self.past_key_values)
 
         return inputs
 
