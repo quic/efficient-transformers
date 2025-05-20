@@ -11,7 +11,6 @@ from typing import Dict, Optional, Tuple, Type
 import torch
 import torch.nn as nn
 import transformers.models.auto.modeling_auto as mapping
-from transformers import AutoModelForCausalLM
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,
@@ -281,6 +280,8 @@ def build_model_class_mapping(auto_model_class, qeff_class_name):
     return {
         config_class.__name__: qeff_class_name for config_class, model_class in auto_model_class._model_mapping.items()
     }
+
+
 MODEL_CLASS_MAPPING = {
     **build_model_class_mapping(mapping.AutoModelForCausalLM, "QEFFAutoModelForCausalLM"),
     **build_model_class_mapping(mapping.AutoModelForImageTextToText, "QEFFAutoModelForImageTextToText"),
