@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -103,7 +103,9 @@ class ApiRunner:
             :numpy.ndarray: Generated output tokens
         """
         input_ids = self.input_handler.tokenizer.encode(self.input_handler.prompt[0], return_tensors="pt")
-        generated_ids = model_hf.generate(input_ids, max_new_tokens=self.gen_len, do_sample=False)[0][len(input_ids[0]:]
+        generated_ids = model_hf.generate(input_ids, max_new_tokens=self.gen_len, do_sample=False)[0][
+            len(input_ids[0]) :
+        ]
         generated_text = self.input_handler.tokenizer.decode(generated_ids, skip_special_tokens=True)
         print("Original HF Model Outputs (Torch CPU): \n")
         print("Prompt:", repr(self.input_handler.prompt))
