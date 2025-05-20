@@ -12,10 +12,19 @@ import os
 # hf_transfer is imported (will happen on line 15 via leading imports)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
-from transformers import AutoConfig
+from transformers import AutoConfig, AutoModelForCausalLM
 
-from QEfficient.transformers.modeling_utils import MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS
+# Placeholder for all non-transformer models
+from QEfficient.transformers.models.llama_swiftkv.modeling_llama_swiftkv import (
+    QEffLlamaSwiftKVConfig,
+    QEffLlamaSwiftKVForCausalLM,
+)
 from QEfficient.utils.logging_utils import logger
+
+# Map of model type to config class, Modelling class and transformer model architecture class
+MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS = {
+    "llama_swiftkv": [QEffLlamaSwiftKVConfig, QEffLlamaSwiftKVForCausalLM, AutoModelForCausalLM],
+}
 
 # loop over all the model types which are not present in transformers and register them
 for model_type, model_cls in MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS.items():
