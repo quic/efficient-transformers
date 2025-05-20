@@ -67,6 +67,62 @@ def filter_hidden_states(
     return hidden_states
 
 
+def prefill_path(
+    input_ids: torch.LongTensor,
+    position_ids: torch.LongTensor,
+    batch_index: torch.LongTensor,
+    batch_index_reshaped: torch.LongTensor,
+    past_repetition_penalty_buffer: torch.Tensor,
+    past_presence_penalty_buffer: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    # Initialize retain states for first input chunk
+    mul_value = torch.ones(past_repetition_penalty_buffer.shape[0], 1, dtype=torch.bool)
+    mul_value[batch_index_reshaped] = position_ids[:, :1] != 0
+    past_repetition_penalty_buffer *= mul_value
+    past_presence_penalty_buffer *= mul_value
+
+    # Mask out-of-bounds or invalid position_ids or input_ids
+    input_ids = torch.where(position_ids == -1, torch.iinfo(torch.int32).max, input_ids)
+
+    # Update retain states for chunked input
+    past_repetition_penalty_buffer = CtxScatterFuncCB3D.apply(
+        past_repetition_penalty_buffer,
+        batch_index,
+        input_ids,
+        torch.ones(input_ids.shape, dtype=torch.bool),
+    )
+    return past_repetition_penalty_buffer, past_presence_penalty_buffer
+
+
+def decode_path(
+    last_accepted_output_tokens: torch.LongTensor,
+    position_ids: torch.LongTensor,
+    batch_index: torch.LongTensor,
+    batch_index_reshaped: torch.LongTensor,
+    past_repetition_penalty_buffer: torch.Tensor,
+    past_presence_penalty_buffer: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    # Mask out-of-bounds or invalid position_ids or last_accepted_output_tokens
+    last_accepted_output_tokens = torch.where(position_ids == -1, torch.iinfo(torch.int32).max, last_accepted_output_tokens)
+
+    # Update retained states
+    scatter_values = torch.ones(last_accepted_output_tokens.shape, dtype=torch.bool)
+    past_repetition_penalty_buffer = CtxScatterFuncCB3D.apply(
+        past_repetition_penalty_buffer,
+        batch_index,
+        last_accepted_output_tokens,
+        scatter_values,
+    )
+    past_presence_penalty_buffer = CtxScatterFuncCB3D.apply(
+        past_presence_penalty_buffer,
+        batch_index,
+        last_accepted_output_tokens,
+        scatter_values,
+    )
+    # TODO: For frequency retain state, first gather and then scatter
+    return past_repetition_penalty_buffer, past_presence_penalty_buffer
+
+
 def sampler_forward(
     self,
     input_ids: torch.LongTensor = None,
@@ -214,49 +270,30 @@ def sampler_forward(
     # Perform Sampling
     batch_size, spec_length, vocab_size = logits.shape
     logits = logits.reshape(-1, vocab_size)  # Reshape tensor to 2D
-    # FIXME: Create 3D retain states
 
     batch_index_reshaped = batch_index.view(-1)
-    # --- Prefill ---
-    if input_ids.shape[1] > spec_length:
-        if (position_ids[:, 0] == 0).any():
-            # First input chunk, so initialize retain states
-            mul_value = torch.ones(past_repetition_penalty_buffer.shape[0], 1, dtype=torch.bool)
-            mul_value[batch_index_reshaped] = position_ids[:, :1] != 0
-            past_repetition_penalty_buffer *= mul_value
-            past_presence_penalty_buffer *= mul_value
-
-        # Mask out-of-bounds or invalid position_ids or input_ids
-        input_ids = torch.where(position_ids == -1, torch.iinfo(torch.int32).max, input_ids)
-
-        # Chunked input, so update retain states
-        past_repetition_penalty_buffer = CtxScatterFuncCB3D.apply(
-            past_repetition_penalty_buffer,
-            batch_index,
-            input_ids,
-            torch.ones(input_ids.shape, dtype=torch.bool),
-        )
-
-    # --- Decode ---
-    else:
-        # Mask out-of-bounds or invalid position_ids or last_accepted_output_tokens
-        last_accepted_output_tokens = torch.where(position_ids == -1, torch.iinfo(torch.int32).max, last_accepted_output_tokens)
-
-        # Update retained states
-        scatter_values = torch.ones(last_accepted_output_tokens.shape, dtype=torch.bool)
-        past_repetition_penalty_buffer = CtxScatterFuncCB3D.apply(
-            past_repetition_penalty_buffer,
-            batch_index,
-            last_accepted_output_tokens,
-            scatter_values,
-        )
-        past_presence_penalty_buffer = CtxScatterFuncCB3D.apply(
-            past_presence_penalty_buffer,
-            batch_index,
-            last_accepted_output_tokens,
-            scatter_values,
-        )
-        # TODO: For frequency retain state, first gather and then scatter
+    # Prefill
+    past_repetition_penalty_buffer_prefill, past_presence_penalty_buffer_prefill = prefill_path(
+        input_ids=input_ids, 
+        position_ids=position_ids, 
+        batch_index=batch_index, 
+        batch_index_reshaped=batch_index_reshaped, 
+        past_repetition_penalty_buffer=past_repetition_penalty_buffer.clone(), 
+        past_presence_penalty_buffer=past_presence_penalty_buffer.clone(),
+    )
+    # Decode
+    past_repetition_penalty_buffer_decode, past_presence_penalty_buffer_decode = decode_path(
+        last_accepted_output_tokens=last_accepted_output_tokens, 
+        position_ids=position_ids, 
+        batch_index=batch_index, 
+        batch_index_reshaped=batch_index_reshaped, 
+        past_repetition_penalty_buffer=past_repetition_penalty_buffer.clone(), 
+        past_presence_penalty_buffer=past_presence_penalty_buffer.clone(),
+    )
+    # Select the correct repetition and presence penalty buffers
+    is_prefill = torch.ones(past_repetition_penalty_buffer.shape, dtype=torch.bool) * (input_ids.shape[1] > spec_length)
+    past_repetition_penalty_buffer = torch.where(is_prefill, past_repetition_penalty_buffer_prefill, past_repetition_penalty_buffer_decode)
+    past_presence_penalty_buffer = torch.where(is_prefill, past_presence_penalty_buffer_prefill, past_presence_penalty_buffer_decode)
 
     # Greedy Sampling
     greedy_samples = torch.argmax(logits, dim=1, keepdim=True)  # (batch_size * spec_length, 1)
