@@ -103,13 +103,24 @@ def main(args):
     print("Original KV heads:", orig_kv_heads)
     print("Modified KV heads:", new_kv_heads)
 
+    # Check if hidden size and number of attention heads are explicitly passed as arguments or not
+    if args.num_attention_heads is None:
+        num_attn_heads = model.config.num_attention_heads
+    else:
+        num_attn_heads = args.num_attention_heads
+
+    if args.hidden_size is None:
+        hidden_size = model.config.hidden_size
+    else:
+        hidden_size = args.hidden_size
+
     # Update the model's attention layers with new key-value heads
     for block in model.model.layers:
         attn = block.self_attn
         attn.num_key_value_heads = new_kv_heads
-        attn.num_key_value_groups = block.self_attn.num_heads // new_kv_heads
-        duplicate_weights_for_linear_layer(attn.k_proj, orig_kv_heads, repeat, attn.head_dim, attn.hidden_size)
-        duplicate_weights_for_linear_layer(attn.v_proj, orig_kv_heads, repeat, attn.head_dim, attn.hidden_size)
+        attn.num_key_value_groups = num_attn_heads // new_kv_heads
+        duplicate_weights_for_linear_layer(attn.k_proj, orig_kv_heads, repeat, attn.head_dim, hidden_size)
+        duplicate_weights_for_linear_layer(attn.v_proj, orig_kv_heads, repeat, attn.head_dim, hidden_size)
 
     # Generate modified outputs and tokens
     with torch.inference_mode():
@@ -161,6 +172,20 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="Number of hidden layers to use, default is None",
+    )
+    parser.add_argument(
+        "--num_attention_heads",
+        "--num-attention-heads",
+        type=int,
+        default=None,
+        help="Number of attention heads, if not passed explicitly then will be picked from config.json",
+    )
+    parser.add_argument(
+        "--hidden_size",
+        "--hidden-size",
+        type=int,
+        default=None,
+        help="Hidden size to use, if not passed explicitly then will be picked from config.json",
     )
 
     args = parser.parse_args()
