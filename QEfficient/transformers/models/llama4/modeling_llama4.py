@@ -559,7 +559,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         # Use temperature tuning from https://arxiv.org/abs/2501.19399) to NoROPE layers
         if self.attn_temperature_tuning and not self.use_rope:
             attn_scales = (
-                torch.log(torch.floor((cache_position.float() + 1.0) / self.floor_scale) + 1.0) * self.attn_scale + 1.0
+                torch.log(torch.floor((position_ids.float() + 1.0) / self.floor_scale) + 1.0) * self.attn_scale + 1.0
             )
             attn_scales = attn_scales.view((*input_shape, 1, 1))
             query_states = (query_states * attn_scales).to(query_states.dtype)
