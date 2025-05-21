@@ -48,7 +48,7 @@ class QEFFCommonLoader:
             model_class = getattr(module, class_name)
         else:
             raise NotImplementedError(
-                f"Unknown architecture={config.__class__.__name__, None}, either use specific auto model class for loading the model or raise an issue for support!"
+                f"Unknown architecture={config.__class__.__name__}, either use specific auto model class for loading the model or raise an issue for support!"
             )
 
         local_model_dir = kwargs.pop("local_model_dir", None)
