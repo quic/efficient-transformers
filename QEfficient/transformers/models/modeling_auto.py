@@ -1493,11 +1493,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
 
         if self.include_sampler:
-            nlk = constants.ONNX_EXPORT_EXAMPLE_NLK  # Number of Logits to Keep
             max_top_k_ids = constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS
             
-            example_inputs["last_accepted_output_tokens"] = torch.randint(low=0, high=self.model.config.vocab_size, size=(bs, nlk))
-            dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "num_logits_to_keep"}
+            example_inputs["last_accepted_output_tokens"] = torch.zeros((bs, seq_len), dtype=torch.int64)
+            dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "seq_len"}
 
             example_inputs["past_repetition_penalty_buffer"] = torch.zeros(
                 fbs if self.continuous_batching else bs, self.model.config.vocab_size, dtype=torch.bool)
@@ -1554,7 +1553,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "batch_size": 1 if self.continuous_batching else batch_size,
             "seq_len": prefill_seq_len,
             "ctx_len": ctx_len,
-            "num_logits_to_keep": 1 if self.is_tlm or self.include_sampler else None,
+            "num_logits_to_keep": 1 if self.is_tlm else None,
             "max_top_k_ids": max_top_k_ids if self.include_sampler else None,
         }
         if self.continuous_batching:
@@ -1581,7 +1580,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "batch_size": full_batch_size if self.continuous_batching else batch_size,
             "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
             "ctx_len": ctx_len,
-            "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm or self.include_sampler else None,
+            "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm else None,
             "max_top_k_ids": max_top_k_ids if self.include_sampler else None,
         }
         if self.continuous_batching:
