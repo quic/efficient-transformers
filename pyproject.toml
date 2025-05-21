@@ -31,7 +31,7 @@ dependencies = [
     "onnx==1.18.0",
     "onnxruntime==1.22",
     "numpy==1.26.4",
-    "protobuf==4.25.1",
+    "protobuf==6.31.0",
     "onnxscript==0.2.5",
     "pillow===10.4.0",
     "sympy",
