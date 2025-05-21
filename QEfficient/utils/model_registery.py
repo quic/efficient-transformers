@@ -1,3 +1,11 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+
 from transformers import AutoConfig, AutoModelForCausalLM
 
 # Placeholder for all non-transformer models
