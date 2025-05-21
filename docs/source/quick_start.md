@@ -13,6 +13,13 @@ To achieve this, we have 2 levels of APIs, with different levels of abstraction.
 
 | Feature | Impact |
 | --- | --- |
+| [SpD, multiprojection heads](https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding) | Implemented post-attention hidden size projections to speculate tokens ahead of the base model. |
+| [QNN Compilation support](https://github.com/quic/efficient-transformers/pull/374) for AutoModel classes | QNN compilation capabilities for multi-models, embedding models and causal models |
+| disaggregated serving | It support for separate prefill and decode compilation for encoder (vision) and language models. [disaggregated serving](https://github.com/quic/efficient-transformers/pull/365).|
+| SwiftKV | Support for both [continuous and non-continuous batching execution](https://github.com/quic/efficient-transformers/pull/367) in SwiftKV |
+| Support for | [GGUF model execution](https://github.com/quic/efficient-transformers/pull/368) (without quantized weights) |
+| Enabled FP8 model support on | [replicate_kv_heads script](https://github.com/quic/efficient-transformers/tree/main/scripts/replicate_kv_head) |
+| Added support for | [gradient checkpointing](https://github.com/quic/efficient-transformers/pull/338) in the finetuning script|
 | Context Length Specializations (upcoming) | Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text. |
 | Swift KV [Snowflake/Llama-3.1-SwiftKV-8B-Instruct] | Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. |
 | Block Attention (in progress) | Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG. |
