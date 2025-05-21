@@ -22,15 +22,10 @@ from QEfficient.utils.logging_utils import logger
 
 # TODO: Remove after adding support for VLM's compile and execute
 def execute_vlm_model(
+    processor: PreTrainedModel,
     qeff_model: PreTrainedModel,
-    model_name: str,
-    image_url: str,
-    image_path: str,
-    prompt: Optional[str] = None,  # type: ignore
+    inputs: Optional[dict] = None,
     device_group: Optional[List[int]] = None,
-    local_model_dir: Optional[str] = None,
-    cache_dir: Optional[str] = None,
-    hf_token: Optional[str] = None,
     generation_len: Optional[int] = None,
 ):
     """
@@ -50,15 +45,42 @@ def execute_vlm_model(
     Returns:
         :dict: Output from the ``AI_100`` runtime.
     """
+    streamer = TextStreamer(processor.tokenizer)
+    output = qeff_model.generate(
+        inputs=inputs,
+        streamer=streamer,
+        device_ids=device_group,
+        generation_len=generation_len,
+    )
+    return output
+
+
+def count_vlm_tokens(
+    processor: PreTrainedModel,
+    prompt_len: int = 32,
+    ctx_len: int = 128,
+    image_url: Optional[str] = None,
+    image_path: Optional[str] = None,
+    prompt: Optional[str] = None,  # type: ignore
+):
+    """
+    This method counts the number of tokens in the image and updates the prompt length and context length accordingly.
+    ``Mandatory`` Args:
+        :processor (PreTrainedModel): Hugging Face Processor object.
+        :image_url (str): Image URL to be used for inference. ``Defaults to None.``
+        :image_path (str): Image path to be used for inference. ``Defaults to None.``
+    ``Optional`` Args:
+        :prompt_len (str): Prompt length for the model to compile. ``Defaults to 32.``
+        :ctx_len (str): Maximum context length to compile the model. ``Defaults to 128.``
+        :prompt (str): Sample prompt for the model text generation. ``Defaults to None.```
+    Returns:
+        :prompt_len: Updated prompt length for the VLM model to compile.
+        :ctx_len: Updated context length for the VLM model to compile.
+        :split_inputs: Tokenized inputs for the VLM model.
+    """
     if not (image_url or image_path):
         raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
     raw_image = Image.open(requests.get(image_url, stream=True).raw) if image_url else Image.open(image_path)
-
-    processor = load_hf_processor(
-        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-        cache_dir=cache_dir,
-        hf_token=hf_token,
-    )
 
     # Added for QEff version 1.20 supported VLM models (mllama and llava)
     conversation = [
@@ -73,21 +95,24 @@ def execute_vlm_model(
 
     # Converts a list of dictionaries with `"role"` and `"content"` keys to a list of token ids.
     input_text = processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
-
     split_inputs = processor(
         text=input_text,
         images=raw_image,
         return_tensors="pt",
         add_special_tokens=False,
     )
-    streamer = TextStreamer(processor.tokenizer)
-    output = qeff_model.generate(
-        inputs=split_inputs,
-        streamer=streamer,
-        device_ids=device_group,
-        generation_len=generation_len,
-    )
-    return output
+    decoded_tokens = processor.tokenizer.decode(split_inputs["input_ids"][0])
+
+    total_tokens = decoded_tokens.count("<IMG_CONTEXT>") + decoded_tokens.count("<image>")
+    if total_tokens > prompt_len:
+        logger.warning(
+            f"Prompt length {prompt_len} is less than the number of tokens in the image. "
+            f"Increasing increase the prompt length to at least {total_tokens + prompt_len}."
+        )
+        prompt_len = total_tokens + prompt_len
+        ctx_len = prompt_len + 50
+
+    return prompt_len, ctx_len, split_inputs
 
 
 def main(
@@ -176,6 +201,20 @@ def main(
         kwargs.pop("img_size", None) or image_path or image_url
     ):
         logger.warning(f"Skipping image arguments as they are not valid for {architecture}")
+    else:
+        processor = load_hf_processor(
+            pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+            cache_dir=cache_dir,
+            hf_token=hf_token,
+        )
+        prompt_len, ctx_len, inputs = count_vlm_tokens(
+            processor=processor,
+            prompt_len=prompt_len,
+            ctx_len=ctx_len,
+            image_url=image_url,
+            image_path=image_path,
+            prompt=prompt,
+        )
 
     #########
     # Compile
@@ -206,15 +245,10 @@ def main(
     #########
     if architecture in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values():
         exec_info = execute_vlm_model(
+            processor=processor,
             qeff_model=qeff_model,
-            model_name=model_name,
-            prompt=prompt,
-            image_url=image_url,
-            image_path=image_path,
+            inputs=inputs,
             device_group=device_group,
-            local_model_dir=local_model_dir,
-            cache_dir=cache_dir,
-            hf_token=hf_token,
             generation_len=generation_len,
         )
         print(exec_info)

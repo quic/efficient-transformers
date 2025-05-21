@@ -194,6 +194,23 @@ qeff_model.generate(prompts=["My name is"])
 
 **Users can also take advantage of features like multi-Qranium inference and continuous batching with QNN SDK Compilation.**
 
+
+### VLM Inference
+
+Users can compile a VLM model by using the below commands.
+
+**CLI Inference Command**
+
+For Llava
+```bash
+python -m QEfficient.cloud.infer --model_name llava-hf/llava-1.5-7b-hf --batch_size 1 --prompt_len 784 --ctx_len 1024 --mxfp6 --num_cores 16 --device_group [0] --prompt "Describe the image" --mos 1 --aic_enable_depth_first --image_url https://i.etsystatic.com/8155076/r/il/0825c2/1594869823/il_fullxfull.1594869823_5x0w.jpg --generation_len 128
+```
+
+For Mllama
+```bash
+python -m QEfficient.cloud.infer --model_name meta-llama/Llama-3.2-11B-Vision-Instruct --batch_size 1 --prompt_len 32 --ctx_len 512 --num_cores 16 --device_group [0] --prompt "Describe the image?" --mos 1  --allocator_dealloc_delay 1 --image_url https://i.etsystatic.com/8155076/r/il/0825c2/1594869823/il_fullxfull.1594869823_5x0w.jpg
+```
+
 ## Python API
 
 ### 1.  Model download and Optimize for Cloud AI 100
