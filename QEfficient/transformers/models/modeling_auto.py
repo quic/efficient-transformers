@@ -816,7 +816,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         # Run prefill
         for i in range(num_chunks):
-            chunk_inputs = lang_inputs.copy()
             chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][
                 :, i * prefill_seq_len : (i + 1) * prefill_seq_len
