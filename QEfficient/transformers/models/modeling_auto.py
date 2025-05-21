@@ -1017,7 +1017,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         self,
         inputs: torch.Tensor,
         device_ids: List[int],
-        enable_debug_logs: bool = False,
+        enable_debug_logs: bool = True,
         generation_len: int = None,
         streamer: Optional[TextStreamer] = None,
     ) -> np.ndarray:
