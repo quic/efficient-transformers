@@ -12,7 +12,7 @@ from typing import List, Optional
 
 import requests
 from PIL import Image
-from transformers import PreTrainedModel, TextStreamer
+from transformers import PreTrainedModel
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
 from QEfficient.base.common import QEFFCommonLoader

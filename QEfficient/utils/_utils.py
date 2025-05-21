@@ -20,10 +20,10 @@ from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import (
     AutoProcessor,
-    TextStreamer,
     AutoTokenizer,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
+    TextStreamer,
 )
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants, QnnConstants
@@ -222,7 +222,7 @@ def load_hf_processor(
 
 
 def load_streamer(
-        tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+    tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
 ):
     """
     Loads the streamer for the given tokenizer.
@@ -234,7 +234,7 @@ def load_streamer(
         TextStreamer object for the given tokenizer.
     """
     logger.info("Loading Streamer")
-    return  TextStreamer(tokenizer)
+    return TextStreamer(tokenizer)
 
 
 def get_qpc_dir_path(
