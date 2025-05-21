@@ -16,7 +16,7 @@ from transformers import PreTrainedModel, TextStreamer
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
 from QEfficient.base.common import QEFFCommonLoader
-from QEfficient.utils import check_and_assign_cache_dir, load_hf_processor, load_hf_tokenizer
+from QEfficient.utils import check_and_assign_cache_dir, load_hf_processor, load_hf_tokenizer, load_streamer
 from QEfficient.utils.logging_utils import logger
 
 
@@ -45,7 +45,7 @@ def execute_vlm_model(
     Returns:
         :dict: Output from the ``AI_100`` runtime.
     """
-    streamer = TextStreamer(processor.tokenizer)
+    streamer = load_streamer(processor.tokenizer)
     output = qeff_model.generate(
         inputs=inputs,
         streamer=streamer,
@@ -101,16 +101,23 @@ def count_vlm_tokens(
         return_tensors="pt",
         add_special_tokens=False,
     )
+
+    # Get the number of total number of decoded tokens in the input
     decoded_tokens = processor.tokenizer.decode(split_inputs["input_ids"][0])
 
     total_tokens = decoded_tokens.count("<IMG_CONTEXT>") + decoded_tokens.count("<image>")
+
+    # Check if the number of tokens in the image is greater than the prompt length
     if total_tokens > prompt_len:
         logger.warning(
             f"Prompt length {prompt_len} is less than the number of tokens in the image. "
-            f"Increasing increase the prompt length to at least {total_tokens + prompt_len}."
+            f"Increasing the prompt length to at least {total_tokens + prompt_len}."
         )
         prompt_len = total_tokens + prompt_len
-        ctx_len = prompt_len + 50
+
+    # Update the context length only if it is less than the prompt length
+    if ctx_len < prompt_len:
+        ctx_len = prompt_len + ctx_len
 
     return prompt_len, ctx_len, split_inputs
 
@@ -207,6 +214,8 @@ def main(
             cache_dir=cache_dir,
             hf_token=hf_token,
         )
+
+        # count the number of tokens in required in the input and update the prompt length and context length accordingly
         prompt_len, ctx_len, inputs = count_vlm_tokens(
             processor=processor,
             prompt_len=prompt_len,

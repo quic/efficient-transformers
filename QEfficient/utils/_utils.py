@@ -20,6 +20,7 @@ from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
 from transformers import (
     AutoProcessor,
+    TextStreamer,
     AutoTokenizer,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
@@ -218,6 +219,22 @@ def load_hf_processor(
     processor = AutoProcessor.from_pretrained(model_hf_path, trust_remote_code=True, **kwargs)
 
     return processor
+
+
+def load_streamer(
+        tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+):
+    """
+    Loads the streamer for the given tokenizer.
+    --------
+
+    tokenizer: `Union[PreTrainedTokenizer, PreTrainedTokenizerFast]` - Pass model tokenizer to load streamer.
+
+    Return:
+        TextStreamer object for the given tokenizer.
+    """
+    logger.info("Loading Streamer")
+    return  TextStreamer(tokenizer)
 
 
 def get_qpc_dir_path(
