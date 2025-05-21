@@ -105,15 +105,15 @@ def count_vlm_tokens(
     # Get the number of total number of decoded tokens in the input
     decoded_tokens = processor.tokenizer.decode(split_inputs["input_ids"][0])
 
-    total_tokens = decoded_tokens.count("<IMG_CONTEXT>") + decoded_tokens.count("<image>")
+    total_image_tokens = decoded_tokens.count("<IMG_CONTEXT>") + decoded_tokens.count("<image>")
 
     # Check if the number of tokens in the image is greater than the prompt length
-    if total_tokens > prompt_len:
+    if total_image_tokens > prompt_len:
         logger.warning(
             f"Prompt length {prompt_len} is less than the number of tokens in the image. "
-            f"Increasing the prompt length to at least {total_tokens + prompt_len}."
+            f"Increasing the prompt length to at least {total_image_tokens + prompt_len}."
         )
-        prompt_len = total_tokens + prompt_len
+        prompt_len = total_image_tokens + prompt_len
 
     # Update the context length only if it is less than the prompt length
     if ctx_len < prompt_len:
