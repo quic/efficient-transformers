@@ -913,8 +913,6 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 "batch_size": batch_size,
                 "batch_size_times_num_tiles": batch_size_times_num_tiles,
                 "img_size": img_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
             }
         ]
         lang = [
