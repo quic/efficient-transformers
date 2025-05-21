@@ -12,12 +12,10 @@ import os
 # hf_transfer is imported (will happen on line 15 via leading imports)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
-from transformers import AutoConfig, AutoModelForCausalLM
-
 # Placeholder for all non-transformer models registered in QEfficient
-import QEfficient.utils.model_registery
-
+import QEfficient.utils.model_registery  # noqa: F401
 from QEfficient.utils.logging_utils import logger
+
 
 def check_qaic_sdk():
     """Check if QAIC SDK is installed"""
