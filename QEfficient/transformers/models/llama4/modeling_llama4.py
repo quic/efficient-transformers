@@ -899,10 +899,6 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             )
             batch_size_times_num_tiles = 17
 
-        vision_seq_len = compiler_options.pop("vision_seq_len", None)
-        if vision_seq_len is None:
-            vision_seq_len = 2560
-
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
@@ -917,7 +913,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 "batch_size": batch_size,
                 "batch_size_times_num_tiles": batch_size_times_num_tiles,
                 "img_size": img_size,
-                "seq_len": vision_seq_len,
+                "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
             }
         ]
@@ -1009,7 +1005,8 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         # Define shapes
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-        vision_size = constants.LLAMA4_NUM_PATCHES * 144
+        num_patches = 17
+        vision_size = num_patches * 144
         inputs_shapes["vision_embeds"] = (
             vision_size,
             self.language_model.config.hidden_size,  # 5120
@@ -1019,7 +1016,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
         inputs_shapes["pixel_values"] = (
-            constants.LLAMA4_NUM_PATCHES,  # constants.INTERN_NUM_PATCHES,
+            num_patches,  # constants.INTERN_NUM_PATCHES,
             constants.INTERN_NUM_CHANNELS,
             img_size,
             img_size,
