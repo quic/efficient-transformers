@@ -99,6 +99,8 @@ class TrainConfig:
     # profiler_dir: str = "PATH/to/save/profiler/results" # will be used if using profiler
 
     # dist-related
+    enable_pp: bool = False
+    num_pp_stages: int = 1
     enable_ddp: bool = False
     dist_backend: str = "cpu:gloo,qaic:qccl,cuda:gloo"
 
