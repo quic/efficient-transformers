@@ -38,7 +38,6 @@ configs = [
 ]
 
 
-@pytest.mark.skip(reason="Currently CI is broken. Once it is fixed we will enable this test.")
 @pytest.mark.cli
 @pytest.mark.on_qaic
 @pytest.mark.finetune
