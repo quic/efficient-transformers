@@ -646,11 +646,10 @@ class QEffLlama4TextModel(Llama4TextModel):
         causal_mask = _create_causal_mask(
             position_ids=position_ids, target_length=past_key_values.key_cache[3].shape[-2]
         )
-        # chunked_position_ids = position_ids % self.config.attention_chunk_size
         chunked_position_ids = torch.where(
             position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
         )
-        target_length = min(past_seen_tokens, torch.tensor(self.config.attention_chunk_size))
+        target_length = min(past_key_values.key_cache[0].shape[-2], torch.tensor(self.config.attention_chunk_size))
         chunk_causal_mask = _create_causal_mask(position_ids=chunked_position_ids, target_length=target_length)
 
         # embed positions
