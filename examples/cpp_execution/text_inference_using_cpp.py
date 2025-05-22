@@ -146,7 +146,7 @@ def cloud_ai_100_exec_kv_cpp(
     prompts_txt_file_path: Optional[str] = None,
     device_id: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
-    enable_debug_logs: bool = False,
+    enable_debug_logs: bool = True,
     stream: bool = True,
     full_batch_size: Optional[int] = None,
 ):
