@@ -16,7 +16,8 @@ class TrainConfig:
         model_name (str): Name of the pre-trained model to fine-tune (default: "meta-llama/Llama-3.2-1B").
         tokenizer_name (str): Name of the tokenizer (defaults to model_name if None).
         run_validation (bool): Whether to run validation during training (default: True).
-        batch_size_training (int): Batch size for training (default: 1).
+        train_batch_size (int): Batch size for training (default: 1).
+        val_batch_size (int): Batch size for validation (default: 1).
         context_length (Optional[int]): Maximum sequence length for inputs (default: None).
         gradient_accumulation_steps (int): Steps for gradient accumulation (default: 4).
         gradient checkpointing (bool): Enable gradient checkpointing to save the memory by compromising the speed. (default: False).
@@ -29,9 +30,10 @@ class TrainConfig:
         weight_decay (float): Weight decay for optimizer (default: 0.0).
         gamma (float): Learning rate decay factor (default: 0.85).
         seed (int): Random seed for reproducibility (default: 42).
+        use_autocast (bool): Use autocast for mixed precision (default: True).
+        dataset (str): Dataset name for training (default: "samsum_dataset").
         use_fp16 (bool): Use mixed precision training (default: True).
         use_autocast (bool): Use autocast for mixed precision (default: True).
-        val_batch_size (int): Batch size for validation (default: 1).
         dataset (str): Dataset name for training (default: "samsum_dataset").
         task_type (str): Type of task for which the finetuning is to be done. Options: "generation" and "seq_classification". (default: "generation")
         peft_method (str): Parameter-efficient fine-tuning method (default: "lora").
@@ -39,7 +41,6 @@ class TrainConfig:
         from_peft_checkpoint (str): Path to PEFT checkpoint (default: "").
         output_dir (str): Directory to save outputs (default: "meta-llama-samsum").
         num_freeze_layers (int): Number of layers to freeze (default: 1).
-        one_qaic (bool): Use single QAIC device (default: False).
         save_model (bool): Save the trained model (default: True).
         save_metrics (bool): Save training metrics (default: True).
         intermediate_step_save (int): Steps between intermediate saves (default: 1000).
@@ -58,7 +59,8 @@ class TrainConfig:
     model_name: str = "meta-llama/Llama-3.2-1B"
     tokenizer_name: str = None  # if not passed as an argument, it uses the value of model_name
     run_validation: bool = True
-    batch_size_training: int = 1
+    train_batch_size: int = 1
+    val_batch_size: int = 1
     context_length: int = None
     gradient_accumulation_steps: int = 4
     gradient_checkpointing: bool = False
@@ -71,9 +73,7 @@ class TrainConfig:
     weight_decay: float = 0.0
     gamma: float = 0.85  # multiplicatively decay the learning rate by gamma after each epoch
     seed: int = 42
-    use_fp16: bool = True
     use_autocast: bool = True
-    val_batch_size: int = 1
     dataset = "samsum_dataset"
     task_type = "generation"  # "generation" / "seq_classification"
     peft_method: str = "lora"
@@ -81,7 +81,6 @@ class TrainConfig:
     from_peft_checkpoint: str = ""  # if not empty and use_peft=True, will load the peft checkpoint and resume the fine-tuning on that checkpoint
     output_dir: str = "meta-llama-samsum"
     num_freeze_layers: int = 1
-    one_qaic: bool = False
     save_model: bool = True
     save_metrics: bool = True  # saves training metrics to a json file for later plotting
     intermediate_step_save: int = 1000
