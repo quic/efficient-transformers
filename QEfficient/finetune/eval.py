@@ -109,13 +109,13 @@ def main(**kwargs):
             pin_memory=True,
             **val_dl_kwargs,
         )
-        logger.info(f"Num of Validation Set Batches loaded = {len(eval_dataloader)}")
+        logger.log_rank_zero(f"Num of Validation Set Batches loaded = {len(eval_dataloader)}")
         if len(eval_dataloader) == 0:
             raise ValueError(
                 f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"
             )
         else:
-            logger.info(f"Num of Validation Set Batches loaded = {len(eval_dataloader)}")
+            logger.log_rank_zero(f"Num of Validation Set Batches loaded = {len(eval_dataloader)}")
 
     model.to(device)
     _ = evaluation(model, train_config, eval_dataloader, None, tokenizer, device)

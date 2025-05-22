@@ -36,7 +36,7 @@ class DownloadRetryLimitExceeded(Exception):
 
 
 def login_and_download_hf_lm(model_name, *args, **kwargs):
-    logger.info(f"loading HuggingFace model for {model_name}")
+    logger.log_rank_zero(f"loading HuggingFace model for {model_name}")
     hf_token = kwargs.pop("hf_token", None)
     cache_dir = kwargs.pop("cache_dir", None)
     if hf_token is not None:

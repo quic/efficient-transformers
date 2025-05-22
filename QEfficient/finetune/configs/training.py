@@ -105,3 +105,5 @@ class TrainConfig:
     grad_scaler: bool = True
     dump_root_dir: str = "meta-llama-samsum-mismatches/step_"
     opByOpVerifier: bool = False
+
+    dump_logs: bool = True
