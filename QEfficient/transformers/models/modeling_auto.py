@@ -1509,7 +1509,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         chunked_cache_shape = [
             1,
             8,
-            self.model.config.attention_chunk_size,
+            seq_len,
             128,
         ]
 
