@@ -28,7 +28,7 @@ model = Gemma3ForCausalLM.from_pretrained(
 model.eval()
 
 tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_id)
-qeff_model = QEFFAutoModelForCausalLM(model)
+qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=True)
 
 onnx_model_path = qeff_model.export()
 
@@ -42,7 +42,7 @@ qpc_path = qeff_model.compile(
     mos=1,
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
-    node_precision_info="fp32_nodes_gemma3_text.yaml",
+    node_precision_info="fp32_nodes_gemma3_4b_text.yaml",
 )
 print(f"qpc path is {qpc_path}")
 exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR, device_ids=[0])
