@@ -54,7 +54,9 @@ def decode_path(
     past_presence_penalty_buffer: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     # Mask out-of-bounds or invalid position_ids or last_accepted_output_tokens
-    last_accepted_output_tokens = torch.where(position_ids == -1, torch.iinfo(torch.int32).max, last_accepted_output_tokens)
+    last_accepted_output_tokens = torch.where(
+        position_ids == -1, torch.iinfo(torch.int32).max, last_accepted_output_tokens
+    )
 
     # Update retained states
     scatter_values = torch.ones(last_accepted_output_tokens.shape, dtype=torch.bool)
@@ -198,26 +200,30 @@ def sampler_forward(
     batch_index_reshaped = batch_index.view(-1)
     # Prefill
     past_repetition_penalty_buffer_prefill, past_presence_penalty_buffer_prefill = prefill_path(
-        input_ids=input_ids, 
-        position_ids=position_ids, 
-        batch_index=batch_index, 
-        batch_index_reshaped=batch_index_reshaped, 
-        past_repetition_penalty_buffer=past_repetition_penalty_buffer.clone(), 
+        input_ids=input_ids,
+        position_ids=position_ids,
+        batch_index=batch_index,
+        batch_index_reshaped=batch_index_reshaped,
+        past_repetition_penalty_buffer=past_repetition_penalty_buffer.clone(),
         past_presence_penalty_buffer=past_presence_penalty_buffer.clone(),
     )
     # Decode
     past_repetition_penalty_buffer_decode, past_presence_penalty_buffer_decode = decode_path(
-        last_accepted_output_tokens=last_accepted_output_tokens, 
-        position_ids=position_ids, 
-        batch_index=batch_index, 
-        batch_index_reshaped=batch_index_reshaped, 
-        past_repetition_penalty_buffer=past_repetition_penalty_buffer.clone(), 
+        last_accepted_output_tokens=last_accepted_output_tokens,
+        position_ids=position_ids,
+        batch_index=batch_index,
+        batch_index_reshaped=batch_index_reshaped,
+        past_repetition_penalty_buffer=past_repetition_penalty_buffer.clone(),
         past_presence_penalty_buffer=past_presence_penalty_buffer.clone(),
     )
     # Select the correct repetition and presence penalty buffers
     is_prefill = torch.ones(past_repetition_penalty_buffer.shape, dtype=torch.bool) * (input_ids.shape[1] > spec_length)
-    past_repetition_penalty_buffer = torch.where(is_prefill, past_repetition_penalty_buffer_prefill, past_repetition_penalty_buffer_decode)
-    past_presence_penalty_buffer = torch.where(is_prefill, past_presence_penalty_buffer_prefill, past_presence_penalty_buffer_decode)
+    past_repetition_penalty_buffer = torch.where(
+        is_prefill, past_repetition_penalty_buffer_prefill, past_repetition_penalty_buffer_decode
+    )
+    past_presence_penalty_buffer = torch.where(
+        is_prefill, past_presence_penalty_buffer_prefill, past_presence_penalty_buffer_decode
+    )
 
     # Greedy Sampling
     greedy_samples = torch.argmax(logits, dim=1, keepdim=True)  # (batch_size * spec_length, 1)
