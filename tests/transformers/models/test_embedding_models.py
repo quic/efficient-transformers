@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -47,7 +47,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     pt_outputs = pt_model(**inputs)
     pt_embeddings = pt_outputs[0][0].detach().numpy()
     # Pytorch transformed model
-    qeff_model = QEFFAutoModel(pt_model)
+    qeff_model = QEFFAutoModel(pt_model, pretrained_model_name_or_path=model_name)
     qeff_pt_outputs = qeff_model.generate(inputs=inputs, runtime_ai100=False)
     qeff_pt_embeddings = qeff_pt_outputs[0][0].detach().numpy()
     mad = np.mean(np.abs(pt_embeddings - qeff_pt_embeddings))
