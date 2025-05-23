@@ -1345,6 +1345,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
+        self.include_sampler = False
         if qaic_config is not None and qaic_config.get("include_sampler", False) is True:
             self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
             self.include_sampler = transformed
