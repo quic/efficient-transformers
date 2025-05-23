@@ -871,7 +871,8 @@ class QEffLlama4DecoderWrapper(nn.Module):
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
-        index = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        next_index = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        index = torch.where(index < next_index, next_index, index)
         return outputs.logits, vision_embeds, index, outputs.past_key_values
 
 
