@@ -60,7 +60,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     _hf_auto_class: type
 
-    def __init__(self, model: nn.Module, **kwargs) -> None:
+    def __init__(self, model: nn.Module) -> None:
         if (
             hasattr(model, "config")
             and hasattr(model.config, "quantization_config")
@@ -75,7 +75,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, is_tlm: bool = False, *args, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -85,7 +85,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path)
+        return cls(model, is_tlm=is_tlm)
 
     @property
     def model_name(self) -> str:
@@ -160,7 +160,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
-        self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
 
     @classmethod
     @with_replaced_quantizers
@@ -213,7 +212,7 @@ class QEFFAutoModel(QEFFTransformersBase):
                 model, kv_offload=kv_offload
             )
 
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path)
+        return cls(model)
 
     @property
     def model_hash(self) -> str:
@@ -227,9 +226,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
-
-        mhash.update(to_hashable(self.pretrained_model_name_or_path))
-
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -445,7 +441,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable(self.model.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEffVisionEncoderForTextImageToTextModel": True}))
-        mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -509,7 +504,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEffCausalLMForTextImageToTextModel": True}))
-        mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -537,9 +531,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         self.model = model
         self.config = model.config
-        self.model.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model)
+
         self.input_shapes, self.output_names = None, None
 
     @property
@@ -559,7 +553,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
+        return cls(model, **kwargs)
 
     @property
     def onnx_path(self):
@@ -691,6 +685,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 aic_num_cores=num_cores,
                 custom_io=custom_io_lang,
                 mxint8_kv_cache=mxint8_kv_cache,
+                node_precision_info="/home/vbaddi/.cache/qeff_models/fp32_nodes_rmsnorm.yaml",
                 **compiler_options,
             )
         return self.qpc_path
@@ -799,7 +794,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         vision_session.deactivate()
         lang_session.activate()
 
-        lang_session.set_buffers(vision_outputs)
+        # lang_session.set_buffers(vision_outputs)
+        lang_inputs["vision_embeds"] = vision_outputs["vision_embeds"]
 
         # Run prefill
         for i in range(num_chunks):
@@ -884,7 +880,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             self.model.config.vision_config.use_flash_attn = "false"
         else:
             self.model.config.text_config.use_cache = True
-        self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
 
     @classmethod
     def from_pretrained(
@@ -907,7 +902,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config.vision_config.use_flash_attn = "false"
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
+        return cls(model, **kwargs)
 
     def export(
         self,
@@ -1146,7 +1141,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEFFAutoModelForImageTextToText1QPC": True}))
-        mhash.update(to_hashable(self.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -1262,7 +1256,7 @@ class QEFFAutoModelForImageTextToText:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        return cls(model, kv_offload=kv_offload, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
+        return cls(model, kv_offload=kv_offload, **kwargs)
 
 
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoModelForImageTextToText}
@@ -1276,7 +1270,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     ``Mandatory`` Args:
         :model (nn.Module):  PyTorch model
         :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
-        :qaic_config (Optional[dict]): Qaic config with supported keys of `speculative_model_type` to specify speculative decoding TLM models.
+        :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
 
 
     .. code-block:: python
@@ -1327,13 +1321,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
 
         super().__init__(model)
+
         # Set use_cache=True to get KV values as output during ONNX export
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
         self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         self.is_tlm = transformed
-        self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
 
     @property
     def model_name(self) -> str:
@@ -1363,8 +1357,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Args:
             :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
             :continuous_batching (bool): Whether this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
-
-            :qaic_config (Optional[dict]): Qaic config with supported keys of `speculative_model_type` to specify speculative decoding TLM models.
+            :is_tlm (bool): Whether this is a Speculative Decoding Target Language Model. If set to True, `num_logits_to_keep` input array will have to be fed to control the number of returned logits during prefill/decode.
             :args, kwargs: Additional arguments to pass to transformers.AutoModelForCausalLM.
 
         .. code-block:: python
@@ -1408,11 +1401,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model, kv_offload=kv_offload
             )
+
         return cls(
             model,
             continuous_batching=continuous_batching,
             qaic_config=qaic_config,
-            pretrained_model_name_or_path=pretrained_model_name_or_path,
             **kwargs,
         )
 
@@ -1424,7 +1417,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
         mhash.update(to_hashable({"is_tlm": self.is_tlm}))
         mhash.update(to_hashable(self._transform_names()))
-        mhash.update(to_hashable(self.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -1444,6 +1436,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        sliding_param: int = 32
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
@@ -1467,13 +1460,39 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
                 2: "ctx_len",
             }
+            pkv_dynamic_sliding_axes = {
+                0: "full_batch_size" if self.continuous_batching else "batch_size",
+                2: "sliding_window",
+            }
+
         output_names = ["logits"]
 
-        for i in range(self.num_layers):
+        layer_switch = (
+            self.model.config.sliding_window_pattern if hasattr(self.model.config, "sliding_window_pattern") else 2
+        )  # 2 is for BC
+        is_sliding = torch.tensor(
+            [bool((i + 1) % layer_switch) for i in range(self.model.config.num_hidden_layers)], dtype=torch.bool
+        )
+        # global_cache_shape = [1, 4, seq_len, 256]
+        # sliding_cache_shape = [1, 4, sliding_param, 256]
+        # breakpoint()
+        example_inputs["past_key_values"] = get_padding_shape_from_config(
+            config=self.model.config, batch_size=fbs if self.continuous_batching else bs, seq_len=seq_len
+        )
+        import ipdb; ipdb.set_trace()
+        for i in range(self.model.config.num_hidden_layers):
             for kv in ["key", "value"]:
-                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                # cache_shape = global_cache_shape if not is_sliding[i] else sliding_cache_shape
+                apply_dynamic_axes = pkv_dynamic_sliding_axes
+                # example_inputs["past_key_values"][i].append(torch.zeros(cache_shape, dtype=torch.float32))
+                dynamic_axes[f"past_{kv}.{i}"] = apply_dynamic_axes
                 output_names.append(f"past_{kv}.{i}_RetainedState")
+
+        # for i in range(self.num_layers):
+        #     for kv in ["key", "value"]:
+        #         example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+        #         dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+        #         output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -1483,7 +1502,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             nlk = constants.ONNX_EXPORT_EXAMPLE_NLK  # Number of Logits to Keep
             example_inputs["num_logits_to_keep"] = torch.arange(nlk).view(nlk, 1)
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
-
         return self._export(
             example_inputs,
             output_names,
@@ -1503,6 +1521,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "batch_size": 1 if self.continuous_batching else batch_size,
             "seq_len": prefill_seq_len,
             "ctx_len": ctx_len,
+            "sliding_window": self.model.config.sliding_window,
             "num_logits_to_keep": 1 if self.is_tlm else None,
         }
         if self.continuous_batching:
@@ -1528,6 +1547,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "batch_size": full_batch_size if self.continuous_batching else batch_size,
             "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
             "ctx_len": ctx_len,
+            "sliding_window": self.model.config.sliding_window,
             "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm else None,
         }
         if self.continuous_batching:
@@ -1645,11 +1665,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             **compiler_options,
         )
 
-        if compiler_options.get("io_encrypt", None):
-            logger.warning(
-                "Compilation for IO-Encrypt has been successfully completed. However, Efficient-Transformers do not support IO-Encrypt execution. Please run the execution separately with QPC compiled without io-encrypt."
-            )
-
         return qpc_path
 
     # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate
@@ -1700,7 +1715,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 )
             num_speculative_tokens = num_speculative_tokens_
         elif num_speculative_tokens is None:
-            raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` instance variable is True.")
+            raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` is True.")
 
         if not isinstance(num_speculative_tokens, int) and num_speculative_tokens < 2:
             ValueError(
@@ -1765,7 +1780,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         super().__init__(model)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
-        self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
 
     @property
     def model_hash(self) -> str:
@@ -1779,7 +1793,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         mhash = hashlib.sha256()
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
-        mhash.update(to_hashable(self.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
         return mhash
 

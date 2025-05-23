@@ -90,6 +90,7 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+    # breakpoint()
     cos = cos[position_ids].unsqueeze(unsqueeze_dim)
     sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
@@ -111,7 +112,7 @@ def eager_attention_forward(
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
-
+    # breakpoint()
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
@@ -140,6 +141,7 @@ class QEffMistralAttention(MistralAttention):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        # sliding_window: Optional[bool] = None, 
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
@@ -159,13 +161,20 @@ class QEffMistralAttention(MistralAttention):
         kv_seq_len = key_states.shape[-2]
 
         kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos, sin = self.rotary_emb(value_states, seq_len=4096*3+1)
+        
+
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
+        key_states = torch.where(position_ids.unsqueeze(1).unsqueeze(-1)>=0, key_states, torch.tensor(0))
+        value_states = torch.where(position_ids.unsqueeze(1).unsqueeze(-1)>=0, value_states, torch.tensor(0))
+
         if past_key_value is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids, 
+                            "sliding_window_size": self.config.sliding_window,}
+
+            key_states, value_states = past_key_value.update_mistral(key_states, value_states, self.layer_idx, cache_kwargs)
+
 
         attention_interface: Callable = eager_attention_forward
 
@@ -310,6 +319,7 @@ class QEffMistralModel(MistralModel):
             position_ids = cache_position.unsqueeze(0)
 
         target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
+        # breakpoint()
         causal_mask = _create_causal_mask(
             position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
         )
@@ -383,12 +393,14 @@ class QEffMistralForCausalLM(MistralForCausalLM):
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
+        # if position_ids.max() >= 9:
+        #     import ipdb; ipdb.set_trace()
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
+        
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
             input_ids=input_ids,

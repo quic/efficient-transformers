@@ -36,6 +36,11 @@ class QEffDynamicCache(DynamicCache):
 
     """
 
+    # Return length actually usable by the layer
+
+    # def get_usable_length(self, kv_seq_len: int, layer_idx: int, sliding_window: Optional[int]):
+    #     return min(kv_seq_len, sliding_window) if sliding_window else kv_seq_len
+
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
         """
         Write in the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
@@ -112,6 +117,72 @@ class QEffDynamicCache(DynamicCache):
 
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return k_out, v_out
+    
+
+    def update_mistral(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        layer_idx: int,
+        cache_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            key_states (`torch.Tensor`):
+                The new key states to cache.
+            value_states (`torch.Tensor`):
+                The new value states to cache.
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        # Update the cache
+        position_ids = cache_kwargs.get("position_ids")
+        # N = cache_kwargs.get("sliding_window_size")
+        N = self.key_cache[layer_idx].shape[2]
+
+        kv_position_ids = torch.where(position_ids == -1,  position_ids, position_ids%(N-1))
+        
+        kv_position_ids = torch.where(position_ids.max() >= (N-1)*2, (position_ids+1)% N, kv_position_ids)
+
+        
+        self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
+        self.value_cache[layer_idx] = CtxScatterFunc.apply(
+            self.value_cache[layer_idx], kv_position_ids, value_states
+        )
+
+        k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+
+        # Original Gather
+        ctx_len = min(N, k_out.shape[2])
+        ctx_indices = torch.arange(ctx_len)[None, None, ...]
+        gather_limit = kv_position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        invalid_mask = ctx_indices > gather_limit
+        if torch.onnx.is_in_onnx_export():
+            invalid_idx_value = torch.iinfo(torch.int32).max
+        else:
+            invalid_idx_value = 0
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+        
+        # rolling indices
+        all_indices = torch.arange(N) + kv_position_ids.max()+1
+        rolling_indices = torch.where(all_indices>N-1, all_indices%N, all_indices)
+
+        final_indices = torch.where(position_ids.max()>=(N-1), rolling_indices, ctx_indices)
+
+        k_out = CtxGatherFunc.apply(k_out, final_indices)
+        v_out = CtxGatherFunc.apply(v_out, final_indices)
+        prefill_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+        v_out = torch.where(position_ids.max()>=(N-1), v_out, prefill_v_out)
+        return k_out,v_out
+        
+       
 
     def update(
         self,
@@ -181,11 +252,17 @@ class QEffDynamicCache(DynamicCache):
                 k_out = CtxGatherFuncCB.apply(k_out, batch_index, ctx_indices)
                 v_out = CtxGatherFuncCB.apply(v_out, batch_index, ctx_indices)
             else:
+                # breakpoint()
                 k_out = CtxGatherFunc.apply(k_out, ctx_indices)
                 v_out = CtxGatherFunc.apply(v_out, ctx_indices)
             v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
 
         return k_out, v_out
+
+        # return key_states, value_states
+        # is_sliding = bool((layer_idx + 1) % 6)
+        # return_kvs = k_out, v_out if not is_sliding else key_states, value_states
+        # return return_kvs
 
     def update3D(
         self,

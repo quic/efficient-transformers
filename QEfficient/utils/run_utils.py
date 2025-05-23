@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import copy
 import os
 
 import numpy as np
@@ -102,23 +103,28 @@ class ApiRunner:
         Return:
             :numpy.ndarray: Generated output tokens
         """
-        input_ids = self.input_handler.tokenizer.encode(self.input_handler.prompt[0], return_tensors="pt")
+        from transformers.cache_utils import SlidingWindowCache
+        inputs = self.input_handler.tokenizer(self.input_handler.prompt[0], return_tensors="pt")
+       
+        # input_ids_len = len(input_ids[0])
 
-        input_ids_len = len(input_ids[0])
+        # for _ in range(self.gen_len):
+        #     outputs = model_hf(input_ids)
+        #     logits = outputs.logits[:, -1, :]
+        #     predicted_token_id = torch.argmax(logits, dim=-1)
+        #     input_ids = torch.cat([input_ids, predicted_token_id.unsqueeze(1)], dim=-1)
 
-        for _ in range(self.gen_len):
-            outputs = model_hf(input_ids)
-            logits = outputs.logits[:, -1, :]
-            predicted_token_id = torch.argmax(logits, dim=-1)
-            input_ids = torch.cat([input_ids, predicted_token_id.unsqueeze(1)], dim=-1)
-
-        generated_ids = input_ids[0][input_ids_len:].detach().numpy()
-        generated_text = self.input_handler.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        # generated_ids = input_ids[0][input_ids_len:].detach().numpy()
+        # generated_text = self.input_handler.tokenizer.decode(generated_ids, skip_special_tokens=True)
         print("Original HF Model Outputs (Torch CPU): \n")
-        print("Prompt:", repr(self.input_handler.prompt))
-        print("Completion:", repr(generated_text))
-        return generated_ids
-
+        # print("Prompt:", repr(self.input_handler.prompt))
+        # print("Completion:", repr(generated_text))
+        # config = copy.deepcopy(model_hf.config)
+        # config.sliding_window = 11
+        out = model_hf.generate( past_key_values = SlidingWindowCache(config=model_hf.config, max_batch_size=1, max_cache_len=10), **inputs, max_length=32, eos_token_id=None)
+        print(self.input_handler.tokenizer.batch_decode(out, skip_special_tokens=True))
+        return out
+         
     def run_kv_model_on_pytorch(self, model):
         """
         Function responsible for running KV ``PyTorch`` model and return the output tokens
@@ -131,12 +137,14 @@ class ApiRunner:
         """
 
         generated_ids = []
+        # breakpoint()
         inputs = self.input_handler.prepare_pytorch_inputs()
-
+        # breakpoint()
         pt_outputs = model(**inputs)
         for _ in range(1, self.gen_len):
             generated_ids.append(pt_outputs["logits"].argmax(-1).reshape(-1, 1))
             inputs = self.input_handler.update_pytorch_inputs(inputs, pt_outputs)
+            print("inputs to kv model", inputs['input_ids'], inputs['position_ids'])
             pt_outputs = model(**inputs)
 
         generated_ids.append(pt_outputs["logits"].argmax(-1).reshape(-1, 1))
