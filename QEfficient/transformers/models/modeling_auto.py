@@ -1335,7 +1335,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
-        if qaic_config is not None and (transformed := qaic_config.get("include_sampler", False)) is True:
+        if qaic_config is not None and qaic_config.get("include_sampler", False) is True:
             self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
             self.include_sampler = transformed
 
@@ -1497,8 +1497,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
 
         if self.include_sampler:
-            max_top_k_ids = constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS
-
             example_inputs["last_accepted_output_tokens"] = torch.zeros((bs, seq_len), dtype=torch.int64)
             dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "seq_len"}
 
@@ -1510,7 +1508,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             }
             output_names.append("past_repetition_penalty_buffer_RetainedState")
 
-            example_inputs["repetition_penalties"] = torch.ones((bs, 1), dtype=torch.float) * 0.5
+            example_inputs["repetition_penalties"] = (
+                torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_REPETITION_PENALTIES
+            )
             dynamic_axes["repetition_penalties"] = {0: "batch_size"}
 
             example_inputs["past_presence_penalty_buffer"] = torch.zeros(
@@ -1521,19 +1521,25 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             }
             output_names.append("past_presence_penalty_buffer_RetainedState")
 
-            example_inputs["presence_penalties"] = torch.zeros((bs, 1), dtype=torch.float) + 0.5
+            example_inputs["presence_penalties"] = (
+                torch.zeros((bs, 1), dtype=torch.float) + constants.ONNX_EXPORT_EXAMPLE_PRESENCE_PENALTIES
+            )
             dynamic_axes["presence_penalties"] = {0: "batch_size"}
 
-            example_inputs["temperatures"] = torch.ones((bs, 1), dtype=torch.float)
+            example_inputs["temperatures"] = (
+                torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TEMPERATURES
+            )
             dynamic_axes["temperatures"] = {0: "batch_size"}
 
-            example_inputs["top_ks"] = torch.randint(1, max_top_k_ids, size=(bs, 1)).to(torch.int32)
+            example_inputs["top_ks"] = torch.randint(
+                1, constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS, size=(bs, 1)
+            ).to(torch.int32)
             dynamic_axes["top_ks"] = {0: "batch_size"}
 
-            example_inputs["top_ps"] = torch.ones((bs, 1), dtype=torch.float) * 0.80
+            example_inputs["top_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TOP_PS
             dynamic_axes["top_ps"] = {0: "batch_size"}
 
-            example_inputs["min_ps"] = torch.ones((bs, 1), dtype=torch.float) * 0.99
+            example_inputs["min_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_MIN_PS
             dynamic_axes["min_ps"] = {0: "batch_size"}
 
             example_inputs["random_numbers"] = torch.rand((bs, 1), dtype=torch.float)
