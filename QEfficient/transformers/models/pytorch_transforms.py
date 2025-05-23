@@ -480,6 +480,7 @@ class SamplerTransform:
         elif not include_sampler:
             return model, transformed
         elif (model_class := model.__class__) in cls._module_mapping:
+            model.old_forward = model.forward
             model.forward = MethodType(sampler_forward, model)
             model.return_pdfs = qaic_config.get("return_pdfs", False)
             transformed = True

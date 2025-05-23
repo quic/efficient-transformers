@@ -5,66 +5,17 @@ import torch.nn.functional as F
 from QEfficient.customop import CtxScatterFuncCB3D
 from QEfficient.utils.constants import Constants
 from transformers.cache_utils import Cache
-from transformers.modeling_outputs import CausalLMOutputWithPast, ModelOutput
+from transformers.modeling_outputs import ModelOutput
 from typing import List, Optional, Tuple, Union
 
 
 @dataclass
-class QEffCausalLMOutputWithPast(ModelOutput):
-    loss: Optional[torch.FloatTensor] = None
+class SamplerOutput(ModelOutput):
     probs: torch.FloatTensor = None
     next_tokens: torch.IntTensor = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
-    hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
-    attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
     past_repetition_penalty_buffer: Optional[torch.Tensor] = None
     past_presence_penalty_buffer: Optional[torch.Tensor] = None
-
-
-def filter_hidden_states(
-    hidden_states: torch.Tensor,
-    position_ids: torch.Tensor,
-    num_logits_to_keep: Optional[int] = None,
-) -> torch.Tensor:
-    """
-    Filter hidden states based on whether this is a TLM SpD model
-
-    ``Mandatory`` Args:
-        :hidden_states (torch.Tensor): Hidden states tensor.
-        :position_ids (torch.Tensor): Position ids tensor.
-    ``Optional`` Args:
-        :num_logits_to_keep (int, optional): Number of speculative tokens, specified only for TLM SpD model
-
-    Returns:
-        :torch.Tensor: Filtered hidden states.
-    """
-    batch_size = position_ids.size(0)
-    batch_indices = torch.arange(batch_size)
-    # Cast to INT32 to avoid issue while running in ONNXRT
-    logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-
-    if num_logits_to_keep is None:
-        # return the last logit
-        return hidden_states[batch_indices.view(-1, 1), logit_index]
-
-    # gather approach
-    num_logits_to_keep = num_logits_to_keep.shape[0]
-    lower_idx = torch.where(
-        logit_index < num_logits_to_keep,
-        0,
-        logit_index + 1 - num_logits_to_keep,
-    ).view(
-        -1, 1
-    )  # shape: [bsz, 1]
-    spec_idx = torch.arange(num_logits_to_keep).view(1, -1)  # shape: [1, k]
-    indices = torch.add(lower_idx, spec_idx).unsqueeze(2)  # shape: [bsz, k, 1]
-    indices = indices.repeat(
-        1, 1, hidden_states.size(-1)
-    )  # shape: [bsz, ,k, d_model]
-    hidden_states = torch.gather(
-        hidden_states, dim=1, index=indices
-    )  # shape: [bsz, k, d_model]
-    return hidden_states
 
 
 def prefill_path(
@@ -148,7 +99,7 @@ def sampler_forward(
     top_ps: Optional[torch.Tensor] = None,
     min_ps: Optional[torch.Tensor] = None,
     random_numbers: Optional[torch.Tensor] = None,
-) -> Union[Tuple, CausalLMOutputWithPast]:
+) -> Union[Tuple, SamplerOutput]:
     r"""
     Args:
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -222,22 +173,7 @@ def sampler_forward(
     "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
     ```"""
 
-    output_attentions = (
-        output_attentions
-        if output_attentions is not None
-        else self.config.output_attentions
-    )
-    output_hidden_states = (
-        output_hidden_states
-        if output_hidden_states is not None
-        else self.config.output_hidden_states
-    )
-    return_dict = (
-        return_dict if return_dict is not None else self.config.use_return_dict
-    )
-
-    # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-    outputs = self.model(
+    outputs = self.old_forward(
         input_ids=input_ids,
         attention_mask=attention_mask,
         position_ids=position_ids,
@@ -251,20 +187,8 @@ def sampler_forward(
         cache_position=cache_position,
     )
 
-    hidden_states = filter_hidden_states(
-        outputs[0], position_ids, num_logits_to_keep
-    )
-    if self.config.pretraining_tp > 1:
-        lm_head_slices = self.lm_head.weight.split(
-            self.vocab_size // self.config.pretraining_tp, dim=0
-        )
-        logits = [
-            F.linear(hidden_states, lm_head_slices[i])
-            for i in range(self.config.pretraining_tp)
-        ]
-        logits = torch.cat(logits, dim=-1)
-    else:
-        logits = self.lm_head(hidden_states)
+    logits = outputs.get("logits", None)
+    assert logits is not None, f"{self.model.__class__.__name__} does not return logits."
     logits = logits.float()  # (batch_size, num_logits_to_keep aka spec_length, vocab_size)
 
     # Perform Sampling
@@ -298,13 +222,10 @@ def sampler_forward(
     # Greedy Sampling
     greedy_samples = torch.argmax(logits, dim=1, keepdim=True)  # (batch_size * spec_length, 1)
     if (temperatures == 0).all() and self.return_pdfs == False:
-        return QEffCausalLMOutputWithPast(
-            loss=None,
+        return SamplerOutput(
             probs=None,
             next_tokens=greedy_samples.reshape(-1, spec_length, 1),  # Return sampled next tokens instead of logits
             past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
             past_repetition_penalty_buffer=past_repetition_penalty_buffer,
             past_presence_penalty_buffer=past_presence_penalty_buffer,
         )
@@ -374,13 +295,10 @@ def sampler_forward(
     # Sample the next tokens
     next_tokens = torch.where(temperatures == 0, greedy_samples, random_samples).reshape(-1, spec_length, 1)  # (batch_size, spec_length, 1)
 
-    return QEffCausalLMOutputWithPast(
-        loss=None,
+    return SamplerOutput(
         probs=probs,
         next_tokens=next_tokens,  # Return sampled next tokens instead of logits
         past_key_values=outputs.past_key_values,
-        hidden_states=outputs.hidden_states,
-        attentions=outputs.attentions,
         past_repetition_penalty_buffer=past_repetition_penalty_buffer,
         past_presence_penalty_buffer=past_presence_penalty_buffer,
     )
