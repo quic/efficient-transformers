@@ -35,7 +35,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     qnn_config: Optional[str] = None,
 ):
     # Prepare input
-    tokenizer = AutoTokenizer.from_pretrained(model_name, token="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")
+    tokenizer = AutoTokenizer.from_pretrained(model_name, )
     inputs = tokenizer("My name is", return_tensors="pt")
 
     # Original PyTorch model
@@ -44,9 +44,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
         # num_hidden_layers=n_layer,
         attn_implementation="eager",
         trust_remote_code=True,
-        token="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"
-    )
-
+        )
     pt_outputs = pt_model(**inputs)
     pt_embeddings = pt_outputs[0][0].detach().numpy()
     
