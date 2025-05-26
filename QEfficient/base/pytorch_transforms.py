@@ -4,10 +4,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
+import json
 from types import MethodType
 from typing import Callable, Dict, Tuple, Type
 
 from torch import nn
+
+# from QEfficient.transformers.embeddings.embedding_utils import define_pooling, patch_model_with_pooling
 
 
 class PytorchTransform:
