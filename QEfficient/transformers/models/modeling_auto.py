@@ -384,7 +384,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
 
         outputs = {
-            "output": np.random.randn(self.batch_size, self.qpc_session.bindings[2].dims[1]).astype(
+            "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(
                 np.float32
             ),
         }

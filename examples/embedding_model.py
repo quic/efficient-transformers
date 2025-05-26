@@ -21,14 +21,15 @@ def mean_pooling(model_output, attention_mask):
     return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
 
+
 # Sentences we want sentence embeddings for
 sentences = "This is an example sentence"
 
 # Load model from HuggingFace Hub
-tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+tokenizer = AutoTokenizer.from_pretrained("intfloat/e5-large", token="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")
 
 
-qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+qeff_model = AutoModel.from_pretrained("intfloat/e5-large", token="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")
 qeff_model.compile(num_cores=14)
 
 # Tokenize sentences

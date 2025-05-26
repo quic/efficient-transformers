@@ -71,7 +71,6 @@ class PooledModel(nn.Module):
 
     def forward(self, input_ids: Optional[torch.Tensor] = None, attention_mask: Optional[torch.Tensor] = None, **kwargs):
         output = self.base_model(input_ids, attention_mask, **kwargs)
-        # attention_mask = kwargs.get('attention_mask', None)
         return self.pooling_fn(output, attention_mask)
 
  
@@ -109,7 +108,7 @@ def get_modules_json_path(model_name_or_path):
     else:
        # It's a Hugging Face model ID
         try:
-           json_path = hf_hub_download(repo_id=model_name_or_path, filename="modules.json", token="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")
+           json_path = hf_hub_download(repo_id=model_name_or_path, filename="modules.json")
            return json_path
         except Exception as e:
            print(f"Error: {e}")
