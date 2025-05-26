@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
+import json
 from types import MethodType
 from typing import Callable, Dict, Tuple, Type
 

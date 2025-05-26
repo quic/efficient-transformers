@@ -524,3 +524,16 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
     }
     _match_class_replace_method = {}
+
+# class Embedding_Transform(PytorchTransform):
+#     def apply(self, model: nn.Module, modules_json_path) -> Tuple[nn.Module, bool]:
+#         transformed = False
+#         with open(modules_json_path) as fIn:
+#             modules_json = json.load(fIn)
+#         for module in modules_json:
+#             if module["type"] == "Pooling":
+#                 pooling=define_pooling(modules_json_path)
+#                 model=patch_model_with_pooling(model,pooling)
+#                 transformed = True
+#             # if module["type"] == "Normalization":
+#         return model, transformed

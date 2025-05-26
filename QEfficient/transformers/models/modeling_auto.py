@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+from curses.ascii import EM
 import hashlib
 import warnings
 from pathlib import Path
@@ -35,6 +36,7 @@ from QEfficient.generation.text_generation_inference import (
     calculate_latency,
     get_compilation_dims,
 )
+from QEfficient.transformers.embeddings.embedding_utils import embedding_transform
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheModuleMethodMapperTransform,
@@ -157,15 +159,17 @@ class QEFFAutoModel(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
+    @embedding_transform
     def __init__(self, model: nn.Module, **kwargs):
         super().__init__(model)
-        self.model.config.use_cache = True
-        self.num_layers = model.config.num_hidden_layers
+        self.model.base_model.config.use_cache=True
+        # self.model.config.use_cache = True
+        self.num_layers = self.model.base_model.config.num_hidden_layers
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path,pooling, *args, **kwargs):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModel.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
@@ -214,7 +218,7 @@ class QEFFAutoModel(QEFFTransformersBase):
                 model, kv_offload=kv_offload
             )
 
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path)
+        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, pooling=pooling, **kwargs)
 
     @property
     def model_hash(self) -> str:
@@ -380,13 +384,13 @@ class QEFFAutoModel(QEFFTransformersBase):
         inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
 
         outputs = {
-            "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[2]).astype(
+            "output": np.random.randn(self.batch_size, self.qpc_session.bindings[2].dims[1]).astype(
                 np.float32
             ),
         }
         self.qpc_session.set_buffers(outputs)
         outputs = self.qpc_session.run(inputs)
-        outputs = outputs["output"][:, :input_ids_len, :]
+        # outputs = outputs["output"][:, :input_ids_len, :]
         return outputs
 
     def pytorch_feature_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
