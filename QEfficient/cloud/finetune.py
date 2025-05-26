@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import logging
 import random
 import warnings
 from typing import Any, Dict, Optional, Union
@@ -40,8 +39,6 @@ from QEfficient.finetune.utils.train_utils import (
 )
 from QEfficient.utils._utils import login_and_download_hf_lm
 from QEfficient.utils.logging_utils import logger
-
-logger.setLevel(logging.INFO)
 
 # Try importing QAIC-specific module, proceed without it if unavailable
 try:
@@ -329,6 +326,9 @@ def main(peft_config_file: str = None, **kwargs) -> None:
     update_config(train_config, **kwargs)
     dataset_config = generate_dataset_config(train_config.dataset)
     update_config(dataset_config, **kwargs)
+
+    logger.prepare_dump_logs(train_config.dump_logs)
+    logger.setLevel(train_config.log_level)
 
     setup_distributed_training(train_config)
     setup_seeds(train_config.seed)

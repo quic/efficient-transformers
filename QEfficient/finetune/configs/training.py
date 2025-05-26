@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
+import logging
 from dataclasses import dataclass
 
 
@@ -107,3 +109,4 @@ class TrainConfig:
     opByOpVerifier: bool = False
 
     dump_logs: bool = True
+    log_level: str = logging.INFO

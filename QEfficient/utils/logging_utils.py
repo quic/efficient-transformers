@@ -56,21 +56,6 @@ def create_logger() -> logging.Logger:
     ch.setFormatter(QEffFormatter())
     logger.addHandler(ch)
 
-    dump_logs = True
-    if dump_logs:
-        logs_path = os.path.join(ROOT_DIR, "logs")
-        if not os.path.exists(logs_path):
-            os.makedirs(logs_path, exist_ok=True)
-        file_name = f"log-file-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}" + ".txt"
-        log_file = os.path.join(logs_path, file_name)
-
-        # create file handler and set level
-        fh = logging.FileHandler(log_file)
-        fh.setLevel(logging.INFO)
-        formatter = logging.Formatter("%(levelname)s - %(name)s - %(message)s")
-        fh.setFormatter(formatter)
-        logger.addHandler(fh)
-
     return logger
 
 
@@ -85,8 +70,7 @@ class CustomLogger(logging.Logger):
             return
         self.log(level, msg, stacklevel=2)
 
-
-"""    def dump_logs(self, dump_logs=True):
+    def prepare_dump_logs(self, dump_logs=False):
         if dump_logs:
             logs_path = os.path.join(ROOT_DIR, "logs")
             if not os.path.exists(logs_path):
@@ -100,7 +84,6 @@ class CustomLogger(logging.Logger):
             formatter = logging.Formatter("%(levelname)s - %(name)s - %(message)s")
             fh.setFormatter(formatter)
             logger.addHandler(fh)
-"""
 
 
 logging.setLoggerClass(CustomLogger)

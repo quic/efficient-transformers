@@ -312,6 +312,13 @@ if __name__ == "__main__":
         help="pass to print info logs",
     )
     parser.add_argument(
+        "--log_level",
+        "--log-level",
+        type=int,
+        default=20,
+        help="set the Log level {NOTSET:0, DEBUG:10, INFO:20, WARNING:30, ERROR:40, CRITICAL:50}",
+    )
+    parser.add_argument(
         "--full_batch_size",
         "--full-batch-size",
         type=int,
@@ -353,6 +360,11 @@ if __name__ == "__main__":
             )
             compiler_options_dict[key] = value
     if args.verbose:
-        logger.setLevel(logging.INFO)
+        logger.prepare_dump_logs(args.verbose)
+        if args.log_level:
+            logger.setLevel(args.log_level)
+        else:
+            logger.setLevel(logging.INFO)
     del args.verbose  # type: ignore
+    del args.log_level  # type: ignore
     main(**args.__dict__, **compiler_options_dict)
