@@ -1277,13 +1277,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     ``Mandatory`` Args:
         :model (nn.Module):  PyTorch model
         :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
-        :qaic_config (Optional[dict]): QAIC config dictionary with the following supported keys:
+    ``Optional`` Args:
+        :qaic_config (dict): QAIC config dictionary with the following supported keys:
             :speculative_model_type (str): To specify Speculative Decoding Target Language Models.
             :include_sampler (bool): Enable/Disable sampling of next tokens.
-            :return_pdfs (bool): Return probability distributions along with sampled 
-            next tokens. For Speculative Decoding Target Language Model, 
-            `return_pdfs`=True always. Otherwise, `return_pdfs`=True for Speculative 
+            :return_pdfs (bool): Return probability distributions along with sampled
+            next tokens. For Speculative Decoding Target Language Model,
+            `return_pdfs`=True always. Otherwise, `return_pdfs`=True for Speculative
             Decoding Draft Language Model and `return_pdfs`=False for regular model.
+            :max_top_k_ids (int): Specify the maximum number of top K tokens
+            (<= vocab size) to consider during sampling. The values provided in
+            `top_ks` tensor must be less than this maximum limit.
 
     .. code-block:: python
 
@@ -1337,6 +1341,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
+        self.model.qaic_config = qaic_config
+
         self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         self.is_tlm = transformed
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
@@ -1345,12 +1351,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
-        self.include_sampler = False
-        if qaic_config is not None and qaic_config.get("include_sampler", False) is True:
-            self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
-            self.include_sampler = transformed
-            if self.is_tlm:
-                self.model.return_pdfs = True
+        self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
+        if self.is_tlm:
+            self.model.qaic_config["return_pdfs"] = True
 
     @property
     def model_name(self) -> str:
@@ -1380,13 +1383,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Args:
             :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
             :continuous_batching (bool): Whether this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
-            :qaic_config (Optional[dict]): QAIC config dictionary with the following supported keys:
+        ``Optional`` Args:
+            :qaic_config (dict): QAIC config dictionary with the following supported keys:
                 :speculative_model_type (str): To specify Speculative Decoding Target Language Models.
                 :include_sampler (bool): Enable/Disable sampling of next tokens.
-                :return_pdfs (bool): Return probability distributions along with sampled 
-                next tokens. For Speculative Decoding Target Language Model, 
-                `return_pdfs`=True always. Otherwise, `return_pdfs`=True for Speculative 
+                :return_pdfs (bool): Return probability distributions along with sampled
+                next tokens. For Speculative Decoding Target Language Model,
+                `return_pdfs`=True always. Otherwise, `return_pdfs`=True for Speculative
                 Decoding Draft Language Model and `return_pdfs`=False for regular model.
+                :max_top_k_ids (int): Specify the maximum number of top K tokens
+                (<= vocab size) to consider during sampling. The values provided in
+                `top_ks` tensor must be less than this maximum limit.
 
         .. code-block:: python
 
@@ -1444,7 +1451,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable({"continuous_batching": self.continuous_batching}))
         mhash.update(to_hashable({"is_tlm": self.is_tlm}))
-        mhash.update(to_hashable({"include_sampler": self.include_sampler}))
+        mhash.update(to_hashable({"qaic_config": self.model.qaic_config}))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable(self.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
@@ -1490,8 +1497,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 2: "ctx_len",
             }
         output_names = []
-        if self.include_sampler:
-            if self.model.return_pdfs:
+        if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
+            if self.model.qaic_config.get("return_pdfs", False):
                 output_names.append("probs")
             output_names.append("next_tokens")
         else:
@@ -1512,7 +1519,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             example_inputs["num_logits_to_keep"] = torch.arange(nlk).view(nlk, 1)
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
 
-        if self.include_sampler:
+        if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
             example_inputs["last_accepted_output_tokens"] = torch.zeros((bs, seq_len), dtype=torch.int64)
             dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "seq_len"}
 
@@ -1547,9 +1554,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
             dynamic_axes["temperatures"] = {0: "batch_size"}
 
-            example_inputs["top_ks"] = torch.randint(
-                1, constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS, size=(bs, 1)
-            ).to(torch.int32)
+            max_top_k_ids = self.model.qaic_config.get("max_top_k_ids", constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS)
+            example_inputs["top_ks"] = torch.randint(1, max_top_k_ids, size=(bs, 1)).to(torch.int32)
             dynamic_axes["top_ks"] = {0: "batch_size"}
 
             example_inputs["top_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TOP_PS
@@ -1575,14 +1581,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         batch_size: int = 1,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
-        max_top_k_ids: Optional[int] = None,
     ):
         spec = {
             "batch_size": 1 if self.continuous_batching else batch_size,
             "seq_len": prefill_seq_len,
             "ctx_len": ctx_len,
             "num_logits_to_keep": 1 if self.is_tlm else None,
-            "max_top_k_ids": max_top_k_ids if self.include_sampler else None,
         }
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
@@ -1600,7 +1604,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
         num_speculative_tokens: Optional[int] = None,
-        max_top_k_ids: Optional[int] = None,
     ):
         if prefill_seq_len == 1 and not self.continuous_batching:
             return None  # Avoid duplication with prefill
@@ -1609,7 +1612,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
             "ctx_len": ctx_len,
             "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm else None,
-            "max_top_k_ids": max_top_k_ids if self.include_sampler else None,
         }
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
@@ -1682,7 +1684,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "enable `continuous_batching=True` in `from_pretrained`."
             )
 
-        if self.include_sampler and num_speculative_tokens > 0:
+        if (self.model.qaic_config is not None
+            and self.model.qaic_config.get("include_sampler", False)
+            and num_speculative_tokens > 0
+        ):
             raise ValueError("Currently, sampler does not support `num_speculative_tokens` > 0.")
 
         # Infer kv_cache_batch_size if not provided
@@ -1699,7 +1704,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     batch_size=batch_size,
                     kv_cache_batch_size=kv_cache_batch_size,
                     full_batch_size=full_batch_size,
-                    max_top_k_ids=constants.Constants.MAX_TOP_K_IDS if self.include_sampler else None,
                 )
             )
         if prefill_only is None or not prefill_only:
@@ -1710,7 +1714,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 kv_cache_batch_size=kv_cache_batch_size,
                 full_batch_size=full_batch_size,
                 num_speculative_tokens=num_speculative_tokens,
-                max_top_k_ids=constants.Constants.MAX_TOP_K_IDS if self.include_sampler else None,
             )
             if decode_spec:
                 specializations.append(decode_spec)

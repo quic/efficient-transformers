@@ -483,10 +483,11 @@ class SamplerTransform:
     @classmethod
     def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
         transformed = False
-        if (model_class := model.__class__) in cls._module_mapping:
+        if qaic_config is None or not qaic_config.get("include_sampler", False):
+            return model, transformed
+        elif (model_class := model.__class__) in cls._module_mapping:
             model.old_forward = model.forward
             model.forward = MethodType(sampler_forward, model)
-            model.return_pdfs = qaic_config.get("return_pdfs", False)
             transformed = True
         else:
             raise NotImplementedError(f"Model class {model_class} does not support on device sampling.")

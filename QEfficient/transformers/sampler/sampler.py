@@ -26,6 +26,9 @@ def prefill_path(
     past_repetition_penalty_buffer: torch.Tensor,
     past_presence_penalty_buffer: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Initialize or update RetainedState buffers for prefill stage based on `input_ids`.
+    """
     # Initialize retain states for first input chunk
     mul_value = torch.ones(past_repetition_penalty_buffer.shape[0], 1, dtype=torch.bool)
     mul_value[batch_index_reshaped] = position_ids[:, :1] != 0
@@ -53,6 +56,9 @@ def decode_path(
     past_repetition_penalty_buffer: torch.Tensor,
     past_presence_penalty_buffer: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Update RetainedState buffers for decode stage based on `last_accepted_output_tokens`.
+    """
     # Mask out-of-bounds or invalid position_ids or last_accepted_output_tokens
     last_accepted_output_tokens = torch.where(
         position_ids == -1, torch.iinfo(torch.int32).max, last_accepted_output_tokens
@@ -227,7 +233,7 @@ def sampler_forward(
 
     # Greedy Sampling
     greedy_samples = torch.argmax(logits, dim=1, keepdim=True)  # (batch_size * spec_length, 1)
-    if (temperatures == 0).all() and self.return_pdfs == False:
+    if (temperatures == 0).all() and self.qaic_config.get("return_pdfs", False) == False:
         return SamplerOutput(
             probs=None,
             next_tokens=greedy_samples.reshape(-1, spec_length, 1),  # Return sampled next tokens instead of logits
@@ -254,37 +260,38 @@ def sampler_forward(
 
     # Temperature Scaling
     temperatures = temperatures.repeat(spec_length, 1)  # (batch_size, 1) -> (batch_size * spec_length, 1)
-    logits /= temperatures
+    logits = torch.where(temperatures != 0, logits / temperatures, logits)
 
     # Top K
-    # TODO (Optimization): if (top_ks != -1 or top_ks != Constants.MAX_TOP_K_IDS).any() is False: skip but will need topk_values_asc and topk_indices_asc
-    topk_values, topk_indices = torch.topk(logits, k=Constants.MAX_TOP_K_IDS, dim=1)  # (batch_size * spec_length, vocab_size)
+    # TODO (Optimization): if (top_ks != -1 or top_ks != max_top_k_ids).any() is False: skip but will need topk_values_asc and topk_indices_asc
+    max_top_k_ids = self.qaic_config.get("max_top_k_ids", Constants.MAX_TOP_K_IDS)
+    topk_values, topk_indices = torch.topk(logits, k=max_top_k_ids, dim=1)  # (batch_size * spec_length, vocab_size)
     topk_values_asc = topk_values.flip(dims=[1])
     topk_indices_asc = topk_indices.flip(dims=[1])
-    top_ks[top_ks > Constants.MAX_TOP_K_IDS] = Constants.MAX_TOP_K_IDS  # Clip k to max value
+    top_ks[top_ks > max_top_k_ids] = max_top_k_ids  # Clip k to max value
     # True values in this mask indicate the positions of the non-top K values
-    topk_mask = torch.arange(topk_values_asc.shape[1]).unsqueeze(0) < (topk_values_asc.size(1) - top_ks.to(torch.long)).repeat(spec_length, 1)  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
+    topk_mask = torch.arange(topk_values_asc.shape[1]).unsqueeze(0) < (topk_values_asc.size(1) - top_ks.to(torch.long)).repeat(spec_length, 1)  # (batch_size * spec_length, max_top_k_ids)
     topk_values_asc[topk_mask] = torch.finfo(torch.float16).min
 
     # Top P
     # TODO (Optimization): if (top_ps != 1.).any() is False: skip but will need top_probs for Min P
-    top_probs = torch.softmax(topk_values_asc, dim=1)  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
+    top_probs = torch.softmax(topk_values_asc, dim=1)  # (batch_size * spec_length, max_top_k_ids)
     topk_probs_sum = torch.cumsum(top_probs, dim=1)
-    top_p_mask = topk_probs_sum <= 1 - top_ps.repeat(spec_length, 1)  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
-    top_p_mask[:, Constants.MAX_TOP_K_IDS - 1] = False
+    top_p_mask = topk_probs_sum <= 1 - top_ps.repeat(spec_length, 1)  # (batch_size * spec_length, max_top_k_ids)
+    top_p_mask[:, max_top_k_ids - 1] = False
     topk_values_asc[top_p_mask] = torch.finfo(torch.float16).min
 
     # Min P
     if (min_ps != 0.0).any():
         scaled_min_p = torch.mul(
             min_ps.repeat(spec_length, 1),
-            top_probs[:, Constants.MAX_TOP_K_IDS - 1 :],
+            top_probs[:, max_top_k_ids - 1 :],
         )  # (batch_size * spec_length, 1)
-        min_p_mask = top_probs < scaled_min_p  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
+        min_p_mask = top_probs < scaled_min_p  # (batch_size * spec_length, max_top_k_ids)
         topk_values_asc[min_p_mask] = torch.finfo(torch.float16).min
 
     probs = None
-    if self.return_pdfs:
+    if self.qaic_config.get("return_pdfs", False):
         # Update the logits
         logits.fill_(torch.finfo(torch.float16).min)
         logits = logits.scatter(1, topk_indices_asc, topk_values_asc)  # (batch_size * spec_length, vocab_size)
@@ -292,7 +299,7 @@ def sampler_forward(
         probs = torch.softmax(logits, dim=1).reshape(-1, spec_length, vocab_size)  # (batch_size, spec_length, vocab_size)
 
     # Random Sampling
-    topk_probs_asc = torch.softmax(topk_values_asc, dim=1)  # (batch_size * spec_length, Constants.MAX_TOP_K_IDS)
+    topk_probs_asc = torch.softmax(topk_values_asc, dim=1)  # (batch_size * spec_length, max_top_k_ids)
     gumbel_noise = -torch.log(-torch.log(random_numbers.repeat(spec_length, 1)))  # Gumbel-Max Trick
     y = topk_probs_asc + gumbel_noise
     random_samples_indices = torch.argmax(y, dim=1, keepdim=True)
