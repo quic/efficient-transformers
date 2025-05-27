@@ -31,3 +31,5 @@ Replace `<hf_token>` with your actual token.
 - **--model_name**: Model card name to use (default: “meta-llama/Meta-Llama-3-8B-Instruct”).
 - **--prompt**: Prompt to use for the model (default: “My name is”).
 - **--repeat**: Factor to repeat key-value heads (default: 2).
+- **--num_attention_heads**: Number of attentin heads (default: None). This is optional param, if not given explicitly the will be read from config.json.
+- **--hidden_size**: Hidden size (default: None). This is optional param, if not given explicitly the will be read from config.json.

@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -196,6 +196,10 @@ def main(
         qnn_config=qnn_config,
         **kwargs,
     )
+
+    #  If the io-encrypt flag is passed we will exit after QPC generation.
+    if kwargs.get("io_encrypt", None):
+        exit()
 
     #########
     # Execute
