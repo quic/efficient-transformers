@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from transformers import AutoModelForCausalLM
 
+from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils import hf_download
@@ -21,40 +22,40 @@ from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
 
 test_models_qaic = [
-    # "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    # "gpt2",
-    # "Salesforce/codegen-350M-mono",
-    # "microsoft/Phi-3-mini-4k-instruct",
+    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "gpt2",
+    "Salesforce/codegen-350M-mono",
+    "microsoft/Phi-3-mini-4k-instruct",
     "tiiuae/falcon-7b",
-    # "Qwen/Qwen2-0.5B",
-    # "bigcode/starcoder2-3b",
-    # "Felladrin/Minueza-32M-Base",
-    # "wtang06/mpt-125m-c4",
-    # "hakurei/gpt-j-random-tinier",
-    # "mistralai/Mixtral-8x7B-Instruct-v0.1",
-    # "meta-llama/Llama-3.2-1B",
-    # "unsloth/gemma-2b",
-    # "unsloth/gemma-2-2b",
-    # "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
-    # "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
-    # "ibm-granite/granite-20b-code-base",
-    # # "neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8-dynamic",  # naive-quantized compressed-tensor FP8 model per-channel weight, per-token activations
-    # "neuralmagic/Llama-3.2-3B-Instruct-FP8",  # float quantized compressed-tensor per tensor both weight and activations
-    # "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
-    # "ibm-granite/granite-3.1-2b-instruct",
-    # "ibm-granite/granite-guardian-3.1-2b",
+    "Qwen/Qwen2-0.5B",
+    "bigcode/starcoder2-3b",
+    "Felladrin/Minueza-32M-Base",
+    "wtang06/mpt-125m-c4",
+    "hakurei/gpt-j-random-tinier",
+    "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    "meta-llama/Llama-3.2-1B",
+    "unsloth/gemma-2b",
+    "unsloth/gemma-2-2b",
+    "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
+    "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
+    "ibm-granite/granite-20b-code-base",
+    # "neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8-dynamic",  # naive-quantized compressed-tensor FP8 model per-channel weight, per-token activations
+    "neuralmagic/Llama-3.2-3B-Instruct-FP8",  # float quantized compressed-tensor per tensor both weight and activations
+    "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
+    "ibm-granite/granite-3.1-2b-instruct",
+    "ibm-granite/granite-guardian-3.1-2b",
 ]
 
 test_models_qnn = [
-    # "mistralai/Mixtral-8x7B-Instruct-v0.1",
-    # "meta-llama/Llama-3.2-1B",
-    # "unsloth/gemma-2b",
-    # "ibm-granite/granite-guardian-3.1-2b",
+    "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    "meta-llama/Llama-3.2-1B",
+    "unsloth/gemma-2b",
+    "ibm-granite/granite-guardian-3.1-2b",
 ]
 
 spd_test_models = [
-    # "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    # "Qwen/Qwen2-0.5B",
+    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "Qwen/Qwen2-0.5B",
 ]
 
 
@@ -214,33 +215,33 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
 
 # FIXME: there should be a CB test here
-# @pytest.mark.parametrize("model_name", ["gpt2"], ids=lambda x: x)
-# def test_causal_lm_export_with_deprecated_api(model_name):
-#     model_config = {"model_name": model_name}
-#     model_config["n_layer"] = 1
-#     model, _ = load_causal_lm_model(model_config)
-#     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
-#     qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name, pretrained_model_name_or_path=model_name)
-#     new_api_onnx_model_path = qeff_model.export()
-#     _, old_api_onnx_model_path = qualcomm_efficient_converter(
-#         model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer
-#     )
+@pytest.mark.parametrize("model_name", ["gpt2"], ids=lambda x: x)
+def test_causal_lm_export_with_deprecated_api(model_name):
+    model_config = {"model_name": model_name}
+    model_config["n_layer"] = 1
+    model, _ = load_causal_lm_model(model_config)
+    tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
+    qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name, pretrained_model_name_or_path=model_name)
+    new_api_onnx_model_path = qeff_model.export()
+    _, old_api_onnx_model_path = qualcomm_efficient_converter(
+        model_name=model_name, model_kv=qeff_model, tokenizer=tokenizer
+    )
 
-#     api_runner = ApiRunner(
-#         batch_size=1,
-#         tokenizer=tokenizer,
-#         config=model.config,
-#         prompt=Constants.INPUT_STR,
-#         prompt_len=Constants.PROMPT_LEN,
-#         ctx_len=Constants.CTX_LEN,
-#     )
+    api_runner = ApiRunner(
+        batch_size=1,
+        tokenizer=tokenizer,
+        config=model.config,
+        prompt=Constants.INPUT_STR,
+        prompt_len=Constants.PROMPT_LEN,
+        ctx_len=Constants.CTX_LEN,
+    )
 
-#     new_api_ort_tokens = api_runner.run_kv_model_on_ort(new_api_onnx_model_path)
-#     old_api_ort_tokens = api_runner.run_kv_model_on_ort(old_api_onnx_model_path)
+    new_api_ort_tokens = api_runner.run_kv_model_on_ort(new_api_onnx_model_path)
+    old_api_ort_tokens = api_runner.run_kv_model_on_ort(old_api_onnx_model_path)
 
-#     assert (new_api_ort_tokens == old_api_ort_tokens).all(), (
-#         "New API output does not match old API output for ONNX export function"
-#     )
+    assert (new_api_ort_tokens == old_api_ort_tokens).all(), (
+        "New API output does not match old API output for ONNX export function"
+    )
 
 
 @pytest.mark.on_qaic
@@ -259,84 +260,84 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
 
 
-# @pytest.mark.on_qaic
-# @pytest.mark.qnn
-# @pytest.mark.parametrize("model_name", test_models_qnn)
-# def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
-#     """
-#     QNN Compilation Test
-#     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
-#     ``Mandatory`` Args:
-#         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-#     """
-#     if model_name == "microsoft/Phi-3-mini-4k-instruct":
-#         n_layer = 2  # test only 2 layer models
-#     else:
-#         n_layer = 1
+@pytest.mark.on_qaic
+@pytest.mark.qnn
+@pytest.mark.parametrize("model_name", test_models_qnn)
+def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
+    """
+    QNN Compilation Test
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    if model_name == "microsoft/Phi-3-mini-4k-instruct":
+        n_layer = 2  # test only 2 layer models
+    else:
+        n_layer = 1
 
-#     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-#     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
-#     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-#         model_name=model_name, n_layer=n_layer, enable_qnn=True, qnn_config=qnn_config_json_path
-#     )
-
-
-# @pytest.mark.skip()  # remove when the SDK 1.20.0 issue solved for compiling this model
-# @pytest.mark.on_qaic
-# @pytest.mark.parametrize("model_name", spd_test_models)
-# def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
-#     """
-#     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
-#     ``Mandatory`` Args:
-#         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-#     """
-
-#     if model_name == "microsoft/Phi-3-mini-4k-instruct":
-#         n_layer = 2  # test only 2 layer models
-#     else:
-#         n_layer = 1
-
-#     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-#         model_name=model_name, n_layer=n_layer, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS
-#     )
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, n_layer=n_layer, enable_qnn=True, qnn_config=qnn_config_json_path
+    )
 
 
-# @pytest.mark.on_qaic
-# def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
-#     """
-#     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and without continuous batching.
-#     """
-#     model_name = "gpt2"
-#     prompt_len = 1
+@pytest.mark.skip()  # remove when the SDK 1.20.0 issue solved for compiling this model
+@pytest.mark.on_qaic
+@pytest.mark.parametrize("model_name", spd_test_models)
+def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
 
-#     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
+    if model_name == "microsoft/Phi-3-mini-4k-instruct":
+        n_layer = 2  # test only 2 layer models
+    else:
+        n_layer = 1
 
-
-# @pytest.mark.on_qaic
-# @pytest.mark.qnn
-# def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_qnn():
-#     """
-#     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and without continuous batching.
-#     """
-#     model_name = "gpt2"
-#     prompt_len = 1
-
-#     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-#     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-#     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-#         model_name=model_name, prompt_len=prompt_len, enable_qnn=True, qnn_config=qnn_config_json_path
-#     )
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, n_layer=n_layer, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS
+    )
 
 
-# @pytest.mark.on_qaic
-# def test_prefiill_only_pytorch_vs_kv_vs_ort_vs_ai100():
-#     model_name = "gpt2"
-#     n_layer = 1
-#     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer, prefill_only=True)
+@pytest.mark.on_qaic
+def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and without continuous batching.
+    """
+    model_name = "gpt2"
+    prompt_len = 1
 
-#     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer, prefill_only=False)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
+
+
+@pytest.mark.on_qaic
+@pytest.mark.qnn
+def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1_qnn():
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and without continuous batching.
+    """
+    model_name = "gpt2"
+    prompt_len = 1
+
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name, prompt_len=prompt_len, enable_qnn=True, qnn_config=qnn_config_json_path
+    )
+
+
+@pytest.mark.on_qaic
+def test_prefiill_only_pytorch_vs_kv_vs_ort_vs_ai100():
+    model_name = "gpt2"
+    n_layer = 1
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer, prefill_only=True)
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer, prefill_only=False)
 
 
 @pytest.mark.on_qaic
