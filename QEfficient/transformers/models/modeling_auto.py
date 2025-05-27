@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-from curses.ascii import EM
 import hashlib
 import warnings
 from pathlib import Path
@@ -162,14 +161,14 @@ class QEFFAutoModel(QEFFTransformersBase):
     @embedding_transform
     def __init__(self, model: nn.Module, **kwargs):
         super().__init__(model)
-        self.model.base_model.config.use_cache=True
+        self.model.base_model.config.use_cache = True
         # self.model.config.use_cache = True
-        self.num_layers = self.model.base_model.config.num_hidden_layers
+        # self.num_layers = self.model.base_model.config.num_hidden_layers
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path,pooling, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path, pooling=None, *args, **kwargs):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModel.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
@@ -203,13 +202,9 @@ class QEFFAutoModel(QEFFTransformersBase):
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
 
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False, "add_pooling_layer": False})
-        try:
-            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-            warnings.warn("Removing pooling layer from the model if exist")
-        except TypeError:
-            kwargs.pop("add_pooling_layer", None)
-            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        
+        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
@@ -384,9 +379,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
 
         outputs = {
-            "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(
-                np.float32
-            ),
+            "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(np.float32),
         }
         self.qpc_session.set_buffers(outputs)
         outputs = self.qpc_session.run(inputs)
