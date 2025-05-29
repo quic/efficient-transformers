@@ -5,12 +5,14 @@
 #
 # -----------------------------------------------------------------------------
 
+import copy
 import os
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 import pytest
-from transformers import AutoModelForCausalLM
+import torch.nn as nn
+from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -46,17 +48,148 @@ test_models_qaic = [
     "ibm-granite/granite-guardian-3.1-2b",
 ]
 
+test_dummy_model_configs = [
+    # model_name, model_type, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
+    ("TinyLlama/TinyLlama-1.1B-Chat-v1.0", "llama", 128, 1, 2, 64, 256, 2000, {"num_key_value_heads": 1}),
+    ("gpt2", "gpt2", 128, 1, 2, 64, 256, 50257, {"num_key_value_heads": 1}),
+    ("Salesforce/codegen-350M-mono", "codegen", 128, 1, 2, 64, 256, 51200, {"rotary_dim": 16}),
+    # ("microsoft/Phi-3-mini-4k-instruct","phi3", 128, 1, 2, 64, 256, 32064, {}), ouput not matching
+    ("tiiuae/falcon-7b", "falcon", 128, 1, 2, 64, 256, 65024, {}),
+    ("Qwen/Qwen2-0.5B", "qwen2", 128, 1, 2, 64, 256, 151900, {"num_key_value_heads": 1}),
+    ("bigcode/starcoder2-3b", "starcoder2", 128, 1, 2, 64, 256, 49152, {}),
+    ("Felladrin/Minueza-32M-Base", "mistral", 128, 1, 2, 64, 256, 32002, {"num_key_value_heads": 2}),
+    ("wtang06/mpt-125m-c4", "mpt", 128, 1, 2, 64, 256, 50368, {}),
+    ("hakurei/gpt-j-random-tinier", "gptj", 128, 1, 2, 64, 256, 50400, {"rotary_dim": 16}),
+    ("mistralai/Mixtral-8x7B-Instruct-v0.1", "mixtral", 128, 1, 2, 64, 256, 32000, {"num_key_value_heads": 2}),
+    (
+        "meta-llama/Llama-3.2-1B",
+        "llama",
+        128,
+        1,
+        2,
+        64,
+        256,
+        128250,
+        {
+            "num_key_value_heads": 1,
+            "rope_scaling": {
+                "factor": 32.0,
+                "high_freq_factor": 4.0,
+                "low_freq_factor": 1.0,
+                "original_max_position_embeddings": 8192,
+                "rope_type": "llama3",
+            },
+        },
+    ),
+    (
+        "unsloth/gemma-2b",
+        "gemma",
+        128,
+        1,
+        2,
+        64,
+        256,
+        256000,
+        {"num_key_value_heads": 1, "_name_or_path": "unsloth/gemma-2b"},
+    ),
+    ("unsloth/gemma-2-2b", "gemma2", 128, 1, 2, 64, 256, 256000, {"_name_or_path": "unsloth/gemma-2-2b"}),
+    # ("TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ", "llama",  128, 1, 2, 64, 256, 2000, {"num_key_value_heads": 1, "architectures": ["LlamaForCausalLM"], "pad_token_id": 0}),
+    # ("TheBloke/Llama-2-7B-GPTQ", "llama", 128, 1, 2, 64, 256, 32000, {"num_key_value_heads": 2}),
+    (
+        "ibm-granite/granite-20b-code-base",
+        "gpt_bigcode",
+        128,
+        1,
+        2,
+        64,
+        256,
+        4910,
+        {"activation_function": "gelu", "architectures": ["GPTBigCodeForCausalLM"]},
+    ),
+    # ("neuralmagic/Llama-3.2-3B-Instruct-FP8", "llama", 128, 1, 2, 64, 256, 128256, {"num_key_value_heads": 2}),
+    # ("neuralmagic/Qwen2-0.5B-Instruct-FP8", "qwen2", 128, 1, 2, 64, 256, 151900, {"num_key_value_heads": 1,"quantization_config": {"activation_scheme": "static","ignored_layers": [  "lm_head" ],"quant_method": "fp8"}}),
+    # ("ibm-granite/granite-3.1-2b-instruct", "granite", 128, 1, 2, 64, 256, 49155, {"num_key_value_heads": 2}),
+    ("ibm-granite/granite-guardian-3.1-2b", "granite", 128, 1, 4, 64, 256, 49155, {"num_key_value_heads": 1}),
+]
+
+
+def get_model_configs_and_names(configs: List[tuple]):
+    configs = [
+        (
+            AutoConfig.for_model(
+                model_type,
+                max_position_embeddings=max_position_embeddings,
+                num_hidden_layers=num_hidden_layers,
+                num_attention_heads=num_attention_heads,
+                hidden_size=hidden_size,
+                intermediate_size=intermediate_size,
+                vocab_size=vocab_size,
+                **additional_params,
+            ),
+            model_name,
+        )
+        for (
+            model_name,
+            model_type,
+            max_position_embeddings,
+            num_hidden_layers,
+            num_attention_heads,
+            hidden_size,
+            intermediate_size,
+            vocab_size,
+            additional_params,
+        ) in configs
+    ]
+    names = [y for (_, y) in configs]
+    return configs, names
+
+
+test_dummy_model_configs, test_dummy_model_names = get_model_configs_and_names(test_dummy_model_configs)
+
 test_models_qnn = [
     "mistralai/Mixtral-8x7B-Instruct-v0.1",
     "meta-llama/Llama-3.2-1B",
     "unsloth/gemma-2b",
     "ibm-granite/granite-guardian-3.1-2b",
 ]
+test_dummy_model_configs_qnn = [
+    # model_name, model_type, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
+    ("mistralai/Mixtral-8x7B-Instruct-v0.1", "mixtral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    (
+        "meta-llama/Llama-3.2-1B",
+        "llama",
+        128,
+        2,
+        4,
+        64,
+        256,
+        128256,
+        {
+            "num_key_value_heads": 2,
+            "rope_scaling": {
+                "factor": 32.0,
+                "high_freq_factor": 4.0,
+                "low_freq_factor": 1.0,
+                "original_max_position_embeddings": 8192,
+                "rope_type": "llama3",
+            },
+        },
+    ),
+    ("unsloth/gemma-2b", "gemma", 256, 2, 4, 128, 512, 127, {"_name_or_path": "unsloth/gemma-2b"}),
+    ("ibm-granite/granite-guardian-3.1-2b", "granite", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+]
+test_dummy_model_configs_qnn, test_dummy_model_names_qnn = get_model_configs_and_names(test_dummy_model_configs_qnn)
 
 spd_test_models = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
     "Qwen/Qwen2-0.5B",
 ]
+test_dummy_model_configs_spd = [
+    # model_name, model_type, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
+    ("TinyLlama/TinyLlama-1.1B-Chat-v1.0", "llama", 256, 2, 4, 128, 512, 32000, {"num_key_value_heads": 2}),
+    ("Qwen/Qwen2-0.5B", "qwen2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+]
+test_dummy_model_configs_spd, test_dummy_model_names_spd = get_model_configs_and_names(test_dummy_model_configs_spd)
 
 
 def load_causal_lm_model(model_config):
@@ -93,6 +226,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     prefill_only: Optional[bool] = None,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
+    model_hf: Optional[nn.Module] = None,
 ):
     """
     Validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
@@ -105,9 +239,10 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     replace_transformers_quantizers()
     model_config = {"model_name": model_name}
     model_config["n_layer"] = n_layer
+    if model_hf is None:
+        model_hf, _ = load_causal_lm_model(model_config)
 
-    model_hf, _ = load_causal_lm_model(model_config)
-
+    model_hf_cb = copy.deepcopy(model_hf)
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
     batch_size = len(Constants.INPUT_STR)
@@ -121,16 +256,13 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     )
 
     pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
-
     is_tlm = False if num_speculative_tokens is None else True
     qeff_model = QEFFAutoModelForCausalLM(model_hf, is_tlm=is_tlm, pretrained_model_name_or_path=model_name)
-
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
     assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
         "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
     )
-
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
     gen_len = ort_tokens.shape[-1]
@@ -139,7 +271,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
-
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
@@ -166,8 +297,10 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
     if prefill_only is not None:
         return
+
     # testing for CB models
-    model_hf, _ = load_causal_lm_model(model_config)
+    model_hf = model_hf_cb
+    model_hf.eval()
     full_batch_size = 4
     fbs_prompts = Constants.INPUT_STR * 4
     api_runner = ApiRunner(
@@ -245,6 +378,27 @@ def test_causal_lm_export_with_deprecated_api(model_name):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.regular
+@pytest.mark.parametrize(
+    "test_dummy_model_config, test_dummy_model_name", test_dummy_model_configs, ids=test_dummy_model_names
+)
+def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(test_dummy_model_config, test_dummy_model_name):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+
+    model_hf = AutoModelForCausalLM.from_config(
+        test_dummy_model_config,
+        attn_implementation="eager",
+    )
+    model_hf.eval()
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(test_dummy_model_name, model_hf=model_hf)
+
+
+@pytest.mark.nightly
+@pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models_qaic)
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
@@ -260,6 +414,35 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
 
 
+@pytest.mark.on_qaic
+@pytest.mark.regular
+@pytest.mark.qnn
+@pytest.mark.parametrize(
+    "test_dummy_model_config_qnn, test_dummy_model_name_qnn",
+    test_dummy_model_configs_qnn,
+    ids=test_dummy_model_names_qnn,
+)
+def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(test_dummy_model_config_qnn, test_dummy_model_name_qnn):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+
+    model_hf = AutoModelForCausalLM.from_config(
+        test_dummy_model_config_qnn,
+        attn_implementation="eager",
+    )
+    model_hf.eval()
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        test_dummy_model_name_qnn, enable_qnn=True, qnn_config=qnn_config_json_path, model_hf=model_hf
+    )
+
+
+@pytest.mark.nightly
 @pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.parametrize("model_name", test_models_qnn)
@@ -284,6 +467,33 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
 
 
 @pytest.mark.skip()  # remove when the SDK 1.20.0 issue solved for compiling this model
+@pytest.mark.regular
+@pytest.mark.on_qaic
+@pytest.mark.qnn
+@pytest.mark.parametrize(
+    "test_dummy_model_config_spd, test_dummy_model_name_spd",
+    test_dummy_model_configs_spd,
+    ids=test_dummy_model_names_spd,
+)
+def test_dummy_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(test_dummy_model_config_spd, test_dummy_model_name_spd):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    model_hf = AutoModelForCausalLM.from_config(
+        test_dummy_model_config_spd,
+        attn_implementation="eager",
+    )
+    model_hf.eval()
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=test_dummy_model_name_spd, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS, model_hf=model_hf
+    )
+
+
+@pytest.mark.skip()  # remove when the SDK 1.20.0 issue solved for compiling this model
+@pytest.mark.nightly
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", spd_test_models)
 def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
@@ -308,7 +518,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and without continuous batching.
     """
-    model_name = "gpt2"
+    model_name = "gpt2"  # hf-internal-testing/tiny-random-gpt2
     prompt_len = 1
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
