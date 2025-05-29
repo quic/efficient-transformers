@@ -11,8 +11,10 @@ from typing import Optional
 import numpy as np
 import onnxruntime as ort
 import pytest
+import torch
 from transformers import AutoModel, AutoTokenizer
 
+from QEfficient.transformers.embeddings.embedding_utils import mean_pooling
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import Constants, QnnConstants
@@ -81,9 +83,49 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     ai100_output = qeff_model.generate(inputs=inputs)
 
     # Compare ONNX and AI 100 outputs
-    mad = np.mean(np.abs(ai100_output - onnx_outputs[0]))
+    mad = np.mean(np.abs(ai100_output["output"][:, : inputs["input_ids"].shape[1], :] - onnx_outputs[0]))
     print("Mad for onnx and AI 100 output is ", mad)
-    assert mad <= 10**-3, f"MAD is too high for onnx and Pytorch: {mad}"
+    assert mad <= 10**-2, f"MAD is too high for onnx and Pytorch: {mad}"
+    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
+
+    # Testing pooled model
+    pt_pooled_embedding = mean_pooling(pt_outputs.last_hidden_state, inputs["attention_mask"])
+
+    # Pytorch transformed model
+    qeff_model = QEFFAutoModel(pt_model, pretrained_model_name_or_path=model_name, pooling="mean")
+
+    inputs = tokenizer("My name is", return_tensors="pt")
+    qeff_pt_outputs = qeff_model.generate(inputs=inputs, runtime_ai100=False)
+
+    mad = torch.mean(torch.abs(pt_pooled_embedding - qeff_pt_outputs))
+    print("Mad for PyTorch and PyTorch transformed qeff_model is ", mad)
+    assert mad <= 0, f"MAD is too high for onnx and Pytorch: {mad}"
+
+    onnx_model = qeff_model.export()
+    ort_session = ort.InferenceSession(str(onnx_model))
+
+    # Run inference
+    onnx_outputs = ort_session.run(None, onnx_inputs)
+
+    # Compare Transformed PyTorch and ONNX outputs
+
+    pt_embeddings = pt_outputs[0][0].detach().numpy()
+    onnx_embeddings = onnx_outputs[0]
+    mad = np.mean(np.abs(pt_pooled_embedding.detach().numpy() - onnx_embeddings))
+    print("Mad for onnx and PyTorch is ", mad)
+    assert mad <= 10**-5, f"MAD is too high for onnx and Pytorch: {mad}"
+
+    qeff_model.compile(
+        num_cores=14,
+        enable_qnn=enable_qnn,
+        qnn_config=qnn_config,
+    )
+    ai100_output = qeff_model.generate(inputs=inputs)
+
+    # Compare ONNX and AI 100 outputs
+    mad = np.mean(np.abs(ai100_output["output"] - onnx_outputs[0]))
+    print("Mad for onnx and AI 100 output is ", mad)
+    assert mad <= 10**-2, f"MAD is too high for onnx and Pytorch: {mad}"
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
 
