@@ -7,6 +7,7 @@
 
 from types import MethodType
 from typing import Optional, Tuple
+import warnings
 
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
@@ -145,6 +146,7 @@ from transformers.models.whisper.modeling_whisper import (
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
+from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QeffCodeGenBlock,
@@ -524,3 +526,15 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
     }
     _match_class_replace_method = {}
+
+class EmbeddingTransform:    
+    @classmethod
+    def apply(cls, model: nn.Module, **kwargs) -> Tuple[nn.Module, bool]:
+        transformed = False
+        if kwargs.get("pooling") is not None:
+            pooling = kwargs["pooling"]
+            pooling_method = POOLING_MAP[pooling]
+            model = PooledModel(model, pooling_method)
+            warnings.warn(f"Pooling method {pooling} is applied to the model.")
+        return model, transformed
+           

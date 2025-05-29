@@ -35,7 +35,6 @@ from QEfficient.generation.text_generation_inference import (
     calculate_latency,
     get_compilation_dims,
 )
-from QEfficient.transformers.embeddings.embedding_utils import embedding_transform
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheModuleMethodMapperTransform,
@@ -43,6 +42,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     SpDTransform,
     VlmKVOffloadTransform,
     VlmNoKVOffloadTransform,
+    EmbeddingTransform,
 )
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
@@ -158,10 +158,14 @@ class QEFFAutoModel(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    @embedding_transform
     def __init__(self, model: nn.Module, **kwargs):
         super().__init__(model)
+        
+        # Make Embedding specific transforms like pooling
+        self.model, _= EmbeddingTransform.apply(self.model, **kwargs)
+        
         self.model.base_model.config.use_cache = True
+        
         # self.model.config.use_cache = True
         # self.num_layers = self.model.base_model.config.num_hidden_layers
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)

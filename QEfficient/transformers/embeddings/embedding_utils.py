@@ -52,16 +52,3 @@ class PooledModel(nn.Module):
     ):
         output = self.base_model(input_ids, attention_mask, **kwargs)
         return self.pooling_fn(output[0], attention_mask)
-
-
-def embedding_transform(func):
-    def wrapper(self, model, **kwargs):
-        if kwargs.get("pooling") is not None:
-            pooling = kwargs["pooling"]
-            pooling_method = POOLING_MAP[pooling]
-            model = PooledModel(model, pooling_method)
-            warnings.warn(f"Pooling method {pooling} is applied to the model.")
-        result = func(self, model, **kwargs)
-        return result
-
-    return wrapper
