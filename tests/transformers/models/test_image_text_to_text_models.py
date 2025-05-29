@@ -27,7 +27,6 @@ from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerVlm
 from QEfficient.utils.test_utils import InternProcessor
 
-HF_TOKEN = ""
 NEW_GENERATION_TOKENS = 10
 test_models_config = [
     # CONFIG PARAMS NEEDED FOR A MODEL TO BE TESTED
@@ -104,21 +103,18 @@ intern_model_config = [
 def load_image_text_to_text_model(model_config):
     model_path = hf_download(
         repo_id=model_config._name_or_path,
-        hf_token=HF_TOKEN,
         ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
     try:
         model_hf = AutoModelForImageTextToText.from_pretrained(
             model_path,
             low_cpu_mem_usage=False,
-            token=HF_TOKEN,
             config=model_config,
         )
     except ValueError:
         model_hf = AutoModelForCausalLM.from_pretrained(
             model_path,
             low_cpu_mem_usage=False,
-            token=HF_TOKEN,
             trust_remote_code=True,
             config=model_config,
         )
@@ -161,7 +157,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_config = {"model_name": model_name}
     model_config["img_size"] = img_size
     config = AutoConfig.from_pretrained(
-        model_config["model_name"], token=HF_TOKEN, trust_remote_code=True, padding=True
+        model_config["model_name"], trust_remote_code=True, padding=True
     )
     config = set_num_layers(config, n_layer=n_layer)
     model_hf, _ = load_image_text_to_text_model(config)
@@ -199,7 +195,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_config["model_name"],
         kv_offload=kv_offload,
         config=config,
-        token=HF_TOKEN,
     )
 
     # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
@@ -284,7 +279,6 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_config["model_name"],
         kv_offload=kv_offload,
         config=config,
-        token=HF_TOKEN,
     )
     # pytorch_kv_tokens = api_runner.run_vlm_kv_model_on_pytorch(qeff_model.model)
     # assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
