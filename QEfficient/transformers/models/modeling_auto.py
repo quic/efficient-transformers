@@ -1088,14 +1088,15 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         streamer: Optional[TextStreamer] = None,
     ) -> np.ndarray:
         inputs = self.auto_correct_inputs(inputs)
+        #self.qpc_path = Path("/home/mohisoni/.cache/qeff_models/Llama4ForConditionalGeneration-270c6f56f5941415/qpc-8c8e644bd1f2ca1e/qpc_1")
         qpc_session = QAICInferenceSession(
             self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
         )
-
+ 
         batch_size, ctx_len, fbs = get_compilation_dims(self.qpc_path)
-
+ 
         pad_token_id = 1
-
+        # import ipdb; ipdb.set_trace()
         # Skip inputs/outputs
         qpc_session.skip_buffers(
             [
@@ -1104,30 +1105,30 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 if x.startswith("past_") or x.endswith("_RetainedState")
             ]
         )
-
+ 
         # Read prompt and ctx len from session
         batch_size = max(
             [x[qpc_session.binding_index_map["input_ids"]][1][0] for x in qpc_session.allowed_shapes]
             + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[0]]
         )
-
+ 
         prefill_seq_len = max(
             [x[qpc_session.binding_index_map["input_ids"]][1][1] for x in qpc_session.allowed_shapes]
             + [qpc_session.bindings[qpc_session.binding_index_map["input_ids"]].dims[1]]
         )
-
+ 
         input_len = inputs["attention_mask"].sum(1, keepdims=True)
         input_ids_length = inputs["input_ids"].shape[1]
-
+ 
         num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
-
+ 
         padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
         if generation_len is None:
             generation_len = ctx_len - input_len.max()
-
+ 
         assert generation_len > 0, "generation length should be greater than zero"
         generated_ids = np.full((batch_size, generation_len + 1), pad_token_id)
-
+ 
         # Prepare inputs for prefill
         inputs["input_ids"] = torch.nn.functional.pad(
             inputs["input_ids"],
@@ -1144,10 +1145,10 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             )
         for k, v in inputs.items():
             inputs[k] = np.array(v)
-
+ 
         if "pixel_values_RetainedState" in qpc_session.output_names:
             inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
-
+ 
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
         inputs["image_idx"] = np.array([[0]])
 
@@ -1166,19 +1167,19 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         # Get first token
         inputs["input_ids"] = outputs["logits"].argmax(2)
         inputs["position_ids"] = input_len.numpy()
-
+ 
         if "cross_attention_mask" in inputs:
             bs, _, num_images, img_tiles = inputs["cross_attention_mask"].shape
             inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64).numpy()
-
+ 
         generated_ids[:, 0] = inputs["input_ids"].squeeze(1)
         if streamer:
             streamer.put(inputs["input_ids"][0])
-
+ 
         if "pixel_values_RetainedState" in qpc_session.output_names:
             qpc_session.skip_buffers(["pixel_values"])
             inputs.pop("pixel_values")
-
+ 
         # Decode loop
         decode_start = perf_counter()
         for num_token in range(1, generation_len):
@@ -1189,15 +1190,15 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
             if streamer:
                 streamer.put(inputs["input_ids"][0])
-
+ 
         decode_end = perf_counter()
         if streamer:
             streamer.end()
-
+ 
         decode_perf = (num_token - 1) / (decode_end - decode_start)
         total_time = decode_end - prefill_start
         total_perf = num_token / total_time
-
+ 
         return CloudAI100ExecInfoNew(
             batch_size=batch_size,
             generated_ids=generated_ids,
