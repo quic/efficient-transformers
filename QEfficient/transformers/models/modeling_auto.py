@@ -175,8 +175,13 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         This API can also be used as exception for VLM model since transformers support loading InternChatVL models via AutoModel API we support it via AutoModelForCausalLM API
         Args:
-            :pretrained_name_or_path (str): Model card name from HuggingFace or local path to model directory.
-            :args, kwargs: Additional arguments to pass to transformers.AutoModel.
+            pretrained_model_name_or_path (str): The name or path of the pre-trained model.
+            pooling (Optional[str], optional): The pooling method to use. Defaults to None.
+                Options:
+                    - "mean": Mean pooling
+                    - "max": Max pooling
+                    - "cls": CLS token pooling
+                    - "avg": Average pooling
 
         .. code-block:: python
 
@@ -203,7 +208,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        
+
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
@@ -366,7 +371,6 @@ class QEFFAutoModel(QEFFTransformersBase):
             self.batch_size = self.qpc_session.bindings[0].dims[0]
             self.seq_len = self.qpc_session.bindings[0].dims[1]
         # Prepare input
-        input_ids_len = inputs["input_ids"].shape[1]
         input_ids = np.array(
             torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - inputs["input_ids"].size(1)), "constant", 0)
         )
