@@ -5,9 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
+import warnings
 from types import MethodType
 from typing import Optional, Tuple
-import warnings
 
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
@@ -527,7 +527,12 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
     }
     _match_class_replace_method = {}
 
-class EmbeddingTransform:    
+
+class EmbeddingTransform:
+    """
+    Apply Embedding transform to the embedding model.
+    """
+
     @classmethod
     def apply(cls, model: nn.Module, **kwargs) -> Tuple[nn.Module, bool]:
         transformed = False
@@ -537,4 +542,3 @@ class EmbeddingTransform:
             model = PooledModel(model, pooling_method)
             warnings.warn(f"Pooling method {pooling} is applied to the model.")
         return model, transformed
-           

@@ -16,18 +16,13 @@ from transformers import AutoModel, AutoTokenizer
 
 from QEfficient.transformers.embeddings.embedding_utils import mean_pooling
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
-from QEfficient.utils._utils import create_json
-from QEfficient.utils.constants import Constants, QnnConstants
+from QEfficient.utils.constants import Constants
 
 embed_test_models = [
     # model_name, architecture
-    # "sentence-transformers/multi-qa-mpnet-base-cos-v1",  # MPNetForMaskedLM
-    # "BAAI/bge-reranker-v2-m3",  # XLMRobertaForSequenceClassification
-    # "BAAI/bge-small-en-v1.5",  # BertModel
-    "jinaai/jina-embeddings-v2-base-en",
-    # "intfloat/e5-large"
-    # "sentence-transformers/gtr-t5-large"
-    # ]
+    "sentence-transformers/multi-qa-mpnet-base-cos-v1",  # MPNetForMaskedLM
+    "BAAI/bge-reranker-v2-m3",  # XLMRobertaForSequenceClassification
+    "BAAI/bge-small-en-v1.5",  # BertModel
 ]
 
 
@@ -39,7 +34,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     qnn_config: Optional[str] = None,
 ):
     # Prepare input
-    tokenizer = AutoTokenizer.from_pretrained(model_name, token="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")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     inputs = tokenizer("My name is", return_tensors="pt")
 
     # Original PyTorch model
@@ -48,25 +43,14 @@ def check_embed_pytorch_vs_ort_vs_ai100(
         num_hidden_layers=n_layer,
         attn_implementation="eager",
         trust_remote_code=True,
-        token="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",
     )
 
     pt_outputs = pt_model(**inputs)
     pt_embeddings = pt_outputs[0][0].detach().numpy()
-
-    # checking without pooling
     # Pytorch transformed model
-    qeff_model = QEFFAutoModel.from_pretrained(
-        pretrained_model_name_or_path=model_name,
-        attn_implementation="eager",
-        num_hidden_layers=n_layer,
-        trust_remote_code=True,
-        token="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",
-    )
+    qeff_model = QEFFAutoModel(pt_model, pretrained_model_name_or_path=model_name)
     qeff_pt_outputs = qeff_model.generate(inputs=inputs, runtime_ai100=False)
     qeff_pt_embeddings = qeff_pt_outputs[0][0].detach().numpy()
-
-    # ipdb.set_trace()
     mad = np.mean(np.abs(pt_embeddings - qeff_pt_embeddings))
     print("Mad for PyTorch and PyTorch transformed qeff_model is ", mad)
     assert mad <= 0, f"MAD is too high for onnx and Pytorch: {mad}"
@@ -79,8 +63,11 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     attention_mask = np.array(inputs["attention_mask"])
 
     onnx_inputs = {"input_ids": input_ids, "attention_mask": attention_mask}
-
+    # Run inference
     onnx_outputs = ort_session.run(None, onnx_inputs)
+
+    # Compare Transformed PyTorch and ONNX outputs
+
     pt_embeddings = pt_outputs[0][0].detach().numpy()
     onnx_embeddings = onnx_outputs[0]
     mad = np.mean(np.abs(pt_embeddings - onnx_embeddings))
@@ -100,18 +87,12 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     assert mad <= 10**-2, f"MAD is too high for onnx and Pytorch: {mad}"
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
-    # pt_pooled_embedding = average_pool(pt_outputs.last_hidden_state, inputs["attention_mask"])
+    # Testing pooled model
     pt_pooled_embedding = mean_pooling(pt_outputs.last_hidden_state, inputs["attention_mask"])
 
     # Pytorch transformed model
-    qeff_model = QEFFAutoModel.from_pretrained(
-        pretrained_model_name_or_path=model_name,
-        pooling="mean",
-        num_hidden_layers=n_layer,
-        token="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",
-        attn_implementation="eager",
-        trust_remote_code=True,
-    )
+    qeff_model = QEFFAutoModel(pt_model, pretrained_model_name_or_path=model_name, pooling="mean")
+
     inputs = tokenizer("My name is", return_tensors="pt")
     qeff_pt_outputs = qeff_model.generate(inputs=inputs, runtime_ai100=False)
 
