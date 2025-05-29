@@ -16,7 +16,8 @@ from transformers import AutoModel, AutoTokenizer
 
 from QEfficient.transformers.embeddings.embedding_utils import mean_pooling
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
-from QEfficient.utils.constants import Constants
+from QEfficient.utils._utils import create_json
+from QEfficient.utils.constants import Constants, QnnConstants
 
 embed_test_models = [
     # model_name, architecture
@@ -137,17 +138,17 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100(model_name):
     check_embed_pytorch_vs_ort_vs_ai100(model_name=model_name, seq_len=32, n_layer=1)
 
 
-# @pytest.mark.on_qaic
-# @pytest.mark.qnn
-# @pytest.mark.parametrize("model_name", embed_test_models)
-# def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
-#     """
-#     QNN Compilation path test.
-#     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
-#     """
-#     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-#     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+@pytest.mark.on_qaic
+@pytest.mark.qnn
+@pytest.mark.parametrize("model_name", embed_test_models)
+def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
+    """
+    QNN Compilation path test.
+    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
+    """
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
-#     check_embed_pytorch_vs_ort_vs_ai100(
-#         model_name=model_name, seq_len=32, n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path
-#     )
+    check_embed_pytorch_vs_ort_vs_ai100(
+        model_name=model_name, seq_len=32, n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path
+    )
