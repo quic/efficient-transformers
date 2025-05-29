@@ -5,29 +5,16 @@
 #
 # -----------------------------------------------------------------------------
 
-from logging import warning
+import warnings
 from typing import Optional
 
 import torch
 import torch.nn as nn
 
 
-def mean_pooling(model_output, attention_mask):
-    token_embeddings = model_output 
-    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-# def mean_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-#     # Apply the attention mask to the hidden states
-#     masked_hidden = last_hidden_states[0] * attention_mask[..., None]
-    
-#     # Sum the masked hidden states along the sequence dimension
-#     sum_hidden = masked_hidden.sum(dim=1)
-    
-#     # Count the number of valid (non-masked) tokens
-#     valid_token_count = attention_mask.sum(dim=1)[..., None]
-    
-#     # Compute the mean by dividing summed hidden states by the count of valid tokens
-#     return sum_hidden / valid_token_count
+def mean_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_states.size()).float()
+    return torch.sum(last_hidden_states * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
 
 def average_pool(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -35,15 +22,14 @@ def average_pool(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor)
     return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
 
 
-def max_pooling(model_output, attention_mask):
-    token_embeddings = model_output[0]  
-    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    token_embeddings[input_mask_expanded == 0] = -1e9  
-    return torch.max(token_embeddings, 1)[0]
+def max_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_states.size()).float()
+    last_hidden_states[input_mask_expanded == 0] = -1e9
+    return torch.max(last_hidden_states, 1)[0]
 
 
-def cls_pooling(token_embeddings, attention_mask):
-    return token_embeddings[:, 0]
+def cls_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    return last_hidden_states[:, 0]
 
 
 POOLING_MAP = {
@@ -64,7 +50,6 @@ class PooledModel(nn.Module):
     def forward(
         self, input_ids: Optional[torch.Tensor] = None, attention_mask: Optional[torch.Tensor] = None, **kwargs
     ):
-        warning("")
         output = self.base_model(input_ids, attention_mask, **kwargs)
         return self.pooling_fn(output[0], attention_mask)
 
@@ -75,6 +60,7 @@ def embedding_transform(func):
             pooling = kwargs["pooling"]
             pooling_method = POOLING_MAP[pooling]
             model = PooledModel(model, pooling_method)
+            warnings.warn(f"Pooling method {pooling} is applied to the model.")
         result = func(self, model, **kwargs)
         return result
 

@@ -662,3 +662,9 @@ def filter_kwargs(func, kwargs):
     """
     valid_args = inspect.signature(func).parameters
     return {key: value for key, value in kwargs.items() if key in valid_args}
+
+
+def custom_format_warning(msg, category, *args, **kwargs):
+    YELLOW = "\033[93m"
+    RESET = "\033[0m"
+    return f"{YELLOW}[Warning]: {msg}{RESET}\n"
