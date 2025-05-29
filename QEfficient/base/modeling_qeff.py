@@ -241,10 +241,12 @@ class QEFFBaseModel(ABC):
             :mdp_ts_num_devices (int): Number of devices to partition to use Multi-Device Partitioning with tensor-slicing.
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
-            :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
-            :compiler_options: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+            :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
+            :compiler_options: Pass any compiler option as input.
+                Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
+                For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
         if onnx_path is None and self.onnx_path is None:
             self.export()
@@ -256,6 +258,11 @@ class QEFFBaseModel(ABC):
             raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
 
         if enable_qnn:
+            if compiler_options:
+                logger.warning(
+                    f"Extra arguments to QNN compilation are supported only via qnn_config file. Ignoring {compiler_options}"
+                )
+
             self.qpc_path = qnn_compile(
                 onnx_path=onnx_path,
                 qpc_base_path=compile_dir,
