@@ -14,14 +14,13 @@ To achieve this, we have 2 levels of APIs, with different levels of abstraction.
 | Feature | Impact |
 | --- | --- |
 | [SpD, multiprojection heads](https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding) | Implemented post-attention hidden size projections to speculate tokens ahead of the base model. |
-| [QNN Compilation support](https://github.com/quic/efficient-transformers/pull/374) for AutoModel classes | QNN compilation capabilities for multi-models, embedding models and causal models |
-| disaggregated serving | It support for separate prefill and decode compilation for encoder (vision) and language models. [disaggregated serving](https://github.com/quic/efficient-transformers/pull/365).|
-| SwiftKV | Support for both [continuous and non-continuous batching execution](https://github.com/quic/efficient-transformers/pull/367) in SwiftKV |
-| Support for | [GGUF model execution](https://github.com/quic/efficient-transformers/pull/368) (without quantized weights) |
-| Enabled FP8 model support on | [replicate_kv_heads script](https://github.com/quic/efficient-transformers/tree/main/scripts/replicate_kv_head) |
-| Added support for | [gradient checkpointing](https://github.com/quic/efficient-transformers/pull/338) in the finetuning script|
+| [QNN Compilation support](https://github.com/quic/efficient-transformers/pull/374) | Enabled for AutoModel classes QNN compilation capabilities for multi-models, embedding models and causal models |
+| Disaggregated serving | It support for separate prefill and decode compilation for encoder (vision) and language models. [isaggregated serving](https://github.com/quic/efficient-transformers/pull/365).|
+| [GGUF model execution](https://github.com/quic/efficient-transformers/pull/368) | Supported GGUF model execution (without quantized weights) |
+| Replication of KV | Enabled FP8 model support on [replicate_kv_heads script](https://github.com/quic/efficient-transformers/tree/main/scripts/replicate_kv_head) |
+| [gradient checkpointing](https://github.com/quic/efficient-transformers/pull/338) | Supports gradient checkpointing in the finetuning script|
 | Context Length Specializations (upcoming) | Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text. |
-| Swift KV [Snowflake/Llama-3.1-SwiftKV-8B-Instruct] | Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. |
+| Swift KV [Snowflake/Llama-3.1-SwiftKV-8B-Instruct](https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct) | Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. Support for both [continuous and non-continuous batching execution](https://github.com/quic/efficient-transformers/pull/367) in SwiftKV |
 | Block Attention (in progress) | Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG. |
 | [Vision Language Model](QEFFAutoModelForImageTextToText) | Provides support for the AutoModelForImageTextToText class from the transformers library, enabling advanced vision-language tasks. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text_inference.py) for more **details**. |
 | [Speech Sequence to Sequence Model](QEFFAutoModelForSpeechSeq2Seq) | Provides support for the QEFFAutoModelForSpeechSeq2Seq Facilitates speech-to-text sequence models. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/speech_to_text/run_whisper_speech_to_text.py) for more **details**. |
