@@ -52,7 +52,17 @@ test_dummy_model_configs = [
     # model_name, model_type, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
     ("TinyLlama/TinyLlama-1.1B-Chat-v1.0", "llama", 128, 1, 2, 64, 256, 2000, {"num_key_value_heads": 1}),
     ("gpt2", "gpt2", 128, 1, 2, 64, 256, 50257, {"num_key_value_heads": 1}),
-    ("Salesforce/codegen-350M-mono", "codegen", 128, 1, 2, 64, 256, 51200, {"rotary_dim": 16}),
+    (
+        "Salesforce/codegen-350M-mono",
+        "codegen",
+        128,
+        1,
+        4,
+        64,
+        256,
+        51200,
+        {"_name_or_path": "codegen-350M-mono", "rotary_dim": 16},
+    ),
     # ("microsoft/Phi-3-mini-4k-instruct","phi3", 128, 1, 2, 64, 256, 32064, {}), ouput not matching
     ("tiiuae/falcon-7b", "falcon", 128, 1, 2, 64, 256, 65024, {}),
     ("Qwen/Qwen2-0.5B", "qwen2", 128, 1, 2, 64, 256, 151900, {"num_key_value_heads": 1}),
@@ -92,7 +102,17 @@ test_dummy_model_configs = [
         256000,
         {"num_key_value_heads": 1, "_name_or_path": "unsloth/gemma-2b"},
     ),
-    ("unsloth/gemma-2-2b", "gemma2", 128, 1, 2, 64, 256, 256000, {"_name_or_path": "unsloth/gemma-2-2b"}),
+    (
+        "unsloth/gemma-2-2b",
+        "gemma2",
+        128,
+        1,
+        2,
+        64,
+        256,
+        256000,
+        {"num_key_value_heads": 1, "_name_or_path": "unsloth/gemma-2-2b"},
+    ),
     # ("TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ", "llama",  128, 1, 2, 64, 256, 2000, {"num_key_value_heads": 1, "architectures": ["LlamaForCausalLM"], "pad_token_id": 0}),
     # ("TheBloke/Llama-2-7B-GPTQ", "llama", 128, 1, 2, 64, 256, 32000, {"num_key_value_heads": 2}),
     (
@@ -241,8 +261,8 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_config["n_layer"] = n_layer
     if model_hf is None:
         model_hf, _ = load_causal_lm_model(model_config)
-
     model_hf_cb = copy.deepcopy(model_hf)
+
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
     batch_size = len(Constants.INPUT_STR)
