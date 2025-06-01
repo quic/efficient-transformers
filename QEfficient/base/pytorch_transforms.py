@@ -134,11 +134,16 @@ class SplitGateUpWeightsTransform(PytorchTransform):
         transformed = False
         model_class = model.__class__.__name__ if hasattr(model, "model") else model.__class__.__name__
 
+<<<<<<< HEAD
         if model_class not in VLM_SPLIT_GATE_UP_WEIGHTS:
             return model, transformed
 
         model_tmp = model.language_model if hasattr(model, "language_model") else model
 
+=======
+        model_tmp = model.language_model if hasattr(model, "language_model") else model
+
+>>>>>>> c91dd9f (Adding SingleQPC)
         num_layers = len(model_tmp.model.layers)
         delete_fused_key = True
         sd = model_tmp.state_dict()
