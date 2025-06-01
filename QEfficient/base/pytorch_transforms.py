@@ -129,11 +129,11 @@ class SplitGateUpWeightsTransform(PytorchTransform):
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         transformed = False
 
-        model = model.language_model if hasattr(model, "language_model") else model
+        model_tmp = model.language_model if hasattr(model, "language_model") else model
 
-        num_layers = len(model.model.layers)
+        num_layers = len(model_tmp.model.layers)
         delete_fused_key = True
-        sd = model.state_dict()
+        sd = model_tmp.state_dict()
         for layer_idx in range(num_layers):
             # ---- build the textual prefix once per layer ----------
             prefix = f"model.layers.{layer_idx}.feed_forward.experts."
@@ -148,7 +148,7 @@ class SplitGateUpWeightsTransform(PytorchTransform):
             ffn_dim = two_I // 2
             gate, up = fused.split(ffn_dim, dim=-1)  # views – no copy
 
-            experts = model.model.layers[layer_idx].feed_forward.experts
+            experts = model_tmp.model.layers[layer_idx].feed_forward.experts
             experts.gate_proj.data.copy_(gate)
             experts.up_proj.data.copy_(up)
 
@@ -161,6 +161,8 @@ class SplitGateUpWeightsTransform(PytorchTransform):
 
             logger.info(f"[layer {layer_idx:02d}] loaded gate_proj & up_proj from fused tensor  (shape {fused.shape})")
             transformed = True
+
+        model.language_model = model_tmp
         return model, transformed
 
 

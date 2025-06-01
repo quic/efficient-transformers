@@ -1080,8 +1080,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         generated_ids = np.full((batch_size, generation_len + 1), pad_token_id)
 
         # Prepare inputs for prefill
-        prefill_start = perf_counter()
-
         inputs["input_ids"] = torch.nn.functional.pad(
             inputs["input_ids"],
             (0, padded_len - input_ids_length),
@@ -1102,16 +1100,18 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
 
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+        inputs["index"] = np.array([[0]])
 
         qpc_session.activate()
+        chunk_inputs = inputs.copy()
+        prefill_start = perf_counter()
 
         # Run prefill
-
         for i in range(num_chunks):
-            chunk_inputs = inputs.copy()
             chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             outputs = qpc_session.run(chunk_inputs)
+            chunk_inputs["index"] = outputs["index_output"]
 
         prefill_time = perf_counter() - prefill_start
         # Get first token
