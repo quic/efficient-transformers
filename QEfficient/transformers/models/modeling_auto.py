@@ -1149,7 +1149,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
 
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+<<<<<<< HEAD
         inputs["image_idx"] = np.array([[0]])
+=======
+        inputs["index"] = np.array([[0]])
+>>>>>>> c91dd9f (Adding SingleQPC)
 
         qpc_session.activate()
         chunk_inputs = inputs.copy()
@@ -1160,7 +1164,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             outputs = qpc_session.run(chunk_inputs)
+<<<<<<< HEAD
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
+=======
+            chunk_inputs["index"] = outputs["index_output"]
+>>>>>>> c91dd9f (Adding SingleQPC)
 
         prefill_time = perf_counter() - prefill_start
         # Get first token
