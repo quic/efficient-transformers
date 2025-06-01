@@ -278,7 +278,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         onnx_path: Optional[str] = None,
         compile_dir: Optional[str] = None,
         *,
-        seq_len: int = 32,
+        seq_len: Union[int, List[int]] = 32,
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
@@ -293,7 +293,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         ``Optional`` Args:
             :onnx_path (str, optional): Path to pre-exported onnx model.
             :compile_dir (str, optional): Path for saving the qpc generated.
-            :seq_len (int, optional): The length of the prompt should be less that ``seq_len``. ``Defaults to 32``.
+            :seq_len (Union[int, List[int]]): The length of the prompt should be less that ``seq_len``. ``Defaults to 32``.
             :batch_size (int, optional): Batch size. ``Defaults to 1``.
             :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
             :num_cores (int): Number of cores used to compile the model.
@@ -310,7 +310,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
 
         specializations = [
-            {"batch_size": batch_size, "seq_len": seq_len},
+            {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
 
         return self._compile(
@@ -371,10 +371,19 @@ class QEFFAutoModel(QEFFTransformersBase):
         if self.qpc_session is None:
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
-            self.seq_len = self.qpc_session.bindings[0].dims[1]
-        # Prepare input
+
+        # Dynamic switching to closest seq_Len based on input_ids_len
+        input_ids_len = inputs["input_ids"].shape[1]
+
+        for allowed_shape in self.qpc_session.allowed_shapes:
+            seq_len_allowed = allowed_shape[1][1][1]
+
+            if seq_len_allowed > input_ids_len:
+                self.seq_len = seq_len_allowed
+                break
+
         input_ids = np.array(
-            torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - inputs["input_ids"].size(1)), "constant", 0)
+            torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - input_ids_len), "constant", 0)
         )
         attention_mask = np.array(
             torch.nn.functional.pad(
@@ -389,7 +398,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         }
         self.qpc_session.set_buffers(outputs)
         outputs = self.qpc_session.run(inputs)
-        # outputs = outputs["output"][:, :input_ids_len, :]
         return outputs
 
     def pytorch_feature_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
