@@ -40,6 +40,10 @@ POOLING_MAP = {
 
 
 class PooledModel(nn.Module):
+    """
+    Adds pooling functionality to embedding model.
+    """
+
     def __init__(self, base_model, pooling_fn):
         super().__init__()
         self.config = base_model.config

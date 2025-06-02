@@ -493,7 +493,7 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
 
 class EmbeddingTransform:
     """
-    Apply Embedding transform to the embedding model.
+    Apply Embedding transform to the model.
     """
 
     @classmethod
