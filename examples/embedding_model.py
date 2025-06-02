@@ -18,9 +18,10 @@ sentences = "This is an example sentence"
 # Load model from HuggingFace Hub
 tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
-# if pooling is set to "mean", the model will use the mean pooling method else no pooling will be applied
+# If pooling is not set, model will generate default output
 qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling="mean")
 
+# Here list of seq_len also can be used
 qeff_model.compile(num_cores=16, seq_len=32)
 
 # Tokenize sentences

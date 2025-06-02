@@ -382,6 +382,9 @@ class QEFFAutoModel(QEFFTransformersBase):
                 self.seq_len = seq_len_allowed
                 break
 
+        # To handle single seq_len as we can't fetch allowed shapes for single seq_len
+        self.seq_len = self.qpc_session.bindings[0].dims[1] if not hasattr(self, "seq_len") else self.seq_len
+
         input_ids = np.array(
             torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - input_ids_len), "constant", 0)
         )
