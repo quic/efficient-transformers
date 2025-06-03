@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -13,10 +13,13 @@ from QEfficient.utils._utils import (  # noqa: F401
     check_and_assign_cache_dir,
     dump_qconfig,
     get_num_layers_from_config,
+    get_num_layers_vlm,
     get_onnx_dir_name,
     get_padding_shape_from_config,
+    get_padding_shape_vlm,
     get_qpc_dir_path,
     hf_download,
+    load_hf_processor,
     load_hf_tokenizer,
     login_and_download_hf_lm,
     onnx_exists,

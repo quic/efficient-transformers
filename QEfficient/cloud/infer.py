@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -10,9 +10,84 @@ import logging
 import sys
 from typing import List, Optional
 
+import requests
+from PIL import Image
+from transformers import PreTrainedModel, TextStreamer
+from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
+
 from QEfficient.base.common import QEFFCommonLoader
-from QEfficient.utils import check_and_assign_cache_dir, load_hf_tokenizer
+from QEfficient.utils import check_and_assign_cache_dir, load_hf_processor, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
+
+
+# TODO: Remove after adding support for VLM's compile and execute
+def execute_vlm_model(
+    qeff_model: PreTrainedModel,
+    model_name: str,
+    image_url: str,
+    image_path: str,
+    prompt: Optional[str] = None,  # type: ignore
+    device_group: Optional[List[int]] = None,
+    local_model_dir: Optional[str] = None,
+    cache_dir: Optional[str] = None,
+    hf_token: Optional[str] = None,
+    generation_len: Optional[int] = None,
+):
+    """
+    This method generates output by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
+    ``Mandatory`` Args:
+        :qeff_model (PreTrainedModel): QEfficient model object.
+        :model_name (str): Hugging Face Model Card name, Example: ``llava-hf/llava-1.5-7b-hf``
+        :image_url (str): Image URL to be used for inference. ``Defaults to None.``
+        :image_path (str): Image path to be used for inference. ``Defaults to None.``
+    ``Optional`` Args:
+        :prompt (str): Sample prompt for the model text generation. ``Defaults to None.``
+        :device_group (List[int]): Device Ids to be used for compilation. If ``len(device_group) > 1``, multiple Card setup is enabled. ``Defaults to None.``
+        :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
+        :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to None.``
+        :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
+        :generation_len (int): Number of tokens to be generated. ``Defaults to None.``
+    Returns:
+        :dict: Output from the ``AI_100`` runtime.
+    """
+    if not (image_url or image_path):
+        raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
+    raw_image = Image.open(requests.get(image_url, stream=True).raw) if image_url else Image.open(image_path)
+
+    processor = load_hf_processor(
+        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+        cache_dir=cache_dir,
+        hf_token=hf_token,
+    )
+
+    # Added for QEff version 1.20 supported VLM models (mllama and llava)
+    conversation = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": prompt[0]},
+            ],
+        }
+    ]
+
+    # Converts a list of dictionaries with `"role"` and `"content"` keys to a list of token ids.
+    input_text = processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
+
+    split_inputs = processor(
+        text=input_text,
+        images=raw_image,
+        return_tensors="pt",
+        add_special_tokens=False,
+    )
+    streamer = TextStreamer(processor.tokenizer)
+    output = qeff_model.generate(
+        inputs=split_inputs,
+        streamer=streamer,
+        device_ids=device_group,
+        generation_len=generation_len,
+    )
+    return output
 
 
 def main(
@@ -65,6 +140,9 @@ def main(
         :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
         :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
         :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
+        :kwargs: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+                -allocator_dealloc_delay=1 -> -allocator-dealloc-delay=1
+                -qpc_crc=True -> -qpc-crc
 
     .. code-block:: bash
 
@@ -72,11 +150,6 @@ def main(
 
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
-    tokenizer = load_hf_tokenizer(
-        pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
-        cache_dir=cache_dir,
-        hf_token=hf_token,
-    )
 
     if "--mxfp6" in sys.argv:
         if args.mxfp6:
@@ -92,6 +165,17 @@ def main(
         full_batch_size=full_batch_size,
         local_model_dir=local_model_dir,
     )
+
+    image_path = kwargs.pop("image_path", None)
+    image_url = kwargs.pop("image_url", None)
+
+    config = qeff_model.model.config
+    architecture = config.architectures[0] if config.architectures else None
+
+    if architecture not in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values() and (
+        kwargs.pop("img_size", None) or image_path or image_url
+    ):
+        logger.warning(f"Skipping image arguments as they are not valid for {architecture}")
 
     #########
     # Compile
@@ -113,17 +197,41 @@ def main(
         **kwargs,
     )
 
+    #  If the io-encrypt flag is passed we will exit after QPC generation.
+    if kwargs.get("io_encrypt", None):
+        exit()
+
     #########
     # Execute
     #########
-    _ = qeff_model.generate(
-        tokenizer,
-        prompts=prompt,
-        device_id=device_group,
-        prompt=prompt,
-        prompts_txt_file_path=prompts_txt_file_path,
-        generation_len=generation_len,
-    )
+    if architecture in MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values():
+        exec_info = execute_vlm_model(
+            qeff_model=qeff_model,
+            model_name=model_name,
+            prompt=prompt,
+            image_url=image_url,
+            image_path=image_path,
+            device_group=device_group,
+            local_model_dir=local_model_dir,
+            cache_dir=cache_dir,
+            hf_token=hf_token,
+            generation_len=generation_len,
+        )
+        print(exec_info)
+    else:
+        tokenizer = load_hf_tokenizer(
+            pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
+            cache_dir=cache_dir,
+            hf_token=hf_token,
+        )
+        _ = qeff_model.generate(
+            tokenizer,
+            prompts=prompt,
+            device_id=device_group,
+            prompt=prompt,
+            prompts_txt_file_path=prompts_txt_file_path,
+            generation_len=generation_len,
+        )
 
 
 if __name__ == "__main__":
@@ -219,23 +327,25 @@ if __name__ == "__main__":
     parser.add_argument(
         "--enable_qnn",
         "--enable-qnn",
-        action="store_true",
+        nargs="?",
+        const=True,
+        type=str,
         default=False,
         help="Enables QNN. Optionally, a configuration file can be provided with [--enable_qnn CONFIG_FILE].\
              If not provided, the default configuration will be used.\
              Sample Config: QEfficient/compile/qnn_config.json",
     )
-    parser.add_argument(
-        "qnn_config",
-        nargs="?",
-        type=str,
-    )
 
     args, compiler_options = parser.parse_known_args()
+
+    if isinstance(args.enable_qnn, str):
+        args.qnn_config = args.enable_qnn
+        args.enable_qnn = True
+
     compiler_options_dict = {}
     for i in range(0, len(compiler_options)):
         if compiler_options[i].startswith("--"):
-            key = compiler_options[i].lstrip("-")
+            key = compiler_options[i].lstrip("-").replace("-", "_")
             value = (
                 compiler_options[i + 1]
                 if i + 1 < len(compiler_options) and not compiler_options[i + 1].startswith("-")

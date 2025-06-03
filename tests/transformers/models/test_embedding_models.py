@@ -1,11 +1,12 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
 
 import os
+from typing import Optional
 
 import numpy as np
 import onnxruntime as ort
@@ -13,7 +14,8 @@ import pytest
 from transformers import AutoModel, AutoTokenizer
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
-from QEfficient.utils.constants import Constants
+from QEfficient.utils._utils import create_json
+from QEfficient.utils.constants import Constants, QnnConstants
 
 embed_test_models = [
     # model_name, architecture
@@ -27,6 +29,8 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     model_name: str,
     seq_len: int = Constants.CTX_LEN,
     n_layer: int = 1,
+    enable_qnn: Optional[bool] = False,
+    qnn_config: Optional[str] = None,
 ):
     # Prepare input
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -43,7 +47,7 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     pt_outputs = pt_model(**inputs)
     pt_embeddings = pt_outputs[0][0].detach().numpy()
     # Pytorch transformed model
-    qeff_model = QEFFAutoModel(pt_model)
+    qeff_model = QEFFAutoModel(pt_model, pretrained_model_name_or_path=model_name)
     qeff_pt_outputs = qeff_model.generate(inputs=inputs, runtime_ai100=False)
     qeff_pt_embeddings = qeff_pt_outputs[0][0].detach().numpy()
     mad = np.mean(np.abs(pt_embeddings - qeff_pt_embeddings))
@@ -71,6 +75,8 @@ def check_embed_pytorch_vs_ort_vs_ai100(
 
     qeff_model.compile(
         num_cores=14,
+        enable_qnn=enable_qnn,
+        qnn_config=qnn_config,
     )
     ai100_output = qeff_model.generate(inputs=inputs)
 
@@ -88,3 +94,19 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100(model_name):
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
     """
     check_embed_pytorch_vs_ort_vs_ai100(model_name=model_name, seq_len=32, n_layer=1)
+
+
+@pytest.mark.on_qaic
+@pytest.mark.qnn
+@pytest.mark.parametrize("model_name", embed_test_models)
+def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
+    """
+    QNN Compilation path test.
+    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
+    """
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+
+    check_embed_pytorch_vs_ort_vs_ai100(
+        model_name=model_name, seq_len=32, n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path
+    )

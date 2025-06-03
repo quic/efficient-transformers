@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
@@ -251,6 +251,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
+            mxint8_kv_cache=mxint8_kv_cache,
             **compiler_options,
         )
 

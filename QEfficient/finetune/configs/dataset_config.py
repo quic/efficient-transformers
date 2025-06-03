@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -35,6 +35,14 @@ class gsm8k_dataset:
     dataset: str = "gsm8k_dataset"
     train_split: str = "train"
     test_split: str = "test"
+
+
+@dataclass
+class imdb_dataset:
+    dataset: str = "imdb_dataset"
+    train_split: str = "train"
+    test_split: str = "test"
+    num_labels: int = 2
 
 
 @dataclass

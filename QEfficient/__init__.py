@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -12,6 +12,8 @@ import os
 # hf_transfer is imported (will happen on line 15 via leading imports)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
+# Placeholder for all non-transformer models registered in QEfficient
+import QEfficient.utils.model_registery  # noqa: F401
 from QEfficient.utils.logging_utils import logger
 
 

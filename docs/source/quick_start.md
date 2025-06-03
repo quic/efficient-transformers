@@ -14,7 +14,7 @@ To achieve this, we have 2 levels of APIs, with different levels of abstraction.
 | Feature | Impact |
 | --- | --- |
 | Context Length Specializations (upcoming) | Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text. |
-| Swift KV (upcoming) | Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. |
+| Swift KV [Snowflake/Llama-3.1-SwiftKV-8B-Instruct] | Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. |
 | Block Attention (in progress) | Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG. |
 | [Vision Language Model](QEFFAutoModelForImageTextToText) | Provides support for the AutoModelForImageTextToText class from the transformers library, enabling advanced vision-language tasks. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text_inference.py) for more **details**. |
 | [Speech Sequence to Sequence Model](QEFFAutoModelForSpeechSeq2Seq) | Provides support for the QEFFAutoModelForSpeechSeq2Seq Facilitates speech-to-text sequence models. Refer [sample script](https://github.com/quic/efficient-transformers/blob/main/examples/speech_to_text/run_whisper_speech_to_text.py) for more **details**. |
@@ -258,16 +258,17 @@ End to End demo examples for various models are available in **notebooks** direc
 ### Draft-Based Speculative Decoding
 Draft-based speculative decoding is a technique where a small Draft Language Model (DLM) makes `num_speculative_tokens` autoregressive speculations ahead of the Target Language Model (TLM). The objective is to predict what the TLM would have predicted if it would have been used instead of the DLM. This approach is beneficial when the autoregressive decode phase of the TLM is memory bound and thus, we can leverage the extra computing resources of our hardware by batching the speculations of the DLM as an input to TLM to validate the speculations.
 
-To export and compile both DLM/TLM, add corresponding `is_tlm` and `num_speculative_tokens` for TLM and export DLM as you would any other QEfficient LLM model:
+To export and compile both DLM/TLM, add corresponding `qaic_config` and `num_speculative_tokens` for TLM and export DLM as you would any other QEfficient LLM model:
 
 ```Python
 tlm_name = "meta-llama/Llama-2-70b-chat-hf"
 dlm_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 k = 3 # DLM will make `k` speculations
-tlm = AutoModelForCausalLM.from_pretrained(tlm_name, is_tlm=True)
+qaic_config = dict(speculative_model_type="target")
+tlm = AutoModelForCausalLM.from_pretrained(tlm_name, qaic_config=qaic_config)
 dlm = AutoModelForCausalLM.from_pretrained(dlm_name)
 tlm.compile(num_speculative_tokens=k)
 dlm.compile()
 ```
 
-The `is_tlm` flag is fed during the instantiation of the model because slight changes to the ONNX graph are required. Once complete, the user can specify `num_speculative_tokens` to define the actual number of speculations that the TLM will take as input during the decode phase. As for the DLM, no new changes are required at the ONNX or compile level.
+The `qaic_config` dictionary is fed during the instantiation of the model because slight changes to the ONNX graph are required. Once complete, the user can specify `num_speculative_tokens` to define the actual number of speculations that the TLM will take as input during the decode phase. As for the DLM, no new changes are required at the ONNX or compile level.

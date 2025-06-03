@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -130,12 +130,20 @@ class FP8DeQuantLinear(torch.nn.Module):
 
 class QEffFP8Config(QuantizationConfigMixin):
     def __init__(
-        self, quant_method: str, activation_scheme: str, ignored_layers: List[str] = None, kv_cache_scheme: str = None
+        self,
+        quant_method: str,
+        activation_scheme: str,
+        ignored_layers: List[str] = None,
+        kv_cache_scheme: str = None,
+        run_compressed: bool = False,
     ):
         self.quant_method = quant_method
         self.activation_scheme = activation_scheme
         self.ignored_layers = ignored_layers
         self.kv_cache_scheme = kv_cache_scheme
+        self.run_compressed = run_compressed
+        self.quantization_config = None
+        self.sparsity_config = None
         if kv_cache_scheme:
             logger.warning(
                 f"kv_cache_scheme={kv_cache_scheme} will be ignored please use `mxint8_kv_cache=True` during compile call if you want to keep kv cache in int8 at runtime on Cloud AI 100"
@@ -156,7 +164,7 @@ class QEffFP8Quantizer(CompressedTensorsHfQuantizer):
             raise TypeError(f"Only {QEffFP8Config} is supported for initialization got {type(quantization_config)}")
 
         self.quantization_config = quantization_config
-
+        self.run_compressed = quantization_config.run_compressed
         # -- Handle extra kwargs below --
         self.modules_to_not_convert = kwargs.pop("modules_to_not_convert", [])
         self.modules_to_not_convert = list(
@@ -204,6 +212,12 @@ class QEffFP8Quantizer(CompressedTensorsHfQuantizer):
 
         replace_linear_with_fp8_dequant_layer(model)
 
+    def _process_model_after_weight_loading(self, model, **kwargs):
+        pass
+
+    def update_missing_keys_after_loading(self, model, missing_keys: List[str], prefix: str) -> List[str]:
+        return missing_keys
+
 
 class QEffCompressedTensorsConfig(CompressedTensorsConfig):
     def __init__(
@@ -216,6 +230,7 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
         ignore=None,
         sparsity_config=None,
         quant_method="compressed-tensors",
+        run_compressed: bool = False,
         **kwargs,
     ):
         self.config_groups = config_groups
@@ -226,6 +241,10 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
         self.global_compression_ratio = global_compression_ratio
         self.ignore = ignore
 
+        self.quantization_config = None
+        self.sparsity_config = None
+
+        self.run_compressed = run_compressed
         # Validate configuration
         if len(self.config_groups) != 1:
             raise NotImplementedError(
@@ -318,7 +337,7 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
             raise TypeError(
                 f"Only {QEffCompressedTensorsConfig} is supported for initialization got {type(quantization_config)}"
             )
-
+        self.run_compressed = quantization_config.run_compressed
         self.quantization_config = quantization_config
 
         # -- Handle extra kwargs below --
@@ -370,3 +389,9 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
                     replace_linear_with_fp8_dequant_layer(child_module)
 
         replace_linear_with_fp8_dequant_layer(model)
+
+    def _process_model_after_weight_loading(self, model, **kwargs):
+        pass
+
+    def update_missing_keys_after_loading(self, model, missing_keys: List[str], prefix: str) -> List[str]:
+        return missing_keys

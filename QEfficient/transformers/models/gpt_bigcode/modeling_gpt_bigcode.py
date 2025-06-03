@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -11,9 +11,7 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.utils.checkpoint
-from torch.nn import CrossEntropyLoss
 from transformers.cache_utils import Cache
-from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     CausalLMOutputWithCrossAttentions,
@@ -295,8 +293,6 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
         if batch_size <= 0:
             raise ValueError("batch_size has to be defined and > 0")
 
-        device = input_ids.device if input_ids is not None else inputs_embeds.device
-
         if token_type_ids is not None:
             token_type_ids = token_type_ids.view(-1, input_shape[-1])
 
@@ -304,74 +300,26 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
         past_length = past_key_values.get_seq_length() if past_key_values is not None else 0
 
-        if attention_mask is not None and len(attention_mask.shape) == 2 and position_ids is None:
-            # create position_ids on the fly for batch generation
-            position_ids = attention_mask.long().cumsum(-1) - 1
-            position_ids.masked_fill_(attention_mask == 0, 1)
-            if past_length > 0:
-                position_ids = position_ids[:, past_length : input_shape[-1] + past_length :]
-        elif position_ids is None:
-            position_ids = torch.arange(past_length, input_shape[-1] + past_length, dtype=torch.long, device=device)
-            position_ids = position_ids.unsqueeze(0)
-        elif position_ids is not None:
-            position_ids = position_ids.view(-1, seq_length).long()
-        query_length = input_shape[-1]
-        if self._use_flash_attention_2:
-            # 2d mask is passed through the layers
-            attention_mask = attention_mask.bool() if (attention_mask is not None and 0 in attention_mask) else None
-            encoder_attention_mask = (
-                encoder_attention_mask.bool()
-                if (encoder_attention_mask is not None and 0 in encoder_attention_mask)
-                else None
-            )
+        position_ids = position_ids.view(-1, seq_length).long()
+
+        # update attention mask for Cloud Ai 100
+        self_attention_mask = _create_causal_mask(position_ids, past_length)
+        # MQA models: (batch_size, query_length, n_heads, key_length)
+        # MHA models: (batch_size, n_heads, query_length, key_length)
+        if self.multi_query:
+            self_attention_mask = self_attention_mask.transpose(1, 2)
+
+        attention_mask = self_attention_mask
+
+        # If a 2D or 3D attention mask is provided for the cross-attention
+        # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
+        if self.config.add_cross_attention and encoder_hidden_states is not None and encoder_attention_mask is not None:
+            if encoder_attention_mask.dim() == 2:
+                encoder_attention_mask.unsqueeze(1)
+            assert encoder_attention_mask.dim() == 3
+            encoder_attention_mask = encoder_attention_mask.bool().unsqueeze(2 if self.multi_query else 1)
         else:
-            # update attention mask for Cloud Ai 100
-            self_attention_mask = _create_causal_mask(position_ids, past_length)
-            # MQA models: (batch_size, query_length, n_heads, key_length)
-            # MHA models: (batch_size, n_heads, query_length, key_length)
-            if self.multi_query:
-                self_attention_mask = self_attention_mask.transpose(1, 2)
-
-            if self._use_sdpa and head_mask is None and not output_attentions:
-                # output_attentions=True can not be supported when using SDPA, and we fall back on
-                # the manual implementation that requires a 4D causal mask in all cases.
-                if self.multi_query:
-                    # gpt_bigcode using MQA has the bad taste to use a causal mask with shape
-                    # [batch_size, target_length, 1, source_length], not compatible with SDPA, hence this transpose.
-                    self_attention_mask = self_attention_mask.transpose(1, 2)
-
-                if query_length > 1 and attention_mask is not None:
-                    # From PyTorch 2.1 onwards, F.scaled_dot_product_attention with the memory-efficient attention backend
-                    # produces nans if sequences are completely unattended in the attention mask. Details: https://github.com/pytorch/pytorch/issues/110213
-                    self_attention_mask = AttentionMaskConverter._unmask_unattended(
-                        self_attention_mask, attention_mask, unmasked_value=True
-                    )
-
-                # SDPA with a custom mask is much faster in fp16/fp32 dtype rather than bool. Cast here to floating point instead of at every layer.
-                dtype = self.wte.weight.dtype
-                self_attention_mask = torch.where(
-                    self_attention_mask,
-                    torch.full([], 0.0, dtype=dtype, device=self_attention_mask.device),
-                    torch.full(
-                        [], torch.finfo(self.wte.weight.dtype).min, dtype=dtype, device=self_attention_mask.device
-                    ),
-                )
-
-            attention_mask = self_attention_mask
-
-            # If a 2D or 3D attention mask is provided for the cross-attention
-            # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
-            if (
-                self.config.add_cross_attention
-                and encoder_hidden_states is not None
-                and encoder_attention_mask is not None
-            ):
-                if encoder_attention_mask.dim() == 2:
-                    encoder_attention_mask.unsqueeze(1)
-                assert encoder_attention_mask.dim() == 3
-                encoder_attention_mask = encoder_attention_mask.bool().unsqueeze(2 if self.multi_query else 1)
-            else:
-                encoder_attention_mask = None
+            encoder_attention_mask = None
 
         # Prepare head mask if needed
         # 1.0 in head_mask indicate we keep the head
@@ -402,43 +350,18 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            if self.gradient_checkpointing and self.training:
-                outputs = self._gradient_checkpointing_func(
-                    block.__call__,
-                    hidden_states,
-                    None,
-                    attention_mask,
-                    head_mask[i],
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                    use_cache,
-                    output_attentions,
-                )
-            elif batch_index is not None:
-                outputs = block(
-                    hidden_states,
-                    layer_past=past_key_values,
-                    position_ids=position_ids,
-                    batch_index=batch_index,
-                    attention_mask=attention_mask,
-                    head_mask=head_mask[i],
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_attention_mask,
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                )
-            else:
-                outputs = block(
-                    hidden_states,
-                    layer_past=past_key_values,
-                    position_ids=position_ids,
-                    attention_mask=attention_mask,
-                    head_mask=head_mask[i],
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_attention_mask,
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                )
+            outputs = block(
+                hidden_states,
+                layer_past=past_key_values,
+                position_ids=position_ids,
+                batch_index=batch_index,
+                attention_mask=attention_mask,
+                head_mask=head_mask[i],
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_attention_mask,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+            )
 
             hidden_states = outputs[0]
             if use_cache:
@@ -455,13 +378,6 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
         # Add last hidden state
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
-
-        if not return_dict:
-            return tuple(
-                v
-                for v in [hidden_states, presents, all_hidden_states, all_self_attentions, all_cross_attentions]
-                if v is not None
-            )
 
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
@@ -520,21 +436,8 @@ class QEffGPTBigCodeForCausalLM(GPTBigCodeForCausalLM):
         hidden_states = transformer_outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         lm_logits = self.lm_head(hidden_states)
 
-        loss = None
-        if labels is not None:
-            # Shift so that tokens < n predict n
-            shift_logits = lm_logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous().to(shift_logits.device)
-            # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-
-        if not return_dict:
-            output = (lm_logits,) + transformer_outputs[1:]
-            return ((loss,) + output) if loss is not None else output
-
         return CausalLMOutputWithCrossAttentions(
-            loss=loss,
+            loss=None,
             logits=lm_logits,
             past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,

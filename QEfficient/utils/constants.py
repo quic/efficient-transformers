@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -74,6 +74,18 @@ INTERN_PREFILL_SEQ_LEN = INTERN_CTX_LEN - 256  # 4096-256
 INTERN_NUM_CHANNELS = 3
 INTERN_IMG_CONTEXT_TOKEN = 151667
 
+# Granite Vision Constants
+# Fixing the feature size with reference to ibm-granite/granite-vision-3.2-2b
+GRANITEVISION_FEATURE_SIZE = 5239
+GRANITEVISION_NUM_PATCHES = 10
+GRANITEVISION_IMG_SIZE = 384
+GRANITEVISION_IMG_SIZE_HEIGHT = 1109
+GRANITEVISION_IMG_SIZE_WIDTH = 1610
+GRANITEVISION_PIXEL_VALUE_DIM = 5
+GRANITEVISION_PREFIL_SEQ_LEN = GRANITEVISION_SEQ_LEN = 5500
+GRANITEVISION_CTX_LEN = 6000
+GRANITEVISION_NUM_CHANNELS = 3
+
 
 class Constants:
     # Export Constants.
@@ -83,9 +95,12 @@ class Constants:
     INPUT_STR = ["My name is"]
     GB = 2**30
     MAX_QPC_LIMIT = 30
-    MAX_RETRIES = 5  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
+    MAX_RETRIES = 10  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
     NUM_SPECULATIVE_TOKENS = 2
-    SDK_APPS_XML = "/opt/qti-aic/versions/apps.xml"  # This xml file is parsed to find out the SDK version.
+    SDK_APPS_XML = "/opt/qti-aic/versions/apps.xml"  # This xml file is parsed to find out the SDK apps version.
+    SDK_PLATFORM_XML = (
+        "/opt/qti-aic/versions/platform.xml"  # This xml file is parsed to find out the SDK platform version.
+    )
 
 
 @dataclass
@@ -132,6 +147,7 @@ class QnnConstants:
     COMPILER_STATS_BATCH_SIZE = 1
     COMPILER_TIME_PASSES = False
     GRAPH_NAMES = [f"{MODEL_NAME}_configuration_1", f"{MODEL_NAME}_configuration_2"]
+    GRAPH_NAMES_PREFILL_ONLY = [f"{MODEL_NAME}"]
 
     # qnn_config JSON file supported Keys
     CONVERTER_ARGS_EXTENSION_STR = "converter_args_extension"
@@ -158,3 +174,14 @@ class QnnConstants:
         "--dlc_path ",
         "--config_file ",
     ]
+
+    QNN_SAMPLE_CONFIG = {
+        "converter_args_extension": "--onnx_defer_loading",
+        "context_binary_generator_args_extension": "--log_level debug",
+        "qnn_compilation_backend": {
+            "compiler_enable_depth_first": True,
+            "compiler_printDDRStats": False,
+            "compiler_printPerfMetrics": False,
+        },
+        "SKIP_QNN_CONVERTER_STEP": False,
+    }

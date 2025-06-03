@@ -1,20 +1,19 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
 
-import random
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
 from torch import nn
 from transformers.cache_utils import Cache, EncoderDecoderCache, StaticCache
-from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import (
     BaseModelOutputWithCrossAttentions,
     BaseModelOutputWithPastAndCrossAttentions,
+    Seq2SeqLMOutput,
     Seq2SeqModelOutput,
 )
 from transformers.models.whisper.modeling_whisper import (
@@ -28,6 +27,7 @@ from transformers.models.whisper.modeling_whisper import (
     logger,
 )
 
+from QEfficient.transformers.cache_utils import QEffEncoderDecoderCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils._utils import IOInfo
 
@@ -129,7 +129,7 @@ class QEffWhisperAttention(WhisperAttention):
             attn_weights = layer_head_mask.view(1, -1, 1, 1) * attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
-        attn_weights = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
+        attn_weights = nn.functional.dropout(attn_weights, p=self.dropout)
         attn_output = torch.matmul(attn_weights, value_states)
 
         if tuple(attn_output.size()) != (bsz, self.num_heads, tgt_len, self.head_dim):
@@ -210,7 +210,7 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
             cache_position=cache_position,
             input_features=input_features,
         )
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout)
         hidden_states = residual + hidden_states
 
         # Cross-Attention Block
@@ -231,7 +231,7 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
                 input_features=input_features,
                 is_cross_attention=True,  # explicitly pass this argument, instead of figuring it out form key_value_states
             )
-            hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+            hidden_states = nn.functional.dropout(hidden_states, p=self.dropout)
             hidden_states = residual + hidden_states
 
             # update the cached past_key_values accordingly
@@ -245,9 +245,9 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.activation_fn(self.fc1(hidden_states))
-        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
+        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout)
         hidden_states = self.fc2(hidden_states)
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout)
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
@@ -320,7 +320,7 @@ class QEffWhisperEncoder(WhisperEncoder):
         embed_pos = self.embed_positions.weight
 
         hidden_states = inputs_embeds + embed_pos
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout)
 
         encoder_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None
@@ -335,33 +335,13 @@ class QEffWhisperEncoder(WhisperEncoder):
             if output_hidden_states:
                 encoder_states = encoder_states + (hidden_states,)
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
-            dropout_probability = random.uniform(0, 1)
-            if self.training and (dropout_probability < self.layerdrop):  # skip the layer
-                layer_outputs = (None, None)
-            else:
-                if self.gradient_checkpointing and self.training:
-
-                    def create_custom_forward(module):
-                        def custom_forward(*inputs):
-                            return module(*inputs, output_attentions)
-
-                        return custom_forward
-
-                    layer_outputs = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(encoder_layer),
-                        hidden_states,
-                        None,
-                        (head_mask[idx] if head_mask is not None else None),
-                    )
-                else:
-                    layer_outputs = encoder_layer(
-                        hidden_states,
-                        None,
-                        layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                        output_attentions=output_attentions,
-                    )
-
-                hidden_states = layer_outputs[0]
+            layer_outputs = encoder_layer(
+                hidden_states,
+                None,
+                layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                output_attentions=output_attentions,
+            )
+            hidden_states = layer_outputs[0]
 
             if output_attentions:
                 all_attentions = all_attentions + (layer_outputs[1],)
@@ -497,7 +477,7 @@ class QEffWhisperDecoder(WhisperDecoder):
         if use_cache or past_key_values is not None:
             if not isinstance(past_key_values, Cache):
                 return_legacy_cache = True
-                past_key_values = EncoderDecoderCache.from_legacy_cache(past_key_values)
+                past_key_values = QEffEncoderDecoderCache.from_legacy_cache(past_key_values)
                 logger.warning_once(
                     "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
                     "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
@@ -521,7 +501,7 @@ class QEffWhisperDecoder(WhisperDecoder):
         # embed positions
         positions = self.embed_positions(input_ids, past_key_values_length=position)
         hidden_states = inputs_embeds + positions
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout)
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
@@ -541,52 +521,20 @@ class QEffWhisperDecoder(WhisperDecoder):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
-            dropout_probability = random.uniform(0, 1)
-            if self.training and (dropout_probability < self.layerdrop):
-                continue
-
-            if self.gradient_checkpointing and self.training:
-                if use_cache:
-                    logger.warning(
-                        "`use_cache = True` is incompatible with gradient checkpointing. Setting `use_cache = False`..."
-                    )
-                    use_cache = False
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        # None for past_key_value
-                        return module(*inputs, output_attentions, use_cache)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(decoder_layer),
-                    hidden_states,
-                    attention_mask,
-                    encoder_hidden_states,
-                    None,  # encoder attention mask
-                    head_mask[idx] if head_mask is not None else None,
-                    cross_attn_head_mask[idx] if cross_attn_head_mask is not None else None,
-                    None,  # past_key_value
-                    cache_position,
-                )
-            else:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=causal_mask,
-                    encoder_hidden_states=encoder_hidden_states,
-                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                    cross_attn_layer_head_mask=(
-                        cross_attn_head_mask[idx] if cross_attn_head_mask is not None else None
-                    ),
-                    past_key_value=past_key_values,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                    position_ids_layer=position_ids,
-                    cache_position=cache_position,
-                    input_features=input_features,
-                    is_encoder_decoder=is_encoder_decoder,
-                )
+            layer_outputs = decoder_layer(
+                hidden_states,
+                attention_mask=causal_mask,
+                encoder_hidden_states=encoder_hidden_states,
+                layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                cross_attn_layer_head_mask=(cross_attn_head_mask[idx] if cross_attn_head_mask is not None else None),
+                past_key_value=past_key_values,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                position_ids_layer=position_ids,
+                cache_position=cache_position,
+                input_features=input_features,
+                is_encoder_decoder=is_encoder_decoder,
+            )
             hidden_states = layer_outputs[0]
 
             if use_cache:
@@ -630,11 +578,6 @@ class QEffWhisperDecoder(WhisperDecoder):
         past_key_values: Cache,
         output_attentions: bool,
     ):
-        if self.config._attn_implementation == "flash_attention_2":
-            if attention_mask is not None and 0.0 in attention_mask:
-                return attention_mask
-            return None
-
         # For SDPA, when possible, we will rely on its `is_causal` argument instead of its `attn_mask` argument, in
         # order to dispatch on Flash Attention 2. This feature is not compatible with static cache, as SDPA will fail
         # to infer the attention mask.
@@ -642,14 +585,6 @@ class QEffWhisperDecoder(WhisperDecoder):
         using_static_cache = isinstance(past_key_values, StaticCache)
 
         # When output attentions is True, sdpa implementation's forward method calls the eager implementation's forward
-        if self.config._attn_implementation == "sdpa" and not using_static_cache and not output_attentions:
-            if AttentionMaskConverter._ignore_causal_mask_sdpa(
-                attention_mask,
-                inputs_embeds=input_tensor,
-                past_key_values_length=past_seen_tokens,
-                is_training=self.training,
-            ):
-                return None
 
         dtype, device = input_tensor.dtype, input_tensor.device
         min_dtype = torch.finfo(dtype).min
@@ -680,17 +615,6 @@ class QEffWhisperDecoder(WhisperDecoder):
                 )
             else:
                 causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
-
-        if (
-            self.config._attn_implementation == "sdpa"
-            and attention_mask is not None
-            and attention_mask.device.type == "cuda"
-            and not output_attentions
-        ):
-            # Attend to all tokens in fully masked rows in the causal_mask, for example the relevant first rows when
-            # using left padding. This is required by F.scaled_dot_product_attention memory-efficient attention path.
-            # Details: https://github.com/pytorch/pytorch/issues/110213
-            causal_mask = AttentionMaskConverter._unmask_unattended(causal_mask, min_dtype)
 
         return causal_mask
 
@@ -777,7 +701,73 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
 
     The only differences are:
     - Added get_dummy_inputs, get_onnx_dynamic_axes, get_output_names for AutoModel export
+    - changed forward inputs decoder_input_ids and decoder_position_ids to input_ids and position_ids
     """
+
+    def forward(
+        self,
+        input_features: Optional[torch.FloatTensor] = None,
+        attention_mask: Optional[torch.LongTensor] = None,
+        input_ids: Optional[torch.LongTensor] = None,
+        decoder_attention_mask: Optional[torch.LongTensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        decoder_head_mask: Optional[torch.Tensor] = None,
+        cross_attn_head_mask: Optional[torch.Tensor] = None,
+        encoder_outputs: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+        past_key_values: Optional[Union[EncoderDecoderCache, Tuple[torch.FloatTensor]]] = None,
+        decoder_inputs_embeds: Optional[Tuple[torch.FloatTensor]] = None,
+        position_ids: Optional[Tuple[torch.LongTensor]] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+    ) -> Union[Tuple[torch.Tensor], Seq2SeqLMOutput]:
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        outputs = self.model(
+            input_features,
+            attention_mask=attention_mask,
+            decoder_input_ids=input_ids,
+            encoder_outputs=encoder_outputs,
+            decoder_attention_mask=decoder_attention_mask,
+            head_mask=head_mask,
+            decoder_head_mask=decoder_head_mask,
+            cross_attn_head_mask=cross_attn_head_mask,
+            past_key_values=past_key_values,
+            decoder_inputs_embeds=decoder_inputs_embeds,
+            decoder_position_ids=position_ids,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            cache_position=cache_position,
+        )
+        lm_logits = self.proj_out(outputs[0])
+
+        loss = None
+        if labels is not None:
+            loss_fct = torch.nn.CrossEntropyLoss()
+            # move labels to correct device to enable PP
+            labels = labels.to(lm_logits.device)
+            loss = loss_fct(lm_logits.view(-1, self.config.vocab_size), labels.reshape(-1))
+
+        if not return_dict:
+            output = (lm_logits,) + outputs[1:]
+            return ((loss,) + output) if loss is not None else output
+
+        return Seq2SeqLMOutput(
+            loss=loss,
+            logits=lm_logits,
+            past_key_values=outputs.past_key_values,
+            decoder_hidden_states=outputs.decoder_hidden_states,
+            decoder_attentions=outputs.decoder_attentions,
+            cross_attentions=outputs.cross_attentions,
+            encoder_last_hidden_state=outputs.encoder_last_hidden_state,
+            encoder_hidden_states=outputs.encoder_hidden_states,
+            encoder_attentions=outputs.encoder_attentions,
+        )
 
     def get_dummy_inputs(
         self,
@@ -792,8 +782,8 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
 
         inputs = {
             "input_features": torch.zeros((bs, encoder_feature_count, 1), dtype=torch.float32),
-            "decoder_input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "decoder_position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(num_layers)],
         }
 
@@ -846,8 +836,8 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
 
         dynamic_axes = {
             "input_features": {0: "batch_size", 2: "feature_len"},
-            "decoder_input_ids": {0: "batch_size", 1: "seq_len"},
-            "decoder_position_ids": {0: "batch_size", 1: "seq_len"},
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
         }
         pkv_self_dynamic_axes = {
             0: "batch_size",

@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -12,13 +12,14 @@ QEFF_MODEL_TYPE and the classes that implement the methods i.e.(compile, export 
 QEFFAutoModel provides a common interface for loading the HuggingFace models using either the HF card name of local path of downloaded model.
 """
 
+import os
 from typing import Any
 
 from transformers import AutoConfig
-from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.transformers.modeling_utils import MODEL_CLASS_MAPPING
+from QEfficient.utils import login_and_download_hf_lm
 
 
 class QEFFCommonLoader:
@@ -40,16 +41,19 @@ class QEFFCommonLoader:
         Downloads HuggingFace model if already doesn't exist locally, returns QEFFAutoModel object based on type of model.
         """
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path)
-        architecture = config.architectures[0] if config.architectures else None
 
-        if architecture in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
-            model_class = QEFFAutoModelForCausalLM
+        class_name = MODEL_CLASS_MAPPING.get(config.__class__.__name__, None)
+        if class_name:
+            module = __import__("QEfficient.transformers.models.modeling_auto")
+            model_class = getattr(module, class_name)
         else:
             raise NotImplementedError(
-                f"Unknown architecture={architecture}, either use specific auto model class for loading the model or raise an issue for support!"
+                f"Unknown architecture={config.__class__.__name__}, either use specific auto model class for loading the model or raise an issue for support!"
             )
 
         local_model_dir = kwargs.pop("local_model_dir", None)
+        if not os.path.isdir(pretrained_model_name_or_path) and local_model_dir is None:
+            pretrained_model_name_or_path = login_and_download_hf_lm(pretrained_model_name_or_path, *args, **kwargs)
         hf_token = kwargs.pop("hf_token", None)
         continuous_batching = True if kwargs.pop("full_batch_size", None) else False
 

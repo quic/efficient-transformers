@@ -1,14 +1,13 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
 
 from types import MethodType
-from typing import Tuple
+from typing import Optional, Tuple
 
-import transformers
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
@@ -50,6 +49,16 @@ from transformers.models.granite.modeling_granite import (
     GraniteModel,
     GraniteRMSNorm,
 )
+from transformers.models.granitemoe.modeling_granitemoe import (
+    GraniteMoeAttention,
+    GraniteMoeForCausalLM,
+    GraniteMoeModel,
+    GraniteMoeMoE,
+    GraniteMoeParallelExperts,
+    GraniteMoeRMSNorm,
+    GraniteMoeRotaryEmbedding,
+    GraniteMoeTopKGating,
+)
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
@@ -59,6 +68,9 @@ from transformers.models.llama.modeling_llama import (
 )
 from transformers.models.llava.modeling_llava import (
     LlavaForConditionalGeneration,
+)
+from transformers.models.llava_next.modeling_llava_next import (
+    LlavaNextForConditionalGeneration,
 )
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
@@ -121,7 +133,6 @@ from transformers.models.whisper.modeling_whisper import (
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
-from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QeffCodeGenBlock,
@@ -169,10 +180,16 @@ from QEfficient.transformers.models.granite.modeling_granite import (
     QEffGraniteForCausalLM,
     QEffGraniteModel,
 )
-from QEfficient.transformers.models.internvl.modeling_internvl import (
-    QEffInternVisionEmbeddings,
-    QEffInternVLModel,
+from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
+    QEffGraniteMoeAttention,
+    QEffGraniteMoeForCausalLM,
+    QEffGraniteMoeModel,
+    QEffGraniteMoeMoE,
+    QEffGraniteMoeParallelExperts,
+    QEffGraniteMoeRotaryEmbedding,
+    QEffGraniteMoeTopKGating,
 )
+from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
@@ -181,6 +198,9 @@ from QEfficient.transformers.models.llama.modeling_llama import (
 )
 from QEfficient.transformers.models.llava.modeling_llava import (
     QEffLlavaForConditionalGeneration,
+)
+from QEfficient.transformers.models.llava_next.modeling_llava_next import (
+    QEffLlavaNextForConditionalGeneration,
 )
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
@@ -246,7 +266,10 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
 )
-from QEfficient.transformers.spd.causal_lm_forward import tlm_forward
+from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
+from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
+
+SPD_TARGET = "target"
 
 
 class CustomOpsTransform(ModuleMappingTransform):
@@ -260,6 +283,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen2RMSNorm: CustomRMSNormAIC,
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
+        GraniteMoeRMSNorm: CustomRMSNormAIC,
     }
 
 
@@ -292,6 +316,8 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaForCausalLM: QEffLlamaForCausalLM,
         # Llava
         LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
+        # Llava Next
+        LlavaNextForConditionalGeneration: QEffLlavaNextForConditionalGeneration,
         # Gemma
         GemmaAttention: QEffGemmaAttention,
         GemmaDecoderLayer: QEffGemmaDecoderLayer,
@@ -306,6 +332,14 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
         GraniteAttention: QEffGraniteAttention,
+        # GraniteMoe
+        GraniteMoeModel: QEffGraniteMoeModel,
+        GraniteMoeForCausalLM: QEffGraniteMoeForCausalLM,
+        GraniteMoeAttention: QEffGraniteMoeAttention,
+        GraniteMoeRotaryEmbedding: QEffGraniteMoeRotaryEmbedding,
+        GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
+        GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
+        GraniteMoeMoE: QEffGraniteMoeMoE,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
@@ -370,8 +404,6 @@ class KVCacheTransform(ModuleMappingTransform):
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
-        # FIXME: see if we can merge into _module_mapping dict
-        transformers.cache_utils.DynamicCache.update = QEffDynamicCache.update
         return model, transformed
 
 
@@ -394,19 +426,33 @@ class SpDTransform:
     _module_mapping = {
         # Llama
         QEffLlamaForCausalLM,
+        QEffQwen2ForCausalLM,
     }
 
     @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
         transformed = False
-        if (model_class := model.__class__) in cls._module_mapping:
+        if qaic_config is None or (speculative_model_type := qaic_config.get("speculative_model_type")) is None:
+            return model, transformed
+        elif speculative_model_type not in (
+            supported_spd_model_types := [SPD_TARGET] + list(model_type_registry.keys())
+        ):
+            raise ValueError(
+                f"Specualtive model type {speculative_model_type} is not supported. we currently only support {supported_spd_model_types}"
+            )
+        elif (model_class := model.__class__) in cls._module_mapping:
             model.forward = MethodType(tlm_forward, model)
+            if speculative_model_type != SPD_TARGET:
+                # build and attach draft mlp
+                pretrained_model_name_or_path = qaic_config["pretrained_model_name_or_path"]
+                model = build_and_attach_mlp(
+                    model, pretrained_model_name_or_path, speculative_model_type=speculative_model_type, **kwargs
+                )
             transformed = True
         else:
             raise NotImplementedError(
                 f"model class {model_class} does not yet support returning multiple logits to keep."
             )
-
         return model, transformed
 
 

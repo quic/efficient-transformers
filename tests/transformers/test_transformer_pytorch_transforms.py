@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
@@ -18,6 +18,7 @@ from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
+from QEfficient.transformers.spd.turbo import ResBlock
 from QEfficient.utils._utils import get_padding_shape_from_config
 from QEfficient.utils.logging_utils import logger
 
@@ -71,6 +72,11 @@ SpDTransformTestConfigs = [
     ("llama", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
     ("llama", 3, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
     ("llama", 1, 32, 128, {"num_key_value_heads": 32, "intermediate_size": 512}, 0.8),
+    ("qwen2", 1, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
+]
+
+SpDTransformProjTestConfigs = [
+    ("llama", 3, 32, 128, {"num_key_value_heads": 8, "intermediate_size": 512}, 0.8),
 ]
 
 
@@ -160,10 +166,27 @@ def run_kv_cache_transform_and_test(
             )
         else:
             original_model_outputs = hf_model(input_ids=input_ids, output_hidden_states=True)
+        hidden_size_projections = (
+            hf_model.hidden_size_projections if hasattr(hf_model, "hidden_size_projections") else None
+        )
+        if hidden_size_projections:
+            # compute projections
+            last_hidden_size = original_model_outputs.hidden_states[-1]  # shape: [bsz, seq_len, d_model]
+            proj_hidden_sizes = [last_hidden_size]
+            for proj in hidden_size_projections:
+                proj_i = proj(last_hidden_size)
+                proj_hidden_sizes.append(proj_i)
+            proj_hidden_sizes = torch.stack(proj_hidden_sizes, dim=2)
+            logits = hf_model.lm_head(proj_hidden_sizes)
+            original_model_outputs.logits = logits
 
     # Apply transforms
-    is_tlm = "num_logits_to_keep" in qaic_model_inputs
-    hf_model = QEFFAutoModelForCausalLM(hf_model, is_tlm=is_tlm).model
+    qaic_config = None
+    if "num_logits_to_keep" in qaic_model_inputs:
+        qaic_config = dict(speculative_model_type="target")
+    hf_model = QEFFAutoModelForCausalLM(hf_model, qaic_config=qaic_config).model
+    if hidden_size_projections is not None:
+        hf_model.projections = hidden_size_projections
 
     # Run KV model
     with torch.inference_mode():
@@ -273,6 +296,62 @@ def test_spd_transform(config_class, num_hidden_layers, num_attention_heads, hid
         position_embeddings=None,
     )
     hf_model = AutoModelForCausalLM.from_config(config=config, attn_implementation="eager")
+
+    kv_cache = None
+    if hasattr(config, "cache_implementation") and config.cache_implementation == "hybrid":
+        # Create a KV Cache from HybridCache class to pass as an object for models which use Hybrid KV Cache
+        # Refer https://github.com/huggingface/transformers/issues/32896 for more info
+        # This requires torch._dynamo present in torch>=2.3.0
+        kv_cache = HybridCache(config=config, max_batch_size=1, max_cache_len=32)
+
+    padding_shape = get_padding_shape_from_config(config=config, batch_size=1, seq_len=32)
+
+    # Prepare KV model inputs
+    qaic_model_inputs = create_qaic_model_inputs(
+        input_len=8,
+        vocab_size=config.vocab_size,
+        padding_shape=padding_shape,
+        num_hidden_layers=num_hidden_layers,
+        is_tlm=True,
+    )
+
+    run_kv_cache_transform_and_test(
+        hf_model,
+        qaic_model_inputs=qaic_model_inputs,
+        logits_tolerance=logits_tolerance,
+        kv_cache=kv_cache,
+    )
+
+
+@pytest.mark.parametrize(
+    "config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance",
+    SpDTransformProjTestConfigs,
+)
+def test_spd_proj_transform(
+    config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance
+):
+    config = AutoConfig.for_model(
+        config_class,
+        **kwargs,
+        num_hidden_layers=num_hidden_layers,
+        num_attention_heads=num_attention_heads,
+        hidden_size=hidden_size,
+        use_cache=True,
+        cache_position=None,
+        position_embeddings=None,
+    )
+    hf_model = AutoModelForCausalLM.from_config(config=config, attn_implementation="eager")
+    proj_num_layers = 1
+    num_speculative_tokens = 3
+    hidden_size_projections = torch.nn.ModuleList(
+        [
+            torch.nn.Sequential(
+                *([ResBlock(hidden_size)] * proj_num_layers),
+            )
+            for _ in range(num_speculative_tokens)
+        ],
+    )
+    hf_model.hidden_size_projections = hidden_size_projections
 
     kv_cache = None
     if hasattr(config, "cache_implementation") and config.cache_implementation == "hybrid":

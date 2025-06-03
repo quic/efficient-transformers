@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -13,6 +13,7 @@ import warnings
 from typing import List, Optional, Tuple
 
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.utils._utils import load_json, load_yaml
 from QEfficient.utils.logging_utils import logger
 
 
@@ -63,9 +64,6 @@ def compile_kv_model_on_cloud_ai_100(
         DeprecationWarning,
         stacklevel=2,
     )
-    if kwargs:
-        # FIXME
-        raise NotImplementedError("Can't handle extra compilation args now!")
     aic_binary_dir = os.path.join(base_path, "qpcs")
 
     if os.path.isdir(aic_binary_dir):
@@ -110,6 +108,13 @@ def compile_kv_model_on_cloud_ai_100(
         with open(mdp_ts_config_path, "w") as file:
             json.dump(mdp_ts_config, file, indent=4)
         command.append(f"-mdp-load-partition-config={mdp_ts_config_path}")
+    for key, value in kwargs.items():
+        option = "-" + key.replace("_", "-")
+        if isinstance(value, bool):
+            if value:
+                command.append(option)
+            continue
+        command.append(f"{option}={value}")
     print("Running AI 100 compiler:", " ".join(command))
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
@@ -180,36 +185,35 @@ def compile(
         full_batch_size=full_batch_size,
     )
 
+    # Select the customIO config based on the mx flag.
+    custom_io_file_name = "custom_io_int8.yaml" if mxint8 else "custom_io_fp16.yaml"
+
+    if custom_io_file_path is None:
+        custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)
+
+    if not os.path.isfile(custom_io_file_path):
+        raise FileNotFoundError(
+            f"Custom IO file {custom_io_file_name} is not present at the expected path {custom_io_file_path}. Please pass the correct file path or rerun infer/export API"
+        )
+
     if enable_qnn:
         qpc_path = qnn_compile(
             onnx_path=onnx_path,
             qpc_base_path=qpc_path,
+            qnn_binary_dir=os.path.join(qpc_path, "qpcs"),
             num_cores=num_cores,
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            ctx_len=ctx_len,
             mxfp6=mxfp6,
             mxint8=mxint8,
             allow_mxint8_mdp_io=allow_mxint8_mdp_io,
             aic_enable_depth_first=aic_enable_depth_first,
             mos=mos,
             device_group=device_group,
-            full_batch_size=full_batch_size,
             qnn_config=qnn_config,
+            specializations=(load_json(specialization_json_path))["specializations"],
+            custom_io=load_yaml(custom_io_file_path),
         )
         logger.info(f"QNN Compiled QPC files can be found here: {qpc_path}")
     else:
-        # Select the customIO config based on the mx flag.
-        custom_io_file_name = "custom_io_int8.yaml" if mxint8 else "custom_io_fp16.yaml"
-
-        if custom_io_file_path is None:
-            custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)
-
-        if not os.path.isfile(custom_io_file_path):
-            raise FileNotFoundError(
-                f"Custom IO file {custom_io_file_name} is not present at the expected path {custom_io_file_path}. Please pass the correct file path or rerun infer/export API"
-            )
-
         _, qpc_path = compile_kv_model_on_cloud_ai_100(
             onnx_path=onnx_path,
             specializations_json=specialization_json_path,
@@ -221,6 +225,13 @@ def compile(
             allow_mxint8_mdp_io=allow_mxint8_mdp_io,
             mos=mos,
             device_group=device_group,
+            **kwargs,
         )
-        logger.info(f"Compiled QPC files can be found here: {qpc_path}")
+        if kwargs.get("io_encrypt", None):
+            logger.warning(
+                f"Compilation for IO-Encrypt has been successfully completed at path: {qpc_path}. However, Efficient-Transformers do not support IO-Encrypt execution. Please run the execution separately"
+            )
+        else:
+            logger.info(f"Compiled QPC files can be found here: {qpc_path}")
+
     return qpc_path
