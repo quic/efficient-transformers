@@ -316,6 +316,7 @@ def cloud_ai_100_exec_kv(
     prompts_txt_file_path: Optional[str] = None,
     device_id: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
+    comp_ctx_lengths: Optional[List[int]] = None,
     enable_debug_logs: bool = False,
     stream: bool = True,
     write_io_dir: Optional[str] = None,
@@ -368,6 +369,7 @@ def cloud_ai_100_exec_kv(
         qpc_path=qpc_path,
         device_id=device_id,
         ctx_len=ctx_len,
+        comp_ctx_lengths=comp_ctx_lengths,
         enable_debug_logs=enable_debug_logs,
         write_io_dir=write_io_dir,
         full_batch_size=full_batch_size,
@@ -407,12 +409,14 @@ class QEffTextGenerationBase:
         qpc_path: str,
         full_batch_size: Optional[int] = None,
         ctx_len: Optional[int] = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
         device_id: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
         is_tlm: Optional[int] = None,
     ) -> None:
         self._ctx_len = ctx_len
+        self.comp_ctx_lengths = comp_ctx_lengths
         self._write_io_dir = write_io_dir
         self.is_tlm = is_tlm
 
@@ -724,6 +728,11 @@ class QEffTextGenerationBase:
                 batch_lora_ids = [self._prompt_to_lora_id_mapping_prefill.popleft() for i in range(self.batch_size)]
                 inputs["lora_ids"] = np.array(batch_lora_ids, dtype=np.int64).reshape(self.batch_size, 1)
 
+        if self.comp_ctx_lengths is not None:
+            inputs["comp_ctx_lengths"] = np.random.rand(self.comp_ctx_lengths[0])
+            buffers = {"comp_ctx_len_out": np.zeros(1)}
+            self._session.set_buffers(buffers)
+
         for i in range(num_chunks):
             chunk_inputs = inputs.copy()
             chunk_inputs["input_ids"] = inputs["input_ids"][
@@ -740,6 +749,19 @@ class QEffTextGenerationBase:
             position_ids,
             generation_len,
         )
+
+    def initialize_ccl(self, decode_inputs):
+        max_ccl_id = len(self.comp_ctx_lengths) - 1
+        max_position_id = np.max(decode_inputs["position_ids"])
+        ccl_id = 2
+        for i in range(2, len(self.comp_ctx_lengths)):
+            if max_position_id < self.comp_ctx_lengths[i]:
+                ccl_id = i
+                break
+        buffers = {"comp_ctx_len_out": np.zeros(1)}
+        print(f"CCL:{self.comp_ctx_lengths[ccl_id]}")
+
+        return buffers, ccl_id, max_ccl_id
 
     def run_continuous_batching_decode(self, prompt_queue, generation_len):
         """
@@ -770,6 +792,12 @@ class QEffTextGenerationBase:
         decode_pause_time = 0
         # Prepare decode inputs inputs.
         decode_inputs = self.prepare_decode_inputs()
+
+        if self.comp_ctx_lengths is not None:
+            list_of_comp_ctx_lengths = [np.zeros(length) for length in self.comp_ctx_lengths]
+            buffers, ccl_id, max_ccl_id = self.initialize_ccl(decode_inputs)
+            decode_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths[ccl_id]
+            self._session.set_buffers(buffers)
 
         while prompt_queue or current_decode_ongoing.any():
             outputs = self._session.run(decode_inputs)
@@ -808,6 +836,19 @@ class QEffTextGenerationBase:
                                 batch_id_map[decode_batch_id]
                             ]
 
+                        if self.comp_ctx_lengths is not None:
+                            ###Recalculate ccl_id based on position ids###
+                            # Determine the maximum value of position_ids across all batch elements
+                            max_position_id = np.max(decode_inputs["position_ids"])
+
+                            # Update ccl_id and comp_ctx_lengths based on the maximum position id
+                            ccl_id = 1
+                            for i in range(1, len(self.comp_ctx_lengths)):
+                                if max_position_id < self.comp_ctx_lengths[i]:
+                                    ccl_id = i
+                                    break
+                            decode_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths[ccl_id]
+
                     else:
                         current_decode_ongoing[decode_batch_id] = False
                 else:
@@ -817,6 +858,12 @@ class QEffTextGenerationBase:
                     self.generated_ids[batch_id_map[decode_batch_id], generated_id_current_index[decode_batch_id]] = (
                         next_token_id[decode_batch_id, -1]
                     )
+
+                    if self.comp_ctx_lengths is not None:
+                        # Update ccl_id and comp_ctx_lengths based on the maximum position id
+                        if decode_inputs["position_ids"][decode_batch_id, -1] >= self.comp_ctx_lengths[ccl_id] - 1:
+                            ccl_id = min(ccl_id + 1, max_ccl_id)
+                            decode_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths[ccl_id]
 
                     generated_id_current_index[decode_batch_id] += 1
 
@@ -842,7 +889,21 @@ class QEffTextGenerationBase:
             self._session.set_buffers({"logits": logits_out_placeholder})
         finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
         num_token = 0
+
+        if self.comp_ctx_lengths is not None:
+            list_of_comp_ctx_lengths = [np.zeros(length) for length in self.comp_ctx_lengths]
+            buffers, ccl_id, max_ccl_id = self.initialize_ccl(decode_inputs)
+            decode_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths[ccl_id]
+            self._session.set_buffers(buffers)
+
+        cache_index = np.max(decode_inputs["position_ids"])
         for num_token in range(1, generation_len):
+            if self.comp_ctx_lengths is not None:
+                if cache_index >= self.comp_ctx_lengths[ccl_id] - 1:
+                    # if cache_index >= self.comp_ctx_lengths[ccl_id] - 1:
+                    ccl_id = min(ccl_id + 1, max_ccl_id)
+                    decode_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths[ccl_id]
+
             if streamer:
                 streamer.put(decode_inputs["input_ids"][0])
             outputs = self._session.run(decode_inputs)
@@ -901,17 +962,27 @@ class TextGeneration:
         qpc_path: str,
         full_batch_size: Optional[int] = None,
         ctx_len: Optional[int] = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
         device_id: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
         is_tlm: bool = False,
     ) -> None:
         self._qaic_model = QEffTextGenerationBase(
-            tokenizer, qpc_path, full_batch_size, ctx_len, device_id, enable_debug_logs, write_io_dir, is_tlm
+            tokenizer,
+            qpc_path,
+            full_batch_size,
+            ctx_len,
+            comp_ctx_lengths,
+            device_id,
+            enable_debug_logs,
+            write_io_dir,
+            is_tlm,
         )
         self._full_batch_size = self._qaic_model.full_batch_size
         self._tokenizer = self._qaic_model.tokenizer
         self._ctx_len = ctx_len
+        self.comp_ctx_lengths = comp_ctx_lengths
         self._perf_metrics = None
         self._prompt_queue = None
         self._text_streamer = None
