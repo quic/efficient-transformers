@@ -584,7 +584,6 @@ class QEffTextGenerationBase:
             else:
                 batch_lora_ids = [self._prompt_to_lora_id_mapping_decode.popleft() for i in range(self.batch_size)]
                 decode_inputs["lora_ids"] = np.array(batch_lora_ids, dtype=np.int64).reshape(self.batch_size, 1)
-
         return decode_inputs
 
     def _fetch_next_token_id(self, outputs):
