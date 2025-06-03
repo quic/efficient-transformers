@@ -12,18 +12,9 @@ import os
 # hf_transfer is imported (will happen on line 15 via leading imports)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
-from transformers import AutoConfig
-
-from QEfficient.transformers.modeling_utils import MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS
+# Placeholder for all non-transformer models registered in QEfficient
+import QEfficient.utils.model_registery  # noqa: F401
 from QEfficient.utils.logging_utils import logger
-
-# loop over all the model types which are not present in transformers and register them
-for model_type, model_cls in MODEL_TYPE_TO_CONFIG_CLS_AND_ARCH_CLS.items():
-    # Register the model config class based on the model type. This will be first element in the tuple
-    AutoConfig.register(model_type, model_cls[0])
-
-    # Register the non transformer library Class and config class using AutoModelClass
-    model_cls[2].register(model_cls[0], model_cls[1])
 
 
 def check_qaic_sdk():
