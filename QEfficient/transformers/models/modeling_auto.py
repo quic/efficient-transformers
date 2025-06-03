@@ -1708,6 +1708,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if (self.model.qaic_config is not None
             and self.model.qaic_config.get("include_sampler", False)
+            and num_speculative_tokens is not None
             and num_speculative_tokens > 0
         ):
             raise ValueError("Currently, sampler does not support `num_speculative_tokens` > 0.")
