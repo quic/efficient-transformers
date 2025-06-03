@@ -1611,7 +1611,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         # --- Specializations ---
         specializations = []
-
         if prefill_only is None or prefill_only or prefill_seq_len == 1:
             specializations.append(
                 self.build_prefill_specialization(
