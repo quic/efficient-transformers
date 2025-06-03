@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from argparse import ArgumentParser
+import argparse
 from dataclasses import dataclass
 from time import perf_counter
 from typing import List, Optional, Union
@@ -31,11 +31,6 @@ class SpDPerfMetrics:
         :mean_num_accepted_tokens (float): Average number of accepted tokens.
         :max_gen_len (int): Max generation length.
         :generated_tokens_per_prompt (List[int]): Total generated tokens per prompt.
-        :e2e_time (float): Total end-to-end time.
-        :decode_time (float): Total decode time.
-        :decode_draft_time (float): Total draft time.
-        :decode_target_time (float): Total target time.
-        :decode_iterations (int): Total decode iterations.
     """
 
     mean_ttft: float
@@ -47,13 +42,12 @@ class SpDPerfMetrics:
     generated_tokens_per_prompt: List[int]
     e2e_time: float
     decode_time: float
-    decode_draft_time: float
     decode_target_time: float
     decode_iterations: int
 
 
 @dataclass
-class SpDCloudAI100ExecInfo:
+class CloudAI100ExecInfo:
     """
     Holds all the information about Cloud AI 100 execution
 
@@ -62,7 +56,7 @@ class SpDCloudAI100ExecInfo:
         :batch_size (int): Batch size of the QPC compilation.
         :generated_texts (Union[List[List[str]], List[str]]): Generated text(s).
         :generated_ids (Union[List[np.ndarray], np.ndarray]): Generated IDs.
-        :perf_metrics (SpDPerfMetrics): Performance metrics.
+        :perf_metrics (PerfMetrics): Performance metrics.
         :num_speculative_tokens (int): Number of speculative tokens.
         :prefill_seq_len (int): Prefill sequence length.
         :ctx_len (int): Context length.
@@ -81,8 +75,7 @@ class SpDCloudAI100ExecInfo:
     prefill_seq_len: int
     ctx_len: int
     prefill_bsz: int
-    draft_model_name: str
-    target_model_name: str
+    model_name: str
     full_batch_size: Optional[int]
 
     def __repr__(self):
@@ -97,13 +90,12 @@ class SpDCloudAI100ExecInfo:
         )
 
 
-def run_prefill_on_draft_and_target(
-    tlm_session: QAICInferenceSession,
-    dlm_session: QAICInferenceSession,
+def run_prefill(
+    session: QAICInferenceSession,
     inputs: dict,
     prefill_seq_len: int,
     slot_idx: int,
-):
+) -> np.ndarray:
     input_len = inputs.input_ids.shape[1]
     num_chunks = input_len // prefill_seq_len
     cache_index = np.array([[0]], np.int64)
@@ -118,12 +110,11 @@ def run_prefill_on_draft_and_target(
             :, cache_index[0, 0] : cache_index[0, 0] + prefill_seq_len
         ]
 
-        tlm_outputs = tlm_session.run(chunk_inputs)
-        _ = dlm_session.run(chunk_inputs)
+        outputs = session.run(chunk_inputs)
         cache_index += prefill_seq_len
 
-    tlm_logits = tlm_outputs["logits"]
-    return tlm_logits
+    logits = outputs["logits"]
+    return logits
 
 
 def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
@@ -157,20 +148,17 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
     return bonus_token_inputs, dlm_decode_inputs
 
 
-def draft_spec_decode_inference(
+def multiprojs_spec_decode_inference(
     prompts: List[str],
     num_speculative_tokens: int,
     prefill_seq_len: int,
     ctx_len: int,
     prefill_bsz: int,
-    draft_model_name: str,
-    target_model_name: str,
+    pretrained_model_name_or_path: str,
     full_batch_size: Optional[int],
-    target_device_group: List[int],
-    draft_device_group: List[int],
-    draft_model_session: Optional[QAICInferenceSession] = None,
-    target_model_session: Optional[QAICInferenceSession] = None,
-) -> SpDCloudAI100ExecInfo:
+    session: QAICInferenceSession,
+    ignore_eos_token: bool = False,
+) -> CloudAI100ExecInfo:
     """
     Perform draft speculative decode inference on the given prompts.
 
@@ -180,60 +168,22 @@ def draft_spec_decode_inference(
         prefill_seq_len (int): Prefill sequence length.
         ctx_len (int): Context length.
         prefill_bsz (int): Prefill batch size.
-        draft_model_name (str): Name of the draft model.
-        target_model_name (str): Name of the target model.
+        pretrained_model_name_or_path (str): Name of multiprojection model
         full_batch_size (Optional[int]): Full batch size.
-        target_device_group (List[int]): List of device IDs for target model.
-        draft_device_group (List[int]): List of device IDs for draft model.
+        device_group (List[int]): List of device IDs.
 
     Returns:
-        SpDCloudAI100ExecInfo: Execution information, including performance metrics and generated text.
+        CloudAI100ExecInfo: Execution information, including performance metrics and generated text.
     """
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
-    tokenizer = AutoTokenizer.from_pretrained(target_model_name, padding_side="right")
+    tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path, padding_side="right")
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
     vocab_size = len(tokenizer)
-
-    # export_and_compile tlm and dlm
-    continuous_batching = full_batch_size is not None
-    if target_model_session is None:
-        target_model = AutoModelForCausalLM.from_pretrained(
-            target_model_name, continuous_batching=continuous_batching, is_tlm=True
-        )
-        target_num_devices = len(target_device_group)
-        target_model_qpc_path: str = target_model.compile(
-            num_cores=11,
-            num_devices=target_num_devices,
-            prefill_seq_len=prefill_seq_len,
-            ctx_len=ctx_len,
-            aic_enable_depth_first=True,
-            full_batch_size=full_batch_size,
-            num_speculative_tokens=num_speculative_tokens,
-        )
-        target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=target_device_group)
-    if draft_model_session is None:
-        draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, continuous_batching=continuous_batching)
-        draft_num_devices = len(draft_device_group)
-        draft_model_qpc_path: str = draft_model.compile(
-            num_cores=5,
-            num_devices=draft_num_devices,
-            prefill_seq_len=prefill_seq_len,
-            ctx_len=ctx_len,
-            aic_enable_depth_first=True,
-            full_batch_size=full_batch_size,
-        )
-        # init qaic session
-        draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=draft_device_group)
-
     # skip inputs/outputs buffers
-    target_model_session.skip_buffers(set([x for x in target_model_session.input_names if x.startswith("past_")]))
-    target_model_session.skip_buffers(
-        set([x for x in target_model_session.output_names if x.endswith("_RetainedState")])
-    )
-    draft_model_session.skip_buffers(set([x for x in draft_model_session.input_names if x.startswith("past_")]))
-    draft_model_session.skip_buffers(set([x for x in draft_model_session.output_names if x.endswith("_RetainedState")]))
+    session.skip_buffers(set([x for x in session.input_names if x.startswith("past_")]))
+    session.skip_buffers(set([x for x in session.output_names if x.endswith("_RetainedState")]))
 
     is_cb = full_batch_size is not None
     decode_batch_size = full_batch_size if is_cb else prefill_bsz
@@ -248,104 +198,74 @@ def draft_spec_decode_inference(
         p_tok: dict = tokenizer(p, return_tensors="np", padding="max_length", max_length=input_len_padded)
         position_ids = np.where(p_tok.pop("attention_mask"), np.arange(input_len_padded), -1)
         p_tok["position_ids"] = position_ids
+        p_tok["num_logits_to_keep"] = np.zeros((1, 1), dtype=np.int64)
         prompts_tokenized.append(p_tok)
     # create caches to hold generated ids and input prompt lengths
     generated_ids = [[] for i in range(decode_batch_size)]
     input_lengths = [0] * decode_batch_size
-    # run prefill on both draft and target models
-    dlm_decode_inputs = dict()
-    dlm_decode_inputs["position_ids"] = np.zeros((decode_batch_size, 1), np.int64)
-    dlm_decode_inputs["input_ids"] = np.full((decode_batch_size, 1), tokenizer.pad_token_id)
-    dlm_decode_inputs["batch_index"] = np.reshape(
-        np.array(np.arange(decode_batch_size), np.int64), (decode_batch_size, 1)
-    )
     # mock input key "logits" to store the first batch of output logits
-    tlm_precode_inputs = dict(
-        input_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
-        position_ids=np.zeros((decode_batch_size, num_speculative_tokens + 1), dtype=np.int64),
+    num_logits_to_keep = num_speculative_tokens + 1  # number of logits to keep
+    precode_inputs = dict(
+        input_ids=np.zeros((decode_batch_size, num_logits_to_keep), dtype=np.int64),
+        position_ids=np.zeros((decode_batch_size, num_logits_to_keep), dtype=np.int64),
         batch_index=np.arange(decode_batch_size, dtype=np.int64).reshape(-1, 1),
+        num_logits_to_keep=np.zeros((num_logits_to_keep, 1), dtype=np.int64),
     )
     max_gen_len = [ctx_len] * decode_batch_size
-    num_logits_to_keep = num_speculative_tokens + 1
     # setup buffers
-    tlm_prefill_logits_ph = np.zeros((prefill_bsz, 1, vocab_size), dtype=np.float32)
-    dlm_prefill_logits_ph = np.zeros((prefill_bsz, 1, vocab_size), dtype=np.float32)
-    decode_logits_ph = np.zeros((decode_batch_size, 1, vocab_size), dtype=np.float32)
-    precode_logits_ph = np.zeros((decode_batch_size, num_logits_to_keep, vocab_size), dtype=np.float32)
-
-    target_model_session.set_buffers({"logits": tlm_prefill_logits_ph})
-    draft_model_session.set_buffers({"logits": dlm_prefill_logits_ph})
+    prefill_logits_ph = np.zeros((prefill_bsz, 1, num_logits_to_keep, vocab_size), dtype=np.float32)
+    session.set_buffers({"logits": prefill_logits_ph})
     e2e_start = perf_counter()
     ttfts = []
     for bi in range(decode_batch_size):
         # assumes that prefill queue will always be popped from the front
         start = perf_counter()
-        tlm_logits = run_prefill_on_draft_and_target(
-            tlm_session=target_model_session,
-            dlm_session=draft_model_session,
+        logits = run_prefill(  # shape: [1, 1, num_logits_to_keep, vocab_size]
+            session=session,
             inputs=prompts_tokenized[bi],
             prefill_seq_len=prefill_seq_len,
             slot_idx=bi,
         )
         ttft = perf_counter() - start
         ttfts.append(ttft)
-        input_ids = tlm_logits.argmax(2).astype(np.int64)
-        generated_ids[bi].append(input_ids.item())
-        dlm_decode_inputs["input_ids"][bi, 0] = input_ids
-        tlm_precode_inputs["input_ids"][bi, 0] = input_ids.item()
+        input_ids = logits.argmax(-1).astype(np.int64)  # shape: [1, 1, num_logits_to_keep]
+        generated_ids[bi].append(input_ids[0, 0, 0].item())
+        precode_inputs["input_ids"][bi] = input_ids.flatten()
         input_len = prompts_tokenized[bi]["position_ids"].max(1).item() + 1
-        dlm_decode_inputs["position_ids"][bi, 0] = input_len
-        tlm_precode_inputs["position_ids"][bi] = np.arange(
-            input_len, input_len + num_speculative_tokens + 1, dtype=np.int64
-        )
+        precode_inputs["position_ids"][bi] = np.arange(input_len, input_len + num_logits_to_keep, dtype=np.int64)
         # assumes that prefill queue will always be popped from the front
         input_lengths[bi] = input_len
         max_gen_len[bi] -= input_lengths[bi]
     batch_ttft = perf_counter() - e2e_start
 
     # set decode logits buffers
-    target_model_session.set_buffers({"logits": precode_logits_ph})
-    draft_model_session.set_buffers({"logits": decode_logits_ph})
+    precode_logits_ph = np.zeros(
+        (decode_batch_size, num_logits_to_keep, num_logits_to_keep, vocab_size), dtype=np.float32
+    )
+    session.set_buffers({"logits": precode_logits_ph})
     # start decode phase
     valid_batch_indices = np.full(decode_batch_size, True, dtype=bool)
-    all_accept = False
+    seq_batch_indices = np.arange(decode_batch_size, dtype=np.int64)
     it = 0
-    decode_draft_time = 0.0
+    mean_num_accepted_tokens = 0
     decode_target_time = 0.0
     decode_start = perf_counter()
-    mean_num_accepted_tokens = 0
-    all_accept = np.full(decode_batch_size, False, dtype=bool)
     while True:
         it += 1
-        # generate proposals from draft model
-        draft_start = perf_counter()
-        for k_ in range(num_speculative_tokens):
-            if all_accept.any():
-                # running decode one extra time in the first speculative iteration
-                # workaround to avoid the incorrect precode with 3-specialized multi-batch DLM
-                bonus_token_inputs, dlm_decode_inputs = split_dlm_bonus_token_inputs(dlm_decode_inputs)
-                _ = draft_model_session.run(bonus_token_inputs)
-                all_accept[:] = False
-            dlm_outputs = draft_model_session.run(dlm_decode_inputs)
-            input_ids = dlm_outputs["logits"].argmax(2)
-            tlm_precode_inputs["input_ids"][:, k_ + 1] = input_ids.flatten()
-            dlm_decode_inputs["input_ids"] = input_ids
-            dlm_decode_inputs["position_ids"][valid_batch_indices] += 1
-        draft_end = perf_counter() - draft_start
-        decode_draft_time += draft_end
-        # run precode on TLM to score the proposed tokens
+        # run precode
         target_start = perf_counter()
-        tlm_outputs = target_model_session.run(tlm_precode_inputs)
-        target_logits = tlm_outputs["logits"]
+        tlm_outputs = session.run(precode_inputs)
+        target_logits = tlm_outputs[
+            "logits"
+        ]  # shape: [decode_batch_size, num_logits_to_keep, num_logits_to_keep, vocab_size]
         # greedy sampling from target model
-        target_tokens = target_logits.argmax(-1)
+        target_tokens = target_logits[:, :, 0].argmax(-1)  # shape: [decode_batch_size, num_logits_to_keep]
         target_end = perf_counter() - target_start
         decode_target_time += target_end
         # exact matching between draft and target tokens
-        draft_tokens = tlm_precode_inputs["input_ids"][:, 1:]
+        draft_tokens = precode_inputs["input_ids"][:, 1:]  # shape: [decode_batch_size, num_speculative_tokens]
         matching = draft_tokens == target_tokens[:, :-1]  # shape: [decode_batch_size, num_speculative_tokens]
         num_tokens_selected = matching.cumprod(axis=1).sum(axis=1) + 1  # shape: [decode_batch_size]
-        all_accept[valid_batch_indices] = num_tokens_selected[valid_batch_indices] == num_speculative_tokens + 1
         mean_num_accepted_tokens += num_tokens_selected[valid_batch_indices].mean().item()
         # append selected tokens to the generated_ids
         for bi, valid in enumerate(valid_batch_indices):
@@ -353,41 +273,23 @@ def draft_spec_decode_inference(
                 continue
             accepted_tokens = num_tokens_selected[bi]
             num_tokens_to_append = min(accepted_tokens, max_gen_len[bi] - len(generated_ids[bi]))
-            generated_ids[bi].extend(target_tokens[bi, :num_tokens_to_append].tolist())
-            if len(generated_ids[bi]) >= max_gen_len[bi]:
+            accepted_tokens_arr = target_tokens[bi, :num_tokens_to_append]
+            generated_ids[bi].extend(accepted_tokens_arr.tolist())
+            if len(generated_ids[bi]) >= max_gen_len[bi] or (
+                (not ignore_eos_token) and (accepted_tokens_arr == tokenizer.eos_token_id).any()
+            ):
                 valid_batch_indices[bi] = False
         # check if all generations are done
         if not valid_batch_indices.any():
             break
         # prepare decode inputs for next decode iteration
-        num_valid_batch_indices = valid_batch_indices.sum().item()
-        common_input_ids = target_tokens[valid_batch_indices, num_tokens_selected[valid_batch_indices] - 1].reshape(
-            num_valid_batch_indices, 1
-        )
-        common_position_ids = (
-            tlm_precode_inputs["position_ids"][
-                valid_batch_indices, num_tokens_selected[valid_batch_indices] - 1
-            ].reshape(num_valid_batch_indices, 1)
-            + 1
-        )
-        if all_accept.any():
-            # all_accept input_ids
-            input_ids = np.zeros((decode_batch_size, 2), dtype=np.int64)
-            last_spec_token_id = target_tokens[valid_batch_indices, -2].reshape(-1, 1)
-            input_ids[valid_batch_indices] = np.concatenate([last_spec_token_id, common_input_ids], axis=1)
-            dlm_decode_inputs["input_ids"] = input_ids
-            # all_accept position_ids
-            position_ids = np.full((decode_batch_size, 2), -1, dtype=np.int64)
-            last_spec_position_id = tlm_precode_inputs["position_ids"][valid_batch_indices, -1].reshape(-1, 1)
-            position_ids[valid_batch_indices] = np.concatenate([last_spec_position_id, common_position_ids], axis=1)
-            dlm_decode_inputs["position_ids"] = position_ids
-        else:
-            dlm_decode_inputs["input_ids"][valid_batch_indices] = common_input_ids
-            dlm_decode_inputs["position_ids"][valid_batch_indices] = common_position_ids
-        tlm_precode_inputs["input_ids"][valid_batch_indices, 0] = common_input_ids.flatten()
-        tlm_precode_inputs["position_ids"][valid_batch_indices] += num_tokens_selected[valid_batch_indices].reshape(
-            num_valid_batch_indices, 1
-        )
+        next_input_ids = (
+            target_logits[seq_batch_indices, num_tokens_selected - 1].argmax(-1).astype(np.int64)
+        )  # shape: [decode_batch_size, num_logits_to_keep]
+        next_position_ids = precode_inputs["position_ids"] + num_tokens_selected[:, np.newaxis]
+        next_position_ids[~valid_batch_indices] = -1
+        precode_inputs["input_ids"] = next_input_ids
+        precode_inputs["position_ids"] = next_position_ids
     end = perf_counter()
     # calculate performance metrics
     decode_end = end - decode_start
@@ -408,11 +310,10 @@ def draft_spec_decode_inference(
         generated_tokens_per_prompt,
         e2e_end,
         decode_end,
-        decode_draft_time,
         decode_target_time,
         it,
     )
-    exec_info = SpDCloudAI100ExecInfo(
+    exec_info = CloudAI100ExecInfo(
         prompts,
         decode_batch_size,
         batch_decode,
@@ -422,14 +323,13 @@ def draft_spec_decode_inference(
         prefill_seq_len,
         ctx_len,
         prefill_bsz,
-        draft_model_name,
-        target_model_name,
+        pretrained_model_name_or_path,
         full_batch_size,
     )
     return exec_info
 
 
-def optional_int(x: Optional[str]):
+def optional_int(x):
     if x is None:
         return None
     return int(x)
@@ -440,40 +340,78 @@ def comma_separated_ints(x: str):
 
 
 def arg_parse():
-    parser = ArgumentParser(description="Draft-based SpD Inference")
+    parser = argparse.ArgumentParser(description="Draft-based SpD Inference")
     parser.add_argument("--prompts", action="append", default=None, help="Input prompt(s)")
-    parser.add_argument("--num-speculative-tokens", type=int, default=4, help="Number of speculative tokens")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
     parser.add_argument("--prefill-bsz", type=int, default=1, help="Prefill batch size")
     parser.add_argument(
-        "--draft-model-name", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0", help="Draft model name"
-    )
-    parser.add_argument(
-        "--target-model-name", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0", help="Target model name"
+        "--pretrained-model-name-or-path",
+        type=str,
+        default="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        help="Target model name",
     )
     parser.add_argument("--full-batch-size", type=optional_int, default=None, help="Full batch size")
-    parser.add_argument(
-        "--target-device-group",
-        type=comma_separated_ints,
-        default="0",
-        help="comma separated device QIDs (e.g., '1,2,3')",
-    )
-    parser.add_argument(
-        "--draft-device-group",
-        type=comma_separated_ints,
-        default="0",
-        help="comma separated device QIDs (e.g., '1,2,3')",
-    )
+    parser.add_argument("--device-group", type=comma_separated_ints, default="0", help="device QIDs")
+    parser.add_argument("--ignore-eos-token", action="store_true")
     args = parser.parse_args()
     return args
+
+
+def get_session(
+    pretrained_model_name_or_path,
+    device_group,
+    prefill_seq_len,
+    ctx_len,
+    full_batch_size=None,
+):
+    is_cb = full_batch_size is not None
+    qaic_config = dict(speculative_model_type="turbo")
+    qeff_model = AutoModelForCausalLM.from_pretrained(
+        pretrained_model_name_or_path,
+        continuous_batching=is_cb,
+        qaic_config=qaic_config,
+    )
+    num_devices = len(device_group)
+    model_qpc_path: str = qeff_model.compile(
+        num_cores=16,
+        num_devices=num_devices,
+        prefill_seq_len=prefill_seq_len,
+        ctx_len=ctx_len,
+        aic_enable_depth_first=True,
+        full_batch_size=full_batch_size,
+    )
+    print(f"{model_qpc_path=}")
+    # init qaic session
+    session = QAICInferenceSession(model_qpc_path, device_ids=device_group)
+    num_speculative_tokens = qeff_model.model.config.speculative_config["num_speculative_tokens"]
+    return session, num_speculative_tokens
 
 
 def main():
     args = arg_parse()
     if args.prompts is None:
         args.prompts = Constants.INPUT_STR
-    exec_info = draft_spec_decode_inference(**vars(args))
+
+    session, num_speculative_tokens = get_session(
+        pretrained_model_name_or_path=args.pretrained_model_name_or_path,
+        device_group=args.device_group,
+        prefill_seq_len=args.prefill_seq_len,
+        ctx_len=args.ctx_len,
+        full_batch_size=args.full_batch_size,
+    )
+    args.session = session
+    exec_info = multiprojs_spec_decode_inference(
+        args.prompts,
+        num_speculative_tokens,
+        args.prefill_seq_len,
+        args.ctx_len,
+        args.prefill_bsz,
+        args.pretrained_model_name_or_path,
+        args.full_batch_size,
+        args.session,
+        args.ignore_eos_token,
+    )
     print(exec_info)
     prompts = exec_info.prompts
     generated_texts = exec_info.generated_texts
