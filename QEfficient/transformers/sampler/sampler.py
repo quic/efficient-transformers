@@ -31,7 +31,11 @@ def prefill_path(
     """
     # Initialize retain states for first input chunk
     mul_value = torch.ones(past_repetition_penalty_buffer.shape[0], 1, dtype=torch.bool)
-    mul_value[batch_index_reshaped] = position_ids[:, :1] != 0
+    zero_tensor = torch.zeros(batch_index.shape, dtype=torch.long)
+    positions_mask = (position_ids[:, :1] != zero_tensor).view(-1, 1)
+    mul_value = CtxScatterFuncCB3D.apply(
+        mul_value, batch_index, zero_tensor, positions_mask
+    )
     past_repetition_penalty_buffer *= mul_value
     past_presence_penalty_buffer *= mul_value
 
