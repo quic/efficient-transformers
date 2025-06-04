@@ -6,53 +6,72 @@
 # -----------------------------------------------------------------------------
 
 import logging
+import os
+from datetime import datetime
+from typing import Optional
+
+from concurrent_log_handler import ConcurrentRotatingFileHandler
 
 
-class QEffFormatter(logging.Formatter):
-    """
-    Formatter class used to set colors for printing different logging levels of messages on console.
-    """
+class QEFFLogger:
+    _instance: Optional[logging.Logger] = None
 
-    cyan: str = "\x1b[38;5;14m"
-    yellow: str = "\x1b[33;20m"
-    red: str = "\x1b[31;20m"
-    bold_red: str = "\x1b[31;1m"
-    reset: str = "\x1b[0m"
-    common_format: str = "%(levelname)s - %(name)s - %(message)s"  # type: ignore
-    format_with_line_info = "%(levelname)s - %(name)s - %(message)s  (%(filename)s:%(lineno)d)"  # type: ignore
+    def __init__(self, loglevel: Optional[str] = "INFO"):
+        if QEFFLogger._instance is None:
+            self.loglevel = loglevel
+            self.logger = self._initialize_logger()
+            QEFFLogger._instance = self.logger
 
-    FORMATS = {
-        logging.DEBUG: cyan + format_with_line_info + reset,
-        logging.INFO: cyan + common_format + reset,
-        logging.WARNING: yellow + common_format + reset,
-        logging.ERROR: red + format_with_line_info + reset,
-        logging.CRITICAL: bold_red + format_with_line_info + reset,
-    }
+    def _get_formatter(self) -> logging.Formatter:
+        return logging.Formatter(
+            "[%(asctime)s:%(levelname)s:%(threadName)s:%(filename)s:%(lineno)d:%(funcName)s()]:%(message)s"
+        )
 
-    def format(self, record):
-        """
-        Overriding the base class method to Choose format based on log level.
-        """
-        log_fmt = self.FORMATS.get(record.levelno)
-        formatter = logging.Formatter(log_fmt)
-        return formatter.format(record)
+    def _initialize_logger(self) -> logging.Logger:
+        # Define the hidden log directory path
+        log_dir = os.path.expanduser("~/.cache/.log")
+        os.makedirs(log_dir, exist_ok=True)  # Create the directory if it doesn't exist
 
+        # Create a timestamped log file in the hidden directory
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        logfile = os.path.join(log_dir, f"QEFF_{timestamp}.log")
 
-def create_logger() -> logging.Logger:
-    """
-    Creates a logger object with Colored QEffFormatter.
-    """
-    logger = logging.getLogger("QEfficient")
+        numeric_level = getattr(logging, self.loglevel.upper(), None)
+        if not isinstance(numeric_level, int):
+            raise ValueError(f"Invalid log level: {self.loglevel}")
 
-    # create console handler and set level to debug
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-    # define formatter
-    ch.setFormatter(QEffFormatter())
+        logger = logging.getLogger("QEFF_LOGGER")
+        logger.setLevel(numeric_level)
 
-    logger.addHandler(ch)
-    return logger
+        if not logger.handlers:
+            handler = ConcurrentRotatingFileHandler(logfile, maxBytes=5 * 1024 * 1024, backupCount=15)
+            handler.setFormatter(self._get_formatter())
+            logger.addHandler(handler)
 
+        return logger
 
-# Define the logger object that can be used for logging purposes throughout the module.
-logger = create_logger()
+    @classmethod
+    def get_logger(cls, loglevel: Optional[str] = "INFO") -> logging.Logger:
+        if cls._instance is None:
+            cls(loglevel)
+        return cls._instance
+
+    @classmethod
+    def set_loglevel(cls, loglevel: Optional[str] = "INFO"):
+        if cls._instance is None:
+            raise RuntimeError("Logger has not been initialized yet. Call get_logger() first.")
+
+        numeric_level = getattr(logging, loglevel.upper(), None)
+        if not isinstance(numeric_level, int):
+            raise ValueError(f"Invalid log level: {loglevel}")
+
+        cls._instance.setLevel(numeric_level)
+
+    @classmethod
+    def close_logger(cls):
+        if cls._instance:
+            handlers = cls._instance.handlers[:]
+            for handler in handlers:
+                handler.close()
+                cls._instance.removeHandler(handler)
+            cls._instance = None

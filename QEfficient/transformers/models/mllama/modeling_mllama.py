@@ -30,7 +30,6 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaTextModel,
     MllamaTextSelfAttention,
     MllamaVisionModel,
-    logger,
     repeat_kv,
     rotate_half,
 )
@@ -43,6 +42,9 @@ from QEfficient.transformers.modeling_utils import (
 )
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
 
 MAX_NUM_IMG = 1
 NUM_CHANNEL = 3

@@ -22,13 +22,15 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeRotaryEmbedding,
     GraniteMoeTopKGating,
     load_balancing_loss_func,
-    logger,
     repeat_kv,
     rotate_half,
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
 
 
 class QEffGraniteMoeRotaryEmbedding(GraniteMoeRotaryEmbedding):
@@ -199,9 +201,7 @@ class QEffGraniteMoeModel(GraniteMoeModel):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
         if self.gradient_checkpointing and self.training and use_cache:
-            logger.warning_once(
-                "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
-            )
+            logger.warning("`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`.")
             use_cache = False
 
         if inputs_embeds is None:
@@ -216,7 +216,7 @@ class QEffGraniteMoeModel(GraniteMoeModel):
                 past_key_values = QEffDynamicCache()
             else:
                 past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
-                logger.warning_once(
+                logger.warning(
                     "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
                     "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
                     "(https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)"

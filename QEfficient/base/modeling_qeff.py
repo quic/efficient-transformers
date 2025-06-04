@@ -7,7 +7,6 @@
 
 import hashlib
 import inspect
-import logging
 import shutil
 import subprocess
 import warnings
@@ -24,8 +23,9 @@ from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants, create_json, dump_qconfig, generate_mdp_partition_config, load_json
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
+from QEfficient.utils.logging_utils import QEFFLogger
 
-logger = logging.getLogger(__name__)
+logger = QEFFLogger.get_logger()
 
 
 class QEFFBaseModel(ABC):
@@ -62,6 +62,11 @@ class QEFFBaseModel(ABC):
             warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+
+    def set_loglevel(loglevel: Optional[str] = "INFO"):
+        QEFFLogger.set_loglevel(loglevel)
+        logger.info(f"log level to be set is: {loglevel}")
+        logger.debug(f"log level set to: {loglevel}")
 
     @property
     @abstractmethod

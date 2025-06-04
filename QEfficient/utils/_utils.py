@@ -26,7 +26,9 @@ from transformers import (
 )
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants, QnnConstants
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
 
 
 class DownloadRetryLimitExceeded(Exception):

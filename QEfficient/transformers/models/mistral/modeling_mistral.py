@@ -24,13 +24,15 @@ from transformers.models.mistral.modeling_mistral import (
     MistralForCausalLM,
     MistralModel,
     MistralRotaryEmbedding,
-    logger,
     repeat_kv,
     rotate_half,
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
 
 
 class QEffMistralRotaryEmbedding(MistralRotaryEmbedding):

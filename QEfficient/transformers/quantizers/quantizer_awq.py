@@ -15,7 +15,9 @@ from QEfficient.transformers.quantizers.quantizer_utils import (
     replace_linear_layer_with_target_layer,
     replace_quantization_scales,
 )
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
 
 
 class QEffAwqConfig(AwqConfig):
