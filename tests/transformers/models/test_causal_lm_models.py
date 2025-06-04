@@ -174,18 +174,18 @@ test_models_qnn = [
 ]
 test_dummy_model_configs_qnn = [
     # model_name, model_type, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
-    ("mistralai/Mixtral-8x7B-Instruct-v0.1", "mixtral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    ("mistralai/Mixtral-8x7B-Instruct-v0.1", "mixtral", 128, 1, 2, 64, 256, 32000, {"num_key_value_heads": 2}),
     (
         "meta-llama/Llama-3.2-1B",
         "llama",
         128,
+        1,
         2,
-        4,
         64,
         256,
-        128256,
+        128250,
         {
-            "num_key_value_heads": 2,
+            "num_key_value_heads": 1,
             "rope_scaling": {
                 "factor": 32.0,
                 "high_freq_factor": 4.0,
@@ -195,8 +195,18 @@ test_dummy_model_configs_qnn = [
             },
         },
     ),
-    ("unsloth/gemma-2b", "gemma", 256, 2, 4, 128, 512, 127, {"_name_or_path": "unsloth/gemma-2b"}),
-    ("ibm-granite/granite-guardian-3.1-2b", "granite", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    (
+        "unsloth/gemma-2b",
+        "gemma",
+        128,
+        1,
+        2,
+        64,
+        256,
+        256000,
+        {"num_key_value_heads": 1, "_name_or_path": "unsloth/gemma-2b"},
+    ),
+    ("ibm-granite/granite-guardian-3.1-2b", "granite", 128, 1, 4, 64, 256, 49155, {"num_key_value_heads": 1}),
 ]
 test_dummy_model_configs_qnn, test_dummy_model_names_qnn = get_model_configs_and_names(test_dummy_model_configs_qnn)
 
@@ -206,8 +216,8 @@ spd_test_models = [
 ]
 test_dummy_model_configs_spd = [
     # model_name, model_type, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
-    ("TinyLlama/TinyLlama-1.1B-Chat-v1.0", "llama", 256, 2, 4, 128, 512, 32000, {"num_key_value_heads": 2}),
-    ("Qwen/Qwen2-0.5B", "qwen2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    ("TinyLlama/TinyLlama-1.1B-Chat-v1.0", "llama", 128, 1, 2, 64, 256, 2000, {"num_key_value_heads": 1}),
+    ("Qwen/Qwen2-0.5B", "qwen2", 128, 1, 2, 64, 256, 151900, {"num_key_value_heads": 1}),
 ]
 test_dummy_model_configs_spd, test_dummy_model_names_spd = get_model_configs_and_names(test_dummy_model_configs_spd)
 
