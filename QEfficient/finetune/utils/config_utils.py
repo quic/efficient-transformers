@@ -4,26 +4,19 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
 import inspect
 import json
 import os
 from dataclasses import asdict
 from typing import Any, Dict
 
-import torch.distributed as dist
-import torch.utils.data as data_utils
 import yaml
-from peft import (
-    AdaptionPromptConfig,
-    PrefixTuningConfig,
-)
 from peft import LoraConfig as PeftLoraConfig
-from transformers.data import DataCollatorForSeq2Seq
 
 import QEfficient.finetune.configs.dataset_config as datasets
-from QEfficient.finetune.configs.peft_config import LoraConfig, PrefixConfig
+from QEfficient.finetune.configs.peft_config import LoraConfig
 from QEfficient.finetune.configs.training import TrainConfig
-from QEfficient.finetune.data.sampler import DistributedLengthBasedBatchSampler
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
 
 
@@ -75,12 +68,7 @@ def generate_peft_config(train_config: TrainConfig, peft_config_file: str = None
         validate_config(peft_config_data, config_type="lora")
         peft_config = PeftLoraConfig(**peft_config_data)
     else:
-        config_map = {
-            "lora": (LoraConfig, PeftLoraConfig),
-            "prefix": (PrefixConfig, PrefixTuningConfig),
-            "adaption_prompt": (None, AdaptionPromptConfig),
-        }
-
+        config_map = {"lora": (LoraConfig, PeftLoraConfig)}
         if train_config.peft_method not in config_map:
             raise RuntimeError(f"Peft config not found: {train_config.peft_method}")
 
@@ -113,36 +101,6 @@ def generate_dataset_config(dataset_name: str) -> Any:
     # FIXME (Meet): Replace below logic by creating using auto registry of datasets.
     dataset_config = {k: v for k, v in inspect.getmembers(datasets)}[dataset_name]()
     return dataset_config
-
-
-def get_dataloader_kwargs(train_config, dataset, dataset_processer, mode):
-    kwargs = {}
-    batch_size = train_config.train_batch_size if mode == "train" else train_config.val_batch_size
-    if train_config.enable_ddp:
-        if train_config.enable_sorting_for_ddp:
-            if train_config.context_length:
-                raise ValueError(
-                    "Sorting cannot be done with padding, Please disable sorting or pass context_length as None to disable padding"
-                )
-            else:
-                kwargs["batch_sampler"] = DistributedLengthBasedBatchSampler(
-                    dataset,
-                    batch_size=batch_size,
-                    rank=dist.get_rank(),
-                    num_replicas=dist.get_world_size(),
-                    shuffle=False,
-                )
-        else:
-            kwargs["sampler"] = data_utils.DistributedSampler(
-                dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True
-            )
-            kwargs["batch_size"] = batch_size
-            kwargs["drop_last"] = True
-    else:
-        kwargs["batch_size"] = batch_size
-        kwargs["drop_last"] = True
-    kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
-    return kwargs
 
 
 def validate_config(config_data: Dict[str, Any], config_type: str = "lora") -> None:

@@ -31,7 +31,6 @@ configs = [
         1,  # intermediate_step_save
         None,  # context_length
         True,  # run_validation
-        True,  # use_peft
         "qaic",  # device
         id="llama_config",  # config name
     )
@@ -43,7 +42,7 @@ configs = [
 @pytest.mark.on_qaic
 @pytest.mark.finetune
 @pytest.mark.parametrize(
-    "model_name,max_eval_step,max_train_step,intermediate_step_save,context_length,run_validation,use_peft,device",
+    "model_name,max_eval_step,max_train_step,intermediate_step_save,context_length,run_validation,device",
     configs,
 )
 def test_finetune(
@@ -53,7 +52,6 @@ def test_finetune(
     intermediate_step_save,
     context_length,
     run_validation,
-    use_peft,
     device,
     mocker,
 ):
@@ -75,7 +73,6 @@ def test_finetune(
         "intermediate_step_save": intermediate_step_save,
         "context_length": context_length,
         "run_validation": run_validation,
-        "use_peft": use_peft,
         "device": device,
     }
 

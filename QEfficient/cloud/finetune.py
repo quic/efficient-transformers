@@ -23,13 +23,9 @@ from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.utils.config_utils import (
     generate_dataset_config,
     generate_peft_config,
-    get_dataloader_kwargs,
     update_config,
 )
-from QEfficient.finetune.utils.dataset_utils import (
-    get_custom_data_collator,
-    get_preprocessed_dataset,
-)
+from QEfficient.finetune.utils.dataset_utils import get_dataloader
 from QEfficient.finetune.utils.parser import get_finetune_parser
 from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
 from QEfficient.utils._utils import login_and_download_hf_lm
@@ -68,7 +64,8 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
     assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
     assert torch_device.index is None, f"DDP requires only device type, got: {torch_device}"
 
-    dist.init_process_group(backend=train_config.dist_backend)
+    dist_backend = {"cpu": "gloo", "qaic": "qccl", "cuda": "gloo"}
+    dist.init_process_group(backend=dist_backend[torch_device.type])
     # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
     getattr(torch, torch_device.type).set_device(dist.get_rank())
 
@@ -180,11 +177,11 @@ def apply_peft(
         kwargs: Additional arguments to override PEFT config params.
 
     Returns:
-        Union[AutoModel, PeftModel]: If the use_peft in train_config is True
+        Union[AutoModel, PeftModel]: If the peft_method in train_config is set to lora
             then PeftModel object is returned else original model object
             (AutoModel) is returned.
     """
-    if not train_config.use_peft:
+    if train_config.peft_method != "lora":
         return model
 
     # Load the pre-trained peft model checkpoint and setup its configuration
@@ -226,58 +223,13 @@ def setup_dataloaders(
         - Applies a custom data collator if provided by get_custom_data_collator.
         - Configures DataLoader kwargs using get_dataloader_kwargs for train and val splits.
     """
-    # Get the dataset utils
-    dataset_processer = tokenizer
 
-    # Load and preprocess the dataset for training and validation
-    dataset_train = get_preprocessed_dataset(
-        dataset_processer, dataset_config, split="train", context_length=train_config.context_length
-    )
-
-    dataset_val = get_preprocessed_dataset(
-        dataset_processer, dataset_config, split="test", context_length=train_config.context_length
-    )
-
-    # TODO: vbaddi, check if its necessary to do this?
-    # dataset_train = ConcatDataset(
-    #             dataset_train, chunk_size=train_config.context_length
-    #         )
-    ##
-    train_dl_kwargs = get_dataloader_kwargs(train_config, dataset_train, dataset_processer, "train")
-    print("length of dataset_train", len(dataset_train))
-
-    # FIXME (Meet): Add custom data collator registration from the outside by the user.
-    custom_data_collator = get_custom_data_collator(dataset_processer, dataset_config)
-    if custom_data_collator:
-        print("custom_data_collator is used")
-        train_dl_kwargs["collate_fn"] = custom_data_collator
-
-    # Create DataLoaders for the training and validation dataset
-    train_dataloader = torch.utils.data.DataLoader(
-        dataset_train,
-        num_workers=train_config.num_workers_dataloader,
-        pin_memory=True,
-        **train_dl_kwargs,
-    )
+    train_dataloader = get_dataloader(tokenizer, dataset_config, train_config, split="train")
     print(f"--> Num of Training Set Batches loaded = {len(train_dataloader)}")
 
     eval_dataloader = None
     if train_config.run_validation:
-        # if train_config.batching_strategy == "packing":
-        #     dataset_val = ConcatDataset(
-        #         dataset_val, chunk_size=train_config.context_length
-        #     )
-
-        val_dl_kwargs = get_dataloader_kwargs(train_config, dataset_val, dataset_processer, "val")
-        if custom_data_collator:
-            val_dl_kwargs["collate_fn"] = custom_data_collator
-
-        eval_dataloader = torch.utils.data.DataLoader(
-            dataset_val,
-            num_workers=train_config.num_workers_dataloader,
-            pin_memory=True,
-            **val_dl_kwargs,
-        )
+        eval_dataloader = get_dataloader(tokenizer, dataset_config, train_config, split="test")
         if len(eval_dataloader) == 0:
             raise ValueError(
                 f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"
@@ -356,4 +308,5 @@ def main(peft_config_file: str = None, **kwargs) -> None:
 if __name__ == "__main__":
     parser = get_finetune_parser()
     args = parser.parse_args()
-    main(**args.__dict__)
+    args_dict = vars(args)
+    main(**args_dict)

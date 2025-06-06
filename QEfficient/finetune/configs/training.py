@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
 from dataclasses import dataclass
 
 
@@ -30,17 +31,11 @@ class TrainConfig:
         weight_decay (float): Weight decay for optimizer (default: 0.0).
         gamma (float): Learning rate decay factor (default: 0.85).
         seed (int): Random seed for reproducibility (default: 42).
-        use_autocast (bool): Use autocast for mixed precision (default: True).
-        dataset (str): Dataset name for training (default: "samsum_dataset").
-        use_fp16 (bool): Use mixed precision training (default: True).
-        use_autocast (bool): Use autocast for mixed precision (default: True).
         dataset (str): Dataset name for training (default: "samsum_dataset").
         task_type (str): Type of task for which the finetuning is to be done. Options: "generation" and "seq_classification". (default: "generation")
         peft_method (str): Parameter-efficient fine-tuning method (default: "lora").
-        use_peft (bool): Whether to use PEFT (default: True).
         from_peft_checkpoint (str): Path to PEFT checkpoint (default: "").
         output_dir (str): Directory to save outputs (default: "meta-llama-samsum").
-        num_freeze_layers (int): Number of layers to freeze (default: 1).
         save_model (bool): Save the trained model (default: True).
         save_metrics (bool): Save training metrics (default: True).
         intermediate_step_save (int): Steps between intermediate saves (default: 1000).
@@ -50,8 +45,6 @@ class TrainConfig:
         convergence_loss (float): Loss threshold for convergence (default: 1e-4).
         use_profiler (bool): Enable profiling (default: False).
         enable_ddp (bool): Enable distributed data parallel (default: False).
-        dist_backend (str): Backend for distributed training (default: "cpu:gloo,qaic:qccl,cuda:gloo").
-        grad_scaler (bool): Use gradient scaler (default: True).
         dump_root_dir (str): Directory for mismatch dumps (default: "meta-llama-samsum-mismatches/step_").
         opByOpVerifier (bool): Enable operation-by-operation verification (default: False).
     """
@@ -73,18 +66,16 @@ class TrainConfig:
     weight_decay: float = 0.0
     gamma: float = 0.85  # multiplicatively decay the learning rate by gamma after each epoch
     seed: int = 42
-    use_autocast: bool = True
     dataset = "samsum_dataset"
     task_type = "generation"  # "generation" / "seq_classification"
     peft_method: str = "lora"
-    use_peft: bool = True  # use parameter efficient fine tuning
-    from_peft_checkpoint: str = ""  # if not empty and use_peft=True, will load the peft checkpoint and resume the fine-tuning on that checkpoint
+    from_peft_checkpoint: str = ""  # if not empty and peft_method='lora', will load the peft checkpoint and resume the fine-tuning on that checkpoint
     output_dir: str = "meta-llama-samsum"
-    num_freeze_layers: int = 1
     save_model: bool = True
     save_metrics: bool = True  # saves training metrics to a json file for later plotting
     intermediate_step_save: int = 1000
     batching_strategy: str = "packing"
+    enable_ddp: bool = False
     enable_sorting_for_ddp: bool = True
     convergence_counter: int = 5  # its value should be >= 1, stop fine tuning when loss <= convergence_loss (defined below) for #convergence_counter steps
     convergence_loss: float = (
@@ -97,10 +88,5 @@ class TrainConfig:
     use_profiler: bool = False  # Enable pytorch profiler, can not be used with flop counter at the same time.
     # profiler_dir: str = "PATH/to/save/profiler/results" # will be used if using profiler
 
-    # dist-related
-    enable_ddp: bool = False
-    dist_backend: str = "cpu:gloo,qaic:qccl,cuda:gloo"
-
-    grad_scaler: bool = True
-    dump_root_dir: str = "meta-llama-samsum-mismatches/step_"
+    dump_root_dir: str = "mismatches/step_"
     opByOpVerifier: bool = False

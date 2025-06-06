@@ -8,7 +8,6 @@
 import json
 import os
 import time
-from contextlib import nullcontext
 from datetime import datetime
 from typing import Dict, List, Tuple
 
@@ -90,11 +89,10 @@ def train(
     else:
         tensorboard_updates = SummaryWriter()
 
-    if train_config.grad_scaler:
-        if device.startswith("qaic"):
-            scaler = QAicGradScaler()
-        else:
-            scaler = GradScaler(device_type)
+    if device.startswith("qaic"):
+        scaler = QAicGradScaler()
+    else:
+        scaler = GradScaler(device_type)
 
     loss_0_counter = torch.tensor([0]).to(device)
 
@@ -123,7 +121,7 @@ def train(
                 )
                 break
 
-        if train_config.use_peft and train_config.from_peft_checkpoint:
+        if train_config.peft_method == "lora" and train_config.from_peft_checkpoint:
             intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
             if epoch < intermediate_epoch:
                 print(f"Skipping epoch {epoch + 1} since fine tuning has already completed for it.")
@@ -153,7 +151,7 @@ def train(
 
         for step, batch in enumerate(train_dataloader):
             # resume training from a particular checkpoint, assuming the dataset is not shuffled
-            if train_config.use_peft and train_config.from_peft_checkpoint:
+            if train_config.peft_method == "lora" and train_config.from_peft_checkpoint:
                 intermediate_step = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1])
                 intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
                 # to bring the count of train_step in sync with where it left off
@@ -173,9 +171,7 @@ def train(
                 break
             batch = {k: v.to(device) for k, v in batch.items()}  # move the batch elements to qaic device
 
-            with (
-                torch.autocast(device_type=device, dtype=torch.float16) if train_config.use_autocast else nullcontext()
-            ):
+            with torch.autocast(device_type=device, dtype=torch.float16):
                 # an additional condition can be put here to avoid opByOpVerifier getting triggered for each step
                 if train_config.opByOpVerifier:
                     with qaic_debug.OpByOpVerifierMode(
@@ -234,17 +230,11 @@ def train(
                     step_metric_val = float(torch.exp(loss.detach().float()))
                 train_step_metric.append(step_metric_val)
 
-            if train_config.grad_scaler:
-                scaler.scale(loss).backward()  # backward pass
-            else:
-                loss.backward()  # backward pass
+            scaler.scale(loss).backward()  # backward pass
 
             if (step + 1) % train_config.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
-                if train_config.grad_scaler:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
                 optimizer.zero_grad()
                 pbar.update(1)
 
@@ -292,12 +282,12 @@ def train(
         epoch_times.append(epoch_end_time)
 
         if loss_0_counter.item() == train_config.convergence_counter:
-            if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
+            if train_config.peft_method == "lora" and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
                 train_epoch_loss = total_loss / (step - intermediate_step)
             else:
                 train_epoch_loss = total_loss / step
         else:
-            if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
+            if train_config.peft_method == "lora" and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
                 train_epoch_loss = total_loss / (len(train_dataloader) - intermediate_step)
             else:
                 train_epoch_loss = total_loss / len(train_dataloader)
@@ -427,9 +417,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
         # Ensure no gradients are computed for this scope to save memory
         with torch.no_grad():
             # Forward pass and compute loss
-            with (
-                torch.autocast(device_type=device, dtype=torch.float16) if train_config.use_autocast else nullcontext()
-            ):
+            with torch.autocast(device_type=device, dtype=torch.float16):
                 outputs = model(**batch)
             loss = outputs.loss
 
