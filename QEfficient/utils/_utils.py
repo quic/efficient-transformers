@@ -328,11 +328,30 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
         d_head = config.hidden_size // config.num_attention_heads
     else:
         raise ValueError("Invalid model configuration: n_head/d_heads or num_key_value_heads not found.")
-    padding_shape = [batch_size, n_heads, seq_len, d_head]
+    layer_switch = config.sliding_window_pattern if hasattr(config, "sliding_window_pattern") else 2  # 2 is for BC
+    is_sliding = torch.tensor([bool((i + 1) % layer_switch) for i in range(config.num_hidden_layers)], dtype=torch.bool)
+    global_cache_shape = [batch_size, n_heads, seq_len, d_head]
+    if hasattr(config, "sliding_window"):
+        sliding_cache_shape = [batch_size, n_heads, min(config.sliding_window, seq_len), d_head]
     if hasattr(config, "architectures") and config.architectures is not None:  # Check for Starcoder1 - 3D layout
         if "GPTBigCodeForCausalLM" in config.architectures:
-            padding_shape = [batch_size, seq_len, d_head]
-    return padding_shape
+            global_cache_shape = [batch_size, seq_len, d_head]
+    past_key_values = []
+    breakpoint()
+    cache_shape = global_cache_shape
+    for i in range(config.num_hidden_layers):
+        if hasattr(config, "sliding_window"):
+            cache_shape = global_cache_shape if not is_sliding[i] else sliding_cache_shape
+        new_layer_key_cache = torch.zeros(cache_shape, dtype=torch.float32)
+        new_layer_value_cache = torch.zeros(cache_shape, dtype=torch.float32)
+        pkv = (new_layer_key_cache, new_layer_value_cache)
+        past_key_values.append(pkv)
+    return past_key_values
+    # padding_shape = [batch_size, n_heads, seq_len, d_head]
+    # if hasattr(config, "architectures") and config.architectures is not None:  # Check for Starcoder1 - 3D layout
+    #     if "GPTBigCodeForCausalLM" in config.architectures:
+    #         padding_shape = [batch_size, seq_len, d_head]
+    # return padding_shape
 
 
 def get_num_layers_from_config(config):
