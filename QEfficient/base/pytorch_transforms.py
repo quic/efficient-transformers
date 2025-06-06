@@ -90,7 +90,7 @@ class ModuleMutatorTransform(PytorchTransform):
         raise NotImplementedError("Please implement your own method by inheriting this class")
 
 
-class ModuleMethodMapperTransform(PytorchTransform):
+class ExternalModuleMapperTransform(PytorchTransform):
     """
     Serves as base class for any transform that want to map a particular method of a class to a new method implementation.
     """

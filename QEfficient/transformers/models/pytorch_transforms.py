@@ -131,7 +131,7 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperPositionalEmbedding,
 )
 
-from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
+from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ExternalModuleMapperTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
@@ -480,7 +480,7 @@ class VlmNoKVOffloadTransform(ModuleMappingTransform):
     }
 
 
-class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
+class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_string_replace_method = {
         "InternVLChatModel": {
             "forward": QEffInternVLModel.forward,
