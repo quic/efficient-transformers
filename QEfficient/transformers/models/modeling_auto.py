@@ -1495,7 +1495,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
         for i in range(self.model.config.num_hidden_layers):
             for kv in ["key", "value"]:
-                apply_dynamic_axes = pkv_dynamic_sliding_axes if ((i+1)%layer_switch and hasattr(self.model.config, "sliding_window_pattern")) else pkv_dynamic_axes
+                apply_dynamic_axes = (
+                    pkv_dynamic_sliding_axes
+                    if ((i + 1) % layer_switch and hasattr(self.model.config, "sliding_window_pattern"))
+                    else pkv_dynamic_axes
+                )
                 dynamic_axes[f"past_{kv}.{i}"] = apply_dynamic_axes
                 output_names.append(f"past_{kv}.{i}_RetainedState")
         if self.continuous_batching:
@@ -1560,7 +1564,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if hasattr(self.model.config, "sliding_window"):
             breakpoint()
             spec["sliding_window"] = self.model.config.sliding_window
-            
+
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
         else:

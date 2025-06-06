@@ -78,7 +78,7 @@ class QEffGemma3RotaryEmbedding(nn.Module):
         self.max_position_embeddings = max_position_embeddings
         self.base = base
         inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64).float().to(device) / self.dim))
-        
+
         if hasattr(config, "rope_scaling") and "factor" in config.rope_scaling:
             factor = config.rope_scaling["factor"]
             inv_freq /= factor
@@ -242,9 +242,17 @@ class QEffGemma3Attention(Gemma3Attention):
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             # cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
             # key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, 
-                            "position_ids": position_ids, "is_sliding": self.is_sliding, "sliding_window_pattern": self.config.sliding_window_pattern}
-            key_states, value_states = past_key_value.update_hybrid_cache(key_states, value_states, self.layer_idx, cache_kwargs)
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+                "is_sliding": self.is_sliding,
+                "sliding_window_pattern": self.config.sliding_window_pattern,
+            }
+            key_states, value_states = past_key_value.update_hybrid_cache(
+                key_states, value_states, self.layer_idx, cache_kwargs
+            )
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -296,15 +304,15 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
         hidden_states = self.input_layernorm(hidden_states)
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
         if self.is_sliding:
-            attention_mask = _create_causal_mask(position_ids=position_ids, 
-                                                 target_length=past_seen_tokens,
-                                                 sliding_window=self.config.sliding_window)
+            attention_mask = _create_causal_mask(
+                position_ids=position_ids, target_length=past_seen_tokens, sliding_window=self.config.sliding_window
+            )
         else:
-           # global layer #TODO:akuruvil
+            # global layer #TODO:akuruvil
             # breakpoint()
             attention_mask = _create_causal_mask(
-                position_ids=position_ids, 
-                target_length=past_key_value.key_cache[self.config.sliding_window_pattern - 1].shape[-2]
+                position_ids=position_ids,
+                target_length=past_key_value.key_cache[self.config.sliding_window_pattern - 1].shape[-2],
             )
         # apply global RoPE to non-sliding layer only
         # if self.self_attn.is_sliding:
