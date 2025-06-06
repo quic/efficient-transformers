@@ -43,6 +43,7 @@ from QEfficient.transformers.modeling_utils import (
 )
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 MAX_NUM_IMG = 1
 NUM_CHANNEL = 3
@@ -179,7 +180,7 @@ class QEffMllamaTextCrossAttentionSingleQPC(MllamaTextCrossAttention):
             causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
             attn_weights = attn_weights + causal_mask
             # attn_weights = torch.where(
-            #     attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights
+            #     attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
             # )
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
@@ -256,7 +257,9 @@ class QEffMllamaTextSelfAttention(MllamaTextSelfAttention):
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
 
         if attention_mask is not None:  # no matter the length, we just slice it
-            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+            attn_weights = torch.where(
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            )
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
