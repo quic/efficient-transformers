@@ -97,9 +97,6 @@ class QEffGrok1MultiHeadAttention(nn.Module):
 
         attn_output = self.o_proj(attn_output)
 
-        if not output_attentions:
-            attn_weights = None
-
         return attn_output, attn_weights, past_key_value
 
 
@@ -234,10 +231,8 @@ class QEffGrok1Model(nn.Module):
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
         seq_length_with_past = seq_length
-        past_key_values_length = 0
-        if past_key_values is not None:
-            past_key_values_length = past_key_values[0][0].shape[2]
-            seq_length_with_past = seq_length_with_past + past_key_values_length
+        past_key_values_length = past_key_values[0][0].shape[2]
+        seq_length_with_past = seq_length_with_past + past_key_values_length
 
         past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 

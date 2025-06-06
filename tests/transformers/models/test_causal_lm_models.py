@@ -10,6 +10,7 @@ from typing import Optional
 
 import numpy as np
 import pytest
+import torch
 from transformers import AutoModelForCausalLM
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
@@ -44,6 +45,7 @@ test_models_qaic = [
     "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
     "ibm-granite/granite-3.1-2b-instruct",
     "ibm-granite/granite-guardian-3.1-2b",
+    "hpcai-tech/grok-1",
 ]
 
 test_models_qnn = [
@@ -78,8 +80,10 @@ def load_causal_lm_model(model_config):
         num_hidden_layers=model_config["n_layer"],
         attn_implementation="eager",
         low_cpu_mem_usage=False,
+        trust_remote_code=True,
     )  # Run models for single layers only
     params = sum(p.numel() for p in model_hf.parameters())
+    model_hf.to(torch.float32)
     model_hf.eval()
     return model_hf, params
 
