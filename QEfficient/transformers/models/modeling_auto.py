@@ -37,7 +37,7 @@ from QEfficient.generation.text_generation_inference import (
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
-    KVCacheModuleMethodMapperTransform,
+    KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
     SpDTransform,
@@ -439,7 +439,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         GPTQToMatmulNbitsTransform,
         CustomOpsTransform,
         KVCacheTransform,
-        KVCacheModuleMethodMapperTransform,
+        KVCacheExternalModuleMapperTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
@@ -919,7 +919,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         GPTQToMatmulNbitsTransform,
         CustomOpsTransform,
         KVCacheTransform,
-        KVCacheModuleMethodMapperTransform,
+        KVCacheExternalModuleMapperTransform,
         VlmNoKVOffloadTransform,
         SplitGateUpWeightsTransform,
     ]
@@ -1357,7 +1357,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         CustomOpsTransform,
         KVCacheTransform,
         SplitGateUpWeightsTransform,
-        KVCacheModuleMethodMapperTransform,
+        KVCacheExternalModuleMapperTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
