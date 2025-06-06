@@ -789,7 +789,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         }
 
         vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
+        vision_start = perf_counter()
         vision_outputs = vision_session.run(vision_inputs)
+        vision_end = perf_counter()
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
         lang_inputs["position_ids"] = np.where(
@@ -798,22 +800,28 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         vision_session.deactivate()
         lang_session.activate()
-
+        lang_inputs["vision_embeds"] = vision_outputs["vision_embeds"]
         lang_session.set_buffers(vision_outputs)
-
+        prefill_start = perf_counter()
         # Run prefill
+        chunk_inputs = lang_inputs.copy()
+        chunk_inputs["index"] = np.array([[0]])
         for i in range(num_chunks):
-            chunk_inputs = lang_inputs.copy()
             chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][
                 :, i * prefill_seq_len : (i + 1) * prefill_seq_len
             ]
             outputs = lang_session.run(chunk_inputs)
+            chunk_inputs["index"] = outputs["index_output"]
 
-        prefill_time = perf_counter() - prefill_start
+        prefill_time = perf_counter() - prefill_start + vision_end - vision_start
         # Skip inputs/outputs again
         lang_session.skip_buffers(
-            [x for x in lang_session.input_names + lang_session.output_names if x.startswith("past_")]
+            [
+                x
+                for x in lang_session.input_names + lang_session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
         )
 
         # Get first token
@@ -844,7 +852,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             streamer.end()
 
         decode_perf = (num_token - 1) / (decode_end - decode_start)
-        total_time = decode_end - prefill_start
+        total_time = decode_end - decode_start + prefill_time
         total_perf = num_token / total_time
 
         return CloudAI100ExecInfoNew(
@@ -1025,11 +1033,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         qpc_session = QAICInferenceSession(
             self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
         )
-
         batch_size, ctx_len, fbs = get_compilation_dims(self.qpc_path)
-
         pad_token_id = 1
-
         # Skip inputs/outputs
         qpc_session.skip_buffers(
             [
@@ -1085,16 +1090,16 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
 
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
-
+        inputs["index"] = np.array([[0]])
         qpc_session.activate()
-
+        chunk_inputs = inputs.copy()
         # Run prefill
 
         for i in range(num_chunks):
-            chunk_inputs = inputs.copy()
             chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             outputs = qpc_session.run(chunk_inputs)
+            chunk_inputs["index"] = outputs["index_output"]
 
         prefill_time = perf_counter() - prefill_start
         # Get first token
@@ -1467,14 +1472,32 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
                 2: "ctx_len",
             }
+            pkv_dynamic_sliding_axes = {
+                0: "full_batch_size" if self.continuous_batching else "batch_size",
+                2: "sliding_window",
+            }
         output_names = ["logits"]
 
-        for i in range(self.num_layers):
+        # for i in range(self.num_layers):
+        #     for kv in ["key", "value"]:
+        #         example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+        #         dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+        #         output_names.append(f"past_{kv}.{i}_RetainedState")
+        # From transformers HybridCache
+        layer_switch = (
+            self.model.config.sliding_window_pattern if hasattr(self.model.config, "sliding_window_pattern") else 2
+        )  # 2 is for BC
+        # is_sliding = torch.tensor(
+        #     [bool((i + 1) % layer_switch) for i in range(self.model.config.num_hidden_layers)], dtype=torch.bool
+        # )
+        example_inputs["past_key_values"] = get_padding_shape_from_config(
+            config=self.model.config, batch_size=fbs if self.continuous_batching else bs, seq_len=seq_len
+        )
+        for i in range(self.model.config.num_hidden_layers):
             for kv in ["key", "value"]:
-                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                apply_dynamic_axes = pkv_dynamic_sliding_axes if ((i+1)%layer_switch and hasattr(self.model.config, "sliding_window_pattern")) else pkv_dynamic_axes
+                dynamic_axes[f"past_{kv}.{i}"] = apply_dynamic_axes
                 output_names.append(f"past_{kv}.{i}_RetainedState")
-
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
             dynamic_axes["batch_index"] = {0: "batch_size"}
@@ -1483,7 +1506,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             nlk = constants.ONNX_EXPORT_EXAMPLE_NLK  # Number of Logits to Keep
             example_inputs["num_logits_to_keep"] = torch.arange(nlk).view(nlk, 1)
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
-
+        breakpoint()
         return self._export(
             example_inputs,
             output_names,
@@ -1505,6 +1528,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "ctx_len": ctx_len,
             "num_logits_to_keep": 1 if self.is_tlm else None,
         }
+        breakpoint()
+        if hasattr(self.model.config, "sliding_window"):
+            spec["sliding_window"] = self.model.config.sliding_window
+
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
         else:
@@ -1530,6 +1557,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "ctx_len": ctx_len,
             "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm else None,
         }
+        if hasattr(self.model.config, "sliding_window"):
+            breakpoint()
+            spec["sliding_window"] = self.model.config.sliding_window
+            
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
         else:
@@ -1606,7 +1637,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         # --- Specializations ---
         specializations = []
-
         if prefill_only is None or prefill_only or prefill_seq_len == 1:
             specializations.append(
                 self.build_prefill_specialization(
