@@ -10,7 +10,7 @@ from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
-from transformers.cache_utils import Cache, DynamicCache
+from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPast,
@@ -32,6 +32,7 @@ from transformers.models.llama4.modeling_llama4 import (
     repeat_kv,
 )
 
+from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -704,7 +705,7 @@ class QEffLlama4TextModel(Llama4TextModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0

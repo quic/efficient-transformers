@@ -162,7 +162,10 @@ class SplitGateUpWeightsTransform(PytorchTransform):
             logger.info(f"[layer {layer_idx:02d}] loaded gate_proj & up_proj from fused tensor  (shape {fused.shape})")
             transformed = True
 
-        model.language_model = model_tmp
+        if hasattr(model, "language_model"):
+            model.language_model = model_tmp
+        else:
+            model = model_tmp
         return model, transformed
 
 
