@@ -28,12 +28,25 @@ class QEFFGrok1CustomRMSNormAIC(nn.Module):
     """
 
     def forward(self, hidden_states):
+        """
+        Forward pass of the RMSNorm module.
+
+        Args:
+            hidden_states (torch.Tensor): Input tensor to be normalized.
+
+        Returns:
+            torch.Tensor: Normalized tensor.
+        """
         return CustomRMSNormFunc.apply(
             hidden_states, self.scale, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
         )
 
 
 class QEffGrok1MultiHeadAttention(nn.Module):
+    """
+    Multi-head attention module.
+    """
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -46,6 +59,22 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         use_cache: bool = False,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        """
+        Forward pass of the multi-head attention module.
+
+        Args:
+            hidden_states (torch.Tensor): Input tensor.
+            layer_idx (int): Layer index.
+            attention_mask (Optional[torch.Tensor], optional): Attention mask. Defaults to None.
+            position_ids (Optional[torch.LongTensor], optional): Position ids. Defaults to None.
+            past_key_value (Optional[Tuple[torch.Tensor]], optional): Past key value. Defaults to None.
+            batch_index (Optional[torch.LongTensor], optional): Batch index. Defaults to None.
+            output_attentions (bool, optional): Whether to output attentions. Defaults to False.
+            use_cache (bool, optional): Whether to use cache. Defaults to False.
+
+        Returns:
+            Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]: Attention output, attention weights, and past key value.
+        """
         bsz, q_len, _ = hidden_states.size()
 
         query_states = self.q_proj(hidden_states)
@@ -101,7 +130,20 @@ class QEffGrok1MultiHeadAttention(nn.Module):
 
 
 class QEffGrok1MoeBlock(nn.Module):
+    """
+    Mixture of experts (MoE) block.
+    """
+
     def forward(self, hidden_states: torch.Tensor):
+        """
+        Forward pass of the MoE block.
+
+        Args:
+            hidden_states (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: MoE output.
+        """
         batch_size, sequence_length, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
         router_logits = self.gate(hidden_states)
@@ -116,8 +158,8 @@ class QEffGrok1MoeBlock(nn.Module):
             torch.nn.functional.one_hot(selected_experts[:, 1], num_classes=self.num_experts).bool().T.unsqueeze(-1)
         )
 
-        gateupout1 = torch.zeros(hidden_states.shape[0], 32768)  # T, hs
-        gateupout2 = torch.zeros(hidden_states.shape[0], 32768)  # T, hs
+        gateupout1 = torch.zeros(hidden_states.shape[0], self.ffn_dim)  # T, hs
+        gateupout2 = torch.zeros(hidden_states.shape[0], self.ffn_dim)  # T, hs
         for expert_idx in range(self.num_experts):
             expert_layer = self.experts[expert_idx]
             current_expert_output = expert_layer.act_fn(expert_layer.linear(hidden_states)) * expert_layer.linear_v(
@@ -150,6 +192,16 @@ class QEffGrok1MoeBlock(nn.Module):
 
 
 class QEffGrok1DecoderLayer(nn.Module):
+    """
+    Decoder block of Grok1 model.
+    """
+
+    def __qeff_init__(self):
+        """
+        Assigning extra args to Moe block of decoder.
+        """
+        self.moe_block.ffn_dim = self.config.intermediate_size
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -162,6 +214,22 @@ class QEffGrok1DecoderLayer(nn.Module):
         use_cache: Optional[bool] = False,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+        """
+        Initialize the decoder layer.
+
+        Args:
+            hidden_states (torch.Tensor): Input tensor.
+            attention_mask (Optional[torch.Tensor], optional): Attention mask. Defaults to None.
+            position_ids (Optional[torch.LongTensor], optional): Position ids. Defaults to None.
+            past_key_value (Optional[Tuple[torch.Tensor]], optional): Past key value. Defaults to None.
+            batch_index (Optional[torch.LongTensor], optional): Batch index. Defaults to None.
+            output_attentions (Optional[bool], optional): Whether to output attentions. Defaults to False.
+            output_router_logits (Optional[bool], optional): Whether to output router logits. Defaults to False.
+            use_cache (Optional[bool], optional): Whether to use cache. Defaults to False.
+
+        Returns:
+            Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]: Decoder output, attention weights, and past key value.
+        """
         residual = hidden_states
         hidden_states = self.pre_attn_norm(hidden_states)
         hidden_states, attention_weights, present_key_value = self.attn(
@@ -194,9 +262,17 @@ class QEffGrok1DecoderLayer(nn.Module):
 
 
 class QEffGrok1Model(nn.Module):
+    """
+    Grok1 model
+    """
+
     def __qeff_init__(self):
+        """
+        Initialize the extra args to model.
+        """
         for idx, layer in enumerate(self.layers):
             layer.layer_idx = idx
+            layer.config = self.config
 
     def forward(
         self,
@@ -212,6 +288,24 @@ class QEffGrok1Model(nn.Module):
         output_router_logits: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, MoeModelOutputWithPast]:
+        """
+        Forward pass of the Grok1 model.
+        Args:
+            input_ids (torch.LongTensor, optional): Input ids. Defaults to None.
+            attention_mask (Optional[torch.Tensor], optional): Attention mask. Defaults to None.
+            position_ids (Optional[torch.LongTensor], optional): Position ids. Defaults to None.
+            past_key_values (Optional[List[torch.FloatTensor]], optional): Past key values. Defaults to None.
+            batch_index (Optional[torch.LongTensor], optional): Batch index. Defaults to None.
+            inputs_embeds (Optional[torch.FloatTensor], optional): Input embeddings. Defaults to None.
+            use_cache (Optional[bool], optional): Whether to use cache. Defaults to None.
+            output_attentions (Optional[bool], optional): Whether to output attentions. Defaults to None.
+            output_hidden_states (Optional[bool], optional): Whether to output hidden states. Defaults to None.
+            output_router_logits (Optional[bool], optional): Whether to output router logits. Defaults to None.
+            return_dict (Optional[bool], optional): Whether to return a dictionary. Defaults to None.
+
+        Returns:
+            Union[Tuple, MoeModelOutputWithPast]: Model output.
+        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -294,6 +388,10 @@ class QEffGrok1Model(nn.Module):
 
 
 class QEffGrok1ModelForCausalLM(nn.Module):
+    """
+    Grok model for causal language modeling.
+    """
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -310,6 +408,26 @@ class QEffGrok1ModelForCausalLM(nn.Module):
         return_dict: Optional[bool] = None,
         **kwargs,
     ):
+        """
+        Forward pass for Grok model for causal language modeling
+
+        Args:
+            input_ids (torch.LongTensor, optional): Input ids. Defaults to None.
+            attention_mask (Optional[torch.Tensor], optional): Attention mask. Defaults to None.
+            position_ids (Optional[torch.LongTensor], optional): Position ids. Defaults to None.
+            past_key_values (Optional[List[torch.FloatTensor]], optional): Past key values. Defaults to None.
+            batch_index (Optional[torch.LongTensor], optional): Batch index. Defaults to None.
+            inputs_embeds (Optional[torch.FloatTensor], optional): Input embeddings. Defaults to None.
+            labels (Optional[torch.LongTensor], optional): Labels. Defaults to None.
+            use_cache (Optional[bool], optional): Whether to use cache. Defaults to None.
+            output_attentions (Optional[bool], optional): Whether to output attentions. Defaults to None.
+            output_hidden_states (Optional[bool], optional): Whether to output hidden states. Defaults to None.
+            output_router_logits (Optional[bool], optional): Whether to output router logits. Defaults to None.
+            return_dict (Optional[bool], optional): Whether to return a dictionary. Defaults to None.
+
+        Returns:
+            MoeCausalLMOutputWithPast: Model output.
+        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_router_logits = (
             output_router_logits if output_router_logits is not None else self.config.output_router_logits

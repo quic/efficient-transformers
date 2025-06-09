@@ -18,7 +18,7 @@ from typing import Any
 from transformers import AutoConfig
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.transformers.modeling_utils import MODEL_CLASS_MAPPING
+from QEfficient.transformers.modeling_utils import EXTERNAL_MODEL_CLASS_MAPPING, MODEL_CLASS_MAPPING
 from QEfficient.utils import login_and_download_hf_lm
 
 
@@ -40,9 +40,13 @@ class QEFFCommonLoader:
         """
         Downloads HuggingFace model if already doesn't exist locally, returns QEFFAutoModel object based on type of model.
         """
-        config = AutoConfig.from_pretrained(pretrained_model_name_or_path)
+        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
 
-        class_name = MODEL_CLASS_MAPPING.get(config.__class__.__name__, None)
+        # class_name = MODEL_CLASS_MAPPING.get(config.__class__.__name__, None) OR MODEL_EXTERNAL_CLASS_MAPPING(config.__class__.__name__)
+        class_name = (
+            MODEL_CLASS_MAPPING.get(config.__class__.__name__, None)
+            or EXTERNAL_MODEL_CLASS_MAPPING[config.__class__.__name__]
+        )
         if class_name:
             module = __import__("QEfficient.transformers.models.modeling_auto")
             model_class = getattr(module, class_name)
@@ -61,6 +65,7 @@ class QEFFCommonLoader:
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else pretrained_model_name_or_path),
             token=hf_token,
             continuous_batching=continuous_batching,
+            trust_remote_code=True,
             **kwargs,
         )
         return qeff_model
