@@ -231,17 +231,14 @@ class QEffGemma3Attention(Gemma3Attention):
                     "with a layer index."
                 )
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-        # breakpoint()
         if self.is_sliding:
-            cos, sin = self.rotary_emb_local(value_states, seq_len=8192)
+            cos, sin = self.rotary_emb_local(value_states, seq_len=constants.GEMMA3_MAX_POSITION_EMBEDDINGS)
         else:
-            cos, sin = self.rotary_emb(value_states, seq_len=8192)
+            cos, sin = self.rotary_emb(value_states, seq_len=constants.GEMMA3_MAX_POSITION_EMBEDDINGS)
 
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            # cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
-            # key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
             cache_kwargs = {
                 "sin": sin,
                 "cos": cos,
@@ -308,17 +305,10 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
                 position_ids=position_ids, target_length=past_seen_tokens, sliding_window=self.config.sliding_window
             )
         else:
-            # global layer #TODO:akuruvil
-            # breakpoint()
             attention_mask = _create_causal_mask(
                 position_ids=position_ids,
                 target_length=past_key_value.key_cache[self.config.sliding_window_pattern - 1].shape[-2],
             )
-        # apply global RoPE to non-sliding layer only
-        # if self.self_attn.is_sliding:
-        #     position_embeddings = position_embeddings_local
-        # else:
-        #     position_embeddings = position_embeddings_global
 
         hidden_states, self_attn_weights = self.self_attn(
             hidden_states=hidden_states,

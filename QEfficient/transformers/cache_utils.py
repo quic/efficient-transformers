@@ -269,26 +269,17 @@ class QEffDynamicCache(DynamicCache):
         position_ids = cache_kwargs.get("position_ids")
         sliding_window_pattern = cache_kwargs.get("sliding_window_pattern")
         is_sliding_layer = torch.tensor(bool((layer_idx + 1) % sliding_window_pattern))
-        # N = self.key_cache[0].shape[2]
         N = self.key_cache[layer_idx].shape[2]
 
         kv_position_ids = torch.where((~is_sliding_layer | (position_ids == -1)), position_ids, position_ids % (N - 1))
-        # breakpoint()
-        # position_ids=torch.tensor([[0,1,2,3,4,5,6,7,8,9,10,11,12,-1]])
-        # kv_position_ids = torch.where(position_ids == -1,
-        #                               torch.where(is_sliding_layer, position_ids, position_ids % (N - 1)),
-        #                               torch.where(is_sliding_layer,position_ids % (N - 1), position_ids))
 
         kv_position_ids = torch.where(
             is_sliding_layer & (position_ids.max() >= (N - 1) * 2), (position_ids + 1) % N, kv_position_ids
         )
 
-        valid_mask = (kv_position_ids != -1).unsqueeze(1).unsqueeze(-1)  # shape: [1, 1, 8, 1]
-
-        # breakpoint()
+        valid_mask = (kv_position_ids != -1).unsqueeze(1).unsqueeze(-1)
         key_states = torch.where(valid_mask == 1, key_states, torch.zeros_like(key_states))
         value_states = torch.where(valid_mask == 1, value_states, torch.zeros_like(value_states))
-        # if (position_ids.max()>=4) and layer_idx==0: breakpoint()
         self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], kv_position_ids, key_states)
         self.value_cache[layer_idx] = CtxScatterFunc.apply(self.value_cache[layer_idx], kv_position_ids, value_states)
         k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
@@ -298,7 +289,6 @@ class QEffDynamicCache(DynamicCache):
         ctx_indices = torch.arange(ctx_len)[None, None, ...]
         gather_limit = kv_position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
-        # breakpoint()
         if torch.onnx.is_in_onnx_export():
             invalid_idx_value = torch.iinfo(torch.int32).max
         else:
@@ -307,7 +297,6 @@ class QEffDynamicCache(DynamicCache):
 
         all_indices = torch.arange(N) + kv_position_ids.max() + 1
         rolling_indices = torch.where(all_indices > N - 1, all_indices % N, all_indices)
-        # if layer_idx==0 and position_ids.max()>=9: breakpoint()
         final_indices = torch.where((is_sliding_layer & (position_ids.max() >= (N - 1))), rolling_indices, ctx_indices)
         k_out = CtxGatherFunc.apply(k_out, final_indices)
         v_out = CtxGatherFunc.apply(v_out, final_indices)
