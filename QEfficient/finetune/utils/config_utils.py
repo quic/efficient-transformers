@@ -103,6 +103,19 @@ def generate_dataset_config(dataset_name: str) -> Any:
     return dataset_config
 
 
+def pad_dataset(dataset, batch_size, num_replicas):
+    reminder = len(dataset) % (batch_size * num_replicas)
+    if reminder == 0:
+        return dataset
+
+    sample_input = dataset[0]
+    sample_input["labels"] = [-100] * len(sample_input["labels"])
+    num_pads = (batch_size * num_replicas) - reminder
+    for _ in range(num_pads):
+        dataset = dataset.add_item(sample_input)
+    return dataset
+
+
 def validate_config(config_data: Dict[str, Any], config_type: str = "lora") -> None:
     """Validate the provided YAML/JSON configuration for required fields and types.
 

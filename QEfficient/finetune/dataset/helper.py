@@ -5,15 +5,4 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
-
-
-TASK_TYPE = ["generation", "seq_classification"]
-PEFT_METHOD = ["lora"]
-DEVICE = ["qaic", "cpu", "cuda"]
-BATCHING_STRATEGY = ["padding", "packing"]
-
-
-def print_rank_0(msg):
-    if os.getenv("LOCAL_RANK", None) in [None, 0]:
-        print(msg)
+IGNORE_INDEX = -100

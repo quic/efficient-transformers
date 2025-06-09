@@ -9,6 +9,8 @@ from typing import Dict
 
 from datasets import Dataset, load_dataset
 
+from QEfficient.finetune.dataset.helper import IGNORE_INDEX
+
 default_instruction = """### Instruction: Solve the math question using a basic calculator.
 Calculator can be invoked using the format: <<expression=answer>>.
 "expression" can be one of the 4 arithmetic operations, and "answer" will be filled in for you.
@@ -26,9 +28,8 @@ def tokenize_and_mask(row: Dict[str, str], *, tokenizer, instruction) -> Dict[st
 
     input_str = tokenizer.bos_token + instruction.format(**row)
     ques_ids = tokenizer(input_str, add_special_tokens=False, return_attention_mask=False)["input_ids"]
-    ans_ids = tokenizer(row["answer"] + tokenizer.eos_token, add_special_tokens=False, return_attention_mask=False)[
-        "input_ids"
-    ]
+    ans_str = row["answer"] + tokenizer.eos_token
+    ans_ids = tokenizer(ans_str, add_special_tokens=False, return_attention_mask=False)["input_ids"]
     input_ids = ques_ids + ans_ids
 
     # State machine to recognize <<expression=answer>> and mask answer
@@ -39,11 +40,11 @@ def tokenize_and_mask(row: Dict[str, str], *, tokenizer, instruction) -> Dict[st
         elif mode == 1 and token in equal_tokens:
             mode = 2
         elif mode == 2:
-            ans_ids[i] = -100
+            ans_ids[i] = IGNORE_INDEX
             if token in end_tokens:
                 mode = 0
 
-    labels = [-100] * len(ques_ids) + ans_ids
+    labels = [IGNORE_INDEX] * len(ques_ids) + ans_ids
 
     inputs = {"input_ids": input_ids, "labels": labels}
     return inputs
@@ -54,7 +55,7 @@ def pad_to_max_length(row: Dict[str, list], *, tokenizer, max_length: int) -> Di
     return {
         "input_ids": row["input_ids"] + [tokenizer.pad_token_id] * (max_length - length),
         "attention_mask": [1] * length + [0] * (max_length - length),
-        "labels": row["labels"] + [-100] * (max_length - length),
+        "labels": row["labels"] + [IGNORE_INDEX] * (max_length - length),
     }
 
 

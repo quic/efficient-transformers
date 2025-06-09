@@ -12,6 +12,7 @@ from contextlib import nullcontext
 from datetime import datetime
 from typing import Dict, List, Tuple
 
+import numpy as np
 import torch
 import torch.distributed as dist
 import torchmetrics
@@ -19,6 +20,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.finetune.dataset.helper import IGNORE_INDEX
 
 try:
     import torch_qaic  # noqa: F401
@@ -140,8 +142,9 @@ def train(
         epoch_start_time = time.perf_counter()
         model.train()
 
-        total_loss = 0.0
-        total_length = len(train_dataloader) // train_config.gradient_accumulation_steps
+        total_loss = torch.tensor(0.0, dtype=torch.float32).to(device)
+        total_samples = torch.tensor(0).to(device)
+        total_length = int(np.ceil(len(train_dataloader) / train_config.gradient_accumulation_steps))
         pbar = tqdm(
             colour="blue",
             desc=f"Training Epoch: {epoch + 1}",
@@ -169,7 +172,7 @@ def train(
             total_train_steps += 1
 
             #  stop when the maximum number of training steps is reached
-            if train_config.max_train_step > 0 and total_train_steps > train_config.max_train_step:
+            if train_config.max_train_step > 0 and total_train_steps >= train_config.max_train_step:
                 max_steps_reached = True
                 break
             batch = {k: v.to(device) for k, v in batch.items()}  # move the batch elements to qaic device
@@ -179,6 +182,7 @@ def train(
                 if train_config.use_autocast
                 else nullcontext()
             ):
+                print(f"Local rank: {local_rank}, Step: {step}, shape: {batch['input_ids'].shape}")
                 # an additional condition can be put here to avoid opByOpVerifier getting triggered for each step
                 if train_config.opByOpVerifier:
                     with qaic_debug.OpByOpVerifierMode(
@@ -206,6 +210,8 @@ def train(
                         labels = batch["labels"][:, 0]
                         preds = torch.nn.functional.softmax(logits, dim=-1)
                         acc_helper.forward(preds, labels)
+
+                total_samples += 1
 
             total_loss += loss.detach().float()
             # Accumalate gradients
@@ -238,11 +244,23 @@ def train(
                 train_step_metric.append(step_metric_val)
 
             if train_config.grad_scaler:
-                scaler.scale(loss).backward()  # backward pass
+                if train_config.enable_ddp:
+                    with model.no_sync():
+                        scaler.scale(loss).backward()  # backward pass
+                else:
+                    scaler.scale(loss).backward()  # backward pass
             else:
-                loss.backward()  # backward pass
+                if train_config.enable_ddp:
+                    # FIXME: We can not stop transfer of gradient across devices every time.
+                    # In grad accumulation last step should transfer gradients across devices.
+                    with model.no_sync():
+                        loss.backward()  # backward pass
+                else:
+                    loss.backward()  # backward pass
 
             if (step + 1) % train_config.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
+                # if train_config.enable_ddp:
+                #     dist.barrier()
                 if train_config.grad_scaler:
                     scaler.step(optimizer)
                     scaler.update()
@@ -251,6 +269,12 @@ def train(
                 optimizer.zero_grad()
                 pbar.update(1)
 
+                # Update the learning rate as needed
+                lr_scheduler.step()
+
+            if step == len(train_dataloader) - 1:
+                if train_config.enable_ddp:
+                    dist.barrier()
             # Save the trained checkpoints for every given steps
             if step % train_config.intermediate_step_save == 0:
                 qaic_profile.stop_profiling(device) if train_config.use_profiler else None
@@ -294,6 +318,11 @@ def train(
         epoch_end_time = time.perf_counter() - epoch_start_time
         epoch_times.append(epoch_end_time)
 
+        if train_config.enable_ddp:
+            dist.barrier()
+            dist.all_reduce(total_samples, op=dist.ReduceOp.SUM)
+            print(f"Total samples: {total_samples}")
+
         if loss_0_counter.item() == train_config.convergence_counter:
             if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
                 train_epoch_loss = total_loss / (step - intermediate_step)
@@ -311,30 +340,30 @@ def train(
         else:
             metric_val = torch.exp(train_epoch_loss)
 
+        if train_config.enable_ddp:
+            dist.all_reduce(metric_val, op=dist.ReduceOp.SUM)
+            metric_val /= dist.get_world_size()
+
         train_metric.append(float(metric_val))
         train_loss.append(float(train_epoch_loss))
-
-        # Update the learning rate as needed
-        lr_scheduler.step()
 
         if train_config.run_validation:
             if train_config.enable_ddp:
                 dist.barrier()
-                eval_epoch_loss, eval_metric, temp_val_loss, temp_step_metric = evaluation_helper(
-                    model, train_config, eval_dataloader, device
-                )
-                if local_rank == 0:
-                    tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
+            eval_loss, eval_metric, step_loss, step_metric = evaluation_helper(
+                model, train_config, eval_dataloader, device
+            )
 
-            else:
-                eval_epoch_loss, eval_metric, temp_val_loss, temp_step_metric = evaluation_helper(
-                    model, train_config, eval_dataloader, device
-                )
-                tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
+            # Print evaluation metrics
+            print(f"Eval metric: {eval_metric.detach().cpu():.4f}, Eval Loss: {eval_loss.detach().cpu():.4f}")
+            if local_rank == 0:
+                tensorboard_updates.add_scalars("loss", {"eval": eval_loss}, total_train_steps)
 
             if train_config.save_metrics:
-                val_step_loss.extend(temp_val_loss)
-                val_step_metric.extend(temp_step_metric)
+                val_step_loss.extend(step_loss)
+                val_step_metric.extend(step_metric)
+                val_loss.append(float(eval_loss))
+                val_metric.append(float(eval_metric))
 
         # saving the adapters after completion of each epoch
         if train_config.save_model:
@@ -345,18 +374,17 @@ def train(
                 model.save_pretrained(train_config.output_dir + f"/complete_epoch_{epoch + 1}")
 
         if train_config.run_validation:
-            if eval_epoch_loss < best_val_loss:
-                best_val_loss = eval_epoch_loss
-                print(f"best eval loss on epoch {epoch + 1} is {best_val_loss}")
-            val_loss.append(float(eval_epoch_loss))
-            val_metric.append(float(eval_metric))
+            if eval_loss < best_val_loss:
+                best_val_loss = eval_loss
+                print(f"best eval loss on epoch {epoch + 1} is {best_val_loss:.4f}")
+
         if train_config.task_type == "seq_classification":
             print(
-                f"Epoch {epoch + 1}: train_acc={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
+                f"Epoch {epoch + 1}: train_acc={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time:.2f} sec"
             )
         else:
             print(
-                f"Epoch {epoch + 1}: train_metric={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
+                f"Epoch {epoch + 1}: train_ppl={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time:.2f} sec"
             )
 
         # Saving the results every epoch to plot later
@@ -374,17 +402,6 @@ def train(
             )
     avg_epoch_time = sum(epoch_times) / len(epoch_times)
     avg_checkpoint_time = sum(checkpoint_times) / len(checkpoint_times) if len(checkpoint_times) > 0 else 0
-    avg_train_metric = sum(train_metric) / len(train_metric)
-    avg_train_loss = sum(train_loss) / len(train_loss)
-    if train_config.run_validation:
-        avg_eval_metric = sum(val_metric) / len(val_metric)
-        avg_eval_loss = sum(val_loss) / len(val_loss)
-
-    results["avg_train_metric"] = avg_train_metric
-    results["avg_train_loss"] = avg_train_loss
-    if train_config.run_validation:
-        results["avg_eval_metric"] = avg_eval_metric
-        results["avg_eval_loss"] = avg_eval_loss
     results["avg_epoch_time"] = avg_epoch_time
     results["avg_checkpoint_time"] = avg_checkpoint_time
     if train_config.save_metrics:
@@ -401,8 +418,11 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
         model: The model to evaluate
         eval_dataloader: The dataloader containing the evaluation data
 
-    Returns: eval_epoch_loss, eval_metric, eval_step_loss, eval_step_metric
+    Returns: eval_loss, eval_metric, eval_step_loss, eval_step_metric
     """
+    if train_config.enable_ddp:
+        dist.barrier()
+
     model.eval()
 
     if train_config.task_type == "seq_classification":
@@ -420,10 +440,11 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
 
     eval_loss = 0.0  # Initialize evaluation loss
     device_type = torch.device(device).type
+    num_tokens = 0
 
     for step, batch in enumerate(tqdm(eval_dataloader, colour="green", desc="evaluating Epoch", dynamic_ncols=True)):
         #  stop when the maximum number of eval steps is reached
-        if train_config.max_eval_step > 0 and step > train_config.max_eval_step:
+        if train_config.max_eval_step > 0 and step >= train_config.max_eval_step:
             break
         for key in batch.keys():
             batch[key] = batch[key].to(device)
@@ -452,19 +473,29 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
                 val_step_loss.append(loss.detach().float().item())
                 val_step_metric.append(metric_val)
 
-            eval_loss += loss.detach().float()
+            if train_config.task_type == "seq_classification":
+                eval_loss += loss.detach().float()
+            else:
+                tokens_in_input = torch.sum(batch["labels"] != IGNORE_INDEX) - 1
+                # added minus one because we are shifting labels to left and then computing the loss.
+                eval_loss += loss.detach().float() * tokens_in_input
+                num_tokens += tokens_in_input
 
     # Compute average loss and metric
-    eval_epoch_loss = eval_loss / len(eval_dataloader)
     if train_config.task_type == "seq_classification":
+        eval_loss = eval_loss / len(eval_dataloader)
         eval_metric = acc_helper.compute()
     else:
-        eval_metric = torch.exp(eval_epoch_loss)
+        eval_loss = eval_loss / num_tokens
+        eval_metric = torch.exp(eval_loss)
 
-    # Print evaluation metrics
-    print(f" {eval_metric.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
+    if train_config.enable_ddp:
+        dist.all_reduce(eval_loss, op=dist.ReduceOp.SUM)
+        eval_loss /= dist.get_world_size()
+        dist.all_reduce(eval_metric, op=dist.ReduceOp.SUM)
+        eval_metric /= dist.get_world_size()
 
-    return eval_epoch_loss, eval_metric, val_step_loss, val_step_metric
+    return eval_loss, eval_metric, val_step_loss, val_step_metric
 
 
 def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:

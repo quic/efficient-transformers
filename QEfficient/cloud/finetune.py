@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 import random
 import warnings
 from typing import Any, Dict, Optional, Union
@@ -136,7 +137,7 @@ def load_model_and_tokenizer(
         train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name
     )
     if not tokenizer.pad_token_id:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+        tokenizer.add_special_tokens({"pad_token": "[PAD]"})
 
     # If there is a mismatch between tokenizer vocab size and embedding matrix,
     # throw a warning and then expand the embedding matrix
@@ -192,7 +193,9 @@ def apply_peft(
     else:
         peft_config = generate_peft_config(train_config, peft_config_file, **kwargs)
         model = get_peft_model(model, peft_config)
-    model.print_trainable_parameters()
+
+    if os.getenv("LOCAL_RANK", 0) == 0:
+        model.print_trainable_parameters()
 
     return model
 
