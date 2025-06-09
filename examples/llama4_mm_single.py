@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -29,7 +29,7 @@ qeff_model.compile(
     img_size=336,
     num_cores=16,
     num_devices=8,
-    batch_size_times_num_tiles=17,
+    max_num_tiles=17,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     aic_enable_depth_first=True,
