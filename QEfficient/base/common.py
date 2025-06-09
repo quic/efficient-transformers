@@ -40,9 +40,8 @@ class QEFFCommonLoader:
         """
         Downloads HuggingFace model if already doesn't exist locally, returns QEFFAutoModel object based on type of model.
         """
-        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
+        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
-        # class_name = MODEL_CLASS_MAPPING.get(config.__class__.__name__, None) OR MODEL_EXTERNAL_CLASS_MAPPING(config.__class__.__name__)
         class_name = (
             MODEL_CLASS_MAPPING.get(config.__class__.__name__, None)
             or EXTERNAL_MODEL_CLASS_MAPPING[config.__class__.__name__]
@@ -65,7 +64,6 @@ class QEFFCommonLoader:
             pretrained_model_name_or_path=(local_model_dir if local_model_dir else pretrained_model_name_or_path),
             token=hf_token,
             continuous_batching=continuous_batching,
-            trust_remote_code=True,
             **kwargs,
         )
         return qeff_model
