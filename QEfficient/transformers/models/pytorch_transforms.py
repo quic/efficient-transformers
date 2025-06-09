@@ -539,7 +539,9 @@ class PoolingTransform:
         transformed = False
         if kwargs.get("pooling") is not None:
             pooling = kwargs["pooling"]
-            pooling_method = POOLING_MAP[pooling] if isinstance(pooling,str) else validate_user_pooling_function(pooling)
+            pooling_method = (
+                POOLING_MAP[pooling] if isinstance(pooling, str) else validate_user_pooling_function(pooling)
+            )
             model = PooledModel(model, pooling_method)
             warnings.warn(f"Pooling method {pooling.__name__} is applied to the model.")
         return model, transformed

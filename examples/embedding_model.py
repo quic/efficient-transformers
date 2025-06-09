@@ -13,10 +13,12 @@ from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModel as AutoModel
 
+
 def max_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
     input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_states.size()).float()
     last_hidden_states[input_mask_expanded == 0] = -1e9
     return torch.max(last_hidden_states, 1)[0]
+
 
 # Sentences we want sentence embeddings for
 sentences = "This is an example sentence"
@@ -24,11 +26,17 @@ sentences = "This is an example sentence"
 # Load model from HuggingFace Hub
 tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
-# If pooling is not set, model will generate default output
+
+# You can specify the pooling strategy either as a string (e.g., "mean") or by passing a custom pooling function.
+# If no pooling is specified, the model will return its default output (typically token embeddings).
 qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling=max_pooling)
 
+# Example: Using mean pooling by specifying it as a string.
+# This will return sentence embeddings computed using mean pooling.
+# qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling="mean")
+
 # Here seq_len can be list seq_len or single int
-qeff_model.compile(num_cores=16, seq_len=[32,64])
+qeff_model.compile(num_cores=16, seq_len=[32, 64])
 
 # Tokenize sentences
 encoded_input = tokenizer(sentences, return_tensors="pt")

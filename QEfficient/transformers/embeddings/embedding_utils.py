@@ -57,7 +57,24 @@ class PooledModel(nn.Module):
         output = self.base_model(input_ids, attention_mask, **kwargs)
         return self.pooling_fn(output[0], attention_mask)
 
+
 def validate_user_pooling_function(user_function):
+    """
+    Validate a user-provided pooling function to ensure it meets the required interface.
+
+    The function should take two arguments:
+    - last_hidden_states (torch.Tensor): The last hidden states of the model.
+    - attention_mask (torch.Tensor): The attention mask of the input sequence.
+
+    It should return a torch.Tensor representing the pooled output.
+
+    Args:
+        user_function (callable): The user-provided pooling function.
+
+    Raises:
+        ValueError: If the user-provided function does not meet the required interface.
+    """
+
     if not callable(user_function):
         raise TypeError("Provided pooling function is not callable.")
 
