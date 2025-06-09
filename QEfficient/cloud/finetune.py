@@ -18,7 +18,7 @@ import torch.optim as optim
 import torch.utils.data
 from peft import PeftModel, get_peft_model
 from torch.optim.lr_scheduler import StepLR
-from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModel, AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
 
 from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.utils.config_utils import (
@@ -31,17 +31,21 @@ from QEfficient.finetune.utils.dataset_utils import (
     get_custom_data_collator,
     get_preprocessed_dataset,
 )
-from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
+from QEfficient.finetune.utils.train_utils import (
+    get_longest_seq_length,
+    print_model_size,
+    print_trainable_parameters,
+    train,
+)
 from QEfficient.utils._utils import login_and_download_hf_lm
+from QEfficient.utils.logging_utils import logger
 
 # Try importing QAIC-specific module, proceed without it if unavailable
 try:
     import torch_qaic  # noqa: F401
 except ImportError as e:
-    print(f"Warning: {e}. Proceeding without QAIC modules.")
+    logger.log_rank_zero(f"{e}. Moving ahead without these qaic modules.")
 
-
-from transformers import AutoModelForSequenceClassification
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
@@ -119,7 +123,7 @@ def load_model_and_tokenizer(
         )
 
         if not hasattr(model, "base_model_prefix"):
-            raise RuntimeError("Given huggingface model does not have 'base_model_prefix' attribute.")
+            logger.raise_runtimeerror("Given huggingface model does not have 'base_model_prefix' attribute.")
 
         for param in getattr(model, model.base_model_prefix).parameters():
             param.requires_grad = False
@@ -144,7 +148,7 @@ def load_model_and_tokenizer(
     # If there is a mismatch between tokenizer vocab size and embedding matrix,
     # throw a warning and then expand the embedding matrix
     if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
-        print("WARNING: Resizing embedding matrix to match tokenizer vocab size.")
+        logger.log_rank_zero("Resizing the embedding matrix to match the tokenizer vocab size.", logger.WARNING)
         model.resize_token_embeddings(len(tokenizer))
 
     # FIXME (Meet): Cover below line inside the logger once it is implemented.
@@ -160,7 +164,9 @@ def load_model_and_tokenizer(
         if hasattr(model, "supports_gradient_checkpointing") and model.supports_gradient_checkpointing:
             model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"preserve_rng_state": False})
         else:
-            raise RuntimeError("Given model doesn't support gradient checkpointing. Please disable it and run it.")
+            logger.raise_runtimeerror(
+                "Given model doesn't support gradient checkpointing. Please disable it and run it."
+            )
 
     model = apply_peft(model, train_config, peft_config_file, **kwargs)
 
@@ -195,7 +201,7 @@ def apply_peft(
     else:
         peft_config = generate_peft_config(train_config, peft_config_file, **kwargs)
         model = get_peft_model(model, peft_config)
-    model.print_trainable_parameters()
+    print_trainable_parameters(model)
 
     return model
 
@@ -220,7 +226,7 @@ def setup_dataloaders(
             - Length of longest sequence in the dataset.
 
     Raises:
-        ValueError: If validation is enabled but the validation set is too small.
+        RuntimeError: If validation is enabled but the validation set is too small.
 
     Notes:
         - Applies a custom data collator if provided by get_custom_data_collator.
@@ -244,12 +250,12 @@ def setup_dataloaders(
     #         )
     ##
     train_dl_kwargs = get_dataloader_kwargs(train_config, dataset_train, dataset_processer, "train")
-    print("length of dataset_train", len(dataset_train))
+    logger.log_rank_zero(f"Length of dataset_train = {len(dataset_train)}")
 
     # FIXME (Meet): Add custom data collator registration from the outside by the user.
     custom_data_collator = get_custom_data_collator(dataset_processer, dataset_config)
     if custom_data_collator:
-        print("custom_data_collator is used")
+        logger.log_rank_zero("Custom_data_collator is used")
         train_dl_kwargs["collate_fn"] = custom_data_collator
 
     # Create DataLoaders for the training and validation dataset
@@ -259,7 +265,7 @@ def setup_dataloaders(
         pin_memory=True,
         **train_dl_kwargs,
     )
-    print(f"--> Num of Training Set Batches loaded = {len(train_dataloader)}")
+    logger.log_rank_zero(f"Number of Training Set Batches loaded = {len(train_dataloader)}")
 
     eval_dataloader = None
     if train_config.run_validation:
@@ -279,11 +285,11 @@ def setup_dataloaders(
             **val_dl_kwargs,
         )
         if len(eval_dataloader) == 0:
-            raise ValueError(
+            logger.raise_runtimeerror(
                 f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"
             )
         else:
-            print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
+            logger.log_rank_zero(f"Number of Validation Set Batches loaded = {len(eval_dataloader)}")
 
         longest_seq_length, _ = get_longest_seq_length(
             torch.utils.data.ConcatDataset([train_dataloader.dataset, eval_dataloader.dataset])
@@ -321,13 +327,16 @@ def main(peft_config_file: str = None, **kwargs) -> None:
     dataset_config = generate_dataset_config(train_config.dataset)
     update_config(dataset_config, **kwargs)
 
+    logger.prepare_dump_logs(train_config.dump_logs)
+    logger.setLevel(train_config.log_level)
+
     setup_distributed_training(train_config)
     setup_seeds(train_config.seed)
     model, tokenizer = load_model_and_tokenizer(train_config, dataset_config, peft_config_file, **kwargs)
 
     # Create DataLoaders for the training and validation dataset
     train_dataloader, eval_dataloader, longest_seq_length = setup_dataloaders(train_config, dataset_config, tokenizer)
-    print(
+    logger.log_rank_zero(
         f"The longest sequence length in the train data is {longest_seq_length}, "
         f"passed context length is {train_config.context_length} and overall model's context length is "
         f"{model.config.max_position_embeddings}"
@@ -338,7 +347,7 @@ def main(peft_config_file: str = None, **kwargs) -> None:
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
     if train_config.enable_ddp:
         model = nn.parallel.DistributedDataParallel(model, device_ids=[dist.get_rank()])
-    results = train(
+    _ = train(
         model,
         tokenizer,
         train_dataloader,
@@ -350,7 +359,7 @@ def main(peft_config_file: str = None, **kwargs) -> None:
     )
     if train_config.enable_ddp:
         dist.destroy_process_group()
-    return results
+    return
 
 
 if __name__ == "__main__":

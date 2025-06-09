@@ -6,6 +6,12 @@
 # -----------------------------------------------------------------------------
 
 import logging
+import os
+from datetime import datetime
+
+import torch.distributed as dist
+
+from QEfficient.utils.constants import ROOT_DIR
 
 
 class QEffFormatter(logging.Formatter):
@@ -44,15 +50,43 @@ def create_logger() -> logging.Logger:
     """
     logger = logging.getLogger("QEfficient")
 
-    # create console handler and set level to debug
+    # create console handler and set level
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
-    # define formatter
     ch.setFormatter(QEffFormatter())
-
     logger.addHandler(ch)
+
     return logger
 
+
+class CustomLogger(logging.Logger):
+    def raise_runtimeerror(self, message):
+        self.error(message)
+        raise RuntimeError(message)
+
+    def log_rank_zero(self, msg: str, level: int = logging.INFO) -> None:
+        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
+        if rank != 0:
+            return
+        self.log(level, msg, stacklevel=2)
+
+    def prepare_dump_logs(self, dump_logs=False):
+        if dump_logs:
+            logs_path = os.path.join(ROOT_DIR, "logs")
+            if not os.path.exists(logs_path):
+                os.makedirs(logs_path, exist_ok=True)
+            file_name = f"log-file-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}" + ".txt"
+            log_file = os.path.join(logs_path, file_name)
+
+            # create file handler and set level
+            fh = logging.FileHandler(log_file)
+            fh.setLevel(logging.INFO)
+            formatter = logging.Formatter("%(levelname)s - %(name)s - %(message)s")
+            fh.setFormatter(formatter)
+            logger.addHandler(fh)
+
+
+logging.setLoggerClass(CustomLogger)
 
 # Define the logger object that can be used for logging purposes throughout the module.
 logger = create_logger()

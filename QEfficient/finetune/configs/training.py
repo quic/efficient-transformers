@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
+import logging
 from dataclasses import dataclass
 
 
@@ -105,3 +107,6 @@ class TrainConfig:
     grad_scaler: bool = True
     dump_root_dir: str = "meta-llama-samsum-mismatches/step_"
     opByOpVerifier: bool = False
+
+    dump_logs: bool = True
+    log_level: str = logging.INFO
