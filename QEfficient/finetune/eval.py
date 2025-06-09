@@ -44,8 +44,12 @@ def main(**kwargs):
     random.seed(train_config.seed)
     np.random.seed(train_config.seed)
 
-    # Load the pre-trained model and setup its configuration
-    save_dir = os.path.join(train_config.output_dir, "complete_epoch_1")
+    # Load the pre-trained model from latest checkpoint
+    trained_weights_path = os.path.join(train_config.output_dir, "trained_weights")
+    epoch_max_index = max([int(name.split("_")[-1]) for name in os.listdir(trained_weights_path)])
+    epochs_path = os.path.join(trained_weights_path, "epoch_" + str(epoch_max_index))
+    step_max_index = max([int(name.split("_")[-1]) for name in os.listdir(epochs_path)])
+    save_dir = os.path.join(epochs_path, "step_" + str(step_max_index))
 
     # Load PEFT model on CPU
     model_peft = AutoPeftModelForCausalLM.from_pretrained(save_dir)

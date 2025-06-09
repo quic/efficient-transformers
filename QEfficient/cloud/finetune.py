@@ -64,8 +64,8 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
     assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
     assert torch_device.index is None, f"DDP requires only device type, got: {torch_device}"
 
-    dist_backend = {"cpu": "gloo", "qaic": "qccl", "cuda": "gloo"}
-    dist.init_process_group(backend=dist_backend[torch_device.type])
+    dist_backend_map = {"cpu": "gloo", "qaic": "qccl", "cuda": "gloo"}
+    dist.init_process_group(backend=dist_backend_map[torch_device.type])
     # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
     getattr(torch, torch_device.type).set_device(dist.get_rank())
 
@@ -177,11 +177,11 @@ def apply_peft(
         kwargs: Additional arguments to override PEFT config params.
 
     Returns:
-        Union[AutoModel, PeftModel]: If the peft_method in train_config is set to lora
+        Union[AutoModel, PeftModel]: If use_peft in train_config is True
             then PeftModel object is returned else original model object
             (AutoModel) is returned.
     """
-    if train_config.peft_method != "lora":
+    if not train_config.use_peft:
         return model
 
     # Load the pre-trained peft model checkpoint and setup its configuration
@@ -229,7 +229,7 @@ def setup_dataloaders(
 
     eval_dataloader = None
     if train_config.run_validation:
-        eval_dataloader = get_dataloader(tokenizer, dataset_config, train_config, split="test")
+        eval_dataloader = get_dataloader(tokenizer, dataset_config, train_config, split="val")
         if len(eval_dataloader) == 0:
             raise ValueError(
                 f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"

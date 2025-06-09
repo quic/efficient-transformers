@@ -8,11 +8,12 @@
 import argparse
 
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
+from QEfficient.finetune.utils.helper import BATCHING_STRATEGY, DEVICE, PEFT_METHOD, TASK_TYPE
 
 
 def get_finetune_parser():
     parser = argparse.ArgumentParser(
-        description="Finetune command, the model will be downloaded from Huggingface and finetuned on Cloud AI 100 and weights are saved."
+        description="Finetune command, the model is downloaded from Huggingface, finetuned on Cloud AI 100 and checkpoints are saved."
     )
     parser.add_argument(
         "--model_name",
@@ -65,6 +66,13 @@ def get_finetune_parser():
         help="Use gradient checkpointing",
     )
     parser.add_argument(
+        "--use_autocast",
+        "--use-autocast",
+        action="store_false",
+        help="Use autocast for mixed precision",
+    )
+    parser.add_argument("--grad_scaler", "--grad-scaler", action="store_false", help="Use gradient scaler")
+    parser.add_argument(
         "--num_epochs", "--num-epochs", required=False, type=int, default=1, help="Number of training epochs"
     )
     parser.add_argument(
@@ -83,7 +91,7 @@ def get_finetune_parser():
         default=0,
         help="Maximum evaluation steps, unlimited if 0",
     )
-    parser.add_argument("--device", required=False, type=str, default="qaic", help="Device to train on")
+    parser.add_argument("--device", required=False, type=str, default="qaic", choices=DEVICE, help="Device to train on")
     parser.add_argument(
         "--num_workers_dataloader",
         "--num-workers-dataloader",
@@ -118,8 +126,14 @@ def get_finetune_parser():
         required=False,
         type=str,
         default="generation",
-        choices=["generation", "seq_classification"],
+        choices=TASK_TYPE,
         help="Task used for finetuning. Use 'generation' for decoder based models and 'seq_classification' for encoder based models.",
+    )
+    parser.add_argument(
+        "--use_peft",
+        "--use-peft",
+        action="store_false",
+        help="Whether to use PEFT(parameter efficient fine tuning)",
     )
     parser.add_argument(
         "--peft_method",
@@ -127,7 +141,7 @@ def get_finetune_parser():
         required=False,
         type=str,
         default="lora",
-        choices=["lora"],
+        choices=PEFT_METHOD,
         help="Parameter efficient finetuning technique to be used. Currently only 'lora' is supported.",
     )
     parser.add_argument(
@@ -143,7 +157,7 @@ def get_finetune_parser():
         "--output-dir",
         required=False,
         type=str,
-        default="meta-llama-samsum",
+        default="training_results",
         help="Directory to save outputs of training",
     )
     parser.add_argument(
@@ -172,7 +186,7 @@ def get_finetune_parser():
         required=False,
         type=str,
         default="padding",
-        choices=["padding", "packing"],
+        choices=BATCHING_STRATEGY,
         help="Strategy for making batches of data points. Packing groups data points into batches by minimizing unnecessary empty spaces. Padding adds extra values (often zeros) to batch sequences so they align in size. Currently only padding is supported which is by default.",
     )
     parser.add_argument(

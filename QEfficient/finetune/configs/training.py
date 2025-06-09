@@ -22,6 +22,8 @@ class TrainConfig:
         context_length (Optional[int]): Maximum sequence length for inputs (default: None).
         gradient_accumulation_steps (int): Steps for gradient accumulation (default: 4).
         gradient checkpointing (bool): Enable gradient checkpointing to save the memory by compromising the speed. (default: False).
+        use_autocast (bool): Use autocast for mixed precision (default: True).
+        grad_scaler (bool): Use gradient scaler (default: True).
         num_epochs (int): Number of training epochs (default: 1).
         max_train_step (int): Maximum training steps (default: 0, unlimited if 0).
         max_eval_step (int): Maximum evaluation steps (default: 0, unlimited if 0).
@@ -33,6 +35,7 @@ class TrainConfig:
         seed (int): Random seed for reproducibility (default: 42).
         dataset (str): Dataset name for training (default: "samsum_dataset").
         task_type (str): Type of task for which the finetuning is to be done. Options: "generation" and "seq_classification". (default: "generation")
+        use_peft (bool): Whether to use PEFT (default: True).
         peft_method (str): Parameter-efficient fine-tuning method (default: "lora").
         from_peft_checkpoint (str): Path to PEFT checkpoint (default: "").
         output_dir (str): Directory to save outputs (default: "meta-llama-samsum").
@@ -57,6 +60,8 @@ class TrainConfig:
     context_length: int = None
     gradient_accumulation_steps: int = 4
     gradient_checkpointing: bool = False
+    use_autocast: bool = True
+    grad_scaler: bool = True
     num_epochs: int = 1
     max_train_step: int = 0
     max_eval_step: int = 0
@@ -66,11 +71,12 @@ class TrainConfig:
     weight_decay: float = 0.0
     gamma: float = 0.85  # multiplicatively decay the learning rate by gamma after each epoch
     seed: int = 42
-    dataset = "samsum_dataset"
-    task_type = "generation"  # "generation" / "seq_classification"
+    dataset: str = "alpaca_dataset"
+    task_type: str = "generation"  # "generation" / "seq_classification"
+    use_peft: bool = True  # use parameter efficient finetuning
     peft_method: str = "lora"
     from_peft_checkpoint: str = ""  # if not empty and peft_method='lora', will load the peft checkpoint and resume the fine-tuning on that checkpoint
-    output_dir: str = "meta-llama-samsum"
+    output_dir: str = "training_results"
     save_model: bool = True
     save_metrics: bool = True  # saves training metrics to a json file for later plotting
     intermediate_step_save: int = 1000
