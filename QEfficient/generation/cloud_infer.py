@@ -42,6 +42,14 @@ aic_to_np_dtype_mapping = {
 
 
 class QAICInferenceSession:
+    _session = None
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._session:
+            cls._session = super(QAICInferenceSession, cls).__new__(cls)
+            cls._session.initialized = False
+        return cls._session
+
     def __init__(
         self,
         qpc_path: Union[Path, str],
@@ -58,45 +66,47 @@ class QAICInferenceSession:
         :activate: bool. If false, activation will be disabled. Default=True.
         :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
         """
-        # Load QPC
-        if device_ids is not None:
-            devices = qaicrt.QIDList(device_ids)
-            self.context = qaicrt.Context(devices)
-            self.queue = qaicrt.Queue(self.context, device_ids[0])
-        else:
-            self.context = qaicrt.Context()
-            self.queue = qaicrt.Queue(self.context, 0)  # Async API
-        if enable_debug_logs:
-            if self.context.setLogLevel(qaicrt.QLogLevel.QL_DEBUG) != qaicrt.QStatus.QS_SUCCESS:
-                raise RuntimeError("Failed to setLogLevel")
-        qpc = qaicrt.Qpc(str(qpc_path))
-        # Load IO Descriptor
-        iodesc = aicapi.IoDesc()
-        status, iodesc_data = qpc.getIoDescriptor()
-        if status != qaicrt.QStatus.QS_SUCCESS:
-            raise RuntimeError("Failed to getIoDescriptor")
-        iodesc.ParseFromString(bytes(iodesc_data))
-        self.allowed_shapes = [
-            [(aic_to_np_dtype_mapping[x.type].itemsize, list(x.dims)) for x in allowed_shape.shapes]
-            for allowed_shape in iodesc.allowed_shapes
-        ]
-        self.bindings = iodesc.selected_set.bindings
-        self.binding_index_map = {binding.name: binding.index for binding in self.bindings}
-        # Create and load Program
-        prog_properties = qaicrt.QAicProgramProperties()
-        prog_properties.SubmitRetryTimeoutMs = 60_000
-        if device_ids and len(device_ids) > 1:
-            prog_properties.devMapping = ":".join(map(str, device_ids))
-        self.program = qaicrt.Program(self.context, None, qpc, prog_properties)
-        if self.program.load() != qaicrt.QStatus.QS_SUCCESS:
-            raise RuntimeError("Failed to load program")
-        if activate:
-            self.activate()
-        # Create input qbuffers and buf_dims
-        self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
-        self.buf_dims = qaicrt.BufferDimensionsVecRef(
-            [(aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
-        )
+        if not hasattr(self, "initialized") or not self.initialized:
+            self.initialized = True
+            # Load QPC
+            if device_ids is not None:
+                devices = qaicrt.QIDList(device_ids)
+                self.context = qaicrt.Context(devices)
+                self.queue = qaicrt.Queue(self.context, device_ids[0])
+            else:
+                self.context = qaicrt.Context()
+                self.queue = qaicrt.Queue(self.context, 0)  # Async API
+            if enable_debug_logs:
+                if self.context.setLogLevel(qaicrt.QLogLevel.QL_DEBUG) != qaicrt.QStatus.QS_SUCCESS:
+                    raise RuntimeError("Failed to setLogLevel")
+            qpc = qaicrt.Qpc(str(qpc_path))
+            # Load IO Descriptor
+            iodesc = aicapi.IoDesc()
+            status, iodesc_data = qpc.getIoDescriptor()
+            if status != qaicrt.QStatus.QS_SUCCESS:
+                raise RuntimeError("Failed to getIoDescriptor")
+            iodesc.ParseFromString(bytes(iodesc_data))
+            self.allowed_shapes = [
+                [(aic_to_np_dtype_mapping[x.type].itemsize, list(x.dims)) for x in allowed_shape.shapes]
+                for allowed_shape in iodesc.allowed_shapes
+            ]
+            self.bindings = iodesc.selected_set.bindings
+            self.binding_index_map = {binding.name: binding.index for binding in self.bindings}
+            # Create and load Program
+            prog_properties = qaicrt.QAicProgramProperties()
+            prog_properties.SubmitRetryTimeoutMs = 60_000
+            if device_ids and len(device_ids) > 1:
+                prog_properties.devMapping = ":".join(map(str, device_ids))
+            self.program = qaicrt.Program(self.context, None, qpc, prog_properties)
+            if self.program.load() != qaicrt.QStatus.QS_SUCCESS:
+                raise RuntimeError("Failed to load program")
+            if activate:
+                self.activate()
+            # Create input qbuffers and buf_dims
+            self.qbuffers = [qaicrt.QBuffer(bytes(binding.size)) for binding in self.bindings]
+            self.buf_dims = qaicrt.BufferDimensionsVecRef(
+                [(aic_to_np_dtype_mapping[binding.type].itemsize, list(binding.dims)) for binding in self.bindings]
+            )
 
     @property
     def input_names(self) -> List[str]:
