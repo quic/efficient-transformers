@@ -794,17 +794,24 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
 
-        vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
+        if vision_inputs:
+            vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
         vision_start = perf_counter()
 
-        vision_outputs = vision_session.run(vision_inputs)
+        vision_outputs = {}
+        if vision_inputs:
+            vision_outputs = vision_session.run(vision_inputs)
         vision_end = perf_counter()
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
         lang_inputs["position_ids"] = np.where(
             lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
         )  # Need to use -1 as position_ids for invalid tokens
-        lang_inputs["index"] = np.array([[0]])
+
+        NOT_MLLAMA = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
+        if NOT_MLLAMA:
+            lang_inputs["index"] = np.array([[0]])
+
         vision_session.deactivate()
         lang_session.activate()
 

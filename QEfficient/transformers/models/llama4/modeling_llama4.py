@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -248,34 +248,28 @@ class QEffLlama4VisionModel(Llama4VisionModel):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # num_concurrent_media and num_chunks are both currently 1
-        batch_size_times_num_tiles, num_channels, height, width = pixel_values.shape
+        max_num_tiles, num_channels, height, width = pixel_values.shape
         num_concurrent_media = 1
         num_chunks = 1
         hidden_state = self.patch_embedding(pixel_values)
         _, num_patches, hidden_dim = hidden_state.shape
 
         # Add cls token
-        hidden_state = hidden_state.reshape(
-            batch_size_times_num_tiles * num_concurrent_media * num_chunks, num_patches, hidden_dim
-        )
+        hidden_state = hidden_state.reshape(max_num_tiles * num_concurrent_media * num_chunks, num_patches, hidden_dim)
         class_embedding = self.class_embedding.expand(hidden_state.shape[0], 1, hidden_state.shape[-1])
         hidden_state = torch.cat([hidden_state, class_embedding], dim=1)
         num_patches += 1
 
         # Position embeddings
-        hidden_state = hidden_state.reshape(
-            batch_size_times_num_tiles * num_concurrent_media, num_chunks, num_patches, hidden_dim
-        )
+        hidden_state = hidden_state.reshape(max_num_tiles * num_concurrent_media, num_chunks, num_patches, hidden_dim)
         positional_embedding = self.positional_embedding_vlm.to(dtype=hidden_state.dtype, device=hidden_state.device)
         hidden_state = hidden_state + positional_embedding
 
         hidden_state = self.layernorm_pre(hidden_state)
 
-        hidden_state = hidden_state.view(batch_size_times_num_tiles, -1, hidden_dim)
+        hidden_state = hidden_state.view(max_num_tiles, -1, hidden_dim)
         freqs_ci = self.rotary_embedding(pixel_values)
-        # import ipdb; ipdb.set_trace()
 
-        # import ipdb; ipdb.set_trace()
         output = self.model(
             hidden_state,
             attention_mask=None,
@@ -452,75 +446,6 @@ class QEffLlama4TextMoe(Llama4TextMoe):
         shared_out = self.shared_expert(hidden)  # [T, H]
         final = shared_out + expert_out  # restore [B,S,H]
         return final.view(B, S, H), router_logits
-
-    # ------------------- Gather based, weights as activation approach ---------------
-    # def forward(self, hidden_states):
-    #     bs, seq_len, _ = hidden_states.shape
-    #     hidden_states = hidden_states.view(bs * seq_len, self.hidden_dim)
-    #     router_logits = self.router(hidden_states).transpose(0, 1)
-    #     router_top_value, router_indices = torch.topk(router_logits.transpose(0, 1), self.top_k, dim=1)
-
-    #     # GATHER
-    #     gate_up_proj = self.experts.gate_up_proj[router_indices.flatten()]
-    #     down_proj = self.experts.down_proj[router_indices.flatten()]
-
-    #     # apply router top value
-    #     expert_in = hidden_states * torch.sigmoid(router_top_value)
-    #     ######################
-    #     # Apply Chosen Experts
-    #     ######################
-    #     expert_in = expert_in.view(bs * seq_len, 1, self.hidden_dim)
-    #     gateup = torch.bmm(expert_in, gate_up_proj)
-    #     gate, up = gateup.chunk(2, dim=-1)
-    #     experts_out = torch.bmm((up * self.experts.act_fn(gate)), down_proj).view(bs * seq_len, self.hidden_dim)
-    #     shared_out = self.shared_expert(hidden_states)
-    #     out = shared_out + experts_out
-    #     return out, router_logits
-
-    # def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    #     """
-    #     Implements expert routing and computation as in original LLaMA 4 MoE.
-    #     """
-    #     batch, seq_len, hidden_dim = hidden_states.shape         # B = batch, S = seq_len, H = hidden
-    #     T = batch * seq_len                                      # T = total number of tokens
-    #     hidden_states_flat = hidden_states.view(T, hidden_dim)   # [T, H] = token-wise input
-
-    #     router_logits = self.router(hidden_states_flat)          # [T, E] where E = num_experts
-
-    #     topk_values, topk_indices = torch.topk(router_logits, self.top_k, dim=1)  # both [T, K]
-    #     masked_logits = torch.full_like(router_logits, float("-inf"))  # [T, E]
-    #     masked_logits.scatter_(1, topk_indices, topk_values)           # Set only top-k logits
-    #     routing_weights = torch.sigmoid(masked_logits.float()).to(hidden_states.dtype)  # [T, E]
-
-    #     # -----------------------------------------------------------
-    #     # : Zero tensor for accumulating expert outputs
-    #     # Each expert contributes selectively into this output
-    #     # -----------------------------------------------------------
-    #     expert_output = torch.zeros_like(hidden_states_flat)  # [T, H]
-    #     for expert_idx in range(self.num_experts):
-    #         gate_up = hidden_states_flat @ self.experts.gate_up_proj[expert_idx]  # [T, 2I]
-    #         gate, up = gate_up.chunk(2, dim=-1)                                   # [T, I], [T, I]
-    #         activated = self.experts.act_fn(gate) * up                            # [T, I]
-
-    #         expert_out = activated @ self.experts.down_proj[expert_idx]           # [T, H]
-    #         routing_weight = routing_weights[:, expert_idx].unsqueeze(-1)         # [T, 1]
-
-    #         # Conditionally apply expert output
-    #         #    : cond ? X * w : 0 → ONNX-safe execution
-    #         #    Only routed tokens contribute non-zero values
-    #         masked_out = torch.where(
-    #             routing_weight > 0,                     # condition
-    #             expert_out * routing_weight,            # scaled expert output
-    #             torch.zeros_like(expert_out)            # fallback = 0
-    #         )
-
-    #         expert_output += masked_out  # [T, H]
-
-    #     shared_output = self.shared_expert(hidden_states_flat)  # [T, H]
-    #     final = expert_output + shared_output                   # [T, H]
-    #     final = final.view(batch, seq_len, hidden_dim)          # [B, S, H]
-
-    #     return final, router_logits
 
 
 class QEffLlama4TextAttention(Llama4TextAttention):
@@ -920,12 +845,12 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         **compiler_options,
     ):
         # TODO: check if this should be named num_patches or something else
-        batch_size_times_num_tiles = compiler_options.pop("batch_size_times_num_tiles", None)
-        if batch_size_times_num_tiles is None:
+        max_num_tiles = compiler_options.pop("max_num_tiles", None)
+        if max_num_tiles is None:
             logger.warning(
-                "User should pass `batch_size_times_num_tiles` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 17"
+                "User should pass `max_num_tiles` to compile API to fix the dynamic axes `pixel_values`, you can get more info by calling get_inputs_info function!, Since its not found setting its value to 17"
             )
-            batch_size_times_num_tiles = 17
+            max_num_tiles = 17
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
@@ -934,12 +859,19 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         elif img_size is None:
             img_size = 336  # FIXME based on llama4 Image size
             logger.warning("Setting img_size to be 336, as it was neither passed nor found in vision_config")
-        vision_size = 144 * batch_size_times_num_tiles
+
+        downsample_ratio = int(round(1.0 / (self.config.vision_config.pixel_shuffle_ratio**2)))
+        num_features_per_tile = int(
+            (img_size // self.config.vision_config.patch_size)
+            * (img_size // self.config.vision_config.patch_size)
+            // downsample_ratio
+        )
+        vision_size = num_features_per_tile * max_num_tiles
 
         vision = [
             {
                 "batch_size": batch_size,
-                "batch_size_times_num_tiles": batch_size_times_num_tiles,
+                "max_num_tiles": max_num_tiles,
                 "img_size": img_size,
             }
         ]
@@ -948,7 +880,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "batch_size_times_num_tiles": batch_size_times_num_tiles,
+                "max_num_tiles": max_num_tiles,
                 "img_size": img_size,
                 "vision_size": vision_size,
             },
@@ -956,7 +888,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 "batch_size": batch_size,
                 "seq_len": "1",
                 "ctx_len": ctx_len,
-                "batch_size_times_num_tiles": batch_size_times_num_tiles,
+                "max_num_tiles": max_num_tiles,
                 "img_size": img_size,
                 "vision_size": vision_size,
             },
@@ -978,7 +910,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["vision_embeds"] = {0: "vision_size"}
-        vision_dynamic_axes["pixel_values"] = {0: "batch_size_times_num_tiles", 2: "img_size", 3: "img_size"}
+        vision_dynamic_axes["pixel_values"] = {0: "max_num_tiles", 2: "img_size", 3: "img_size"}
 
         pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
         for i in range(self.language_model.config.num_hidden_layers):
@@ -1018,23 +950,19 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             img_size = getattr(vis_cfg, "image_size", 336)
         else:
             img_size = 336
-        # if img_size != constants.INTERN_IMG_SIZE and kv_offload:
-        #     raise NotImplementedError("Image Size other than 448 is not supported for Intern models yet.")
-
-        # patch_size = getattr(self.config.vision_config, "patch_size", None)
-        # downsample_ratio = getattr(self.config, "downsample_ratio", None)
-        # if patch_size and downsample_ratio:
-        #     computed_feature_size = int(((img_size / patch_size) * downsample_ratio) ** 2)
-        #     if computed_feature_size != constants.INTERN_FEATURE_SIZE:
-        #         logger.warning(
-        #             "Discrepancy detected between estimated and actual feature sizes. Could impact on functionality or accuracy"
-        #         )
 
         # Define shapes
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-        num_patches = 17
-        vision_size = num_patches * 144
+        max_num_tiles = 17
+        downsample_ratio = int(round(1.0 / (self.config.vision_config.pixel_shuffle_ratio**2)))
+        num_features_per_tile = int(
+            (img_size // self.config.vision_config.patch_size)
+            * (img_size // self.config.vision_config.patch_size)
+            // downsample_ratio
+        )
+        vision_size = num_features_per_tile * max_num_tiles
+
         inputs_shapes["vision_embeds"] = (
             vision_size,
             self.language_model.config.hidden_size,  # 5120
@@ -1044,7 +972,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
         inputs_shapes["pixel_values"] = (
-            num_patches,  # constants.INTERN_NUM_PATCHES,
+            max_num_tiles,  # constants.INTERN_NUM_PATCHES,
             constants.INTERN_NUM_CHANNELS,
             img_size,
             img_size,
@@ -1091,6 +1019,6 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             IOInfo(
                 name="pixel_values",
                 datatype=torch.float32,
-                shape=("batch_size_times_num_tiles", 3, "img_size", "img_size"),
+                shape=("max_num_tiles", 3, "img_size", "img_size"),
             ),
         ]
