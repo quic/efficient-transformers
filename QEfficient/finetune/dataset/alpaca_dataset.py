@@ -11,6 +11,8 @@ import json
 import torch
 from torch.utils.data import Dataset
 
+from QEfficient.finetune.dataset.helper import IGNORE_INDEX
+
 PROMPT_DICT = {
     "prompt_input": (
         "Below is an instruction that describes a task, paired with an input that provides further context. "
@@ -42,8 +44,6 @@ class InstructionDataset(Dataset):
         return len(self.ann)
 
     def __getitem__(self, index):
-        IGNORE_INDEX = -100  # The default setting
-
         ann = self.ann[index]
         if ann.get("input", "") == "":
             prompt = PROMPT_DICT["prompt_no_input"].format_map(ann)

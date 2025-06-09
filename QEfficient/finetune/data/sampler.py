@@ -49,14 +49,18 @@ class DistributedLengthBasedBatchSampler(torch.utils.data.BatchSampler):
     ) -> None:
         random.seed(seed)
         self.batch_sampler = LengthBasedBatchSampler(
-            data_source, batch_size=batch_size, drop_last=True, shuffle=shuffle
+            data_source, batch_size=batch_size, drop_last=False, shuffle=shuffle
         )
         self.num_replicas = num_replicas
         self.rank = rank
+        assert len(self.batch_sampler) % self.num_replicas == 0, (
+            "Length of batch samples should be divisible by number to processes in DDP."
+        )
+        self.sampler_len = len(self.batch_sampler) // self.num_replicas
+        self.max_length = len(self.batch_sampler)
 
     def __iter__(self):
-        max_length = len(self.batch_sampler) // self.num_replicas * self.num_replicas
-        return islice(self.batch_sampler, self.rank, max_length, self.num_replicas)
+        return islice(self.batch_sampler, self.rank, self.max_length, self.num_replicas)
 
     def __len__(self):
-        return len(self.batch_sampler) // self.num_replicas
+        return self.sampler_len
