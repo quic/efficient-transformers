@@ -150,11 +150,29 @@
 </tr>
 </thead>
 <tbody>
+<tr class="row-even"><td><p><a class="reference external" href="https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding">SpD, multiprojection heads</a></p></td>
+<td><p>Implemented post-attention hidden size projections to speculate tokens ahead of the base model.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/374">QNN Compilation support</a></p></td>
+<td><p>Enabled for AutoModel classes QNN compilation capabilities for multi-models, embedding models and causal models</p></td>
+</tr>
+<tr class="row-even"><td><p>Disaggregated serving</p></td>
+<td><p>It support for separate prefill and decode compilation for encoder (vision) and language models. <a class="reference external" href="https://github.com/quic/efficient-transformers/pull/365">isaggregated serving</a>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/368">GGUF model execution</a></p></td>
+<td><p>Supported GGUF model execution (without quantized weights)</p></td>
+</tr>
+<tr class="row-even"><td><p>Replication of KV</p></td>
+<td><p>Enabled FP8 model support on <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/scripts/replicate_kv_head">replicate_kv_heads script</a></p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/338">gradient checkpointing</a></p></td>
+<td><p>Supports gradient checkpointing in the finetuning script</p></td>
+</tr>
 <tr class="row-even"><td><p>Context Length Specializations (upcoming)</p></td>
 <td><p>Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Swift KV (upcoming)</p></td>
-<td><p>Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput.</p></td>
+<tr class="row-odd"><td><p>Swift KV <a class="reference external" href="https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct">Snowflake/Llama-3.1-SwiftKV-8B-Instruct</a></p></td>
+<td><p>Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. Support for both <a class="reference external" href="https://github.com/quic/efficient-transformers/pull/367">continuous and non-continuous batching execution</a> in SwiftKV</p></td>
 </tr>
 <tr class="row-even"><td><p>Block Attention (in progress)</p></td>
 <td><p>Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG.</p></td>
@@ -407,17 +425,18 @@ Please raise an <a class="reference external" href="https://github.com/quic/effi
 <section id="draft-based-speculative-decoding">
 <h3>Draft-Based Speculative Decoding<a class="headerlink" href="#draft-based-speculative-decoding" title="Permalink to this heading"></a></h3>
 <p>Draft-based speculative decoding is a technique where a small Draft Language Model (DLM) makes <code class="docutils literal notranslate"><span class="pre">num_speculative_tokens</span></code> autoregressive speculations ahead of the Target Language Model (TLM). The objective is to predict what the TLM would have predicted if it would have been used instead of the DLM. This approach is beneficial when the autoregressive decode phase of the TLM is memory bound and thus, we can leverage the extra computing resources of our hardware by batching the speculations of the DLM as an input to TLM to validate the speculations.</p>
-<p>To export and compile both DLM/TLM, add corresponding <code class="docutils literal notranslate"><span class="pre">is_tlm</span></code> and <code class="docutils literal notranslate"><span class="pre">num_speculative_tokens</span></code> for TLM and export DLM as you would any other QEfficient LLM model:</p>
+<p>To export and compile both DLM/TLM, add corresponding <code class="docutils literal notranslate"><span class="pre">qaic_config</span></code> and <code class="docutils literal notranslate"><span class="pre">num_speculative_tokens</span></code> for TLM and export DLM as you would any other QEfficient LLM model:</p>
 <div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">tlm_name</span> <span class="o">=</span> <span class="s2">&quot;meta-llama/Llama-2-70b-chat-hf&quot;</span>
 <span class="n">dlm_name</span> <span class="o">=</span> <span class="s2">&quot;TinyLlama/TinyLlama-1.1B-Chat-v1.0&quot;</span>
 <span class="n">k</span> <span class="o">=</span> <span class="mi">3</span> <span class="c1"># DLM will make `k` speculations</span>
-<span class="n">tlm</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">tlm_name</span><span class="p">,</span> <span class="n">is_tlm</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">qaic_config</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">speculative_model_type</span><span class="o">=</span><span class="s2">&quot;target&quot;</span><span class="p">)</span>
+<span class="n">tlm</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">tlm_name</span><span class="p">,</span> <span class="n">qaic_config</span><span class="o">=</span><span class="n">qaic_config</span><span class="p">)</span>
 <span class="n">dlm</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">dlm_name</span><span class="p">)</span>
 <span class="n">tlm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">num_speculative_tokens</span><span class="o">=</span><span class="n">k</span><span class="p">)</span>
 <span class="n">dlm</span><span class="o">.</span><span class="n">compile</span><span class="p">()</span>
 </pre></div>
 </div>
-<p>The <code class="docutils literal notranslate"><span class="pre">is_tlm</span></code> flag is fed during the instantiation of the model because slight changes to the ONNX graph are required. Once complete, the user can specify <code class="docutils literal notranslate"><span class="pre">num_speculative_tokens</span></code> to define the actual number of speculations that the TLM will take as input during the decode phase. As for the DLM, no new changes are required at the ONNX or compile level.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">qaic_config</span></code> dictionary is fed during the instantiation of the model because slight changes to the ONNX graph are required. Once complete, the user can specify <code class="docutils literal notranslate"><span class="pre">num_speculative_tokens</span></code> to define the actual number of speculations that the TLM will take as input during the decode phase. As for the DLM, no new changes are required at the ONNX or compile level.</p>
 </section>
 </section>
 </section>

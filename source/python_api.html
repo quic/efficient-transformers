@@ -124,7 +124,11 @@
 <li class="toctree-l3"><a class="reference internal" href="#module-QEfficient.utils.device_utils"><code class="docutils literal notranslate"><span class="pre">utils</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.device_utils.get_available_device_id"><code class="docutils literal notranslate"><span class="pre">get_available_device_id()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.generate_inputs.InputHandler"><code class="docutils literal notranslate"><span class="pre">InputHandler</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.generate_inputs.InputHandlerInternVL"><code class="docutils literal notranslate"><span class="pre">InputHandlerInternVL</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.generate_inputs.InputHandlerVLM"><code class="docutils literal notranslate"><span class="pre">InputHandlerVLM</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunner"><code class="docutils literal notranslate"><span class="pre">ApiRunner</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunnerInternVL"><code class="docutils literal notranslate"><span class="pre">ApiRunnerInternVL</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunnerVlm"><code class="docutils literal notranslate"><span class="pre">ApiRunnerVlm</span></code></a></li>
 </ul>
 </li>
 </ul>
@@ -186,7 +190,7 @@
 <h3><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM</span></code><a class="headerlink" href="#qeffautomodelforcausallm" title="Permalink to this heading"></a></h3>
 <dl class="py class">
 <dt class="sig sig-object py" id="QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.transformers.models.modeling_auto.</span></span><span class="sig-name descname"><span class="pre">QEFFAutoModelForCausalLM</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Module</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">continuous_batching</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_tlm</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForCausalLM"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM" title="Permalink to this definition"></a></dt>
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.transformers.models.modeling_auto.</span></span><span class="sig-name descname"><span class="pre">QEFFAutoModelForCausalLM</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Module</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">continuous_batching</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qaic_config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForCausalLM"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM" title="Permalink to this definition"></a></dt>
 <dd><p>The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
 Although it is possible to initialize the class directly, we highly recommend using the <code class="docutils literal notranslate"><span class="pre">from_pretrained</span></code> method for initialization.</p>
 <dl class="simple">
@@ -197,8 +201,8 @@ Although it is possible to initialize the class directly, we highly recommend us
 <dt class="field-even">continuous_batching (bool)<span class="colon">:</span></dt>
 <dd class="field-even"><p>Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.</p>
 </dd>
-<dt class="field-odd">is_tlm (bool)<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Whether this is a Speculative Decoding Target Language Model. If set to True, <cite>num_logits_to_keep</cite> input array will have to be fed to control the number of returned logits during prefill/decode.</p>
+<dt class="field-odd">qaic_config (Optional[dict])<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Qaic config with supported keys of <cite>speculative_model_type</cite> to specify speculative decoding TLM models.</p>
 </dd>
 </dl>
 </dd>
@@ -236,12 +240,12 @@ Although it is possible to initialize the class directly, we highly recommend us
 
 <dl class="py method">
 <dt class="sig sig-object py" id="QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.compile">
-<span class="sig-name descname"><span class="pre">compile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">onnx_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compile_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prefill_seq_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">128</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">full_batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kv_cache_batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_devices</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_cores</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">16</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxfp6_matmul</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxint8_kv_cache</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_speculative_tokens</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_qnn</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qnn_config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">compiler_options</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForCausalLM.compile"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.compile" title="Permalink to this definition"></a></dt>
+<span class="sig-name descname"><span class="pre">compile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">onnx_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compile_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prefill_seq_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">128</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">full_batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kv_cache_batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_devices</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_cores</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">16</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxfp6_matmul</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxint8_kv_cache</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_speculative_tokens</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prefill_only</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">compiler_options</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForCausalLM.compile"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.compile" title="Permalink to this definition"></a></dt>
 <dd><p>This method compiles the exported <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model using the Cloud AI 100 Platform SDK compiler binary found at <code class="docutils literal notranslate"><span class="pre">/opt/qti-aic/exec/qaic-exec</span></code> and generates a <code class="docutils literal notranslate"><span class="pre">qpc</span></code> package.
 If the model has not been exported yet, this method will handle the export process.
 You can pass any other arguments that the <cite>qaic-exec</cite> takes as extra kwargs.</p>
-<dl class="simple">
-<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><dl class="field-list simple">
+<dl>
+<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><dl class="field-list">
 <dt class="field-odd">onnx_path (str, optional)<span class="colon">:</span></dt>
 <dd class="field-odd"><p>Path to pre-exported onnx model.</p>
 </dd>
@@ -275,17 +279,39 @@ You can pass any other arguments that the <cite>qaic-exec</cite> takes as extra 
 <dt class="field-odd">num_speculative_tokens (int, optional)<span class="colon">:</span></dt>
 <dd class="field-odd"><p>Number of speculative tokens to take as input for Speculative Decoding Target Language Model.</p>
 </dd>
-<dt class="field-even">mos (int, optional)<span class="colon">:</span></dt>
-<dd class="field-even"><p>Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">-1</span></code>.</p>
+<dt class="field-even">prefill_only (bool)<span class="colon">:</span></dt>
+<dd class="field-even"><p>if <code class="docutils literal notranslate"><span class="pre">True</span></code> compile for prefill only and if <code class="docutils literal notranslate"><span class="pre">False</span></code> compile for decode only. Defaults to None, which compiles for both <code class="docutils literal notranslate"><span class="pre">prefill</span> <span class="pre">and</span> <span class="pre">``decode</span></code>.</p>
 </dd>
-<dt class="field-odd">aic_enable_depth_first (bool, optional)<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Enables DFS with default memory size. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False</span></code>.</p>
+<dt class="field-odd">compiler_options (dict, optional)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Additional compiler options. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None</span></code>.
+For QAIC Compiler: Extra arguments for qaic-exec can be passed.</p>
+<blockquote>
+<div><dl class="field-list simple">
+<dt class="field-odd">mos (int, optional)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">-1</span></code>.</p>
 </dd>
-<dt class="field-even">enable_qnn (bool)<span class="colon">:</span></dt>
-<dd class="field-even"><p>Enables QNN Compilation. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+<dt class="field-even">aic_enable_depth_first (bool, optional)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Enables DFS with default memory size. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False</span></code>.</p>
 </dd>
-<dt class="field-odd">qnn_config (str)<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Path of QNN Config parameters file. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+<dt class="field-odd">allow_mxint8_mdp_io (bool, optional)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Allows MXINT8 compression of MDP IO traffic. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+</dl>
+<p>Params are converted to flags as below:
+- aic_num_cores=16 -&gt; -aic-num-cores=16
+- convert_to_fp16=True -&gt; -convert-to-fp16</p>
+</div></blockquote>
+<dl class="simple">
+<dt>For QNN Compiler: Following arguments can be passed.</dt><dd><dl class="field-list simple">
+<dt class="field-odd">enable_qnn (bool)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Enables QNN Compilation.</p>
+</dd>
+<dt class="field-even">qnn_config (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.</p>
+</dd>
+</dl>
+</dd>
+</dl>
 </dd>
 </dl>
 </dd>
@@ -387,8 +413,8 @@ Although it is possible to initialize the class directly, we highly recommend us
 <dd><p>This method compiles the exported <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model using the Cloud AI 100 Platform SDK compiler binary found at <code class="docutils literal notranslate"><span class="pre">/opt/qti-aic/exec/qaic-exec</span></code> and generates a <code class="docutils literal notranslate"><span class="pre">qpc</span></code> package.
 If the model has not been exported yet, this method will handle the export process.
 You can pass any other arguments that the <cite>qaic-exec</cite> takes as extra kwargs.</p>
-<dl class="simple">
-<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><dl class="field-list simple">
+<dl>
+<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><dl class="field-list">
 <dt class="field-odd">onnx_path (str, optional)<span class="colon">:</span></dt>
 <dd class="field-odd"><p>Path to pre-exported onnx model.</p>
 </dd>
@@ -410,11 +436,30 @@ You can pass any other arguments that the <cite>qaic-exec</cite> takes as extra 
 <dt class="field-odd">mxfp6_matmul (bool, optional)<span class="colon">:</span></dt>
 <dd class="field-odd"><p>Whether to use <code class="docutils literal notranslate"><span class="pre">mxfp6</span></code> compression for weights. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False</span></code>.</p>
 </dd>
-<dt class="field-even">aic_enable_depth_first (bool, optional)<span class="colon">:</span></dt>
-<dd class="field-even"><p>Enables DFS with default memory size. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False</span></code>.</p>
+<dt class="field-even">compiler_options (dict, optional)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Additional compiler options.
+For QAIC Compiler: Extra arguments for qaic-exec can be passed.</p>
+<blockquote>
+<div><dl class="field-list simple">
+<dt class="field-odd">aic_enable_depth_first (bool, optional)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Enables DFS with default memory size. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False</span></code>.</p>
 </dd>
-<dt class="field-odd">allow_mxint8_mdp_io (bool, optional)<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Allows MXINT8 compression of MDP IO traffic. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+<dt class="field-even">allow_mxint8_mdp_io (bool, optional)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Allows MXINT8 compression of MDP IO traffic. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+</dl>
+</div></blockquote>
+<dl class="simple">
+<dt>For QNN Compiler: Following arguments can be passed.</dt><dd><dl class="field-list simple">
+<dt class="field-odd">enable_qnn (bool)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Enables QNN Compilation.</p>
+</dd>
+<dt class="field-even">qnn_config (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.</p>
+</dd>
+</dl>
+</dd>
+</dl>
 </dd>
 </dl>
 </dd>
@@ -604,7 +649,7 @@ Once exported and compiled for an adapter, the same can be utilized for another 
 <span class="sig-name descname"><span class="pre">compile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">onnx_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compile_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prefill_seq_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_devices</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_cores</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">16</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxfp6_matmul</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxint8_kv_cache</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">compiler_options</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/peft/auto.html#QEffAutoPeftModelForCausalLM.compile"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.compile" title="Permalink to this definition"></a></dt>
 <dd><p>Compile the exported onnx to run on AI100.
 If the model has not been exported yet, this method will handle the export process.</p>
-<dl class="simple">
+<dl>
 <dt>Args:</dt><dd><dl class="field-list simple">
 <dt class="field-odd">onnx_path (str)<span class="colon">:</span></dt>
 <dd class="field-odd"><p>Onnx file to compile</p>
@@ -625,9 +670,23 @@ If the model has not been exported yet, this method will handle the export proce
 <dd class="field-even"><p>Use MXINT8 to compress KV-cache on device to access and update KV-cache faster. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False</span></code>.</p>
 </dd>
 <dt class="field-odd">compiler_options<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Pass any compiler option as input. Any flag that is supported by <code class="docutils literal notranslate"><span class="pre">qaic-exec</span></code> can be passed. Params are converted to flags as below:
-- aic_num_cores=16 -&gt; -aic-num-cores=16
-- convert_to_fp16=True -&gt; -convert-to-fp16</p>
+<dd class="field-odd"><p>Pass any compiler option as input.</p>
+</dd>
+</dl>
+<dl class="simple">
+<dt>Following flag can be passed in compiler_options to enable QNN Compilation path.</dt><dd><dl class="field-list simple">
+<dt class="field-odd">enable_qnn (bool)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Enables QNN Compilation. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span> <span class="pre">if</span> <span class="pre">not</span> <span class="pre">passed.</span></code></p>
+</dd>
+<dt class="field-even">qnn_config (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path of QNN Config parameters file. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span> <span class="pre">if</span> <span class="pre">not</span> <span class="pre">passed</span></code></p>
+</dd>
+</dl>
+</dd>
+<dt>for QAIC compilation path, any flag that is supported by <code class="docutils literal notranslate"><span class="pre">qaic-exec</span></code> can be passed. Params are converted to flags as below:</dt><dd><ul class="simple">
+<li><p>aic_num_cores=16 -&gt; -aic-num-cores=16</p></li>
+<li><p>convert_to_fp16=True -&gt; -convert-to-fp16</p></li>
+</ul>
 </dd>
 </dl>
 </dd>
@@ -855,6 +914,58 @@ Attributes:</p>
 </dl>
 </dd>
 </dl>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoProcessor</span><span class="p">,</span> <span class="n">TextStreamer</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEFFAutoModelForImageTextToText</span>
+
+<span class="c1"># Add HuggingFace Token to access the model</span>
+<span class="n">HF_TOKEN</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<span class="n">model_name</span> <span class="o">=</span> <span class="s2">&quot;meta-llama/Llama-3.2-11B-Vision-Instruct&quot;</span>
+<span class="n">query</span> <span class="o">=</span> <span class="s2">&quot;Describe this image.&quot;</span>
+<span class="n">image_url</span> <span class="o">=</span> <span class="s2">&quot;https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg&quot;</span>
+
+<span class="c1">## STEP - 1 Load the Processor and Model, and kv_offload=True/False for dual and single qpc</span>
+<span class="n">processor</span> <span class="o">=</span> <span class="n">AutoProcessor</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">token</span><span class="o">=</span><span class="n">HF_TOKEN</span><span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">QEFFAutoModelForImageTextToText</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">token</span><span class="o">=</span><span class="n">HF_TOKEN</span><span class="p">,</span> <span class="n">attn_implementation</span><span class="o">=</span><span class="s2">&quot;eager&quot;</span><span class="p">,</span> <span class="n">kv_offload</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="c1">## STEP - 2 Export &amp; Compile the Model</span>
+<span class="n">model</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+    <span class="n">prefill_seq_len</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+    <span class="n">ctx_len</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+    <span class="n">img_size</span><span class="o">=</span><span class="mi">560</span><span class="p">,</span>
+    <span class="n">num_cores</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+    <span class="n">num_devices</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">mxfp6_matmul</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1">## STEP - 3 Load and process the inputs for Inference</span>
+<span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">image_url</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">raw</span><span class="p">)</span>
+<span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">{</span>
+        <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="p">[</span>
+            <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;image&quot;</span><span class="p">},</span>
+            <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">query</span><span class="p">},</span>
+        <span class="p">],</span>
+    <span class="p">}</span>
+<span class="p">]</span>
+<span class="n">input_text</span> <span class="o">=</span> <span class="p">[</span><span class="n">processor</span><span class="o">.</span><span class="n">apply_chat_template</span><span class="p">(</span><span class="n">messages</span><span class="p">,</span> <span class="n">add_generation_prompt</span><span class="o">=</span><span class="kc">True</span><span class="p">)]</span>
+<span class="n">inputs</span> <span class="o">=</span> <span class="n">processor</span><span class="p">(</span>
+    <span class="n">text</span><span class="o">=</span><span class="n">input_text</span><span class="p">,</span>
+    <span class="n">images</span><span class="o">=</span><span class="n">image</span><span class="p">,</span>
+    <span class="n">return_tensors</span><span class="o">=</span><span class="s2">&quot;pt&quot;</span><span class="p">,</span>
+    <span class="n">add_special_tokens</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">padding</span><span class="o">=</span><span class="s2">&quot;max_length&quot;</span><span class="p">,</span>
+    <span class="n">max_length</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1">## STEP - 4 Run Inference on the compiled model</span>
+<span class="n">streamer</span> <span class="o">=</span> <span class="n">TextStreamer</span><span class="p">(</span><span class="n">processor</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">inputs</span><span class="o">=</span><span class="n">inputs</span><span class="p">,</span> <span class="n">streamer</span><span class="o">=</span><span class="n">streamer</span><span class="p">,</span> <span class="n">generation_len</span><span class="o">=</span><span class="mi">512</span><span class="p">)</span>
+</pre></div>
+</div>
 </dd></dl>
 
 </section>
@@ -920,7 +1031,7 @@ Although it is possible to initialize the class directly, we highly recommend us
 
 <dl class="py method">
 <dt class="sig sig-object py" id="QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile">
-<span class="sig-name descname"><span class="pre">compile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">onnx_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compile_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prefill_seq_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">encoder_ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">150</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">full_batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kv_cache_batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_devices</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_cores</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">16</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxfp6_matmul</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxint8_kv_cache</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_speculative_tokens</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_qnn</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">qnn_config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">compiler_options</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForSpeechSeq2Seq.compile"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile" title="Permalink to this definition"></a></dt>
+<span class="sig-name descname"><span class="pre">compile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">onnx_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compile_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prefill_seq_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">encoder_ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">150</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">full_batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kv_cache_batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_devices</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_cores</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">16</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxfp6_matmul</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mxint8_kv_cache</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_speculative_tokens</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">compiler_options</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/QEfficient/transformers/models/modeling_auto.html#QEFFAutoModelForSpeechSeq2Seq.compile"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile" title="Permalink to this definition"></a></dt>
 <dd><p>This method compiles the exported <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model using the Cloud AI 100 Platform SDK compiler binary found at <code class="docutils literal notranslate"><span class="pre">/opt/qti-aic/exec/qaic-exec</span></code> and generates a <code class="docutils literal notranslate"><span class="pre">qpc</span></code> package.
 If the model has not been exported yet, this method will handle the export process.
 You can pass any other arguments that the <cite>qaic-exec</cite> takes as extra kwargs.</p>
@@ -1536,6 +1647,95 @@ Bertstyle Approach:</p>
 
 </dd></dl>
 
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandlerInternVL">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.generate_inputs.</span></span><span class="sig-name descname"><span class="pre">InputHandlerInternVL</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">processor</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_gen_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandlerInternVL"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandlerInternVL" title="Permalink to this definition"></a></dt>
+<dd><p>Bases: <a class="reference internal" href="#QEfficient.utils.generate_inputs.InputHandlerVLM" title="QEfficient.utils.generate_inputs.InputHandlerVLM"><code class="xref py py-class docutils literal notranslate"><span class="pre">InputHandlerVLM</span></code></a></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandlerInternVL.prepare_pytorch_inputs">
+<span class="sig-name descname"><span class="pre">prepare_pytorch_inputs</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandlerInternVL.prepare_pytorch_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandlerInternVL.prepare_pytorch_inputs" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for creating Prefill stage tensor inputs for PyTorch model.</p>
+<dl class="simple">
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">Dict<span class="colon">:</span></dt>
+<dd class="field-odd"><p>input_ids, position_ids, past_key_values</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandlerInternVL.prepare_vlm_ort_inputs">
+<span class="sig-name descname"><span class="pre">prepare_vlm_ort_inputs</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandlerInternVL.prepare_vlm_ort_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandlerInternVL.prepare_vlm_ort_inputs" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandlerVLM">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.generate_inputs.</span></span><span class="sig-name descname"><span class="pre">InputHandlerVLM</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">conversation</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">processor</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_gen_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandlerVLM"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandlerVLM" title="Permalink to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandlerVLM.prepare_pytorch_inputs">
+<span class="sig-name descname"><span class="pre">prepare_pytorch_inputs</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandlerVLM.prepare_pytorch_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandlerVLM.prepare_pytorch_inputs" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for creating Prefill stage tensor inputs for PyTorch model.</p>
+<dl class="simple">
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">Dict<span class="colon">:</span></dt>
+<dd class="field-odd"><p>input_ids, position_ids, past_key_values</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandlerVLM.prepare_vlm_ort_inputs">
+<span class="sig-name descname"><span class="pre">prepare_vlm_ort_inputs</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandlerVLM.prepare_vlm_ort_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandlerVLM.prepare_vlm_ort_inputs" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandlerVLM.update_vlm_ort_inputs">
+<span class="sig-name descname"><span class="pre">update_vlm_ort_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ort_outputs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandlerVLM.update_vlm_ort_inputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandlerVLM.update_vlm_ort_inputs" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for updating Prefill stage inputs to create inputs for decode stage inputs for ONNX model to be run on ONNXRT.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">inputs (Dict)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>NumPy inputs of Onnx model from previous iteration</p>
+</dd>
+<dt class="field-even">ort_outputs (Dict)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Numpy outputs of Onnx model from previous iteration</p>
+</dd>
+</dl>
+</dd>
+<dt>Return:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">Dict<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Updated input_ids, position_ids, pixel_values and past_key_values</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.generate_inputs.InputHandlerVLM.update_vlm_ort_outputs">
+<span class="sig-name descname"><span class="pre">update_vlm_ort_outputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ort_outputs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/generate_inputs.html#InputHandlerVLM.update_vlm_ort_outputs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.generate_inputs.InputHandlerVLM.update_vlm_ort_outputs" title="Permalink to this definition"></a></dt>
+<dd><p>Function responsible for updating ONNXRT session outputs.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">ort_outputs (Dict)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Numpy outputs of Onnx model from current iteration</p>
+</dd>
+</dl>
+</dd>
+<dt>Return:</dt><dd><p>updated_outputs (Dict): Updated past_key_values, logits, pixel_values</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
 <span class="target" id="module-QEfficient.utils.run_utils"></span><dl class="py class">
 <dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunner">
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.run_utils.</span></span><span class="sig-name descname"><span class="pre">ApiRunner</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">full_batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunner"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunner" title="Permalink to this definition"></a></dt>
@@ -1667,6 +1867,66 @@ Bertstyle Approach:</p>
 </dd>
 </dl>
 </dd></dl>
+
+</section>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunnerInternVL">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.run_utils.</span></span><span class="sig-name descname"><span class="pre">ApiRunnerInternVL</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">processor</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_gen_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunnerInternVL"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunnerInternVL" title="Permalink to this definition"></a></dt>
+<dd><p>Bases: <a class="reference internal" href="#QEfficient.utils.run_utils.ApiRunnerVlm" title="QEfficient.utils.run_utils.ApiRunnerVlm"><code class="xref py py-class docutils literal notranslate"><span class="pre">ApiRunnerVlm</span></code></a></p>
+<section id="apirunner-for-internvl-vision-models">
+<h4>ApiRunner for InternVL Vision models:<a class="headerlink" href="#apirunner-for-internvl-vision-models" title="Permalink to this heading"></a></h4>
+<ol class="arabic simple">
+<li><p>HuggingFace <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> model</p></li>
+<li><p>Transformed KV Pytorch Model</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model on ONNXRT</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model on Cloud AI 100</p></li>
+</ol>
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunnerInternVL.run_vlm_hf_model_on_pytorch">
+<span class="sig-name descname"><span class="pre">run_vlm_hf_model_on_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generation_config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunnerInternVL.run_vlm_hf_model_on_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunnerInternVL.run_vlm_hf_model_on_pytorch" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+</section>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunnerVlm">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">QEfficient.utils.run_utils.</span></span><span class="sig-name descname"><span class="pre">ApiRunnerVlm</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">processor</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">image</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">conversation</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prompt_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ctx_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_gen_len</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_layer</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunnerVlm"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunnerVlm" title="Permalink to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<section id="apirunnervlm-class-is-responsible-for-running-vision-models">
+<h4>ApiRunnerVlm class is responsible for running Vision models:<a class="headerlink" href="#apirunnervlm-class-is-responsible-for-running-vision-models" title="Permalink to this heading"></a></h4>
+<ol class="arabic simple">
+<li><p>HuggingFace <code class="docutils literal notranslate"><span class="pre">PyTorch</span></code> model</p></li>
+<li><p>Transformed KV Pytorch Model</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model on ONNXRT</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model on Cloud AI 100</p></li>
+</ol>
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunnerVlm.run_ort_session">
+<span class="sig-name descname"><span class="pre">run_ort_session</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">session</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">dict</span></span></span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunnerVlm.run_ort_session"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunnerVlm.run_ort_session" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunnerVlm.run_vlm_hf_model_on_pytorch">
+<span class="sig-name descname"><span class="pre">run_vlm_hf_model_on_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunnerVlm.run_vlm_hf_model_on_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunnerVlm.run_vlm_hf_model_on_pytorch" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunnerVlm.run_vlm_kv_model_on_ort">
+<span class="sig-name descname"><span class="pre">run_vlm_kv_model_on_ort</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunnerVlm.run_vlm_kv_model_on_ort"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunnerVlm.run_vlm_kv_model_on_ort" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunnerVlm.run_vlm_kv_model_on_pytorch">
+<span class="sig-name descname"><span class="pre">run_vlm_kv_model_on_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunnerVlm.run_vlm_kv_model_on_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunnerVlm.run_vlm_kv_model_on_pytorch" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="QEfficient.utils.run_utils.ApiRunnerVlm.setup_ort_session">
+<span class="sig-name descname"><span class="pre">setup_ort_session</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/QEfficient/utils/run_utils.html#ApiRunnerVlm.setup_ort_session"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#QEfficient.utils.run_utils.ApiRunnerVlm.setup_ort_session" title="Permalink to this definition"></a></dt>
+<dd></dd></dl>
 
 </section>
 </dd></dl>
