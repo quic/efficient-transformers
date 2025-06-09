@@ -146,7 +146,7 @@ from transformers.models.whisper.modeling_whisper import (
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
-from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel
+from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QeffCodeGenBlock,
@@ -528,9 +528,10 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
     _match_class_replace_method = {}
 
 
-class EmbeddingTransform:
+class PoolingTransform:
     """
-    Apply Embedding transform to the model.
+    Apply a pooling transformation to the model. This transformation appends a pooling layer to the model, allowing for the reduction of spatial dimensions in the output.
+    The pooling layer can be configured to use different pooling methods, such as max pooling or average pooling.
     """
 
     @classmethod
@@ -538,7 +539,7 @@ class EmbeddingTransform:
         transformed = False
         if kwargs.get("pooling") is not None:
             pooling = kwargs["pooling"]
-            pooling_method = POOLING_MAP[pooling]
+            pooling_method = POOLING_MAP[pooling] if isinstance(pooling,str) else validate_user_pooling_function(pooling)
             model = PooledModel(model, pooling_method)
-            warnings.warn(f"Pooling method {pooling} is applied to the model.")
+            warnings.warn(f"Pooling method {pooling.__name__} is applied to the model.")
         return model, transformed

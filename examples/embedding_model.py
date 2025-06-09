@@ -8,9 +8,15 @@
 # This is the work example of the Embedding model with the AI 100
 # For more information, visit: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
 
+import torch
 from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModel as AutoModel
+
+def max_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_states.size()).float()
+    last_hidden_states[input_mask_expanded == 0] = -1e9
+    return torch.max(last_hidden_states, 1)[0]
 
 # Sentences we want sentence embeddings for
 sentences = "This is an example sentence"
@@ -19,10 +25,10 @@ sentences = "This is an example sentence"
 tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
 # If pooling is not set, model will generate default output
-qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling="mean")
+qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling=max_pooling)
 
-# Here list of seq_len also can be used
-qeff_model.compile(num_cores=16, seq_len=32)
+# Here seq_len can be list seq_len or single int
+qeff_model.compile(num_cores=16, seq_len=[32,64])
 
 # Tokenize sentences
 encoded_input = tokenizer(sentences, return_tensors="pt")

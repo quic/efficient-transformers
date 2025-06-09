@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import inspect
 from typing import Optional
 
 import torch
@@ -55,3 +56,13 @@ class PooledModel(nn.Module):
     ):
         output = self.base_model(input_ids, attention_mask, **kwargs)
         return self.pooling_fn(output[0], attention_mask)
+
+def validate_user_pooling_function(user_function):
+    if not callable(user_function):
+        raise TypeError("Provided pooling function is not callable.")
+
+    sig = inspect.signature(user_function)
+    required_args = {"last_hidden_states", "attention_mask"}
+    if not required_args.issubset(sig.parameters.keys()):
+        raise ValueError(f"Pooling function must accept arguments: {required_args}")
+    return user_function
