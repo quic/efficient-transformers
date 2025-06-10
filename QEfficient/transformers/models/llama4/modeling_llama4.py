@@ -778,6 +778,12 @@ class QEffLlama4EncoderWrapper(nn.Module):
         return projected_vision_flat
 
 
+# This wrapper utilizes the 'vision_embeds', which contains vision embeddings, and an 'image_idx' index starting at 0.
+# Within the wrapper, a portion of vision_embeds is merged with inputs_embeds wherever it encounters the image_token_idx in input_ids.
+# The image_idx is then updated to point to the next available index of vision_embeds.
+# In successive iterations, merging starts from the image_idx of vision_embeds with inputs_embeds.
+
+
 class QEffLlama4DecoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -785,11 +791,11 @@ class QEffLlama4DecoderWrapper(nn.Module):
         self.language_model = self.model.language_model
         self.config = self.model.config
 
-    def forward(self, input_ids, vision_embeds, position_ids, index, past_key_values):
+    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
         inputs_embeds = self.model.language_model.get_input_embeddings()(input_ids)
         selected = input_ids == self.model.config.image_token_index
         indices1 = selected.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + index, indices1)
+        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
         image_features_expanded = vision_embeds.unsqueeze(0)[indices0, indices1]
         image_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
@@ -797,9 +803,9 @@ class QEffLlama4DecoderWrapper(nn.Module):
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
-        next_index = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        index = torch.where(index < next_index, next_index, index)
-        return outputs.logits, vision_embeds, index, outputs.past_key_values
+        next_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        image_idx = torch.where(image_idx < next_idx, next_idx, image_idx)
+        return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
 
 
 class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
@@ -809,7 +815,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
     def get_qeff_language_decoder(self):
         return QEffLlama4DecoderWrapper(self)
 
-    def forward(self, input_ids, position_ids, pixel_values, index, past_key_values):
+    def forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values):
         inputs_embeds = self.language_model.get_input_embeddings()(input_ids)
         vision_feature_layer = self.config.vision_config.vision_feature_layer
         vision_feature_select_strategy = self.config.vision_config.vision_feature_select_strategy
@@ -823,7 +829,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         projected_vision_flat = self.multi_modal_projector(vision_flat)
         selected = input_ids == self.config.image_token_index
         indices1 = selected.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + index, indices1)
+        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
         image_features_expanded = projected_vision_flat.unsqueeze(0)[indices0, indices1]
         image_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
@@ -831,9 +837,9 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         outputs = self.language_model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
-        next_index = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        index = torch.where(index < next_index, next_index, index)
-        return outputs.logits, pixel_values, index, outputs.past_key_values
+        next_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        image_idx = torch.where(image_idx < next_idx, next_idx, image_idx)
+        return outputs.logits, pixel_values, image_idx, outputs.past_key_values
 
     def get_specializations(
         self,
@@ -936,12 +942,12 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         output_names = {}
         if kv_offload:
             lang_output_names.insert(1, "vision_embeds_RetainedState")
-            lang_output_names.insert(2, "index_output")
+            lang_output_names.insert(2, "image_idx_output")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
             lang_output_names.insert(1, "pixel_values_RetainedState")
-            lang_output_names.insert(2, "index_output")
+            lang_output_names.insert(2, "image_idx_output")
             return lang_output_names
         return output_names
 
@@ -977,7 +983,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             img_size,
             img_size,
         )
-        inputs_shapes["index"] = (1, 1)
+        inputs_shapes["image_idx"] = (1, 1)
         # Define inputs
         vision_inputs = {}
         lang_inputs = {}
@@ -989,7 +995,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
-        lang_inputs["index"] = torch.zeros((inputs_shapes["index"]), dtype=torch.int64)
+        lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
         # Add data for KV
         kv_cache_shape = get_padding_shape_from_config(
             config=self.language_model.config,

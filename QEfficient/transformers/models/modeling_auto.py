@@ -808,9 +808,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
         )  # Need to use -1 as position_ids for invalid tokens
 
-        NOT_MLLAMA = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
-        if NOT_MLLAMA:
-            lang_inputs["index"] = np.array([[0]])
+        not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
+        if not_mllama:
+            lang_inputs["image_idx"] = np.array([[0]])
 
         vision_session.deactivate()
         lang_session.activate()
@@ -828,7 +828,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 :, i * prefill_seq_len : (i + 1) * prefill_seq_len
             ]
             outputs = lang_session.run(chunk_inputs)
-            chunk_inputs["index"] = outputs["index_output"]
+            chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
         prefill_time = perf_counter() - prefill_start + vision_end - vision_start
         # Skip inputs/outputs again
@@ -1107,7 +1107,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
 
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
-        inputs["index"] = np.array([[0]])
+        inputs["image_idx"] = np.array([[0]])
 
         qpc_session.activate()
         chunk_inputs = inputs.copy()
@@ -1118,7 +1118,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             outputs = qpc_session.run(chunk_inputs)
-            chunk_inputs["index"] = outputs["index_output"]
+            chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
         prefill_time = perf_counter() - prefill_start
         # Get first token

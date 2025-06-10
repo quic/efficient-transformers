@@ -14,8 +14,8 @@ from QEfficient import QEFFAutoModelForImageTextToText
 model_id = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 # For Testing Purpose Only
-# config.text_config.num_hidden_layers = 1
-# config.vision_config.num_hidden_layers = 2
+config.text_config.num_hidden_layers = 1
+config.vision_config.num_hidden_layers = 2
 
 model = AutoModelForImageTextToText.from_pretrained(model_id, attn_implementation="eager", config=config)
 model.eval()
@@ -35,6 +35,8 @@ qeff_model.compile(
     aic_enable_depth_first=True,
     mos=1,
 )
+
+### IMAGE + TEXT ###
 
 image_url = (
     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
@@ -60,6 +62,32 @@ inputs = processor.apply_chat_template(
     return_tensors="pt",
 )
 inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+streamer = TextStreamer(tokenizer)
+output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3, 4, 5, 6, 7], generation_len=100)
+print(output.generated_ids)
+print(tokenizer.batch_decode(output.generated_ids))
+print(output)
+print()
+
+### ONLY TEXT ###
+
+messages = [
+    {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Tell me about yourself."},
+        ],
+    },
+]
+
+inputs = processor.apply_chat_template(
+    messages,
+    add_generation_prompt=True,
+    tokenize=True,
+    return_dict=True,
+    return_tensors="pt",
+)
+
 streamer = TextStreamer(tokenizer)
 output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3, 4, 5, 6, 7], generation_len=100)
 print(output.generated_ids)
