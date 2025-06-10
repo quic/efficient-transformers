@@ -6,14 +6,14 @@
 # ----------------------------------------------------------------------------
 
 from dataclasses import dataclass
+from typing import List, Optional, Tuple, Union
+
 import torch
-import torch.nn.functional as F
+from transformers.cache_utils import Cache
+from transformers.modeling_outputs import ModelOutput
 
 from QEfficient.customop import CtxScatterFuncCB3D
 from QEfficient.utils.constants import Constants
-from transformers.cache_utils import Cache
-from transformers.modeling_outputs import ModelOutput
-from typing import List, Optional, Tuple, Union
 
 
 @dataclass
