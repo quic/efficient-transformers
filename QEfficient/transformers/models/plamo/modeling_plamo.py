@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import math
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -70,28 +70,6 @@ class QEffPlamoConfig(PretrainedConfig):  # type: ignore
         )
 
 
-class QEffPlamoRotaryEmbedding(torch.nn.Module):
-    def _set_cos_sin_cache(self, seq_len: int, device: Any, dtype: Any) -> None:
-        self.max_seq_len_cached = seq_len
-        t = torch.arange(self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)  # type: ignore
-
-        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
-        # Different from paper, but it uses a different permutation in order to obtain the same calculation
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos()[None, None, :, :].to(dtype), persistent=False)
-        self.register_buffer("sin_cached", emb.sin()[None, None, :, :].to(dtype), persistent=False)
-
-    def forward(self, x: torch.Tensor, seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:, :, :seq_len, ...].to(dtype=x.dtype),  # type: ignore
-            self.sin_cached[:, :, :seq_len, ...].to(dtype=x.dtype),  # type: ignore
-        )
-
-
 def _rotate_half(x: torch.Tensor) -> torch.Tensor:
     """Rotates half the hidden dims of the input."""
     x1 = x[..., : x.shape[-1] // 2]
@@ -107,15 +85,6 @@ def _rotary_pos_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, posit
     sin = sin[position_ids].unsqueeze(1)  # [bs, 1, seq_len, dim]
     x_embed = (x * cos) + (_rotate_half(x) * sin)
     return x_embed
-
-
-class QEffPlamoRMSNorm(nn.Module):
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        return self.weight * hidden_states.to(input_dtype)
 
 
 def eager_attention_forward(
@@ -178,7 +147,6 @@ class QEffPlamoAttention(torch.nn.Module):
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, layer_idx)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        # query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
         query_states = _rotary_pos_emb(query_states, cos, sin, position_ids)
         key_states = _rotary_pos_emb(key_states, cos, sin, position_ids)
 
@@ -205,11 +173,6 @@ class QEffPlamoAttention(torch.nn.Module):
             attn_weights = None
 
         return attn_output, attn_weights, past_key_value
-
-
-class MLP(nn.Module):
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))  # type: ignore
 
 
 class QEffPlamoDecoderLayer(torch.nn.Module):
@@ -319,7 +282,6 @@ class QEffPlamoPreTrainedModel(PreTrainedModel):  # type: ignore
     config_class = QEffPlamoConfig
     _no_split_modules: List[str]
     base_model_prefix = "model"
-    supports_gradient_checkpointing = True
     _no_split_modules = ["PlamoDecoderLayer"]
     _skip_keys_device_placement = "past_key_values"
     _keys_to_ignore_on_load_unexpected = [r"decoder\.version"]
@@ -334,9 +296,6 @@ class QEffPlamoPreTrainedModel(PreTrainedModel):  # type: ignore
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
-
-    def _set_gradient_checkpointing(self, module: torch.nn.Module, value: bool = False) -> None:
-        module.gradient_checkpointing = value  # type: ignore
 
 
 class QEffPlamoModel(QEffPlamoPreTrainedModel):
@@ -394,10 +353,6 @@ class QEffPlamoModel(QEffPlamoPreTrainedModel):
         attention_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
 
         hidden_states = inputs_embeds
-
-        if self.gradient_checkpointing and self.training:
-            if use_cache:
-                use_cache = False
 
         # decoder layers
         layer_outputs = self.layers(
@@ -492,45 +447,3 @@ class QEffPlamoForCausalLM(QEffPlamoPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
-    def prepare_inputs_for_generation(
-        self,
-        input_ids: torch.Tensor,
-        past_key_values: Optional[Cache] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
-        if past_key_values:
-            input_ids = input_ids[:, -1:]
-
-        position_ids = kwargs.get("position_ids", None)
-        if attention_mask is not None and position_ids is None:
-            # create position_ids on the fly for batch generation
-            position_ids = attention_mask.long().cumsum(-1) - 1
-            position_ids.masked_fill_(attention_mask == 0, 1)
-            if past_key_values:
-                position_ids = position_ids[:, -1].unsqueeze(-1)
-
-        # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
-        if inputs_embeds is not None and past_key_values is None:
-            model_inputs: Dict[str, Any] = {"inputs_embeds": inputs_embeds}
-        else:
-            model_inputs = {"input_ids": input_ids}
-
-        model_inputs.update(
-            {
-                "position_ids": position_ids,
-                "past_key_values": past_key_values,
-                "use_cache": kwargs.get("use_cache"),
-                "attention_mask": attention_mask,
-            }
-        )
-        return model_inputs
-
-    @staticmethod
-    def _reorder_cache(past_key_values: List[torch.FloatTensor], beam_idx: int) -> Tuple[Any, ...]:
-        reordered_past: Tuple[Any, ...] = ()
-        for layer_past in past_key_values:
-            reordered_past += (tuple(past_state.index_select(0, beam_idx) for past_state in layer_past),)
-        return reordered_past

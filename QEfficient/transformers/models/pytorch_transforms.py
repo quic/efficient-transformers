@@ -251,8 +251,6 @@ from QEfficient.transformers.models.plamo.modeling_plamo import (
     QEffPlamoDecoderLayer,
     QEffPlamoForCausalLM,
     QEffPlamoModel,
-    QEffPlamoRMSNorm,
-    QEffPlamoRotaryEmbedding,
 )
 from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2Attention,
@@ -499,7 +497,5 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
         "PlamoDecoder": {"forward": QEffPlamoDecoder.forward},
         "PlamoDecoderLayer": {"forward": QEffPlamoDecoderLayer.forward},
         "Attention": {"forward": QEffPlamoAttention.forward},
-        "RMSNorm": {"forward": QEffPlamoRMSNorm.forward},
-        "RotaryEmbedding": {"forward": QEffPlamoRotaryEmbedding.forward},
     }
     _match_class_replace_method = {}
