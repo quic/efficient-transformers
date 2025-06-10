@@ -303,8 +303,6 @@ from QEfficient.transformers.models.plamo.modeling_plamo import (
     QEffPlamoDecoderLayer,
     QEffPlamoForCausalLM,
     QEffPlamoModel,
-    QEffPlamoRMSNorm,
-    QEffPlamoRotaryEmbedding,
 )
 from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2Attention,
