@@ -158,11 +158,12 @@ class QEFFAutoModel(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, **kwargs):
+    def __init__(self, model: nn.Module, pooling=None, **kwargs):
         super().__init__(model)
 
-        # Make Embedding specific transforms like pooling
-        self.model, _ = PoolingTransform.apply(self.model, **kwargs)
+        # Make Embedding specific transforms like appending pooling
+        if pooling:
+            self.model, _ = PoolingTransform.apply(self.model, pooling)
 
         self.model.base_model.config.use_cache = True
 
@@ -178,12 +179,14 @@ class QEFFAutoModel(QEFFTransformersBase):
         This API can also be used as exception for VLM model since transformers support loading InternChatVL models via AutoModel API we support it via AutoModelForCausalLM API
         Args:
             pretrained_model_name_or_path (str): The name or path of the pre-trained model.
-            pooling (Optional[str], optional): The pooling method to use. Defaults to None.
-                Options:
-                    - "mean": Mean pooling
-                    - "max": Max pooling
-                    - "cls": CLS token pooling
-                    - "avg": Average pooling
+            pooling (Optional[Union[str, Callable]], optional): The pooling method to use. Defaults to None.
+            Options:
+                - "mean": Mean pooling
+                - "max": Max pooling
+                - "cls": CLS token pooling
+                - "avg": Average pooling
+                - Callable: A custom pooling function
+                - None: No pooling applied
 
         .. code-block:: python
 
@@ -191,7 +194,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             from transformers import AutoTokenizer
 
             # Initialize the model using from_pretrained similar to transformers.AutoModel.
-            model = QEFFAutoModel.from_pretrained("model_name")
+            model = QEFFAutoModel.from_pretrained("model_name", pooling="mean")
 
             # Now you can directly compile the model for Cloud AI 100
             model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
@@ -309,6 +312,9 @@ class QEFFAutoModel(QEFFTransformersBase):
             :str: Path of the compiled ``qpc`` package.
         """
 
+        if isinstance(seq_len, list) and len(seq_len) >= 15:
+            warnings.warn("Recommended: `seq_len` should contain fewer than 15 items.")
+
         specializations = [
             {"batch_size": batch_size, "seq_len": sl} for sl in (seq_len if isinstance(seq_len, list) else [seq_len])
         ]
@@ -396,11 +402,21 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
 
-        outputs = {
-            "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(np.float32),
-        }
-        self.qpc_session.set_buffers(outputs)
-        outputs = self.qpc_session.run(inputs)
+        # TODO: Remove try and catch after compiler fix
+        try:
+            outputs = {
+                "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(np.float32),
+            }
+            self.qpc_session.set_buffers(outputs)
+            outputs = self.qpc_session.run(inputs)
+        except Exception as e:
+            outputs = {
+                "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[1]).astype(
+                    np.float32
+                ),
+            }
+            self.qpc_session.set_buffers(outputs)
+            outputs = self.qpc_session.run(inputs)
         return outputs
 
     def pytorch_feature_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:

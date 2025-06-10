@@ -13,22 +13,62 @@ import torch.nn as nn
 
 
 def mean_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    """
+    Performs mean pooling on the last hidden states of a transformer model.
+
+    Args:
+        last_hidden_states (torch.Tensor): The last hidden states of the transformer model.
+        attention_mask (torch.Tensor): The attention mask used to mask out padding tokens.
+
+    Returns:
+        torch.Tensor: The mean pooled last hidden states.
+    """
     input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_states.size()).float()
     return torch.sum(last_hidden_states * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
 
 def average_pool(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    """
+    Performs average pooling on the last hidden states of a transformer model.
+
+    Args:
+        last_hidden_states (torch.Tensor): The last hidden states of the transformer model.
+        attention_mask (torch.Tensor): The attention mask used to mask out padding tokens.
+
+    Returns:
+        torch.Tensor: The average pooled last hidden states.
+    """
     last_hidden = last_hidden_states[0].masked_fill(~attention_mask[..., None].bool(), 0.0)
     return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
 
 
 def max_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    """
+    Performs max pooling on the last hidden states of a transformer model.
+
+    Args:
+        last_hidden_states (torch.Tensor): The last hidden states of the transformer model.
+        attention_mask (torch.Tensor): The attention mask used to mask out padding tokens.
+
+    Returns:
+        torch.Tensor: The max pooled last hidden states.
+    """
     input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_states.size()).float()
     last_hidden_states[input_mask_expanded == 0] = -1e9
     return torch.max(last_hidden_states, 1)[0]
 
 
 def cls_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    """
+    Performs CLS pooling on the last hidden states of a transformer model.
+
+    Args:
+        last_hidden_states (torch.Tensor): The last hidden states of the transformer model.
+        attention_mask (torch.Tensor): The attention mask used to mask out padding tokens.
+
+    Returns:
+        torch.Tensor: The CLS pooled last hidden states.
+    """
     return last_hidden_states[:, 0]
 
 

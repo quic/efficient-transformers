@@ -33,10 +33,12 @@ qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2",
 
 # Example: Using mean pooling by specifying it as a string.
 # This will return sentence embeddings computed using mean pooling.
-# qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling="mean")
+# qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
-# Here seq_len can be list seq_len or single int
+# Here seq_len can be list of seq_len or single int
 qeff_model.compile(num_cores=16, seq_len=[32, 64])
+# qeff_model.compile(num_cores=16, seq_len=32)
+
 
 # Tokenize sentences
 encoded_input = tokenizer(sentences, return_tensors="pt")

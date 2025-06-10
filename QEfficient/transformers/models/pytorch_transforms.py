@@ -7,7 +7,7 @@
 
 import warnings
 from types import MethodType
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple, Union
 
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
@@ -535,13 +535,13 @@ class PoolingTransform:
     """
 
     @classmethod
-    def apply(cls, model: nn.Module, **kwargs) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, pooling: Union[str, Callable]) -> Tuple[nn.Module, bool]:
         transformed = False
-        if kwargs.get("pooling") is not None:
-            pooling = kwargs["pooling"]
-            pooling_method = (
-                POOLING_MAP[pooling] if isinstance(pooling, str) else validate_user_pooling_function(pooling)
-            )
-            model = PooledModel(model, pooling_method)
-            warnings.warn(f"Pooling method {pooling.__name__} is applied to the model.")
+        pooling_method = (
+            POOLING_MAP[pooling]
+            if isinstance(pooling, str) and pooling in POOLING_MAP
+            else validate_user_pooling_function(pooling)
+        )
+        model = PooledModel(model, pooling_method)
+        warnings.warn("Pooling is applied to the model.")
         return model, transformed
