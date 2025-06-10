@@ -50,12 +50,12 @@ class QEFFLlavaDecoderWrapper(nn.Module):
         self.config = self.model.config
         self.language_model = self.model.language_model
 
-    def forward(self, input_ids, vision_embeds, position_ids, vision_idx, past_key_values):
+    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         vision_embeds = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
         mask = input_ids == self.model.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + vision_idx, indices1)
+        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(mask.shape[0]).view(-1, 1)
         vision_embeds_expanded = vision_embeds[indices0, indices1]
         vision_embeds_expanded = torch.where(mask.unsqueeze(-1), vision_embeds_expanded, inputs_embeds)
@@ -66,8 +66,8 @@ class QEFFLlavaDecoderWrapper(nn.Module):
             past_key_values=past_key_values,
         )
 
-        vision_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        return outputs.logits, vision_embeds, vision_idx, outputs.past_key_values
+        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
 
 
 class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
@@ -77,7 +77,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
     def get_qeff_language_decoder(self):
         return QEFFLlavaDecoderWrapper(self)
 
-    def forward(self, input_ids, position_ids, pixel_values, vision_idx, past_key_values):
+    def forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values):
         inputs_embeds = self.get_input_embeddings()(input_ids)
         # Image features
         image_outputs = self.vision_tower(pixel_values, output_hidden_states=True)
@@ -93,7 +93,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         vision_embeds = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
         mask = input_ids == self.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + vision_idx, indices1)
+        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(mask.shape[0]).view(-1, 1)
         vision_embeds_expanded = vision_embeds[indices0, indices1]
         image_embeds = torch.where(mask.unsqueeze(-1), vision_embeds_expanded, inputs_embeds)
@@ -104,9 +104,9 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             position_ids=position_ids,
             past_key_values=past_key_values,
         )
-        next_vision_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        vision_idx = torch.where(vision_idx < next_vision_idx, next_vision_idx, vision_idx)
-        return outputs.logits, pixel_values, vision_idx, outputs.past_key_values
+        next_image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        image_idx = torch.where(image_idx < next_image_idx, next_image_idx, image_idx)
+        return outputs.logits, pixel_values, image_idx, outputs.past_key_values
 
     def get_dummy_inputs(self, kv_offload: bool = False, **kwargs):
         num_layers = self.config.text_config.num_hidden_layers
@@ -126,7 +126,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             "input_ids": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
             "vision_embeds": torch.ones((BS, vision_size, self.language_model.config.hidden_size), dtype=torch.float32),
             "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
-            "vision_idx": torch.zeros((1, 1), dtype=torch.int64),
+            "image_idx": torch.zeros((1, 1), dtype=torch.int64),
         }
         lang_inputs["position_ids"] = lang_inputs.pop("attention_mask").cumsum(1)
         lang_inputs["past_key_values"] = []
@@ -236,12 +236,12 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         output_names = {}
         if kv_offload:
             lang_output_names.insert(1, "vision_embeds_RetainedState")
-            lang_output_names.insert(2, "vision_idx_output")
+            lang_output_names.insert(2, "image_idx_output")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
             lang_output_names.insert(1, "pixel_values_RetainedState")
-            lang_output_names.insert(2, "vision_idx_output")
+            lang_output_names.insert(2, "image_idx_output")
             return lang_output_names
         return output_names
 
