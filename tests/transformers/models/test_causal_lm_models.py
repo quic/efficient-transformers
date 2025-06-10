@@ -11,6 +11,7 @@ from typing import List, Optional
 
 import numpy as np
 import pytest
+import torch
 import torch.nn as nn
 from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -50,7 +51,7 @@ test_models_qaic = [
 
 test_dummy_model_configs = [
     # model_name, model_type, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
-    ("TinyLlama/TinyLlama-1.1B-Chat-v1.0", "llama", 128, 1, 2, 64, 256, 2000, {"num_key_value_heads": 1}),
+    ("TinyLlama/TinyLlama-1.1B-Chat-v1.0", "llama", 128, 1, 2, 64, 256, 32000, {"num_key_value_heads": 1}),
     ("gpt2", "gpt2", 128, 1, 2, 64, 256, 50257, {"num_key_value_heads": 1}),
     (
         "Salesforce/codegen-350M-mono",
@@ -61,16 +62,16 @@ test_dummy_model_configs = [
         64,
         256,
         51200,
-        {"_name_or_path": "codegen-350M-mono", "rotary_dim": 16},
+        {"num_key_value_heads": 1, "rotary_dim": 16},
     ),
     # ("microsoft/Phi-3-mini-4k-instruct","phi3", 128, 1, 2, 64, 256, 32064, {}), ouput not matching
-    ("tiiuae/falcon-7b", "falcon", 128, 1, 2, 64, 256, 65024, {}),
-    ("Qwen/Qwen2-0.5B", "qwen2", 128, 1, 2, 64, 256, 151900, {"num_key_value_heads": 1}),
-    ("bigcode/starcoder2-3b", "starcoder2", 128, 1, 2, 64, 256, 49152, {}),
-    ("Felladrin/Minueza-32M-Base", "mistral", 128, 1, 2, 64, 256, 32002, {"num_key_value_heads": 2}),
+    ("tiiuae/falcon-7b", "falcon", 128, 1, 2, 64, 256, 65024, {"num_key_value_heads": 1}),
+    ("Qwen/Qwen2-0.5B", "qwen2", 128, 1, 2, 64, 256, 151936, {"num_key_value_heads": 1}),
+    ("bigcode/starcoder2-3b", "starcoder2", 128, 1, 2, 64, 256, 49152, {"num_key_value_heads": 1}),
+    ("Felladrin/Minueza-32M-Base", "mistral", 128, 1, 2, 64, 256, 32002, {"num_key_value_heads": 1}),
     ("wtang06/mpt-125m-c4", "mpt", 128, 1, 2, 64, 256, 50368, {}),
-    ("hakurei/gpt-j-random-tinier", "gptj", 128, 1, 2, 64, 256, 50400, {"rotary_dim": 16}),
-    ("mistralai/Mixtral-8x7B-Instruct-v0.1", "mixtral", 128, 1, 2, 64, 256, 32000, {"num_key_value_heads": 2}),
+    ("hakurei/gpt-j-random-tinier", "gptj", 128, 1, 2, 64, 256, 50400, {"num_key_value_heads": 1, "rotary_dim": 16}),
+    ("mistralai/Mixtral-8x7B-Instruct-v0.1", "mixtral", 128, 1, 2, 64, 256, 32000, {"num_key_value_heads": 1}),
     (
         "meta-llama/Llama-3.2-1B",
         "llama",
@@ -79,7 +80,7 @@ test_dummy_model_configs = [
         2,
         64,
         256,
-        128250,
+        128256,
         {
             "num_key_value_heads": 1,
             "rope_scaling": {
@@ -113,7 +114,7 @@ test_dummy_model_configs = [
         256000,
         {"num_key_value_heads": 1, "_name_or_path": "unsloth/gemma-2-2b"},
     ),
-    # ("TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ", "llama",  128, 1, 2, 64, 256, 2000, {"num_key_value_heads": 1, "architectures": ["LlamaForCausalLM"], "pad_token_id": 0}),
+    # ("TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ", "llama",  128, 1, 2, 64, 256, 32003, {"num_key_value_heads": 1, "architectures": ["LlamaForCausalLM"], "pad_token_id": 0}),
     # ("TheBloke/Llama-2-7B-GPTQ", "llama", 128, 1, 2, 64, 256, 32000, {"num_key_value_heads": 2}),
     (
         "ibm-granite/granite-20b-code-base",
@@ -123,13 +124,13 @@ test_dummy_model_configs = [
         2,
         64,
         256,
-        4910,
-        {"activation_function": "gelu", "architectures": ["GPTBigCodeForCausalLM"]},
+        49152,
+        {"num_key_value_heads": 1, "activation_function": "gelu", "architectures": ["GPTBigCodeForCausalLM"]},
     ),
     # ("neuralmagic/Llama-3.2-3B-Instruct-FP8", "llama", 128, 1, 2, 64, 256, 128256, {"num_key_value_heads": 2}),
-    # ("neuralmagic/Qwen2-0.5B-Instruct-FP8", "qwen2", 128, 1, 2, 64, 256, 151900, {"num_key_value_heads": 1,"quantization_config": {"activation_scheme": "static","ignored_layers": [  "lm_head" ],"quant_method": "fp8"}}),
+    # ("neuralmagic/Qwen2-0.5B-Instruct-FP8", "qwen2", 128, 1, 2, 64, 256, 151936, {"num_key_value_heads": 1,"quantization_config": {"activation_scheme": "static","ignored_layers": [  "lm_head" ],"quant_method": "fp8"}}),
     # ("ibm-granite/granite-3.1-2b-instruct", "granite", 128, 1, 2, 64, 256, 49155, {"num_key_value_heads": 2}),
-    ("ibm-granite/granite-guardian-3.1-2b", "granite", 128, 1, 4, 64, 256, 49155, {"num_key_value_heads": 1}),
+    ("ibm-granite/granite-guardian-3.1-2b", "granite", 128, 1, 2, 64, 256, 49155, {"num_key_value_heads": 1}),
 ]
 
 
@@ -174,7 +175,7 @@ test_models_qnn = [
 ]
 test_dummy_model_configs_qnn = [
     # model_name, model_type, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
-    ("mistralai/Mixtral-8x7B-Instruct-v0.1", "mixtral", 128, 1, 2, 64, 256, 32000, {"num_key_value_heads": 2}),
+    ("mistralai/Mixtral-8x7B-Instruct-v0.1", "mixtral", 128, 1, 2, 64, 256, 32000, {"num_key_value_heads": 1}),
     (
         "meta-llama/Llama-3.2-1B",
         "llama",
@@ -183,7 +184,7 @@ test_dummy_model_configs_qnn = [
         2,
         64,
         256,
-        128250,
+        128256,
         {
             "num_key_value_heads": 1,
             "rope_scaling": {
@@ -206,7 +207,7 @@ test_dummy_model_configs_qnn = [
         256000,
         {"num_key_value_heads": 1, "_name_or_path": "unsloth/gemma-2b"},
     ),
-    ("ibm-granite/granite-guardian-3.1-2b", "granite", 128, 1, 4, 64, 256, 49155, {"num_key_value_heads": 1}),
+    ("ibm-granite/granite-guardian-3.1-2b", "granite", 128, 1, 2, 64, 256, 49155, {"num_key_value_heads": 1}),
 ]
 test_dummy_model_configs_qnn, test_dummy_model_names_qnn = get_model_configs_and_names(test_dummy_model_configs_qnn)
 
@@ -216,8 +217,8 @@ spd_test_models = [
 ]
 test_dummy_model_configs_spd = [
     # model_name, model_type, max_position_embeddings, num_hidden_layers, num_attention_heads, hidden_size, intermediate_size, vocab_size, additional_params
-    ("TinyLlama/TinyLlama-1.1B-Chat-v1.0", "llama", 128, 1, 2, 64, 256, 2000, {"num_key_value_heads": 1}),
-    ("Qwen/Qwen2-0.5B", "qwen2", 128, 1, 2, 64, 256, 151900, {"num_key_value_heads": 1}),
+    ("TinyLlama/TinyLlama-1.1B-Chat-v1.0", "llama", 128, 1, 2, 64, 256, 32000, {"num_key_value_heads": 1}),
+    ("Qwen/Qwen2-0.5B", "qwen2", 128, 1, 2, 64, 256, 151936, {"num_key_value_heads": 1}),
 ]
 test_dummy_model_configs_spd, test_dummy_model_names_spd = get_model_configs_and_names(test_dummy_model_configs_spd)
 
@@ -419,6 +420,7 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(test_dummy_model_config, 
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
 
+    torch.manual_seed(42)
     model_hf = AutoModelForCausalLM.from_config(
         test_dummy_model_config,
         attn_implementation="eager",
@@ -459,6 +461,7 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(test_dummy_model_conf
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
 
+    torch.manual_seed(42)
     model_hf = AutoModelForCausalLM.from_config(
         test_dummy_model_config_qnn,
         attn_implementation="eager",
@@ -511,6 +514,8 @@ def test_dummy_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(test_dummy_model_config_
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
+
+    torch.manual_seed(42)
     model_hf = AutoModelForCausalLM.from_config(
         test_dummy_model_config_spd,
         attn_implementation="eager",
