@@ -128,6 +128,10 @@ class SplitGateUpWeightsTransform(PytorchTransform):
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         transformed = False
+        model_class = model.__class__.__name__ if hasattr(model, "model") else model.__class__.__name__
+
+        if model_class not in VLM_SPLIT_GATE_UP_WEIGHTS:
+            return model, transformed
 
         model_tmp = model.language_model if hasattr(model, "language_model") else model
 
@@ -169,14 +173,4 @@ class SplitGateUpWeightsTransform(PytorchTransform):
         return model, transformed
 
 
-VLM_SPLIT_GATE_UP_WEIGHTS = ["Llama4ForConditionalGeneration", "Llama4TextModel"]
-
-
-def append_tranform(func):
-    def wrapper(*args, **kwargs):
-        model_class = args[1].model.__class__.__name__ if hasattr(args[1], "model") else args[1].__class__.__name__
-        if model_class in VLM_SPLIT_GATE_UP_WEIGHTS:
-            args[0]._pytorch_transforms.append(SplitGateUpWeightsTransform)
-        return func(*args, **kwargs)
-
-    return wrapper
+VLM_SPLIT_GATE_UP_WEIGHTS = {"QEffLlama4ForConditionalGeneration"}

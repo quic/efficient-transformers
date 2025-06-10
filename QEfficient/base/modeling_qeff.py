@@ -20,7 +20,7 @@ import onnx
 import torch
 
 from QEfficient.base.onnx_transforms import OnnxTransform
-from QEfficient.base.pytorch_transforms import PytorchTransform, append_tranform
+from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants, dump_qconfig
@@ -46,7 +46,6 @@ class QEFFBaseModel(ABC):
     def _transform_names(cls) -> List[str]:
         return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
-    @append_tranform
     def __init__(self, model: torch.nn.Module) -> None:
         super().__init__()
         self.model = model
