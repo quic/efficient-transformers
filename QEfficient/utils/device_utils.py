@@ -44,7 +44,7 @@ def get_available_device_id():
         if result:
             if "Status:Error" in result.stdout or is_networks_loaded(result.stdout):
                 device_id += 1
-            elif "Status:Ready" in result.stdout:
+            elif "Status:Ready" in result.stdout and not is_networks_loaded(result.stdout):
                 logger.info("device is available.")
                 return [device_id]
             elif "Failed to find requested device ID" in result.stdout:
