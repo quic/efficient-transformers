@@ -18,6 +18,10 @@ from QEfficient.utils.constants import Constants
 
 @dataclass
 class SamplerOutput(ModelOutput):
+    """
+    Dataclass for the output of the On Device Sampler.
+    """
+
     probs: torch.FloatTensor = None
     next_tokens: torch.IntTensor = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
@@ -36,6 +40,7 @@ def prefill_path(
     """
     Initialize or update RetainedState buffers for prefill stage based on `input_ids`.
     """
+
     # Initialize retain states for first input chunk
     mul_value = torch.ones(past_repetition_penalty_buffer.shape[0], 1, dtype=torch.bool)
     zero_tensor = torch.zeros(batch_index.shape, dtype=torch.long)
@@ -70,6 +75,7 @@ def decode_path(
     """
     Update RetainedState buffers for decode stage based on `last_accepted_output_tokens`.
     """
+
     # Mask out-of-bounds or invalid position_ids or last_accepted_output_tokens
     last_accepted_output_tokens = torch.where(
         position_ids == -1, torch.iinfo(torch.int32).max, last_accepted_output_tokens
@@ -120,17 +126,10 @@ def sampler_forward(
     random_numbers: Optional[torch.Tensor] = None,
 ) -> Union[Tuple, SamplerOutput]:
     r"""
+    Perform the sampling of next tokens on the QAIC device (instead of the host)
+    and return the next tokens and/or probability distributions.
+
     Args:
-        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
-            config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
-            (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
-
-        num_logits_to_keep (`int`, *optional*):
-            Calculate logits for the last `num_logits_to_keep` tokens. If `0`, calculate logits for all
-            `input_ids` (special case). Only last token logits are needed for generation, and calculating them only for that
-            token can save memory, which becomes pretty significant for long sequences or large vocabulary size.
-
         last_accepted_output_tokens (`torch.Tensor`, *optional*):
             Output tokens accepted by the Speculative Decoding Draft Language Model.
 
@@ -172,25 +171,7 @@ def sampler_forward(
         random_numbers (`torch.Tensor`, *optional*):
             Sampling parameter that represents the random seeds to use for random sampling.
             Must be in [-1, 1].
-
-    Returns:
-
-    Example:
-
-    ```python
-    >>> from transformers import AutoTokenizer, LlamaForCausalLM
-
-    >>> model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-2-7b-hf")
-    >>> tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
-
-    >>> prompt = "Hey, are you conscious? Can you talk to me?"
-    >>> inputs = tokenizer(prompt, return_tensors="pt")
-
-    >>> # Generate
-    >>> generate_ids = model.generate(inputs.input_ids, max_length=30)
-    >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-    "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
-    ```"""
+    """
 
     outputs = self.old_forward(
         input_ids=input_ids,

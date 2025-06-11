@@ -1539,6 +1539,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
     ):
+        """
+        Update the example inputs and outputs with respect to the On Device Sampler
+        for the ONNX export.
+        """
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
