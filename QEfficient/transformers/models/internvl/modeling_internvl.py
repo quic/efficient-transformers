@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -31,13 +31,14 @@ class QEffInternDecoderWrapper(nn.Module):
         self.config = self.model.language_model.config
         self.language_model = self.model.language_model
 
-    def forward(self, input_ids, vision_embeds, position_ids, past_key_values):
+    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
         input_embeds = self.model.language_model.get_input_embeddings()(input_ids)
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
         image_input_ids = input_ids.reshape(B * N)
         selected = image_input_ids == constants.INTERN_IMG_CONTEXT_TOKEN
         indices1 = selected.unsqueeze(0).to(torch.int64).cumsum(1) - 1
+        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
         image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(0).unsqueeze(-1), image_features_expanded, input_embeds)
@@ -45,7 +46,8 @@ class QEffInternDecoderWrapper(nn.Module):
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
-        return outputs.logits, vision_embeds, outputs.past_key_values
+        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
 
 
 class QEffInternVLModel(nn.Module):
@@ -81,13 +83,14 @@ class QEffInternVLModel(nn.Module):
             logger.warning("Setting img_size to be 448, as it was neither passed nor found in vision_config")
         if img_size != constants.INTERN_IMG_SIZE and kv_offload:
             raise NotImplementedError("Image Size other than 448 is not supported for Intern models yet.")
+
+        per_patch_embed_size = (img_size // self.config.vision_config.patch_size * self.config.downsample_ratio) ** 2
+        vision_size = int(num_patches * per_patch_embed_size)
         vision = [
             {
                 "batch_size": batch_size,
                 "num_patches": num_patches,
                 "img_size": img_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
             }
         ]
         lang = [
@@ -97,6 +100,7 @@ class QEffInternVLModel(nn.Module):
                 "ctx_len": ctx_len,
                 "num_patches": num_patches,
                 "img_size": img_size,
+                "vision_size": vision_size,
             },
             {
                 "batch_size": batch_size,
@@ -104,6 +108,7 @@ class QEffInternVLModel(nn.Module):
                 "ctx_len": ctx_len,
                 "num_patches": num_patches,
                 "img_size": img_size,
+                "vision_size": vision_size,
             },
         ]
 
@@ -122,7 +127,7 @@ class QEffInternVLModel(nn.Module):
         lang_dynamic_axes = {}
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
-        lang_dynamic_axes["vision_embeds"] = {0: "num_patches"}
+        lang_dynamic_axes["vision_embeds"] = {0: "batch_size", 1: "vision_size"}
         vision_dynamic_axes["pixel_values"] = {0: "num_patches", 2: "img_size", 3: "img_size"}
 
         pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
@@ -148,10 +153,12 @@ class QEffInternVLModel(nn.Module):
         output_names = {}
         if kv_offload:
             lang_output_names.insert(1, "vision_embeds_RetainedState")
+            lang_output_names.insert(2, "image_idx_output")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
             lang_output_names.insert(1, "pixel_values_RetainedState")
+            lang_output_names.insert(2, "image_idx_output")
             return lang_output_names
         return output_names
 
@@ -176,8 +183,8 @@ class QEffInternVLModel(nn.Module):
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         inputs_shapes["vision_embeds"] = (
-            constants.INTERN_NUM_PATCHES,
-            constants.INTERN_FEATURE_SIZE,
+            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            computed_feature_size,
             self.language_model.config.hidden_size,
         )
         inputs_shapes["position_ids"] = (
@@ -202,6 +209,7 @@ class QEffInternVLModel(nn.Module):
             .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
+        lang_inputs["image_idx"] = torch.zeros((1, 1), dtype=torch.int64)
 
         # Add data for KV
         kv_cache_shape = get_padding_shape_from_config(
@@ -225,7 +233,7 @@ class QEffInternVLModel(nn.Module):
 
         return inputs
 
-    def forward(self, input_ids, pixel_values, position_ids, past_key_values):
+    def forward(self, input_ids, pixel_values, position_ids, image_idx, past_key_values):
         input_embeds = self.language_model.get_input_embeddings()(input_ids)
         vision_embeds = self.extract_feature(pixel_values)
         B, N, C = input_embeds.shape
@@ -233,6 +241,7 @@ class QEffInternVLModel(nn.Module):
         image_input_ids = input_ids.reshape(B * N)
         selected = image_input_ids == constants.INTERN_IMG_CONTEXT_TOKEN
         indices1 = selected.unsqueeze(0).to(torch.int64).cumsum(1) - 1
+        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
         image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(0).unsqueeze(-1), image_features_expanded, input_embeds)
@@ -240,7 +249,9 @@ class QEffInternVLModel(nn.Module):
         outputs = self.language_model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
-        return outputs.logits, pixel_values, outputs.past_key_values
+        next_image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        image_idx = torch.where(image_idx < next_image_idx, next_image_idx, image_idx)
+        return outputs.logits, pixel_values, image_idx, outputs.past_key_values
 
     def get_inputs_info(self):
         return [
