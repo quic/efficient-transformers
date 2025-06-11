@@ -142,7 +142,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name):
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
     check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model_name, seq_len=32, n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path
+        model_name=model_name["model_name"], seq_len=32, n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path
     )
 
 
