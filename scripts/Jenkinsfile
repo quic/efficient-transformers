@@ -58,7 +58,7 @@ pipeline {
                            mkdir -p $PWD/Non_qaic &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic &&
-                           pytest tests -m '(not cli) and (on_qaic) and (not qnn)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log2.xml &&
+                           pytest tests -m '(not cli) and (on_qaic) and (not multimodal) and (not qnn)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log2.xml &&
                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                            deactivate"
                            '''

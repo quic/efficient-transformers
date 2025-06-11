@@ -27,6 +27,7 @@ from transformers import (
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
@@ -473,6 +474,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         CustomOpsTransform,
         KVCacheTransform,
         VlmKVOffloadTransform,
+        SplitGateUpWeightsTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
@@ -663,7 +665,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_only=True,
                 specializations=specializations["vision"],
                 convert_to_fp16=True,
-                mxfp6_matmul=mxfp6_matmul,
+                mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
                 custom_io=custom_io_vision,
@@ -745,7 +747,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         # Skip inputs/outputs
         lang_session.skip_buffers(
-            [x for x in lang_session.input_names + lang_session.output_names if x.startswith("past_")]
+            [
+                x
+                for x in lang_session.input_names + lang_session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
         )
 
         # Read prompt and ctx len from session
@@ -769,9 +775,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         assert generation_len > 0, "generation length should be greater than zero"
         generated_ids = np.full((batch_size, generation_len + 1), pad_token_id)
 
-        # Prepare inputs for prefill
-        prefill_start = perf_counter()
-
         inputs["input_ids"] = torch.nn.functional.pad(
             inputs["input_ids"],
             (0, padded_len - input_ids_length),
@@ -793,32 +796,50 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
         }
 
-        vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
-        vision_outputs = vision_session.run(vision_inputs)
+        if vision_inputs:
+            vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
+        vision_start = perf_counter()
+
+        vision_outputs = {}
+        if vision_inputs:
+            vision_outputs = vision_session.run(vision_inputs)
+        vision_end = perf_counter()
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
         lang_inputs["position_ids"] = np.where(
             lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
         )  # Need to use -1 as position_ids for invalid tokens
 
+        not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
+        if not_mllama:
+            lang_inputs["image_idx"] = np.array([[0]])
+
         vision_session.deactivate()
         lang_session.activate()
 
         lang_session.set_buffers(vision_outputs)
 
+        # Prepare inputs for prefill
+        chunk_inputs = lang_inputs.copy()
+        prefill_start = perf_counter()
+
         # Run prefill
         for i in range(num_chunks):
-            chunk_inputs = lang_inputs.copy()
             chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][
                 :, i * prefill_seq_len : (i + 1) * prefill_seq_len
             ]
             outputs = lang_session.run(chunk_inputs)
+            chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
-        prefill_time = perf_counter() - prefill_start
+        prefill_time = perf_counter() - prefill_start + vision_end - vision_start
         # Skip inputs/outputs again
         lang_session.skip_buffers(
-            [x for x in lang_session.input_names + lang_session.output_names if x.startswith("past_")]
+            [
+                x
+                for x in lang_session.input_names + lang_session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
         )
 
         # Get first token
@@ -849,7 +870,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             streamer.end()
 
         decode_perf = (num_token - 1) / (decode_end - decode_start)
-        total_time = decode_end - prefill_start
+        total_time = decode_end - decode_start + prefill_time
         total_perf = num_token / total_time
 
         return CloudAI100ExecInfoNew(
@@ -870,6 +891,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         KVCacheTransform,
         KVCacheModuleMethodMapperTransform,
         VlmNoKVOffloadTransform,
+        SplitGateUpWeightsTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
@@ -1068,8 +1090,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         generated_ids = np.full((batch_size, generation_len + 1), pad_token_id)
 
         # Prepare inputs for prefill
-        prefill_start = perf_counter()
-
         inputs["input_ids"] = torch.nn.functional.pad(
             inputs["input_ids"],
             (0, padded_len - input_ids_length),
@@ -1090,16 +1110,18 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
 
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+        inputs["image_idx"] = np.array([[0]])
 
         qpc_session.activate()
+        chunk_inputs = inputs.copy()
+        prefill_start = perf_counter()
 
         # Run prefill
-
         for i in range(num_chunks):
-            chunk_inputs = inputs.copy()
             chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             outputs = qpc_session.run(chunk_inputs)
+            chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
         prefill_time = perf_counter() - prefill_start
         # Get first token
@@ -1304,6 +1326,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         FP8DeQuantLinearToLinearTransform,
         CustomOpsTransform,
         KVCacheTransform,
+        SplitGateUpWeightsTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 

@@ -6,10 +6,19 @@
 # -----------------------------------------------------------------------------
 
 import math
+import re
 import subprocess
 
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
+
+
+def is_networks_loaded(stdout):
+    # Check is the networks are loaded on the device.
+    network_loaded = re.search(r"Networks Loaded:(\d+)", stdout)
+    if network_loaded and int(network_loaded.group(1)) > 0:
+        return True
+    return False
 
 
 def get_available_device_id():
@@ -33,7 +42,7 @@ def get_available_device_id():
             logger.warning("Not a Cloud AI 100 device, Command not found", command)
             return None
         if result:
-            if "Status:Error" in result.stdout:
+            if "Status:Error" in result.stdout or is_networks_loaded(result.stdout):
                 device_id += 1
             elif "Status:Ready" in result.stdout:
                 logger.info("device is available.")

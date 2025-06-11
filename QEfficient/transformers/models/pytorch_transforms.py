@@ -66,6 +66,18 @@ from transformers.models.llama.modeling_llama import (
     LlamaModel,
     LlamaRMSNorm,
 )
+from transformers.models.llama4.modeling_llama4 import (
+    Llama4ForCausalLM,
+    Llama4ForConditionalGeneration,
+    Llama4TextAttention,
+    Llama4TextDecoderLayer,
+    Llama4TextExperts,
+    Llama4TextModel,
+    Llama4TextMoe,
+    Llama4TextRMSNorm,
+    Llama4VisionAttention,
+    Llama4VisionModel,
+)
 from transformers.models.llava.modeling_llava import (
     LlavaForConditionalGeneration,
 )
@@ -189,12 +201,26 @@ from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
     QEffGraniteMoeRotaryEmbedding,
     QEffGraniteMoeTopKGating,
 )
-from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
+from QEfficient.transformers.models.internvl.modeling_internvl import (
+    QEffInternVisionEmbeddings,
+    QEffInternVLModel,
+)
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
+)
+from QEfficient.transformers.models.llama4.modeling_llama4 import (
+    QEffLlama4ForCausalLM,
+    QEffLlama4ForConditionalGeneration,
+    QEffLlama4TextAttention,
+    QEffLlama4TextDecoderLayer,
+    QEffLlama4TextExperts,
+    QEffLlama4TextModel,
+    QEffLlama4TextMoe,
+    QEffLlama4VisionAttention,
+    QEffLlama4VisionModel,
 )
 from QEfficient.transformers.models.llava.modeling_llava import (
     QEffLlavaForConditionalGeneration,
@@ -277,6 +303,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         GemmaRMSNorm: GemmaCustomRMSNormAIC,
         Gemma2RMSNorm: GemmaCustomRMSNormAIC,
         LlamaRMSNorm: CustomRMSNormAIC,
+        Llama4TextRMSNorm: CustomRMSNormAIC,
         MistralRMSNorm: CustomRMSNormAIC,
         MixtralRMSNorm: CustomRMSNormAIC,
         Phi3RMSNorm: CustomRMSNormAIC,
@@ -314,6 +341,16 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaDecoderLayer: QEffLlamaDecoderLayer,
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
+        # Llama4
+        Llama4TextAttention: QEffLlama4TextAttention,
+        Llama4ForCausalLM: QEffLlama4ForCausalLM,
+        Llama4TextDecoderLayer: QEffLlama4TextDecoderLayer,
+        Llama4TextModel: QEffLlama4TextModel,
+        Llama4TextMoe: QEffLlama4TextMoe,
+        Llama4ForConditionalGeneration: QEffLlama4ForConditionalGeneration,
+        Llama4VisionAttention: QEffLlama4VisionAttention,
+        Llama4VisionModel: QEffLlama4VisionModel,
+        Llama4TextExperts: QEffLlama4TextExperts,
         # Llava
         LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
         # Llava Next
