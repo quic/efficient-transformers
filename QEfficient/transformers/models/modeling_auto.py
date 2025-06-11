@@ -455,7 +455,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
             mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
         else:
             mhash.update(to_hashable(self.model.pretrained_model_name_or_path))
-        mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
