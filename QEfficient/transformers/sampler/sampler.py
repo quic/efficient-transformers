@@ -225,7 +225,7 @@ def sampler_forward(
 
     # Greedy Sampling
     greedy_samples = torch.argmax(logits, dim=1, keepdim=True)  # (batch_size * spec_length, 1)
-    if (temperatures == 0).all() and self.qaic_config.get("return_pdfs", False) == False:
+    if (temperatures == 0).all() and not self.qaic_config.get("return_pdfs", False):
         return SamplerOutput(
             probs=None,
             next_tokens=greedy_samples.reshape(-1, spec_length, 1),  # Return sampled next tokens instead of logits
