@@ -61,7 +61,7 @@ spd_test_models = [
 ]
 
 
-def load_causal_lm_model(model_config):
+def load_causal_lm_model(model_config, model_name):
     """
     Function to load model from huggingface and transform to KV model
     --------
@@ -80,10 +80,11 @@ def load_causal_lm_model(model_config):
         num_hidden_layers=model_config["n_layer"],
         attn_implementation="eager",
         low_cpu_mem_usage=False,
-        trust_remote_code=True,
+        trust_remote_code=True if model_name == "hpcai-tech/grok-1" else False,
     )  # Run models for single layers only
     params = sum(p.numel() for p in model_hf.parameters())
-    model_hf.to(torch.float32)
+    if model_name == "hpcai-tech/grok-1":
+        model_hf.to(torch.float32)
     model_hf.eval()
     return model_hf, params
 
@@ -110,7 +111,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_config = {"model_name": model_name}
     model_config["n_layer"] = n_layer
 
-    model_hf, _ = load_causal_lm_model(model_config)
+    model_hf, _ = load_causal_lm_model(model_config, model_name)
 
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
@@ -171,7 +172,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if prefill_only is not None:
         return
     # testing for CB models
-    model_hf, _ = load_causal_lm_model(model_config)
+    model_hf, _ = load_causal_lm_model(model_config, model_name)
     full_batch_size = 4
     fbs_prompts = Constants.INPUT_STR * 4
     api_runner = ApiRunner(
