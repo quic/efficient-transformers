@@ -665,7 +665,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_only=True,
                 specializations=specializations["vision"],
                 convert_to_fp16=True,
-                mxfp6_matmul=mxfp6_matmul,
+                mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
                 custom_io=custom_io_vision,
