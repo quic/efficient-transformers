@@ -672,7 +672,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 mxint8_kv_cache=mxint8_kv_cache,
                 **compiler_options,
             )
-            
 
         if not skip_lang:
             custom_io_lang = {}
