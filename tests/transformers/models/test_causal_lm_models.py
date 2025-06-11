@@ -262,7 +262,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
 @pytest.mark.on_qaic
 @pytest.mark.qnn
-@pytest.mark.parametrize("model_name", test_models_qnn)
+@pytest.mark.parametrize("model_name", test_models_qaic)
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
     """
     QNN Compilation Test
