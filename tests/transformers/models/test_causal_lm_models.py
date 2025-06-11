@@ -22,6 +22,7 @@ from QEfficient.utils.constants import Constants, QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
 
+extrenal_models = {"hpcai-tech/grok-1"}
 test_models_qaic = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
     "gpt2",
@@ -61,7 +62,7 @@ spd_test_models = [
 ]
 
 
-def load_causal_lm_model(model_config, model_name):
+def load_causal_lm_model(model_config):
     """
     Function to load model from huggingface and transform to KV model
     --------
@@ -80,11 +81,13 @@ def load_causal_lm_model(model_config, model_name):
         num_hidden_layers=model_config["n_layer"],
         attn_implementation="eager",
         low_cpu_mem_usage=False,
-        trust_remote_code=True if model_name == "hpcai-tech/grok-1" else False,
-    )  # Run models for single layers only
+        trust_remote_code=model_config["model_name"] in extrenal_models,
+    )
+    # Convert to FP32 if model is in BF16
+    if getattr(model_hf.config, "torch_dtype", None) == torch.bfloat16:
+        model_hf = model_hf.to(torch.float32)
+
     params = sum(p.numel() for p in model_hf.parameters())
-    if model_name == "hpcai-tech/grok-1":
-        model_hf.to(torch.float32)
     model_hf.eval()
     return model_hf, params
 
@@ -111,7 +114,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_config = {"model_name": model_name}
     model_config["n_layer"] = n_layer
 
-    model_hf, _ = load_causal_lm_model(model_config, model_name)
+    model_hf, _ = load_causal_lm_model(model_config)
 
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
@@ -172,7 +175,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if prefill_only is not None:
         return
     # testing for CB models
-    model_hf, _ = load_causal_lm_model(model_config, model_name)
+    model_hf, _ = load_causal_lm_model(model_config)
     full_batch_size = 4
     fbs_prompts = Constants.INPUT_STR * 4
     api_runner = ApiRunner(
