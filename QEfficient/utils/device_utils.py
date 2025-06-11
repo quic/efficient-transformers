@@ -8,48 +8,69 @@
 import math
 import re
 import subprocess
+import time
 
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
 
-def is_networks_loaded(stdout):
-    # Check is the networks are loaded on the device.
-    network_loaded = re.search(r"Networks Active:(\d+)", stdout)
-    if network_loaded and int(network_loaded.group(1)) > 0:
-        return True
-    return False
+def is_device_available(stdout: str) -> bool:
+    try:
+        match = re.search(r"Networks Loaded:(\d+)", stdout)
+        return int(match.group(1)) > 0 if match else False
+    except (ValueError, AttributeError):
+        return False
 
 
-def get_available_device_id():
+def get_device_count():
+    command = ["/opt/qti-aic/tools/qaic-util", "-q"]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True)
+        qids = re.findall(r"QID (\d+)", result.stdout)
+        return max(map(int, qids)) + 1 if qids else 0
+    except OSError:
+        logger.warning("ERROR while fetching the device", command)
+        return 0
+
+
+def get_available_device_id(max_retry_count: int = 50, wait_time: int = 5) -> list[int] | None:
     """
-    API to check available device id.
+    Find an available Cloud AI 100 device ID.
 
-    Return:
-        :int: Available device id.
+    Args:
+    max_retry_count (int): Maximum number of retries.
+    wait_time (int): Seconds to wait between retries.
+
+    Returns:
+    list[int] | None: List containing available device ID, or None if not found.
     """
 
-    device_id = 0
-    result = None
+    device_count = get_device_count()
+    if device_count == 0:
+        logger.warning("No Cloud AI 100 devices found or platform sdk not installed.")
+        return None
 
-    # FIXME: goes into infinite loop when user doesn't have permission and the command gives permission denied.
-    # To reproduce change the ownership of available devices.
-    while 1:
-        command = ["/opt/qti-aic/tools/qaic-util", "-q", "-d", f"{device_id}"]
-        try:
-            result = subprocess.run(command, capture_output=True, text=True)
-        except OSError:
-            logger.warning("Not a Cloud AI 100 device, Command not found", command)
-            return None
-        if result:
-            if "Status:Error" in result.stdout or is_networks_loaded(result.stdout):
-                device_id += 1
-            elif "Status:Ready" in result.stdout:
-                logger.info("device is available.")
-                return [device_id]
-            elif "Failed to find requested device ID" in result.stdout:
-                logger.warning("Failed to find requested device ID")
+    for retry_count in range(max_retry_count):
+        for device_id in range(device_count):
+            command = ["/opt/qti-aic/tools/qaic-util", "-q", "-d", str(device_id)]
+            try:
+                result = subprocess.run(command, capture_output=True, text=True)
+            except OSError:
+                logger.warning("Failed while querying the AIC card", command)
                 return None
+
+            if "Status:Error" in result.stdout or not is_device_available(result.stdout):
+                continue
+
+            elif "Status:Ready" in result.stdout:
+                logger.info(f"Device ID : {device_id} is available.")
+                return [device_id]
+
+            elif "Failed to find requested device ID" in result.stdout:
+                logger.warning("Device ID %d not found.", device_id)
+
+        time.sleep(wait_time)
+    return None
 
 
 def is_qpc_size_gt_32gb(params: int, mxfp6: bool) -> bool:
