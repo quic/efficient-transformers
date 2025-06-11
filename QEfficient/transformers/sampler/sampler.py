@@ -45,9 +45,7 @@ def prefill_path(
     mul_value = torch.ones(past_repetition_penalty_buffer.shape[0], 1, dtype=torch.bool)
     zero_tensor = torch.zeros(batch_index.shape, dtype=torch.long)
     positions_mask = (position_ids[:, :1] != zero_tensor).view(-1, 1)
-    mul_value = CtxScatterFuncCB3D.apply(
-        mul_value, batch_index, zero_tensor, positions_mask
-    )
+    mul_value = CtxScatterFuncCB3D.apply(mul_value, batch_index, zero_tensor, positions_mask)
     past_repetition_penalty_buffer *= mul_value
     past_presence_penalty_buffer *= mul_value
 
@@ -236,16 +234,20 @@ def sampler_forward(
 
     # Repetition Penalty
     if (repetition_penalties != 1.0).any():
-        past_repetition_penalty_buffer_selected = \
-            past_repetition_penalty_buffer[batch_index_reshaped].repeat(spec_length, 1)  # (batch_size * spec_length, vocab_size)
+        past_repetition_penalty_buffer_selected = past_repetition_penalty_buffer[batch_index_reshaped].repeat(
+            spec_length, 1
+        )  # (batch_size * spec_length, vocab_size)
         repetition_penalties_mask = torch.where(past_repetition_penalty_buffer_selected, repetition_penalties, 1.0)
         logits *= repetition_penalties_mask ** (-torch.sign(logits))
 
     # Presence Penalty
     if (presence_penalties != 0.0).any():
-        presence_penalties = presence_penalties.repeat(spec_length, 1)  # (batch_size, 1) -> (batch_size * spec_length, 1)
-        past_presence_penalty_buffer_selected = \
-            past_presence_penalty_buffer[batch_index_reshaped].repeat(spec_length, 1)  # (batch_size * spec_length, vocab_size)
+        presence_penalties = presence_penalties.repeat(
+            spec_length, 1
+        )  # (batch_size, 1) -> (batch_size * spec_length, 1)
+        past_presence_penalty_buffer_selected = past_presence_penalty_buffer[batch_index_reshaped].repeat(
+            spec_length, 1
+        )  # (batch_size * spec_length, vocab_size)
         logits -= presence_penalties * past_presence_penalty_buffer_selected
 
     # TODO: Frequency Penalty
@@ -262,7 +264,9 @@ def sampler_forward(
     topk_indices_asc = topk_indices.flip(dims=[1])
     top_ks[top_ks > max_top_k_ids] = max_top_k_ids  # Clip k to max value
     # True values in this mask indicate the positions of the non-top K values
-    topk_mask = torch.arange(topk_values_asc.shape[1]).unsqueeze(0) < (topk_values_asc.size(1) - top_ks.to(torch.long)).repeat(spec_length, 1)  # (batch_size * spec_length, max_top_k_ids)
+    topk_mask = torch.arange(topk_values_asc.shape[1]).unsqueeze(0) < (
+        topk_values_asc.size(1) - top_ks.to(torch.long)
+    ).repeat(spec_length, 1)  # (batch_size * spec_length, max_top_k_ids)
     topk_values_asc[topk_mask] = torch.finfo(torch.float16).min
 
     # Top P
@@ -288,7 +292,9 @@ def sampler_forward(
         logits.fill_(torch.finfo(torch.float16).min)
         logits = logits.scatter(1, topk_indices_asc, topk_values_asc)  # (batch_size * spec_length, vocab_size)
         # Softmax
-        probs = torch.softmax(logits, dim=1).reshape(-1, spec_length, vocab_size)  # (batch_size, spec_length, vocab_size)
+        probs = torch.softmax(logits, dim=1).reshape(
+            -1, spec_length, vocab_size
+        )  # (batch_size, spec_length, vocab_size)
 
     # Random Sampling
     topk_probs_asc = torch.softmax(topk_values_asc, dim=1)  # (batch_size * spec_length, max_top_k_ids)
@@ -298,7 +304,9 @@ def sampler_forward(
     random_samples = torch.gather(topk_indices_asc, 1, random_samples_indices)  # (batch_size * spec_length, 1)
 
     # Sample the next tokens
-    next_tokens = torch.where(temperatures == 0, greedy_samples, random_samples).reshape(-1, spec_length, 1)  # (batch_size, spec_length, 1)
+    next_tokens = torch.where(temperatures == 0, greedy_samples, random_samples).reshape(
+        -1, spec_length, 1
+    )  # (batch_size, spec_length, 1)
 
     return SamplerOutput(
         probs=probs,

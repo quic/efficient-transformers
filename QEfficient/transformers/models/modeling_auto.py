@@ -1552,11 +1552,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         example_inputs["last_accepted_output_tokens"] = torch.zeros(
-            (bs, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN), dtype=torch.int64)
+            (bs, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN), dtype=torch.int64
+        )
         dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "seq_len"}
 
         example_inputs["past_repetition_penalty_buffer"] = torch.zeros(
-            (fbs if self.continuous_batching else bs, self.model.config.vocab_size), dtype=torch.bool)
+            (fbs if self.continuous_batching else bs, self.model.config.vocab_size), dtype=torch.bool
+        )
         dynamic_axes["past_repetition_penalty_buffer"] = {
             0: "full_batch_size" if self.continuous_batching else "batch_size",
         }
@@ -1568,7 +1570,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         dynamic_axes["repetition_penalties"] = {0: "batch_size"}
 
         example_inputs["past_presence_penalty_buffer"] = torch.zeros(
-            (fbs if self.continuous_batching else bs, self.model.config.vocab_size), dtype=torch.bool)
+            (fbs if self.continuous_batching else bs, self.model.config.vocab_size), dtype=torch.bool
+        )
         dynamic_axes["past_presence_penalty_buffer"] = {
             0: "full_batch_size" if self.continuous_batching else "batch_size",
         }
@@ -1584,25 +1587,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
         dynamic_axes["temperatures"] = {0: "batch_size"}
 
-        max_top_k_ids = self.model.qaic_config.get(
-            "max_top_k_ids", constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS)
-        example_inputs["top_ks"] = torch.randint(
-            1, max_top_k_ids, size=(bs, 1)).to(torch.int32)
+        max_top_k_ids = self.model.qaic_config.get("max_top_k_ids", constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS)
+        example_inputs["top_ks"] = torch.randint(1, max_top_k_ids, size=(bs, 1)).to(torch.int32)
         dynamic_axes["top_ks"] = {0: "batch_size"}
 
-        example_inputs["top_ps"] = (
-            torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TOP_PS
-        )
+        example_inputs["top_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TOP_PS
         dynamic_axes["top_ps"] = {0: "batch_size"}
 
-        example_inputs["min_ps"] = (
-            torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_MIN_PS
-        )
+        example_inputs["min_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_MIN_PS
         dynamic_axes["min_ps"] = {0: "batch_size"}
 
         example_inputs["random_numbers"] = torch.rand((bs, 1), dtype=torch.float)
         dynamic_axes["random_numbers"] = {0: "batch_size"}
-        
+
         return example_inputs, output_names, dynamic_axes
 
     def build_prefill_specialization(
@@ -1717,7 +1714,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "enable `continuous_batching=True` in `from_pretrained`."
             )
 
-        if (self.model.qaic_config is not None
+        if (
+            self.model.qaic_config is not None
             and self.model.qaic_config.get("include_sampler", False)
             and num_speculative_tokens is not None
             and num_speculative_tokens > 0
