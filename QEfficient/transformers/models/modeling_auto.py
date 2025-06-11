@@ -409,7 +409,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             }
             self.qpc_session.set_buffers(outputs)
             outputs = self.qpc_session.run(inputs)
-        except Exception as e:
+        except Exception:
             outputs = {
                 "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[1]).astype(
                     np.float32
