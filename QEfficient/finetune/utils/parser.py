@@ -11,6 +11,17 @@ from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
 from QEfficient.finetune.utils.helper import BATCHING_STRATEGY, DEVICE, PEFT_METHOD, TASK_TYPE
 
 
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ("yes", "true", "t", "y", "1"):
+        return True
+    elif v.lower() in ("no", "false", "f", "n", "0"):
+        return False
+    else:
+        raise argparse.ArgumentTypeError("Boolean value expected.")
+
+
 def get_finetune_parser():
     parser = argparse.ArgumentParser(
         description="Finetune command, the model is downloaded from Huggingface, finetuned on Cloud AI 100 and checkpoints are saved."
@@ -34,7 +45,10 @@ def get_finetune_parser():
     parser.add_argument(
         "--run_validation",
         "--run-validation",
-        action="store_false",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=True,
         help="To run validation during training",
     )
     parser.add_argument(
@@ -68,10 +82,15 @@ def get_finetune_parser():
     parser.add_argument(
         "--use_autocast",
         "--use-autocast",
-        action="store_false",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=True,
         help="Use autocast for mixed precision",
     )
-    parser.add_argument("--grad_scaler", "--grad-scaler", action="store_false", help="Use gradient scaler")
+    parser.add_argument(
+        "--grad_scaler", "--grad-scaler", type=str2bool, nargs="?", const=True, default=True, help="Use gradient scaler"
+    )
     parser.add_argument(
         "--num_epochs", "--num-epochs", required=False, type=int, default=1, help="Number of training epochs"
     )
@@ -132,7 +151,10 @@ def get_finetune_parser():
     parser.add_argument(
         "--use_peft",
         "--use-peft",
-        action="store_false",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=True,
         help="Whether to use PEFT(parameter efficient fine tuning)",
     )
     parser.add_argument(
@@ -163,13 +185,19 @@ def get_finetune_parser():
     parser.add_argument(
         "--save_model",
         "--save-model",
-        action="store_false",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=True,
         help="Save the final trained model checkpoints",
     )
     parser.add_argument(
         "--save_metrics",
         "--save-metrics",
-        action="store_false",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=True,
         help="Save training metrics to a json file for later plotting",
     )
     parser.add_argument(
@@ -192,7 +220,10 @@ def get_finetune_parser():
     parser.add_argument(
         "--enable_sorting_for_ddp",
         "--enable_sorting-for-ddp",
-        action="store_false",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=True,
         help="Sort the data points according to sequence length for DDP",
     )
     parser.add_argument(
