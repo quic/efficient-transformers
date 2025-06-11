@@ -7,9 +7,11 @@
 
 import datasets
 
+from QEfficient.finetune.dataset.helper import IGNORE_INDEX
+
 
 def get_preprocessed_samsum(dataset_config, tokenizer, split, context_length=None):
-    dataset = datasets.load_dataset("Samsung/samsum", split=split, trust_remote_code=True)
+    dataset = datasets.load_dataset("knkarthick/samsum", split=split, trust_remote_code=True)
 
     prompt = "Summarize this dialog:\n{dialog}\n---\nSummary:\n"
 
@@ -35,10 +37,15 @@ def get_preprocessed_samsum(dataset_config, tokenizer, split, context_length=Non
             pad_to_max_length=True,
         )
 
+        labels = [IGNORE_INDEX] * len(prompt) + summary
+        # labels = [l if l != tokenizer.pad_token_id else -100 for l in labels]
+        # sentence: <bos> <prompt> <summary> <eos> <pad>
+        # labels  : -100  -100     <summary> <eos> -100
+
         sample = {
             "input_ids": prompt + summary,
             "attention_mask": [1] * (len(prompt) + len(summary)),
-            "labels": [-100] * len(prompt) + summary,
+            "labels": labels,
         }
 
         return sample

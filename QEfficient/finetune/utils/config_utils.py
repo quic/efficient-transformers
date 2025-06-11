@@ -115,10 +115,26 @@ def generate_dataset_config(dataset_name: str) -> Any:
     return dataset_config
 
 
+def pad_dataset(dataset, batch_size, num_replicas):
+    reminder = len(dataset) % (batch_size * num_replicas)
+    if reminder == 0:
+        return dataset
+
+    sample_input = dataset[0]
+    sample_input["labels"] = [-100] * len(sample_input["labels"])
+    num_pads = (batch_size * num_replicas) - reminder
+    for _ in range(num_pads):
+        dataset = dataset.add_item(sample_input)
+    return dataset
+
+
 def get_dataloader_kwargs(train_config, dataset, dataset_processer, mode):
     kwargs = {}
     batch_size = train_config.batch_size_training if mode == "train" else train_config.val_batch_size
     if train_config.enable_ddp:
+        print("Length of dataset before: ", len(dataset))
+        dataset = pad_dataset(dataset, batch_size, 2)
+        print("Length of dataset after: ", len(dataset))
         if train_config.enable_sorting_for_ddp:
             if train_config.context_length:
                 raise ValueError(
@@ -134,13 +150,12 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, mode):
                 )
         else:
             kwargs["sampler"] = data_utils.DistributedSampler(
-                dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True
+                dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True, drop_last=False
             )
             kwargs["batch_size"] = batch_size
-            kwargs["drop_last"] = True
     else:
         kwargs["batch_size"] = batch_size
-        kwargs["drop_last"] = True
+    kwargs["drop_last"] = False
     kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
     return kwargs
 

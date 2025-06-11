@@ -10,6 +10,8 @@ from pathlib import Path
 from datasets import load_dataset
 from torch.utils.data import Dataset
 
+from QEfficient.finetune.dataset.helper import IGNORE_INDEX
+
 
 class grammar(Dataset):
     def __init__(self, tokenizer, csv_name=None, context_length=None):
@@ -58,7 +60,7 @@ class grammar(Dataset):
         sample = {
             "input_ids": prompt_ids + label_ids,
             "attention_mask": [1] * len(prompt_ids + label_ids),
-            "labels": [-100] * len(prompt_ids) + label_ids,
+            "labels": [IGNORE_INDEX] * len(prompt_ids) + label_ids,
         }
 
         return sample
