@@ -129,7 +129,7 @@ class QnnConstants:
     # Converter Arguments
     FLOAT_BITWIDTH = 16
     FLOAT_BIAS_BITWIDTH = 32
-    CONVERTER_DEFAULT_ARGS = "--preserve_io_datatype --onnx_skip_simplification "
+    CONVERTER_DEFAULT_ARGS = "--preserve_io_datatype --onnx_skip_simplification --target_backend AIC "
 
     # Context-Binary-Generator Arguments
     LOG_LEVEL = "error"
