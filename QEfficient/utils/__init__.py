@@ -11,6 +11,7 @@ from QEfficient.transformers.quantizers.auto import (  # noqa: F401
 )
 from QEfficient.utils._utils import (  # noqa: F401
     check_and_assign_cache_dir,
+    custom_format_warning,
     dump_qconfig,
     get_num_layers_from_config,
     get_num_layers_vlm,
