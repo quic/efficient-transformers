@@ -81,7 +81,6 @@ def train(
     best_val_loss = float("inf")
     total_train_steps = 0
     max_steps_reached = False  # Flag to indicate max training steps reached
-    device_type = device.split(":")[0]
 
     tensorboard_updates = None
     if train_config.enable_ddp:
@@ -94,7 +93,7 @@ def train(
         if device.startswith("qaic"):
             scaler = QAicGradScaler()
         else:
-            scaler = GradScaler(device_type)
+            scaler = GradScaler(torch.device(device).type)
 
     loss_0_counter = torch.tensor([0]).to(device)
 
@@ -174,7 +173,9 @@ def train(
             batch = {k: v.to(device) for k, v in batch.items()}  # move the batch elements to qaic device
 
             with (
-                torch.autocast(device_type=device, dtype=torch.float16) if train_config.use_autocast else nullcontext()
+                torch.autocast(device_type=torch.device(device).type, dtype=torch.float16)
+                if train_config.use_autocast
+                else nullcontext()
             ):
                 # an additional condition can be put here to avoid opByOpVerifier getting triggered for each step
                 if train_config.opByOpVerifier:
@@ -428,7 +429,9 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
         with torch.no_grad():
             # Forward pass and compute loss
             with (
-                torch.autocast(device_type=device, dtype=torch.float16) if train_config.use_autocast else nullcontext()
+                torch.autocast(device_type=torch.device(device).type, dtype=torch.float16)
+                if train_config.use_autocast
+                else nullcontext()
             ):
                 outputs = model(**batch)
             loss = outputs.loss
@@ -467,14 +470,6 @@ def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
     longest_seq_length = max(lengths)
     longest_seq_ix = lengths.index(longest_seq_length)
     return longest_seq_length, longest_seq_ix
-
-
-def get_parameter_dtypes(model):
-    """Get the data types of model parameters"""
-    parameter_dtypes = {}
-    for name, parameter in model.named_parameters():
-        parameter_dtypes[name] = parameter.dtype
-    return parameter_dtypes
 
 
 def print_model_size(model, config) -> None:
