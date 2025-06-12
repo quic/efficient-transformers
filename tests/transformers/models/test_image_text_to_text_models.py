@@ -383,6 +383,8 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
+    if model_name == "meta-llama/Llama-4-Scout-17B-16E-Instruct":
+        pytest.skip("QNN is not supported for Llama 4 Scout models")
 
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
