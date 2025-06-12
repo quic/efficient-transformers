@@ -12,6 +12,7 @@ import torch
 from QEfficient.utils import (
     get_num_layers_from_config,
     get_padding_shape_from_config,
+    get_sliding_window_shapes,
     padding_check_and_fix,
 )
 
@@ -38,7 +39,16 @@ class InputHandler:
         self.ctx_len = ctx_len
         self.full_batch_size = full_batch_size
         self.n_layer = get_num_layers_from_config(config)
-        self.padding_shape = get_padding_shape_from_config(
+        # self.padding_shape = get_padding_shape_from_config(
+        #     config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
+        # )
+        self.past_key_values = get_padding_shape_from_config(
+            config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
+        )
+        self.is_chunked_attention = torch.tensor(
+            [bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool
+        )
+        self.global_shape, self.sliding_shape = get_sliding_window_shapes(
             config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
         )
 
@@ -81,13 +91,14 @@ class InputHandler:
             inputs["position_ids"] = torch.arange(input_len).view(1, input_len)
             inputs["batch_index"] = torch.arange(1).view(-1, 1)
 
-        past_key_values = []
-        for i in range(self.n_layer):
-            past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
-            past_value = torch.zeros((self.padding_shape), dtype=torch.float32)
-            pkv = (past_key, past_value)
-            past_key_values.append(pkv)
-        inputs["past_key_values"] = tuple(past_key_values)
+        # past_key_values = []
+        # for i in range(self.n_layer):
+        #     past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
+        #     past_value = torch.zeros((self.padding_shape), dtype=torch.float32)
+        #     pkv = (past_key, past_value)
+        #     past_key_values.append(pkv)
+        # inputs["past_key_values"] = tuple(past_key_values)
+        inputs["past_key_values"] = tuple(self.past_key_values)
 
         return inputs
 
@@ -153,9 +164,16 @@ class InputHandler:
             axis=1,
         ).astype(np.int64)
 
+        # for i in range(self.n_layer):
+        #     inputs["past_key." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
+        #     inputs["past_value." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
+
         for i in range(self.n_layer):
-            inputs["past_key." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
-            inputs["past_value." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
+            cache_shape = self.global_shape if not self.is_chunked_attention[i] else self.sliding_shape
+            inputs["past_key." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
+            inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
+
+        return inputs
 
         return inputs
 
