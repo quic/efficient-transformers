@@ -491,6 +491,7 @@ class QEffLlama4TextAttention(Llama4TextAttention):
 
         query_states = query_states.transpose(1, 2)
         key_states = key_states.transpose(1, 2)
+        is_sliding = kwargs.get("is_sliding")
 
         if past_key_value is not None:
             chunk_postion_ids = position_ids
@@ -737,6 +738,15 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        is_sliding = None
+        if hasattr(self.config.get_text_config(), "no_rope_layers"):
+            is_sliding = self.config.no_rope_layers
+        else:
+            layer_switch = getattr(self.config, "sliding_window_pattern", 2)
+            is_sliding = [bool((i + 1) % layer_switch) for i in range(self.config.num_hidden_layers)]
+
+        kwargs["is_sliding"] = is_sliding
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
