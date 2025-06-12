@@ -144,7 +144,7 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperPositionalEmbedding,
 )
 
-from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
+from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.codegen.modeling_codegen import (
@@ -203,10 +203,15 @@ from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
     QEffGraniteMoeRotaryEmbedding,
     QEffGraniteMoeTopKGating,
 )
-from QEfficient.transformers.models.internvl.modeling_internvl import (
-    QEffInternVisionEmbeddings,
-    QEffInternVLModel,
+from QEfficient.transformers.models.grok_1.modeling_grok1 import (
+    QEFFGrok1CustomRMSNormAIC,
+    QEffGrok1DecoderLayer,
+    QEffGrok1Model,
+    QEffGrok1ModelForCausalLM,
+    QEffGrok1MoeBlock,
+    QEffGrok1MultiHeadAttention,
 )
+from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
@@ -295,6 +300,7 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperPositionalEmbedding,
 )
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
+from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
 
 SPD_TARGET = "target"
@@ -495,6 +501,43 @@ class SpDTransform:
         return model, transformed
 
 
+class SamplerTransform:
+    """
+    Add nodes at the output of any generic QEffForCausalLM model to enable the
+    sampling of next tokens at the device (instead of the host) and return the
+    next tokens and/or probability distributions.
+
+    Note: To achieve this, the generic QEffForCausalLM model must provide the
+    logits as output.
+
+    ``Mandatory`` Args:
+        :model (nn.Module): PyTorch model.
+
+    Returns:
+        :model (nn.Module): PyTorch model.
+        :transformed (bool): whether transformation was applied successfully.
+    """
+
+    # supported architectures
+    _module_mapping = {
+        # Llama
+        QEffLlamaForCausalLM,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+        transformed = False
+        if qaic_config is None or not qaic_config.get("include_sampler", False):
+            return model, transformed
+        elif (model_class := model.__class__) in cls._module_mapping:
+            model.old_forward = model.forward
+            model.forward = MethodType(sampler_forward, model)
+            transformed = True
+        else:
+            raise NotImplementedError(f"Model class {model_class} does not support on device sampling.")
+        return model, transformed
+
+
 class VlmKVOffloadTransform(ModuleMappingTransform):
     # supported architectures
     _module_mapping = {
@@ -511,7 +554,7 @@ class VlmNoKVOffloadTransform(ModuleMappingTransform):
     }
 
 
-class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
+class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_string_replace_method = {
         "InternVLChatModel": {
             "forward": QEffInternVLModel.forward,
@@ -524,7 +567,25 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
             "get_qeff_language_decoder": QEffInternVLModel.get_qeff_language_decoder,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
+        # Mapping for grok1 model
+        "Grok1ModelForCausalLM": {"forward": QEffGrok1ModelForCausalLM.forward},
+        "Grok1Model": {
+            "forward": QEffGrok1Model.forward,
+            "__qeff_init__": QEffGrok1Model.__qeff_init__,
+        },
+        "DecoderLayer": {
+            "forward": QEffGrok1DecoderLayer.forward,
+            "__qeff_init__": QEffGrok1DecoderLayer.__qeff_init__,
+        },
+        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward},
+        "MultiHeadAttention": {
+            "forward": QEffGrok1MultiHeadAttention.forward,
+        },
+        "RMSNorm": {
+            "forward": QEFFGrok1CustomRMSNormAIC.forward,
+        },
     }
+
     _match_class_replace_method = {}
 
 
