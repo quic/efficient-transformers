@@ -32,7 +32,7 @@ qeff_model.compile(
     mxint8_kv_cache=False,
     aic_enable_depth_first=True,
     mos=1,
-    node_precision_info="fp32_nodes_gemma3_4b_text.yaml",
+    node_precision_info="fp32_nodes_gemma3_4b_image.yaml",
 )
 
 image_url = (
