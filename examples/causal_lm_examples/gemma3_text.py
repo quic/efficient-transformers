@@ -40,6 +40,7 @@ qpc_path = qeff_model.compile(
     mxint8_kv_cache=False,
     num_devices=1,
     mos=1,
+    full_batch_size=1,
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
     node_precision_info="fp32_nodes_gemma3_4b_text.yaml",
