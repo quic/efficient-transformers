@@ -177,4 +177,4 @@ class SplitGateUpWeightsTransform(PytorchTransform):
         return model, transformed
 
 
-VLM_SPLIT_GATE_UP_WEIGHTS = {"QEffLlama4ForConditionalGeneration"}
+VLM_SPLIT_GATE_UP_WEIGHTS = {"QEffLlama4ForConditionalGeneration", "QEffLlama4ForCausalLM"}
