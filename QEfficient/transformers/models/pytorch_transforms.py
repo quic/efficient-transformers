@@ -185,10 +185,6 @@ from QEfficient.transformers.models.internvl.modeling_internvl import (
     QEffInternVisionEmbeddings,
     QEffInternVLModel,
 )
-from QEfficient.transformers.models.internvl.modeling_internvl import (
-    QEffInternVisionEmbeddings,
-    QEffInternVLModel,
-)
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
