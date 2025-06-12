@@ -157,8 +157,8 @@ def test_spec_decode_inference(
         full_batch_size=full_batch_size,
     )
     # init qaic session
-    target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=device_group)
-    draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=device_group)
+    target_model_session = QAICInferenceSession(target_model_qpc_path)
+    draft_model_session = QAICInferenceSession(draft_model_qpc_path)
 
     # skip inputs/outputs buffers
     target_model_session.skip_buffers(set([x for x in target_model_session.input_names if x.startswith("past_")]))
@@ -341,7 +341,7 @@ def test_spec_decode_inference(
     del draft_model_session
     generated_ids = np.asarray(generated_ids[0]).flatten()
     gen_len = generated_ids.shape[0]
-    exec_info = draft_model.generate(tokenizer, Constants.INPUT_STR, device_group)
+    exec_info = draft_model.generate(tokenizer, Constants.INPUT_STR)
     cloud_ai_100_tokens = exec_info.generated_ids[0][
         :gen_len
     ]  # Because we always run for single input and single batch size
