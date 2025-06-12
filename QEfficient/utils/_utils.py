@@ -283,6 +283,64 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
             tokenizer.pad_token_id = tokenizer.vocab_size - 1
 
 
+def get_sliding_window_shapes(config, batch_size, seq_len):
+    """
+    Gets padding dims from model config - number of kv heads and d_head
+    and returns padding shape - (batch_size, number of kv heads, seq_len, hidden size)
+    required for initialization of past_key_values
+    --------
+
+    :config: AutoConfig from pretrained model.
+    :batch_size: int. number of input prompts used to create inputs
+    :seq_len: int. sequence length to run the model for.
+
+    Return:
+        List[int, int, int, int]
+    """
+
+    if hasattr(config, "n_head"):  # Assuming n_head is a key in the config (GPTs/CodeGen)
+        n_heads = config.n_head
+        d_head = config.n_embd // config.n_head
+    elif hasattr(config, "num_key_value_heads") and hasattr(
+        config, "num_attention_heads"
+    ):  # Check for num_key_value_heads (Llama/Mistral)
+        n_heads = config.num_key_value_heads
+
+        if hasattr(config, "head_dim"):
+            d_head = config.head_dim
+        else:
+            d_head = config.hidden_size // config.num_attention_heads
+
+    elif hasattr(config, "n_heads"):  # Check for n_heads and d_model in the config (MPT Model)
+        n_heads = config.n_heads
+        d_head = config.d_model // config.n_heads
+    elif hasattr(config, "new_decoder_architecture"):  # Check for Falcon
+        new_decoder_architecture = getattr(config, "new_decoder_architecture")
+        if new_decoder_architecture:  # multi_query is ignored when new_decoder_architecture is True
+            n_heads = config.num_attention_heads
+        else:
+            if hasattr(config, "multi_query"):
+                multi_query_value = getattr(config, "multi_query")
+                if multi_query_value:
+                    n_heads = 1  # MQA , multi query is true
+                else:
+                    n_heads = config.num_attention_heads
+        d_head = config.hidden_size // config.num_attention_heads
+    else:
+        raise ValueError("Invalid model configuration: n_head/d_heads or num_key_value_heads not found.")
+
+    # is_chunked_attention = torch.tensor([bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool)
+    global_cache_shape = [batch_size, n_heads, seq_len, d_head]
+    chunked_cache_shape = [
+        batch_size,
+        n_heads,
+        seq_len if seq_len < config.attention_chunk_size else config.attention_chunk_size,
+        d_head,
+    ]
+
+    return global_cache_shape, chunked_cache_shape
+
+
 def get_padding_shape_from_config(config, batch_size, seq_len):
     """
     Gets padding dims from model config - number of kv heads and d_head
@@ -328,11 +386,29 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
         d_head = config.hidden_size // config.num_attention_heads
     else:
         raise ValueError("Invalid model configuration: n_head/d_heads or num_key_value_heads not found.")
-    padding_shape = [batch_size, n_heads, seq_len, d_head]
-    if hasattr(config, "architectures") and config.architectures is not None:  # Check for Starcoder1 - 3D layout
-        if "GPTBigCodeForCausalLM" in config.architectures:
-            padding_shape = [batch_size, seq_len, d_head]
-    return padding_shape
+
+    is_chunked_attention = torch.tensor([bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool)
+    global_cache_shape = [batch_size, n_heads, seq_len, d_head]
+    chunked_cache_shape = [
+        batch_size,
+        n_heads,
+        seq_len if seq_len < config.attention_chunk_size else config.attention_chunk_size,
+        d_head,
+    ]
+
+    past_key_values = []
+    for i in range(config.num_hidden_layers):
+        cache_shape = global_cache_shape if not is_chunked_attention[i] else chunked_cache_shape
+        new_layer_key_cache = torch.zeros(cache_shape, dtype=torch.float32)
+        new_layer_value_cache = torch.zeros(cache_shape, dtype=torch.float32)
+        pkv = (new_layer_key_cache, new_layer_value_cache)
+        past_key_values.append(pkv)
+    return past_key_values
+    # padding_shape = [batch_size, n_heads, seq_len, d_head]
+    # if hasattr(config, "architectures") and config.architectures is not None:  # Check for Starcoder1 - 3D layout
+    #     if "GPTBigCodeForCausalLM" in config.architectures:
+    #         padding_shape = [batch_size, seq_len, d_head]
+    # return padding_shape
 
 
 def get_num_layers_from_config(config):
