@@ -1883,7 +1883,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         elif num_speculative_tokens is None:
             raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` instance variable is True.")
 
-        if not isinstance(num_speculative_tokens, int) and num_speculative_tokens cloud_ai_100_generate 2:
+        if not isinstance(num_speculative_tokens, int) and num_speculative_tokens:
             ValueError(
                 f"`num_speculative_tokens` arg should be an integer greater than 1, got {num_speculative_tokens}"
             )
