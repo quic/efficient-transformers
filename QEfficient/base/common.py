@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -41,15 +41,14 @@ class QEFFCommonLoader:
         Downloads HuggingFace model if already doesn't exist locally, returns QEFFAutoModel object based on type of model.
         """
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path)
-        architecture = config.architectures[0] if config.architectures else None
 
-        class_name = MODEL_CLASS_MAPPING.get(architecture)
+        class_name = MODEL_CLASS_MAPPING.get(config.__class__.__name__, None)
         if class_name:
             module = __import__("QEfficient.transformers.models.modeling_auto")
             model_class = getattr(module, class_name)
         else:
             raise NotImplementedError(
-                f"Unknown architecture={architecture}, either use specific auto model class for loading the model or raise an issue for support!"
+                f"Unknown architecture={config.__class__.__name__}, either use specific auto model class for loading the model or raise an issue for support!"
             )
 
         local_model_dir = kwargs.pop("local_model_dir", None)

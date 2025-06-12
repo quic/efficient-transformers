@@ -13,6 +13,7 @@ For torch_qaic, assuming QEfficient is already installed,
 ```bash
 pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
 ```
+If qeff-env inside docker is used then torch_qaic and accelerate packages are already installed.
 
 ## Finetuning
 

@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -86,6 +86,8 @@ GRANITEVISION_PREFIL_SEQ_LEN = GRANITEVISION_SEQ_LEN = 5500
 GRANITEVISION_CTX_LEN = 6000
 GRANITEVISION_NUM_CHANNELS = 3
 
+VISION_MXFP6_MATMUL = False
+
 
 class Constants:
     # Export Constants.
@@ -97,7 +99,10 @@ class Constants:
     MAX_QPC_LIMIT = 30
     MAX_RETRIES = 10  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
     NUM_SPECULATIVE_TOKENS = 2
-    SDK_APPS_XML = "/opt/qti-aic/versions/apps.xml"  # This xml file is parsed to find out the SDK version.
+    SDK_APPS_XML = "/opt/qti-aic/versions/apps.xml"  # This xml file is parsed to find out the SDK apps version.
+    SDK_PLATFORM_XML = (
+        "/opt/qti-aic/versions/platform.xml"  # This xml file is parsed to find out the SDK platform version.
+    )
 
 
 @dataclass

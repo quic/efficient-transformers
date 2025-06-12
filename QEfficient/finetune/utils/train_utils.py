@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -18,7 +18,7 @@ import torchmetrics
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from QEfficient.finetune.configs.training import train_config as TRAIN_CONFIG
+from QEfficient.finetune.configs.training import TrainConfig
 
 try:
     import torch_qaic  # noqa: F401
@@ -34,34 +34,31 @@ from torch.amp import GradScaler
 
 def train(
     model,
+    tokenizer,
     train_dataloader,
     eval_dataloader,
-    tokenizer,
     optimizer,
     lr_scheduler,
-    gradient_accumulation_steps,
-    train_config: TRAIN_CONFIG,
-    device,
+    train_config: TrainConfig,
     local_rank=None,
-    rank=None,
 ):
     """
     Trains the model on the given dataloader
 
     Args:
         model: The model to be trained
+        tokenizer: tokenizer used in the eval for decoding the predicitons
         train_dataloader: The dataloader containing the training data
+        eval_dataloader: The dataloader containing the eval data
         optimizer: The optimizer used for training
         lr_scheduler: The learning rate scheduler
-        gradient_accumulation_steps: The number of steps to accumulate gradients before performing a backward/update operation
-        num_epochs: The number of epochs to train for
-        local_rank: The rank of the current node in a distributed setting
         train_config: The training configuration
-        eval_dataloader: The dataloader containing the eval data
-        tokenizer: tokenizer used in the eval for decoding the predicitons
+        local_rank: The rank of the current node in a distributed setting
 
     Returns: results dictionary containing average training and validation perplexity and loss
     """
+    device = train_config.device
+
     train_metric = []
     train_loss = []
     val_metric = []
@@ -84,7 +81,6 @@ def train(
     best_val_loss = float("inf")
     total_train_steps = 0
     max_steps_reached = False  # Flag to indicate max training steps reached
-    device_type = device.split(":")[0]
 
     tensorboard_updates = None
     if train_config.enable_ddp:
@@ -97,7 +93,7 @@ def train(
         if device.startswith("qaic"):
             scaler = QAicGradScaler()
         else:
-            scaler = GradScaler(device_type)
+            scaler = GradScaler(torch.device(device).type)
 
     loss_0_counter = torch.tensor([0]).to(device)
 
@@ -177,7 +173,9 @@ def train(
             batch = {k: v.to(device) for k, v in batch.items()}  # move the batch elements to qaic device
 
             with (
-                torch.autocast(device_type=device, dtype=torch.float16) if train_config.use_autocast else nullcontext()
+                torch.autocast(device_type=torch.device(device).type, dtype=torch.float16)
+                if train_config.use_autocast
+                else nullcontext()
             ):
                 # an additional condition can be put here to avoid opByOpVerifier getting triggered for each step
                 if train_config.opByOpVerifier:
@@ -431,7 +429,9 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
         with torch.no_grad():
             # Forward pass and compute loss
             with (
-                torch.autocast(device_type=device, dtype=torch.float16) if train_config.use_autocast else nullcontext()
+                torch.autocast(device_type=torch.device(device).type, dtype=torch.float16)
+                if train_config.use_autocast
+                else nullcontext()
             ):
                 outputs = model(**batch)
             loss = outputs.loss
@@ -461,7 +461,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     # Print evaluation metrics
     print(f" {eval_metric.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
 
-    return eval_metric, eval_epoch_loss, val_step_loss, val_step_metric
+    return eval_epoch_loss, eval_metric, val_step_loss, val_step_metric
 
 
 def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
@@ -470,14 +470,6 @@ def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
     longest_seq_length = max(lengths)
     longest_seq_ix = lengths.index(longest_seq_length)
     return longest_seq_length, longest_seq_ix
-
-
-def get_parameter_dtypes(model):
-    """Get the data types of model parameters"""
-    parameter_dtypes = {}
-    for name, parameter in model.named_parameters():
-        parameter_dtypes[name] = parameter.dtype
-    return parameter_dtypes
 
 
 def print_model_size(model, config) -> None:

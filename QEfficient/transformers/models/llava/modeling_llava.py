@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -50,21 +50,24 @@ class QEFFLlavaDecoderWrapper(nn.Module):
         self.config = self.model.config
         self.language_model = self.model.language_model
 
-    def forward(self, input_ids, vision_embeds, position_ids, past_key_values):
+    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         vision_embeds = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
         mask = input_ids == self.model.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
+        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(mask.shape[0]).view(-1, 1)
         vision_embeds_expanded = vision_embeds[indices0, indices1]
-        inputs_embeds = torch.where(mask.unsqueeze(-1), vision_embeds_expanded, inputs_embeds)
+        vision_embeds_expanded = torch.where(mask.unsqueeze(-1), vision_embeds_expanded, inputs_embeds)
+        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, vision_embeds_expanded)
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
         )
 
-        return outputs.logits, vision_embeds, outputs.past_key_values
+        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
 
 
 class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
@@ -74,7 +77,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
     def get_qeff_language_decoder(self):
         return QEFFLlavaDecoderWrapper(self)
 
-    def forward(self, input_ids, position_ids, pixel_values, past_key_values):
+    def forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values):
         inputs_embeds = self.get_input_embeddings()(input_ids)
         # Image features
         image_outputs = self.vision_tower(pixel_values, output_hidden_states=True)
@@ -88,20 +91,22 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             raise ValueError(f"Unexpected select feature strategy: {self.config.vision_feature_select_strategy}")
         vision_embeds = self.multi_modal_projector(selected_image_feature)
         vision_embeds = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
-
         mask = input_ids == self.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
+        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(mask.shape[0]).view(-1, 1)
         vision_embeds_expanded = vision_embeds[indices0, indices1]
-        image_inputs_embeds = torch.where(mask.unsqueeze(-1), vision_embeds_expanded, inputs_embeds)
+        image_embeds = torch.where(mask.unsqueeze(-1), vision_embeds_expanded, inputs_embeds)
         # *where to skip image encoder for decode*
-        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_inputs_embeds)
+        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_embeds)
         outputs = self.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
         )
-        return outputs.logits, pixel_values, outputs.past_key_values
+        next_image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        image_idx = torch.where(image_idx < next_image_idx, next_image_idx, image_idx)
+        return outputs.logits, pixel_values, image_idx, outputs.past_key_values
 
     def get_dummy_inputs(self, kv_offload: bool = False, **kwargs):
         num_layers = self.config.text_config.num_hidden_layers
@@ -113,13 +118,15 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             img_size = 336
         if img_size != 336 and kv_offload:
             raise NotImplementedError("Image Size other than 336 is not supported for Llava models yet.")
+        vision_size = img_size // self.config.vision_config.patch_size
         vision_inputs = {
             "pixel_values": torch.zeros((BS, NUM_CHANNEL, img_size, img_size), dtype=torch.float32),
         }
         lang_inputs = {
             "input_ids": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
-            "vision_embeds": torch.ones((BS, 576, self.language_model.config.hidden_size), dtype=torch.float32),
+            "vision_embeds": torch.ones((BS, vision_size, self.language_model.config.hidden_size), dtype=torch.float32),
             "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
+            "image_idx": torch.zeros((1, 1), dtype=torch.int64),
         }
         lang_inputs["position_ids"] = lang_inputs.pop("attention_mask").cumsum(1)
         lang_inputs["past_key_values"] = []
@@ -160,13 +167,12 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             logger.warning("Setting img_size to be 336, as it was neither passed nor found in vision_config")
         if img_size != 336 and kv_offload:
             raise NotImplementedError("Image Size other than 336 is not supported for Llava models yet.")
+        vision_size = (img_size // self.config.vision_config.patch_size) ** 2
         vision = [
             {
                 "batch_size": batch_size,
                 "max_num_images": max_num_images,
                 "img_size": img_size,
-                "seq_len": prefill_seq_len,
-                "ctx_len": ctx_len,
             }
         ]
         lang = [
@@ -176,6 +182,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "max_num_images": max_num_images,
                 "img_size": img_size,
+                "vision_size": vision_size,
             },
             {
                 "batch_size": batch_size,
@@ -183,6 +190,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "max_num_images": max_num_images,
                 "img_size": img_size,
+                "vision_size": vision_size,
             },
         ]
         specializations = {}
@@ -204,6 +212,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
+            "vision_embeds": {0: "batch_size", 1: "vision_size"},
         }
         for i in range(num_layers):
             lang_dynamic_axes[f"past_key.{i}"] = {0: "batch_size", 2: "ctx_len"}
@@ -227,10 +236,12 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         output_names = {}
         if kv_offload:
             lang_output_names.insert(1, "vision_embeds_RetainedState")
+            lang_output_names.insert(2, "image_idx_output")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
             lang_output_names.insert(1, "pixel_values_RetainedState")
+            lang_output_names.insert(2, "image_idx_output")
             return lang_output_names
         return output_names
 

@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -173,10 +173,10 @@ def generate_data_format_config(
 
     for input in onnx_model.graph.input:
         if "past_key" in input.name or "past_value" in input.name:
-            kv_nodes.append((input.name).replace(".", "_"))
+            kv_nodes.append(input.name)
     for output in onnx_model.graph.output:
         if "past_key" in output.name or "past_value" in output.name:
-            kv_nodes.append((output.name).replace(".", "_"))
+            kv_nodes.append(output.name)
             kv_overrides = {}
 
     kv_overrides["graphs"] = [

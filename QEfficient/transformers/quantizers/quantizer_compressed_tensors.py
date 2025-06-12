@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 #
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
@@ -218,6 +218,9 @@ class QEffFP8Quantizer(CompressedTensorsHfQuantizer):
     def update_missing_keys_after_loading(self, model, missing_keys: List[str], prefix: str) -> List[str]:
         return missing_keys
 
+    def update_unexpected_keys(self, model, unexpected_keys: List[str], prefix: str) -> List[str]:
+        return unexpected_keys
+
 
 class QEffCompressedTensorsConfig(CompressedTensorsConfig):
     def __init__(
@@ -395,3 +398,6 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
 
     def update_missing_keys_after_loading(self, model, missing_keys: List[str], prefix: str) -> List[str]:
         return missing_keys
+
+    def update_unexpected_keys(self, model, unexpected_keys: List[str], prefix: str) -> List[str]:
+        return unexpected_keys
