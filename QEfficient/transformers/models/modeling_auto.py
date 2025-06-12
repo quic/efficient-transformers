@@ -859,6 +859,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prefill_start = perf_counter()
 
         # Run prefill
+        chunk_inputs = lang_inputs.copy()
+        chunk_inputs["index"] = np.array([[0]])
         for i in range(num_chunks):
             chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][
@@ -1087,11 +1089,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         qpc_session = QAICInferenceSession(
             self.qpc_path, device_ids, enable_debug_logs=enable_debug_logs, activate=False
         )
-
         batch_size, ctx_len, fbs = get_compilation_dims(self.qpc_path)
-
         pad_token_id = 1
-
         # Skip inputs/outputs
         qpc_session.skip_buffers(
             [
@@ -1699,6 +1698,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "ctx_len": ctx_len,
             "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm else None,
         }
+
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
         else:
@@ -1785,7 +1785,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         # --- Specializations ---
         specializations = []
-
         if prefill_only is None or prefill_only or prefill_seq_len == 1:
             specializations.append(
                 self.build_prefill_specialization(
@@ -1832,11 +1831,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             mxint8_kv_cache=mxint8_kv_cache,
             **compiler_options,
         )
-
-        if compiler_options.get("io_encrypt", None):
-            logger.warning(
-                "Compilation for IO-Encrypt has been successfully completed. However, Efficient-Transformers do not support IO-Encrypt execution. Please run the execution separately with QPC compiled without io-encrypt."
-            )
 
         return qpc_path
 
@@ -1890,7 +1884,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         elif num_speculative_tokens is None:
             raise TypeError("missing required argument `num_speculative_tokens` as `is_tlm` instance variable is True.")
 
-        if not isinstance(num_speculative_tokens, int) and num_speculative_tokens < 2:
+        if not isinstance(num_speculative_tokens, int) and num_speculative_tokens:
             ValueError(
                 f"`num_speculative_tokens` arg should be an integer greater than 1, got {num_speculative_tokens}"
             )
