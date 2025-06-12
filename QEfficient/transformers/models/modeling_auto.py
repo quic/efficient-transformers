@@ -1698,6 +1698,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "ctx_len": ctx_len,
             "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm else None,
         }
+
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
         else:
