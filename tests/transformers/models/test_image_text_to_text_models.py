@@ -11,6 +11,7 @@ from typing import List, Optional
 
 import pytest
 import requests
+import torch
 from PIL import Image
 from transformers import (
     AutoConfig,
@@ -60,6 +61,28 @@ test_models_config = [
         1,
         784,
         1024,
+        336,
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
+        "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
+        1,
+    ),
+    (
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        True,
+        1,
+        128,
+        3072,
+        336,
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
+        "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
+        1,
+    ),
+    (
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        False,
+        1,
+        128,
+        3072,
         336,
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
         "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
@@ -191,6 +214,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     )
 
     inputs = processor(images=image, text=prompt, return_tensors="pt")
+    if "pixel_values" in inputs:
+        inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     streamer = TextStreamer(processor.tokenizer)
     pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -220,6 +245,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         qnn_config=qnn_config,
     )
     inputs = processor(images=image, text=prompt, return_tensors="pt")
+    if "pixel_values" in inputs:
+        inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     print("QPC Outputs (QAIC):")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     qpc_tokens = output.generated_ids[:, :-1]

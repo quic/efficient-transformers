@@ -111,6 +111,7 @@ def main(
     allow_mxint8_mdp_io: bool = False,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
+    trust_remote_code: Optional[bool] = False,
     **kwargs,
 ) -> None:
     """
@@ -140,6 +141,7 @@ def main(
         :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
         :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
         :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
+        :trust_remote_code (bool): Trust remote code execution. ``Defaults to False.``
         :kwargs: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
                 -allocator_dealloc_delay=1 -> -allocator-dealloc-delay=1
                 -qpc_crc=True -> -qpc-crc
@@ -164,6 +166,7 @@ def main(
         hf_token=hf_token,
         full_batch_size=full_batch_size,
         local_model_dir=local_model_dir,
+        trust_remote_code=trust_remote_code,
     )
 
     image_path = kwargs.pop("image_path", None)
@@ -263,6 +266,12 @@ if __name__ == "__main__":
         "--mxfp6-matmul",
         action="store_true",
         help="Compress constant MatMul weights to MXFP6 E2M3, default is no compression",
+    )
+    parser.add_argument(
+        "--trust_remote_code",
+        action="store_true",
+        default=False,
+        help="Enable trusting remote code when loading models. Default is False; set to True by passing this flag.",
     )
     parser.add_argument(
         "--mxint8",

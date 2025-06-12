@@ -299,6 +299,8 @@ class QEFFBaseModel(ABC):
 
         if num_speculative_tokens:
             compile_hash.update(to_hashable({"num_speculative_tokens": num_speculative_tokens}))
+        # Hash num_devices too, since default value would always be 1.
+        compile_hash.update(to_hashable(mdp_ts_num_devices))
 
         # Check if already compiled
         compile_hash = compile_hash.hexdigest()[:16]
