@@ -29,7 +29,7 @@ ONNX_EXPORT_CTX_LEN = 1024
 DEFAULT_AIC_NUM_CORES = 16
 DEFAULT_AIC_MXPF6_MATMUL = False
 # Minimum value for causal mask
-MIN_MASKED_ATTENTION_VALUE = -1e4
+MIN_MASKED_ATTENTION_VALUE = float("-inf")
 
 
 # Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
