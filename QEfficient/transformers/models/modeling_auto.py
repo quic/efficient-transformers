@@ -37,7 +37,7 @@ from QEfficient.generation.text_generation_inference import (
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
-    KVCacheModuleMethodMapperTransform,
+    KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
     SamplerTransform,
@@ -440,7 +440,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         GPTQToMatmulNbitsTransform,
         CustomOpsTransform,
         KVCacheTransform,
-        KVCacheModuleMethodMapperTransform,
+        KVCacheExternalModuleMapperTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
@@ -482,7 +482,11 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable(self.model.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEffVisionEncoderForTextImageToTextModel": True}))
-        mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
+
+        if hasattr(self.model, "model"):
+            mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
+        else:
+            mhash.update(to_hashable(self.model.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -920,7 +924,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         GPTQToMatmulNbitsTransform,
         CustomOpsTransform,
         KVCacheTransform,
-        KVCacheModuleMethodMapperTransform,
+        KVCacheExternalModuleMapperTransform,
         VlmNoKVOffloadTransform,
         SplitGateUpWeightsTransform,
     ]
@@ -1367,6 +1371,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         CustomOpsTransform,
         KVCacheTransform,
         SplitGateUpWeightsTransform,
+        KVCacheExternalModuleMapperTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
