@@ -5,8 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
+import warnings
 from types import MethodType
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple, Union
 
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
@@ -65,6 +66,18 @@ from transformers.models.llama.modeling_llama import (
     LlamaForCausalLM,
     LlamaModel,
     LlamaRMSNorm,
+)
+from transformers.models.llama4.modeling_llama4 import (
+    Llama4ForCausalLM,
+    Llama4ForConditionalGeneration,
+    Llama4TextAttention,
+    Llama4TextDecoderLayer,
+    Llama4TextExperts,
+    Llama4TextModel,
+    Llama4TextMoe,
+    Llama4TextRMSNorm,
+    Llama4VisionAttention,
+    Llama4VisionModel,
 )
 from transformers.models.llava.modeling_llava import (
     LlavaForConditionalGeneration,
@@ -133,6 +146,7 @@ from transformers.models.whisper.modeling_whisper import (
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
+from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QeffCodeGenBlock,
@@ -189,12 +203,26 @@ from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
     QEffGraniteMoeRotaryEmbedding,
     QEffGraniteMoeTopKGating,
 )
-from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
+from QEfficient.transformers.models.internvl.modeling_internvl import (
+    QEffInternVisionEmbeddings,
+    QEffInternVLModel,
+)
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
+)
+from QEfficient.transformers.models.llama4.modeling_llama4 import (
+    QEffLlama4ForCausalLM,
+    QEffLlama4ForConditionalGeneration,
+    QEffLlama4TextAttention,
+    QEffLlama4TextDecoderLayer,
+    QEffLlama4TextExperts,
+    QEffLlama4TextModel,
+    QEffLlama4TextMoe,
+    QEffLlama4VisionAttention,
+    QEffLlama4VisionModel,
 )
 from QEfficient.transformers.models.llava.modeling_llava import (
     QEffLlavaForConditionalGeneration,
@@ -278,6 +306,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         GemmaRMSNorm: GemmaCustomRMSNormAIC,
         Gemma2RMSNorm: GemmaCustomRMSNormAIC,
         LlamaRMSNorm: CustomRMSNormAIC,
+        Llama4TextRMSNorm: CustomRMSNormAIC,
         MistralRMSNorm: CustomRMSNormAIC,
         MixtralRMSNorm: CustomRMSNormAIC,
         Phi3RMSNorm: CustomRMSNormAIC,
@@ -315,6 +344,16 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaDecoderLayer: QEffLlamaDecoderLayer,
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
+        # Llama4
+        Llama4TextAttention: QEffLlama4TextAttention,
+        Llama4ForCausalLM: QEffLlama4ForCausalLM,
+        Llama4TextDecoderLayer: QEffLlama4TextDecoderLayer,
+        Llama4TextModel: QEffLlama4TextModel,
+        Llama4TextMoe: QEffLlama4TextMoe,
+        Llama4ForConditionalGeneration: QEffLlama4ForConditionalGeneration,
+        Llama4VisionAttention: QEffLlama4VisionAttention,
+        Llama4VisionModel: QEffLlama4VisionModel,
+        Llama4TextExperts: QEffLlama4TextExperts,
         # Llava
         LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
         # Llava Next
@@ -525,3 +564,22 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
     }
     _match_class_replace_method = {}
+
+
+class PoolingTransform:
+    """
+    Apply a pooling transformation to the model. This transformation appends a pooling layer to the model, allowing for the reduction of spatial dimensions in the output.
+    The pooling layer can be configured to use different pooling methods, such as max pooling or average pooling.
+    """
+
+    @classmethod
+    def apply(cls, model: nn.Module, pooling: Union[str, Callable]) -> Tuple[nn.Module, bool]:
+        transformed = False
+        pooling_method = (
+            POOLING_MAP[pooling]
+            if isinstance(pooling, str) and pooling in POOLING_MAP
+            else validate_user_pooling_function(pooling)
+        )
+        model = PooledModel(model, pooling_method)
+        warnings.warn("Pooling is applied to the model.")
+        return model, transformed
