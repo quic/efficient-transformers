@@ -97,6 +97,17 @@ test_models_config = [
     #     "Explain this image",
     #     7,
     # ),
+    # (
+    #     "ibm-granite/granite-vision-3.2-2b",
+    #     True,
+    #     1,
+    #     128,
+    #     6000,
+    #     384,
+    #     "https://prcdn.freetls.fastly.net/release_image/48278/144/48278-144-d4cfcb52b4b5ac718529bc89ac2ebc0d-1610x1109.jpg",
+    #     "Describe the image",
+    #     7,
+    # ),
 ]
 
 intern_model_config = [
@@ -155,6 +166,8 @@ def set_num_layers(config, n_layer=1):
         config.text_config.cross_attention_layers = [
             x for x in config.text_config.cross_attention_layers if x < n_layer
         ]
+    elif hasattr(config, "model_type") and "llava_next" in config.model_type:
+        config.text_config.num_hidden_layers = n_layer
     elif hasattr(config, "text_config"):
         config.text_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
