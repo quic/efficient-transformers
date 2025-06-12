@@ -92,7 +92,7 @@ class ModuleMutatorTransform(PytorchTransform):
         raise NotImplementedError("Please implement your own method by inheriting this class")
 
 
-class ModuleMethodMapperTransform(PytorchTransform):
+class ExternalModuleMapperTransform(PytorchTransform):
     """
     Serves as base class for any transform that want to map a particular method of a class to a new method implementation.
     """
@@ -109,6 +109,10 @@ class ModuleMethodMapperTransform(PytorchTransform):
             ):
                 for orig_method_name, mapped_method in repl_method_map.items():
                     setattr(module, orig_method_name, MethodType(mapped_method, module))
+
+                    if hasattr(module, "__qeff_init__"):
+                        module.__qeff_init__()
+
                     transformed = True
 
         return model, transformed

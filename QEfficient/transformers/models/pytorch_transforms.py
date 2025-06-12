@@ -144,7 +144,7 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperPositionalEmbedding,
 )
 
-from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
+from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.codegen.modeling_codegen import (
@@ -203,10 +203,15 @@ from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
     QEffGraniteMoeRotaryEmbedding,
     QEffGraniteMoeTopKGating,
 )
-from QEfficient.transformers.models.internvl.modeling_internvl import (
-    QEffInternVisionEmbeddings,
-    QEffInternVLModel,
+from QEfficient.transformers.models.grok_1.modeling_grok1 import (
+    QEFFGrok1CustomRMSNormAIC,
+    QEffGrok1DecoderLayer,
+    QEffGrok1Model,
+    QEffGrok1ModelForCausalLM,
+    QEffGrok1MoeBlock,
+    QEffGrok1MultiHeadAttention,
 )
+from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
@@ -511,7 +516,7 @@ class VlmNoKVOffloadTransform(ModuleMappingTransform):
     }
 
 
-class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
+class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_string_replace_method = {
         "InternVLChatModel": {
             "forward": QEffInternVLModel.forward,
@@ -524,7 +529,25 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
             "get_qeff_language_decoder": QEffInternVLModel.get_qeff_language_decoder,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
+        # Mapping for grok1 model
+        "Grok1ModelForCausalLM": {"forward": QEffGrok1ModelForCausalLM.forward},
+        "Grok1Model": {
+            "forward": QEffGrok1Model.forward,
+            "__qeff_init__": QEffGrok1Model.__qeff_init__,
+        },
+        "DecoderLayer": {
+            "forward": QEffGrok1DecoderLayer.forward,
+            "__qeff_init__": QEffGrok1DecoderLayer.__qeff_init__,
+        },
+        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward},
+        "MultiHeadAttention": {
+            "forward": QEffGrok1MultiHeadAttention.forward,
+        },
+        "RMSNorm": {
+            "forward": QEFFGrok1CustomRMSNormAIC.forward,
+        },
     }
+
     _match_class_replace_method = {}
 
 
