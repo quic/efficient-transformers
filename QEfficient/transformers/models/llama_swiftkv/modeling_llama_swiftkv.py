@@ -371,8 +371,8 @@ class QEffLlamaSwiftKVModel(nn.Module):
             hidden_states = orig_hidden_states[torch.arange(orig_hidden_states.shape[0]).reshape(-1, 1), last_pos_id, :]
             causal_mask = causal_mask[torch.arange(orig_hidden_states.shape[0]).reshape(-1, 1), :, last_pos_id, :]
         else:
-            hidden_states = orig_hidden_states[torch.arange(bsz), last_pos_id, :]
-            causal_mask = causal_mask[torch.arange(bsz), :, last_pos_id, :]
+            hidden_states = orig_hidden_states[torch.arange(bsz).reshape(-1, 1), last_pos_id, :]
+            causal_mask = causal_mask[torch.arange(bsz).reshape(-1, 1), :, last_pos_id, :]
 
         hidden_states, next_decoder_cache = self._run_swiftkv_layers(
             hidden_states, position_ids, past_key_values, causal_mask, batch_index
