@@ -571,12 +571,12 @@ class QEffGemma3DecoderWrapper(nn.Module):
         self.language_model = self.model.language_model
         self.config = self.model.config
 
-    def forward(self, input_ids, vision_embeds, position_ids, index, past_key_values):
+    def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
         selected = input_ids == self.model.config.image_token_index
         indices1 = selected.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + index, indices1)
+        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
         image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
@@ -584,8 +584,8 @@ class QEffGemma3DecoderWrapper(nn.Module):
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
-        index = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        return outputs.logits, vision_embeds, index, outputs.past_key_values
+        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        return outputs.logits, vision_embeds, image_idx, outputs.past_key_values
 
 
 class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
@@ -595,13 +595,13 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
     def get_qeff_language_decoder(self):
         return QEffGemma3DecoderWrapper(self)
 
-    def forward(self, input_ids, position_ids, pixel_values, index, past_key_values):
+    def forward(self, input_ids, position_ids, pixel_values, image_idx, past_key_values):
         image_features = self.get_image_features(pixel_values=pixel_values)
         inputs_embeds = self.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
         selected = input_ids == self.config.image_token_index
         indices1 = selected.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + index, indices1)
+        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
         image_features_expanded = image_features.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
@@ -609,8 +609,8 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         outputs = self.language_model(
             inputs_embeds=inputs_embeds, position_ids=position_ids, past_key_values=past_key_values, use_cache=True
         )
-        index = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        return outputs.logits, pixel_values, index, outputs.past_key_values
+        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        return outputs.logits, pixel_values, image_idx, outputs.past_key_values
 
     def get_specializations(
         self,
@@ -696,12 +696,12 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         output_names = {}
         if kv_offload:
             lang_output_names.insert(1, "vision_embeds_RetainedState")
-            lang_output_names.insert(2, "index_output")
+            lang_output_names.insert(2, "image_idx_output")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
             lang_output_names.insert(1, "pixel_values_RetainedState")
-            lang_output_names.insert(2, "index_output")
+            lang_output_names.insert(2, "image_idx_output")
             return lang_output_names
         return output_names
 
@@ -730,7 +730,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             img_size,
             img_size,
         )
-        inputs_shapes["index"] = (1, 1)
+        inputs_shapes["image_idx"] = (1, 1)
 
         # Define inputs
         vision_inputs = {}
@@ -743,7 +743,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
-        lang_inputs["index"] = torch.zeros((inputs_shapes["index"]), dtype=torch.int64)
+        lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
         # Add data for KV
         kv_cache_shape = get_padding_shape_from_config(
             config=self.language_model.config,
