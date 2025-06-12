@@ -769,12 +769,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         device_ids: List[int] = None,
         generation_len: int = None,
     ):
-        if not self.vision_model.qpc_path or not self.lang_model.qpc_path:
-            raise TypeError("Please run compile API for vision and language model first!")
+        if not self.lang_model.qpc_path:
+            raise TypeError("Please run compile API for language model first!")
 
         lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
 
-        vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
+        if self.vision_model.qpc_path:
+            vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
 
         batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
 
@@ -849,7 +850,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not_mllama:
             lang_inputs["image_idx"] = np.array([[0]])
 
-        vision_session.deactivate()
+        if self.vision_model.qpc_path:
+            vision_session.deactivate()
         lang_session.activate()
 
         lang_session.set_buffers(vision_outputs)
