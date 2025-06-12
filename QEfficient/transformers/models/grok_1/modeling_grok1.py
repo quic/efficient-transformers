@@ -20,6 +20,7 @@ from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models.llama.modeling_llama import qeff_apply_rotary_pos_emb
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 class QEFFGrok1CustomRMSNormAIC(nn.Module):
@@ -110,7 +111,7 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         attn_weights = self.max_attn_val * F.tanh(attn_weights / self.max_attn_val)
 
         if attention_mask is not None:
-            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+            attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
 
         attn_weights = F.softmax(attn_weights, dim=-1).to(query_states.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
