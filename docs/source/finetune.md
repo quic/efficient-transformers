@@ -66,17 +66,21 @@ to visualise the data,
 tensorboard --logdir runs/<file> --bind_all
 ```
 
+## Some features/functionalities of fine-tuning stack:
+    1) Gradient accumulation: By default, gradient accumulation happens for 4 steps. To update this value, command line argument gradient_accumulation_steps has to be passed. (Example: '--gradient_accumulation_steps 8')
+    2) Gradient Checkpointing: By default, gradient checkpointing is disabled. To enable it, command line argument gradient_accumulation_steps has to be passed.
+
 ## Fine-Tuning on custom dataset
 
 To run fine tuning for any user specific dataset, prepare the dataset using the following steps:
 
-    1) Create a directory named 'dataset' inside efficient-transformers (i.e. at the root of the repo). 
-    2) Inside this directory, create a file named 'custom_dataset.py'. This is different than the custom_dataset.py present at efficient-transformers/QEfficient/finetune/dataset.
+    1) Create a directory named 'dataset' inside efficient-transformers.
+    2) Inside this directory, create a file named 'custom_dataset.py'.
     3) Inside the newly created efficient-transformers/dataset/custom_dataset.py, define a function named 'get_custom_dataset'. 
-    4) get_custom_dataset() should have following 4 parameters:  dataset_config, tokenizer, split, context_length. This function gets called twice through QEfficient/cloud/finetune.py with the name get_preprocessed_dataset. 
-    5) Inside get_custom_dataset(), dataset needs to prepared for fine tuning. So, the user needs to apply prompt and tokenize the dataset accordingly. Please refer the below template on how to define get_custom_dataset().
-    6) For examples, please refer python files present in efficient-transformers/QEfficient/finetune/dataset. In case of Samsum dataset, get_preprocessed_samsum() of efficient-transformers/QEfficient/finetune/dataset/samsum_dataset.py is called. 
-    7) In efficient-transformers/QEfficient/finetune/configs/dataset_config.py, for custom_dataset class, pass the appropriate value for train_split and test_split according to the dataset keys corresponding to train and test data points. As an alternative, these values can be passed as command line arguemnets as well with the finetune command. For example "--train_split train". 
+    4) get_custom_dataset() should have following 4 parameters:  dataset_config, tokenizer, split, context_length.  
+    5) Inside get_custom_dataset(), user needs to apply prompt and tokenize the dataset accordingly. Please refer the below template on how to define get_custom_dataset().
+    6) For examples, please refer python files present in [dataset](https://github.com/quic/efficient-transformers/tree/main/QEfficient/finetune/dataset). In case of Samsum dataset, get_preprocessed_samsum() of efficient-transformers/QEfficient/finetune/dataset/samsum_dataset.py is called. 
+    7) In [dataset_config.py](https://github.com/quic/efficient-transformers/blob/main/QEfficient/finetune/configs/dataset_config.py), for custom_dataset class, pass the appropriate value for train_split and test_split. As an alternative, these values can be passed as command line arguments as well with the finetune command. For example "--train_split train".
     8) While running fine tuning, pass argument "-–dataset custom_dataset" to finetune on custom dataset.   
 
 Template for get_custom_dataset() to be defined inside efficient-transformers/dataset/custom_dataset.py is as follows:

@@ -51,7 +51,7 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
                 )
         else:
             kwargs["sampler"] = torch.utils.data.DistributedSampler(
-                dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True
+                dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=False
             )
             kwargs["batch_size"] = batch_size
             kwargs["drop_last"] = True
