@@ -5,8 +5,9 @@
 #
 # ----------------------------------------------------------------------------
 
+import os
 from io import BytesIO
-from typing import List
+from typing import List, Optional
 
 import pytest
 import requests
@@ -23,7 +24,8 @@ from transformers import (
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils import hf_download
-from QEfficient.utils._utils import get_num_layers_vlm
+from QEfficient.utils._utils import create_json, get_num_layers_vlm
+from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerVlm
 from QEfficient.utils.test_utils import InternProcessor
@@ -198,6 +200,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     n_layer: int = 1,
     kv_offload: bool = False,
     num_devices: int = 1,
+    enable_qnn: Optional[bool] = False,
+    qnn_config: Optional[str] = None,
 ):
     model_config = {"model_name": model_name}
     model_config["img_size"] = img_size
@@ -259,6 +263,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
         mxfp6=False,
+        enable_qnn=enable_qnn,
+        qnn_config=qnn_config,
     )
     inputs = processor(images=image, text=prompt, return_tensors="pt")
     if "pixel_values" in inputs:
@@ -281,6 +287,8 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     n_layer: int = 1,
     kv_offload: bool = False,
     num_devices: int = 1,
+    enable_qnn: Optional[bool] = False,
+    qnn_config: Optional[str] = None,
 ):
     model_config = {"model_name": model_name}
 
@@ -346,6 +354,8 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
         mxfp6=False,
+        enable_qnn=enable_qnn,
+        qnn_config=qnn_config,
     )
     print("QPC Outputs (QAIC):")
     output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
@@ -382,6 +392,42 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
 
 @pytest.mark.on_qaic
+@pytest.mark.qnn
+@pytest.mark.multimodal
+@pytest.mark.parametrize(
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer", test_models_config
+)
+def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
+    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_size, img_url, query, n_layer
+):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    if model_name == "meta-llama/Llama-4-Scout-17B-16E-Instruct":
+        pytest.skip("QNN is not supported for Llama 4 Scout models")
+
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_size=img_size,
+        img_url=img_url,
+        query=query,
+        n_layer=n_layer,
+        batch_size=batch_size,
+        kv_offload=kv_offload,
+        enable_qnn=True,
+        qnn_config=qnn_config_json_path,
+    )
+
+
+@pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize(
     "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config
@@ -399,4 +445,31 @@ def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100(
         n_layer=n_layer,
         batch_size=batch_size,
         kv_offload=kv_offload,
+    )
+
+
+@pytest.mark.on_qaic
+@pytest.mark.qnn
+@pytest.mark.multimodal
+@pytest.mark.parametrize(
+    "model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer", intern_model_config
+)
+def test_image_text_to_text_intern_pytorch_vs_kv_vs_ort_vs_ai100_qnn(
+    model_name, kv_offload, batch_size, prompt_len, ctx_len, img_url, query, n_layer
+):
+    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
+    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+
+    check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        max_gen_len=NEW_GENERATION_TOKENS,
+        img_url=img_url,
+        query=query,
+        n_layer=n_layer,
+        batch_size=batch_size,
+        kv_offload=kv_offload,
+        enable_qnn=True,
+        qnn_config=qnn_config_json_path,
     )
