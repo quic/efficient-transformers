@@ -28,7 +28,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
 )
 
 from QEfficient.customop.rms_norm import CustomRMSNorm
-from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.cache_utils import QEffHybridCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -240,7 +240,6 @@ class QEffGemma3Attention(Gemma3Attention):
         value_states = repeat_kv(value_states, self.num_key_value_groups)
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
 
-        # import ipdb; ipdb.set_trace()
         if self.config.attn_logit_softcapping is not None:
             attn_weights = attn_weights / self.config.attn_logit_softcapping
             attn_weights = torch.tanh(attn_weights)
