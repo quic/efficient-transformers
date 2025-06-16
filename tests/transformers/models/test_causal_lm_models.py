@@ -12,12 +12,8 @@ from typing import List, Optional
 import numpy as np
 import pytest
 import torch
-<<<<<<< tests-optim
 import torch.nn as nn
 from transformers import AutoConfig, AutoModelForCausalLM
-=======
-from transformers import AutoModelForCausalLM
->>>>>>> main
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
