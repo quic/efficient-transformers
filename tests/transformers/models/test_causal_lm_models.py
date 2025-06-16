@@ -12,8 +12,12 @@ from typing import List, Optional
 import numpy as np
 import pytest
 import torch
+<<<<<<< tests-optim
 import torch.nn as nn
 from transformers import AutoConfig, AutoModelForCausalLM
+=======
+from transformers import AutoModelForCausalLM
+>>>>>>> main
 
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -24,6 +28,7 @@ from QEfficient.utils.constants import Constants, QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
 
+extrenal_models = {"hpcai-tech/grok-1"}
 test_models_qaic = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
     "gpt2",
@@ -47,6 +52,7 @@ test_models_qaic = [
     "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
     "ibm-granite/granite-3.1-2b-instruct",
     "ibm-granite/granite-guardian-3.1-2b",
+    "hpcai-tech/grok-1",
 ]
 
 test_dummy_model_configs = [
@@ -242,7 +248,12 @@ def load_causal_lm_model(model_config):
         num_hidden_layers=model_config["n_layer"],
         attn_implementation="eager",
         low_cpu_mem_usage=False,
-    )  # Run models for single layers only
+        trust_remote_code=model_config["model_name"] in extrenal_models,
+    )
+    # Convert to FP32 if model is in BF16
+    if getattr(model_hf.config, "torch_dtype", None) == torch.bfloat16:
+        model_hf = model_hf.to(torch.float32)
+
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
     return model_hf, params
