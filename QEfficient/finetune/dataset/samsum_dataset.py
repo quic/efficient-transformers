@@ -38,9 +38,9 @@ def get_preprocessed_samsum(dataset_config, tokenizer, split, context_length=Non
         )
 
         labels = [IGNORE_INDEX] * len(prompt) + summary
-        # labels = [l if l != tokenizer.pad_token_id else -100 for l in labels]
         # sentence: <bos> <prompt> <summary> <eos> <pad>
-        # labels  : -100  -100     <summary> <eos> -100
+        # labels  : -100  -100     <summary> <eos> <pad>
+        # Here, if pad token is not available then eos is used as pad token.
 
         sample = {
             "input_ids": prompt + summary,

@@ -26,8 +26,10 @@ from QEfficient.finetune.utils.config_utils import (
     generate_dataset_config,
     generate_peft_config,
     get_dataloader_kwargs,
+    pad_dataset,
     update_config,
 )
+from QEfficient.finetune.utils.helper import is_rank_zero, get_num_ddp_devices
 from QEfficient.finetune.utils.dataset_utils import (
     get_custom_data_collator,
     get_preprocessed_dataset,
@@ -140,7 +142,7 @@ def load_model_and_tokenizer(
         train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name
     )
     if not tokenizer.pad_token_id:
-        tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+        tokenizer.pad_token_id = tokenizer.eos_token_id
 
     # If there is a mismatch between tokenizer vocab size and embedding matrix,
     # throw a warning and then expand the embedding matrix
@@ -197,7 +199,7 @@ def apply_peft(
         peft_config = generate_peft_config(train_config, peft_config_file, **kwargs)
         model = get_peft_model(model, peft_config)
 
-    if os.getenv("LOCAL_RANK", 0) == 0:
+    if is_rank_zero():
         model.print_trainable_parameters()
 
     return model
@@ -241,13 +243,16 @@ def setup_dataloaders(
         dataset_processer, dataset_config, split="test", context_length=train_config.context_length
     )
 
+    total_devices = get_num_ddp_devices()
+    dataset_train = pad_dataset(dataset_train, train_config.batch_size_training, total_devices)
+    dataset_val = pad_dataset(dataset_val, train_config.val_batch_size, total_devices)
+
     # TODO: vbaddi, check if its necessary to do this?
     # dataset_train = ConcatDataset(
     #             dataset_train, chunk_size=train_config.context_length
     #         )
     ##
     train_dl_kwargs = get_dataloader_kwargs(train_config, dataset_train, dataset_processer, "train")
-    print("length of dataset_train", len(dataset_train))
 
     # FIXME (Meet): Add custom data collator registration from the outside by the user.
     custom_data_collator = get_custom_data_collator(dataset_processer, dataset_config)
