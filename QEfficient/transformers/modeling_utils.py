@@ -283,6 +283,8 @@ def build_model_class_mapping(auto_model_class, qeff_class_name):
     }
 
 
+EXTERNAL_MODEL_CLASS_MAPPING = {"Grok1Config": "QEFFAutoModelForCausalLM"}
+
 MODEL_CLASS_MAPPING = {
     **build_model_class_mapping(mapping.AutoModelForCausalLM, "QEFFAutoModelForCausalLM"),
     **build_model_class_mapping(mapping.AutoModelForImageTextToText, "QEFFAutoModelForImageTextToText"),
