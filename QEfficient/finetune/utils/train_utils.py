@@ -17,7 +17,7 @@ import torch.distributed as dist
 import torchmetrics
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-
+from QEfficient.finetune.utils.helper import is_rank_zero
 from QEfficient.finetune.configs.training import TrainConfig
 
 try:
@@ -213,8 +213,17 @@ def train(
                         acc_helper.forward(preds, labels)
 
             total_loss += loss.detach().float()
-            # Accumalate gradients
-            loss = loss / train_config.gradient_accumulation_steps
+
+            # Accumalate graidents
+            complete_accum_steps = (
+                len(train_dataloader) - len(train_dataloader) % train_config.gradient_accumulation_steps
+            )
+            if step < complete_accum_steps:
+                num_steps_in_cur_update = train_config.gradient_accumulation_steps
+            else:
+                num_steps_in_cur_update = len(train_dataloader) % train_config.gradient_accumulation_steps
+
+            loss = loss / num_steps_in_cur_update
             if train_config.enable_ddp:
                 if local_rank == 0:
                     if loss <= train_config.convergence_loss:
@@ -260,7 +269,7 @@ def train(
             if step % train_config.intermediate_step_save == 0:
                 qaic_profile.stop_profiling(device) if train_config.use_profiler else None
                 if train_config.enable_ddp:
-                    if dist.get_rank() == 0:
+                    if is_rank_zero():
                         model.module.save_pretrained(
                             train_config.output_dir + f"/trained_weights/epoch_{epoch + 1}/step_{step}"
                         )
@@ -351,7 +360,7 @@ def train(
         # saving the adapters after completion of each epoch
         if train_config.save_model:
             if train_config.enable_ddp:
-                if dist.get_rank() == 0:
+                if is_rank_zero():
                     model.module.save_pretrained(train_config.output_dir + f"/complete_epoch_{epoch + 1}")
             else:
                 model.save_pretrained(train_config.output_dir + f"/complete_epoch_{epoch + 1}")
