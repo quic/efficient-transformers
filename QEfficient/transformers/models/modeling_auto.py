@@ -1564,6 +1564,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
                 2: "ctx_len",
             }
+            pkv_dynamic_sliding_axes = {
+                0: "full_batch_size" if self.continuous_batching else "batch_size",
+                2: "chunk_attn",
+            }
+
         output_names = []
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
             if self.model.qaic_config.get("return_pdfs", False):
