@@ -25,9 +25,12 @@ from QEfficient.finetune.utils.config_utils import (
     generate_dataset_config,
     generate_peft_config,
     update_config,
+    pad_dataset,
+    update_config,
 )
 from QEfficient.finetune.utils.dataset_utils import get_dataloader
 from QEfficient.finetune.utils.parser import get_finetune_parser
+from QEfficient.finetune.utils.helper import is_rank_zero, get_num_ddp_devices
 from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
 from QEfficient.utils._utils import login_and_download_hf_lm
 
@@ -137,7 +140,7 @@ def load_model_and_tokenizer(
         train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name
     )
     if not tokenizer.pad_token_id:
-        tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+        tokenizer.pad_token_id = tokenizer.eos_token_id
 
     # If there is a mismatch between tokenizer vocab size and embedding matrix,
     # throw a warning and then expand the embedding matrix
@@ -194,7 +197,7 @@ def apply_peft(
         peft_config = generate_peft_config(train_config, peft_config_file, **kwargs)
         model = get_peft_model(model, peft_config)
 
-    if os.getenv("LOCAL_RANK", 0) == 0:
+    if is_rank_zero():
         model.print_trainable_parameters()
 
     return model

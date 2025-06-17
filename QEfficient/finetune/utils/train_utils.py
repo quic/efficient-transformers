@@ -12,7 +12,6 @@ from contextlib import nullcontext
 from datetime import datetime
 from typing import Dict, List, Tuple
 
-import numpy as np
 import torch
 import torch.distributed as dist
 import torchmetrics
@@ -20,7 +19,6 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from QEfficient.finetune.configs.training import TrainConfig
-from QEfficient.finetune.dataset.helper import IGNORE_INDEX
 
 try:
     import torch_qaic  # noqa: F401
@@ -143,8 +141,7 @@ def train(
         model.train()
 
         total_loss = torch.tensor(0.0, dtype=torch.float32).to(device)
-        total_samples = torch.tensor(0).to(device)
-        total_length = int(np.ceil(len(train_dataloader) / train_config.gradient_accumulation_steps))
+        total_length = len(train_dataloader) // train_config.gradient_accumulation_steps
         pbar = tqdm(
             colour="blue",
             desc=f"Training Epoch: {epoch + 1}",
@@ -155,6 +152,7 @@ def train(
         # enable profile for qaic
         qaic_profile.start_profiling(device, 1) if train_config.use_profiler else None
 
+        padded_samples = 0
         for step, batch in enumerate(train_dataloader):
             # resume training from a particular checkpoint, assuming the dataset is not shuffled
             if train_config.use_peft and train_config.from_peft_checkpoint:
@@ -182,7 +180,6 @@ def train(
                 if train_config.use_autocast
                 else nullcontext()
             ):
-                print(f"Local rank: {local_rank}, Step: {step}, shape: {batch['input_ids'].shape}")
                 # an additional condition can be put here to avoid opByOpVerifier getting triggered for each step
                 if train_config.opByOpVerifier:
                     with qaic_debug.OpByOpVerifierMode(
@@ -203,8 +200,12 @@ def train(
                             acc_helper.forward(preds, labels)
                     print("Mismatches detected:", verifier.get_perop_mismatch_count())
                 else:
+                    loss_weight = batch.get("loss_weight", 1)
                     model_outputs = model(**batch)
                     loss = model_outputs.loss  # Forward call
+                    loss *= loss_weight[0]
+                    if loss_weight[0] == 0:
+                        padded_samples += 1
                     if train_config.task_type == "seq_classification":
                         logits = model_outputs.logits
                         labels = batch["labels"][:, 0]
@@ -244,23 +245,11 @@ def train(
                 train_step_metric.append(step_metric_val)
 
             if train_config.grad_scaler:
-                if train_config.enable_ddp:
-                    with model.no_sync():
-                        scaler.scale(loss).backward()  # backward pass
-                else:
-                    scaler.scale(loss).backward()  # backward pass
+                scaler.scale(loss).backward()  # backward pass
             else:
-                if train_config.enable_ddp:
-                    # FIXME: We can not stop transfer of gradient across devices every time.
-                    # In grad accumulation last step should transfer gradients across devices.
-                    with model.no_sync():
-                        loss.backward()  # backward pass
-                else:
-                    loss.backward()  # backward pass
+                loss.backward()  # backward pass
 
             if (step + 1) % train_config.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
-                # if train_config.enable_ddp:
-                #     dist.barrier()
                 if train_config.grad_scaler:
                     scaler.step(optimizer)
                     scaler.update()
@@ -269,12 +258,6 @@ def train(
                 optimizer.zero_grad()
                 pbar.update(1)
 
-                # Update the learning rate as needed
-                lr_scheduler.step()
-
-            if step == len(train_dataloader) - 1:
-                if train_config.enable_ddp:
-                    dist.barrier()
             # Save the trained checkpoints for every given steps
             if step % train_config.intermediate_step_save == 0:
                 qaic_profile.stop_profiling(device) if train_config.use_profiler else None
@@ -318,21 +301,16 @@ def train(
         epoch_end_time = time.perf_counter() - epoch_start_time
         epoch_times.append(epoch_end_time)
 
-        if train_config.enable_ddp:
-            dist.barrier()
-            dist.all_reduce(total_samples, op=dist.ReduceOp.SUM)
-            print(f"Total samples: {total_samples}")
-
         if loss_0_counter.item() == train_config.convergence_counter:
             if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
-                train_epoch_loss = total_loss / (step - intermediate_step)
+                train_epoch_loss = total_loss / (step - intermediate_step - padded_samples)
             else:
-                train_epoch_loss = total_loss / step
+                train_epoch_loss = total_loss / (step - padded_samples)
         else:
             if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
-                train_epoch_loss = total_loss / (len(train_dataloader) - intermediate_step)
+                train_epoch_loss = total_loss / (len(train_dataloader) - intermediate_step - padded_samples)
             else:
-                train_epoch_loss = total_loss / len(train_dataloader)
+                train_epoch_loss = total_loss / (len(train_dataloader) - padded_samples)
 
         if train_config.task_type == "seq_classification":
             metric_val = acc_helper.compute()
@@ -347,9 +325,10 @@ def train(
         train_metric.append(float(metric_val))
         train_loss.append(float(train_epoch_loss))
 
+        # Update the learning rate as needed
+        lr_scheduler.step()
+
         if train_config.run_validation:
-            if train_config.enable_ddp:
-                dist.barrier()
             eval_loss, eval_metric, step_loss, step_metric = evaluation_helper(
                 model, train_config, eval_dataloader, device
             )
@@ -438,10 +417,10 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     val_step_loss = []
     val_step_metric = []
 
-    eval_loss = 0.0  # Initialize evaluation loss
     device_type = torch.device(device).type
-    num_tokens = 0
+    eval_loss = torch.tensor(0.0, dtype=torch.float32, device=device)  # Initialize evaluation loss
 
+    padded_samples = 0
     for step, batch in enumerate(tqdm(eval_dataloader, colour="green", desc="evaluating Epoch", dynamic_ncols=True)):
         #  stop when the maximum number of eval steps is reached
         if train_config.max_eval_step > 0 and step >= train_config.max_eval_step:
@@ -458,7 +437,12 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
                 else nullcontext()
             ):
                 outputs = model(**batch)
+            loss_weight = batch.get("loss_weight", 1)
             loss = outputs.loss
+            loss *= loss_weight[0]
+
+            if loss_weight[0] == 0:
+                padded_samples += 1
 
             if train_config.task_type == "seq_classification":
                 logits = outputs.logits
@@ -473,20 +457,13 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
                 val_step_loss.append(loss.detach().float().item())
                 val_step_metric.append(metric_val)
 
-            if train_config.task_type == "seq_classification":
-                eval_loss += loss.detach().float()
-            else:
-                tokens_in_input = torch.sum(batch["labels"] != IGNORE_INDEX) - 1
-                # added minus one because we are shifting labels to left and then computing the loss.
-                eval_loss += loss.detach().float() * tokens_in_input
-                num_tokens += tokens_in_input
+            eval_loss += loss.detach().float()
 
     # Compute average loss and metric
+    eval_loss = eval_loss / (len(eval_dataloader) - padded_samples)
     if train_config.task_type == "seq_classification":
-        eval_loss = eval_loss / len(eval_dataloader)
         eval_metric = acc_helper.compute()
     else:
-        eval_loss = eval_loss / num_tokens
         eval_metric = torch.exp(eval_loss)
 
     if train_config.enable_ddp:
