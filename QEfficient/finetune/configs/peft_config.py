@@ -30,10 +30,3 @@ class LoraConfig:
     task_type: str = "CAUSAL_LM"
     lora_dropout: float = 0.05
     inference_mode: bool = False  # should be False for finetuning
-
-
-# CAUTION prefix tuning is currently not supported
-@dataclass
-class PrefixConfig:
-    num_virtual_tokens: int = 30
-    task_type: str = "CAUSAL_LM"
