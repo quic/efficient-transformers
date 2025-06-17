@@ -212,8 +212,6 @@ def train(
                         preds = torch.nn.functional.softmax(logits, dim=-1)
                         acc_helper.forward(preds, labels)
 
-                total_samples += 1
-
             total_loss += loss.detach().float()
             # Accumalate gradients
             loss = loss / train_config.gradient_accumulation_steps
@@ -318,12 +316,14 @@ def train(
         else:
             metric_val = torch.exp(train_epoch_loss)
 
-        if train_config.enable_ddp:
-            dist.all_reduce(metric_val, op=dist.ReduceOp.SUM)
-            metric_val /= dist.get_world_size()
-
         train_metric.append(float(metric_val))
         train_loss.append(float(train_epoch_loss))
+
+        if train_config.enable_ddp:
+            dist.all_reduce(train_epoch_loss, op=dist.ReduceOp.SUM)
+            train_epoch_loss /= dist.get_world_size()
+            dist.all_reduce(metric_val, op=dist.ReduceOp.SUM)
+            metric_val /= dist.get_world_size()
 
         # Update the learning rate as needed
         lr_scheduler.step()
@@ -335,6 +335,10 @@ def train(
 
             # Print evaluation metrics
             print(f"Eval metric: {eval_metric.detach().cpu():.4f}, Eval Loss: {eval_loss.detach().cpu():.4f}")
+            if eval_loss < best_val_loss:
+                best_val_loss = eval_loss
+                print(f"best eval loss on epoch {epoch + 1} is {best_val_loss:.4f}")
+
             if local_rank == 0:
                 tensorboard_updates.add_scalars("loss", {"eval": eval_loss}, total_train_steps)
 
@@ -351,11 +355,6 @@ def train(
                     model.module.save_pretrained(train_config.output_dir + f"/complete_epoch_{epoch + 1}")
             else:
                 model.save_pretrained(train_config.output_dir + f"/complete_epoch_{epoch + 1}")
-
-        if train_config.run_validation:
-            if eval_loss < best_val_loss:
-                best_val_loss = eval_loss
-                print(f"best eval loss on epoch {epoch + 1} is {best_val_loss:.4f}")
 
         if train_config.task_type == "seq_classification":
             print(
