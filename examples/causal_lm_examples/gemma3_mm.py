@@ -14,8 +14,8 @@ from QEfficient import QEFFAutoModelForImageTextToText
 model_id = "google/gemma-3-4b-it"
 config = AutoConfig.from_pretrained(model_id)
 # For Testing Purpose Only
-# config.text_config.num_hidden_layers = 1
-# config.vision_config.num_hidden_layers = 2
+config.text_config.num_hidden_layers = 6
+config.vision_config.num_hidden_layers = 2
 
 model = AutoModelForImageTextToText.from_pretrained(model_id, attn_implementation="eager", config=config)
 model.eval()
@@ -32,7 +32,7 @@ qeff_model.compile(
     mxint8_kv_cache=False,
     aic_enable_depth_first=True,
     mos=1,
-    node_precision_info="fp32_nodes_gemma3_4b_image.yaml",
+    node_precision_info="examples/causal_lm_examples/fp32_nodes_gemma3_4b_image.yaml",
 )
 
 image_url = (
@@ -63,6 +63,7 @@ for key, value in inputs.items():
 
 inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
 streamer = TextStreamer(tokenizer)
+breakpoint()
 output = qeff_model.generate(inputs=inputs, device_ids=[0], generation_len=100)
 print(output.generated_ids)
 print(tokenizer.batch_decode(output.generated_ids))
