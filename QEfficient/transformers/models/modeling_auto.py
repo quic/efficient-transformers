@@ -486,7 +486,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable(self.model.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEffVisionEncoderForTextImageToTextModel": True}))
-
         if hasattr(self.model, "model"):
             mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
         else:
@@ -555,7 +554,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEffCausalLMForTextImageToTextModel": True}))
-        mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
+        if hasattr(self.model, "model"):
+            mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
+        else:
+            mhash.update(to_hashable(self.model.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -876,7 +878,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 :, i * prefill_seq_len : (i + 1) * prefill_seq_len
             ]
             outputs = lang_session.run(chunk_inputs)
-            chunk_inputs["image_idx"] = outputs["image_idx_output"]
+            if not_mllama:
+                chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
         prefill_time = perf_counter() - prefill_start + vision_end - vision_start
         # Skip inputs/outputs again
@@ -1153,7 +1156,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
 
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
-        inputs["image_idx"] = np.array([[0]])
+        not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
+        if not_mllama:
+            inputs["image_idx"] = np.array([[0]])
 
         qpc_session.activate()
         chunk_inputs = inputs.copy()
@@ -1164,7 +1169,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             chunk_inputs["input_ids"] = inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = inputs["position_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             outputs = qpc_session.run(chunk_inputs)
-            chunk_inputs["image_idx"] = outputs["image_idx_output"]
+            if not_mllama:
+                chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
         prefill_time = perf_counter() - prefill_start
         # Get first token
