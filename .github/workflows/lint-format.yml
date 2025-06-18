@@ -5,6 +5,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.10'
+      - name: Check Python version
+        run: python --version
       - run: pip3 install ruff
       - run: ruff check
     env:
@@ -13,6 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.10'
       - run: pip3 install ruff
       - run: ruff format --check
     env:
