@@ -68,7 +68,6 @@ line-length = 120
 lint.extend-select = ["I"]
 target-version = "py310"
 
-
 [tool.pytest.ini_options]
 addopts = "-W ignore -s -v"
 junit_logging = "all"
