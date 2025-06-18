@@ -16,6 +16,7 @@ from peft import IA3Config, LoraConfig, get_peft_model
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient import QEffAutoPeftModelForCausalLM
+from QEfficient.utils.device_utils import get_available_device_id
 
 configs = [
     pytest.param(
@@ -181,6 +182,7 @@ def test_auto_peft_model_for_causal_lm_compile_generate(base_config, adapter_con
             axis=1,
         ),
         max_new_tokens=10,
+        device_ids=get_available_device_id(),
     )
 
     start = perf_counter()

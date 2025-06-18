@@ -17,6 +17,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from QEfficient import QEffAutoPeftModelForCausalLM
 from QEfficient.peft.lora import QEffAutoLoraModelForCausalLM
 from QEfficient.utils import load_hf_tokenizer
+from QEfficient.utils.device_utils import get_available_device_id
 
 configs = [
     pytest.param(
@@ -235,6 +236,7 @@ def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
         tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=base_model_name),
         prompts=prompts,
         prompt_to_adapter_mapping=["adapter_0", "adapter_1", "adapter_0", "base"],
+        device_ids=get_available_device_id(),
     )
 
 
@@ -260,4 +262,5 @@ def test_auto_lora_model_for_causal_lm_cb_compile_generate(base_model_name, adap
         tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=base_model_name),
         prompts=prompts,
         prompt_to_adapter_mapping=["adapter_0", "adapter_1", "adapter_0", "base"],
+        device_ids=get_available_device_id(),
     )

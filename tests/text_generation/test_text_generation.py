@@ -72,10 +72,6 @@ def test_generate_text_stream(
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
 
     qeff_model.export()
-    device_id = get_available_device_id()
-
-    if not device_id:
-        pytest.skip("No available devices to run model on Cloud AI 100")
 
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
@@ -86,7 +82,9 @@ def test_generate_text_stream(
         full_batch_size=full_batch_size,
     )
 
-    exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR, generation_len=max_gen_len)
+    exec_info = qeff_model.generate(
+        tokenizer, prompts=Constants.INPUT_STR, generation_len=max_gen_len, device_ids=get_available_device_id()
+    )
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
     cloud_ai_100_output = [tokenizer.decode(token, skip_special_tokens=True) for token in cloud_ai_100_tokens[0]]
 
@@ -100,7 +98,7 @@ def test_generate_text_stream(
     for decoded_tokens in text_generator.generate_stream_tokens(Constants.INPUT_STR, generation_len=max_gen_len):
         stream_tokens.extend(decoded_tokens)
 
-    assert cloud_ai_100_output == stream_tokens, (
-        f"Deviation in output observed while comparing regular execution and streamed output: {cloud_ai_100_output} != {stream_tokens}"
-    )
+    assert (
+        cloud_ai_100_output == stream_tokens
+    ), f"Deviation in output observed while comparing regular execution and streamed output: {cloud_ai_100_output} != {stream_tokens}"
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
