@@ -135,18 +135,15 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
-    assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
-        "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
-    )
+    assert (
+        pytorch_hf_tokens == pytorch_kv_tokens
+    ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
     gen_len = ort_tokens.shape[-1]
 
     assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
-
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
 
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
@@ -159,18 +156,18 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
     )
-    exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
+    exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR, device_ids=get_available_device_id())
     cloud_ai_100_tokens = exec_info.generated_ids[0][
         :, :gen_len
     ]  # Because we always run for single input and single batch size
     if prefill_only:
-        assert (ort_tokens[0][0] == cloud_ai_100_tokens[0][0]).all(), (
-            "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
-        )
+        assert (
+            ort_tokens[0][0] == cloud_ai_100_tokens[0][0]
+        ).all(), "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
     else:
-        assert (ort_tokens == cloud_ai_100_tokens).all(), (
-            "Tokens don't match for ONNXRT output and Cloud AI 100 output."
-        )
+        assert (
+            ort_tokens == cloud_ai_100_tokens
+        ).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."
         assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
     if prefill_only is not None:
         return
@@ -196,9 +193,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     )
     onnx_model_path = qeff_model.export()
 
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
-
     # TODO: add prefill_only tests
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
@@ -211,7 +205,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
     )
-    exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
+    exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts, device_ids=get_available_device_id())
 
     assert all(
         [
@@ -247,9 +241,9 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     new_api_ort_tokens = api_runner.run_kv_model_on_ort(new_api_onnx_model_path)
     old_api_ort_tokens = api_runner.run_kv_model_on_ort(old_api_onnx_model_path)
 
-    assert (new_api_ort_tokens == old_api_ort_tokens).all(), (
-        "New API output does not match old API output for ONNX export function"
-    )
+    assert (
+        new_api_ort_tokens == old_api_ort_tokens
+    ).all(), "New API output does not match old API output for ONNX export function"
 
 
 @pytest.mark.on_qaic

@@ -145,9 +145,9 @@ def get_padded_input_len(input_len: int, prefill_seq_len: int, ctx_len: int):
     """
     num_chunks = -(input_len // -prefill_seq_len)  # ceil divide without float
     input_len_padded = num_chunks * prefill_seq_len  # Convert input_len to a multiple of prefill_seq_len
-    assert input_len_padded <= ctx_len, (
-        "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
-    )
+    assert (
+        input_len_padded <= ctx_len
+    ), "input_len rounded to nearest prefill_seq_len multiple should be less than ctx_len"
     return input_len_padded
 
 
@@ -234,10 +234,7 @@ def test_pld_spec_decode_inference(
     Returns:
         CloudAI100ExecInfo: Execution information, including performance metrics and generated text.
     """
-    # get device group
-    device_group: List[int] = get_available_device_id()
-    if not device_group:
-        pytest.skip("No available devices to run model on Cloud AI 100")
+
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(target_model_name, padding_side="right")
@@ -453,7 +450,7 @@ def test_pld_spec_decode_inference(
     del draft_model_session
     generated_ids = np.asarray(generated_ids[0]).flatten()
     gen_len = generated_ids.shape[0]
-    exec_info = target_model.generate(tokenizer, Constants.INPUT_STR)
+    exec_info = target_model.generate(tokenizer, Constants.INPUT_STR, device_ids=get_available_device_id())
     cloud_ai_100_tokens = exec_info.generated_ids[0][
         :gen_len
     ]  # Because we always run for single input and single batch size

@@ -255,8 +255,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     # onnx_model_path = qeff_model.export()
     # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
+
     qeff_model.compile(
         img_size=model_config["img_size"],
         num_devices=num_devices,
@@ -270,7 +269,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     if "pixel_values" in inputs:
         inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     print("QPC Outputs (QAIC):")
-    output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
+    output = qeff_model.generate(
+        inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer, device_ids=get_available_device_id()
+    )
     qpc_tokens = output.generated_ids[:, :-1]
     assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
     return
@@ -346,8 +347,7 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     # onnx_model_path = qeff_model.export()
     # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
+
     qeff_model.compile(
         num_patches=1,
         num_devices=num_devices,
@@ -358,7 +358,9 @@ def check_intern_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         qnn_config=qnn_config,
     )
     print("QPC Outputs (QAIC):")
-    output = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
+    output = qeff_model.generate(
+        inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer, device_ids=get_available_device_id()
+    )
     qpc_tokens = output.generated_ids[:, :-1]
     assert (pytorch_hf_tokens == qpc_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
     return
