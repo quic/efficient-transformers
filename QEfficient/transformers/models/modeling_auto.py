@@ -2123,7 +2123,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         """
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
-
         inputs = self.auto_correct_inputs(inputs)
 
         if self.qpc_session is None:
