@@ -343,7 +343,9 @@ def train(
             )
 
             # Print evaluation metrics
-            print(f"Eval metric: {eval_metric.detach().cpu():.4f}, Eval Loss: {eval_loss.detach().cpu():.4f}")
+            print(
+                f"Epoch {epoch + 1}: Eval Loss: {eval_loss.detach().cpu():.4f}, Eval metric: {eval_metric.detach().cpu():.4f}"
+            )
             if eval_loss < best_val_loss:
                 best_val_loss = eval_loss
                 print(f"best eval loss on epoch {epoch + 1} is {best_val_loss:.4f}")
@@ -365,13 +367,8 @@ def train(
             else:
                 model.save_pretrained(train_config.output_dir + f"/complete_epoch_{epoch + 1}")
 
-        if train_config.task_type == "seq_classification":
             print(
-                f"Epoch {epoch + 1}: train_acc={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time:.2f} sec"
-            )
-        else:
-            print(
-                f"Epoch {epoch + 1}: train_ppl={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time:.2f} sec"
+                f"Epoch {epoch + 1}: Train epoch loss: {train_epoch_loss:.4f}, Train metric: {metric_val:.4f}, Epoch time {epoch_end_time:.2f} sec"
             )
 
         # Saving the results every epoch to plot later
