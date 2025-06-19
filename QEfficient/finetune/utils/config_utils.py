@@ -20,11 +20,13 @@ from peft import (
 from peft import LoraConfig as PeftLoraConfig
 from transformers.data import DataCollatorForSeq2Seq
 
+from QEfficient.finetune.utils.helper import get_num_ddp_devices
 import QEfficient.finetune.configs.dataset_config as datasets
 from QEfficient.finetune.configs.peft_config import LoraConfig, PrefixConfig
 from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.data.sampler import DistributedLengthBasedBatchSampler
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
+from QEfficient.finetune.utils.helper import get_rank
 
 
 def update_config(config, **kwargs):
@@ -146,13 +148,13 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, mode):
                 kwargs["batch_sampler"] = DistributedLengthBasedBatchSampler(
                     dataset,
                     batch_size=batch_size,
-                    rank=dist.get_rank(),
-                    num_replicas=dist.get_world_size(),
+                    rank=get_rank(),
+                    num_replicas=get_num_ddp_devices(),
                     shuffle=False,
                 )
         else:
             kwargs["sampler"] = data_utils.DistributedSampler(
-                dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True, drop_last=False
+                dataset, num_replicas=get_num_ddp_devices(), rank=get_rank(), shuffle=True, drop_last=False
             )
             kwargs["batch_size"] = batch_size
     else:
