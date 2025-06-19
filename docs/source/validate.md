@@ -76,8 +76,6 @@
 
 | Architecture            | Model Family | Representative Models                      |
 |-------------------------|--------------|--------------------------------------------|
-| **Llama4ForConditionalGeneration**|LlaMA4-scout| [meta-llama/Llama-4-Scout-17B-16E](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E)|
-| **Grok1ModelForCausalLM** |Grok1| [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)|
 | **Gemma3ForConditionalGeneration** |Gemma3| [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it) |
 | **Qwen3MoeForCausalLM** |Qwen3| [Qwen/Qwen3-MoE-15B-A2B]() |
 | **Mistral3ForConditionalGeneration**|Mistral 3.1| [mistralai/Mistral-Small-3.1-24B-Base-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Base-2503) |
