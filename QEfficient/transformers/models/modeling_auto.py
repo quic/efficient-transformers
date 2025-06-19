@@ -1580,27 +1580,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         is_chunked_attention = torch.tensor(
             [bool((i + 1) % 4) for i in range(self.model.config.num_hidden_layers)], dtype=torch.bool
         )
-        global_cache_shape = [1, 8, seq_len, 128]
-        chunked_cache_shape = [
-            1,
-            8,
-            seq_len,
-            128,
-        ]
 
         for i in range(self.model.config.num_hidden_layers):
             for kv in ["key", "value"]:
-                cache_shape = global_cache_shape if not is_chunked_attention[i] else chunked_cache_shape
                 apply_dynamic_axes = pkv_dynamic_axes if not is_chunked_attention[i] else pkv_dynamic_sliding_axes
-                example_inputs["past_key_values"][i].append(torch.zeros(cache_shape, dtype=torch.float32))
+                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape[0][0].shape, dtype=torch.float32))
                 dynamic_axes[f"past_{kv}.{i}"] = apply_dynamic_axes
                 output_names.append(f"past_{kv}.{i}_RetainedState")
-
-        # for i in range(self.num_layers):
-        #     for kv in ["key", "value"]:
-        #         example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-        #         dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
-        #         output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)

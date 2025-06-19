@@ -475,7 +475,6 @@ class KVCacheTransform(ModuleMappingTransform):
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
-        # FIXME: see if we can merge into _module_mapping dict
         return model, transformed
 
 

@@ -63,7 +63,6 @@ for key, value in inputs.items():
 
 inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
 streamer = TextStreamer(tokenizer)
-breakpoint()
 output = qeff_model.generate(inputs=inputs, device_ids=[0], generation_len=100)
 print(output.generated_ids)
 print(tokenizer.batch_decode(output.generated_ids))
