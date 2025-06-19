@@ -64,7 +64,7 @@ def acquire_device_lock(retry_interval: int = 10, retry_duration: int = 300) -> 
     Returns:
         file object if lock is acquired, else None.
     """
-    ensure_lock_dir()
+    ensure_lock_dir(LOCK_DIR)
     lock_file_path = os.path.join(LOCK_DIR, "device_check.lock")
     start_time = time.time()
 
