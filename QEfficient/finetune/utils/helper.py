@@ -25,3 +25,7 @@ def print_rank_0(msg):
 
 def get_num_ddp_devices():
     return int(os.getenv("WORLD_SIZE", 1))
+
+
+def get_rank():
+    return int(os.getenv("LOCAL_RANK", -1))

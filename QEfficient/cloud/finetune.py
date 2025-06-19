@@ -32,6 +32,7 @@ from QEfficient.finetune.utils.dataset_utils import get_dataloader
 from QEfficient.finetune.utils.parser import get_finetune_parser
 from QEfficient.finetune.utils.helper import is_rank_zero, get_num_ddp_devices
 from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
+from QEfficient.finetune.utils.helper import get_rank
 from QEfficient.utils._utils import login_and_download_hf_lm
 
 # Try importing QAIC-specific module, proceed without it if unavailable
@@ -71,7 +72,7 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
     dist_backend_map = {"cpu": "gloo", "qaic": "qccl", "cuda": "gloo"}
     dist.init_process_group(backend=dist_backend_map[torch_device.type])
     # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
-    getattr(torch, torch_device.type).set_device(dist.get_rank())
+    getattr(torch, torch_device.type).set_device(get_rank())
 
 
 def setup_seeds(seed: int) -> None:
@@ -296,7 +297,7 @@ def main(peft_config_file: str = None, **kwargs) -> None:
     optimizer = optim.AdamW(model.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
     if train_config.enable_ddp:
-        model = nn.parallel.DistributedDataParallel(model, device_ids=[dist.get_rank()])
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[get_rank()])
     results = train(
         model,
         tokenizer,
@@ -305,7 +306,7 @@ def main(peft_config_file: str = None, **kwargs) -> None:
         optimizer,
         scheduler,
         train_config,
-        dist.get_rank() if train_config.enable_ddp else None,
+        get_rank() if train_config.enable_ddp else None,
     )
     if train_config.enable_ddp:
         dist.destroy_process_group()

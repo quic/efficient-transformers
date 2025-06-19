@@ -17,7 +17,7 @@ import torch.distributed as dist
 import torchmetrics
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from QEfficient.finetune.utils.helper import is_rank_zero
+from QEfficient.finetune.utils.helper import is_rank_zero, get_num_ddp_devices
 from QEfficient.finetune.configs.training import TrainConfig
 
 try:
@@ -133,7 +133,6 @@ def train(
                 continue
 
         print(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
-        print(f"train_config.max_train_step: {train_config.max_train_step}")
         # stop when the maximum number of training steps is reached
         if max_steps_reached:
             break
@@ -204,6 +203,7 @@ def train(
                     model_outputs = model(**batch)
                     loss = model_outputs.loss  # Forward call
                     loss *= loss_weight[0]
+                    # FIXME: This does not work for bs>1. Because model_outputs.loss is the average loss across all the samples.
                     if loss_weight[0] == 0:
                         padded_samples += 1
                     if train_config.task_type == "seq_classification":
@@ -224,6 +224,7 @@ def train(
                 num_steps_in_cur_update = len(train_dataloader) % train_config.gradient_accumulation_steps
 
             loss = loss / num_steps_in_cur_update
+            loss = loss / get_num_ddp_devices()
             if train_config.enable_ddp:
                 if local_rank == 0:
                     if loss <= train_config.convergence_loss:
@@ -319,20 +320,18 @@ def train(
             else:
                 train_epoch_loss = total_loss / (len(train_dataloader) - padded_samples)
 
+        train_loss.append(float(train_epoch_loss))
+        train_metric.append(float(metric_val))
+
+        if train_config.enable_ddp:
+            dist.all_reduce(train_epoch_loss, op=dist.ReduceOp.SUM)
+            train_epoch_loss /= get_num_ddp_devices()
+
         if train_config.task_type == "seq_classification":
             metric_val = acc_helper.compute()
             acc_helper.reset()
         else:
             metric_val = torch.exp(train_epoch_loss)
-
-        train_metric.append(float(metric_val))
-        train_loss.append(float(train_epoch_loss))
-
-        if train_config.enable_ddp:
-            dist.all_reduce(train_epoch_loss, op=dist.ReduceOp.SUM)
-            train_epoch_loss /= dist.get_world_size()
-            dist.all_reduce(metric_val, op=dist.ReduceOp.SUM)
-            metric_val /= dist.get_world_size()
 
         # Update the learning rate as needed
         lr_scheduler.step()
@@ -466,16 +465,15 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
 
     # Compute average loss and metric
     eval_loss = eval_loss / (len(eval_dataloader) - padded_samples)
+
+    if train_config.enable_ddp:
+        dist.all_reduce(eval_loss, op=dist.ReduceOp.SUM)
+        eval_loss /= get_num_ddp_devices()
+
     if train_config.task_type == "seq_classification":
         eval_metric = acc_helper.compute()
     else:
         eval_metric = torch.exp(eval_loss)
-
-    if train_config.enable_ddp:
-        dist.all_reduce(eval_loss, op=dist.ReduceOp.SUM)
-        eval_loss /= dist.get_world_size()
-        dist.all_reduce(eval_metric, op=dist.ReduceOp.SUM)
-        eval_metric /= dist.get_world_size()
 
     return eval_loss, eval_metric, val_step_loss, val_step_metric
 
