@@ -1,7 +1,7 @@
 # Finetune Infra
 
-This repository provides the infrastructure for finetuning models using different hardware accelerators such as QAIC.
-Same CLI can be used to run Finetuning on gpu by setting the device flag.(for finetuning on gpu, install torch specific to cuda)
+This repository provides the infrastructure for finetuning models using different hardware accelerators such as QAic.
+Same CLI can be used to run finetuning on GPU by changing the value of device flag (for finetuning on GPU, install torch specific to CUDA).
 
 ## Installation
 
@@ -45,15 +45,20 @@ To download the grammar dataset, visit this [link](https://github.com/meta-llama
 ```python
 python -m QEfficient.cloud.finetune --device qaic:0 --model_name "meta-llama/Llama-3.2-1B"
 ```
-Also, you can configure various training parameters, for more details, checkout: QEfficient/finetune/configs/training.py, Below is example command line
+You can also configure various training parameters. Below is an example command line
 ```python
 python -m QEfficient.cloud.finetune --device qaic:0 --use-peft --output_dir ./meta-sam --num_epochs 2 --context_length 256 
+```
+
+For more details on the usage of the training parameters, use the below command:
+```python
+python -m QEfficient.cloud.finetune -h
 ```
 
 ### Distributed training(DDP) on QAIC
 
 ```python
-QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node 4 -m QEfficient.cloud.finetune --device qaic --enable_ddp --dist_backend qccl --num_epochs 2  --model_name "meta-llama/Llama-3.2-1B"
+QAIC_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc-per-node 4 -m QEfficient.cloud.finetune --device qaic --enable_ddp  --num_epochs 2  --model_name "meta-llama/Llama-3.2-1B"
 ```
 **nproc-per-node is number of workers(QAIC devices) running locally.
 
@@ -74,14 +79,14 @@ tensorboard --logdir runs/<file> --bind_all
 
 To run fine tuning for any user specific dataset, prepare the dataset using the following steps:
 
-    1) Create a directory named 'dataset' inside efficient-transformers.
-    2) Inside this directory, create a file named 'custom_dataset.py'.
-    3) Inside the newly created efficient-transformers/dataset/custom_dataset.py, define a function named 'get_custom_dataset'. 
-    4) get_custom_dataset() should have following 4 parameters:  dataset_config, tokenizer, split, context_length.  
-    5) Inside get_custom_dataset(), user needs to apply prompt and tokenize the dataset accordingly. Please refer the below template on how to define get_custom_dataset().
-    6) For examples, please refer python files present in [dataset](https://github.com/quic/efficient-transformers/tree/main/QEfficient/finetune/dataset). In case of Samsum dataset, get_preprocessed_samsum() of efficient-transformers/QEfficient/finetune/dataset/samsum_dataset.py is called. 
-    7) In [dataset_config.py](https://github.com/quic/efficient-transformers/blob/main/QEfficient/finetune/configs/dataset_config.py), for custom_dataset class, pass the appropriate value for train_split and test_split. As an alternative, these values can be passed as command line arguments as well with the finetune command. For example "--train_split train".
-    8) While running fine tuning, pass argument "-–dataset custom_dataset" to finetune on custom dataset.   
+    1. Create a directory named 'dataset' inside efficient-transformers.
+    2. Inside this directory, create a file named 'custom_dataset.py'.
+    3. Inside the newly created efficient-transformers/dataset/custom_dataset.py, define a function named 'get_custom_dataset'. 
+    4. get_custom_dataset() should have following 4 parameters:  dataset_config, tokenizer, split, context_length.  
+    5. Inside get_custom_dataset(), user needs to apply prompt and tokenize the dataset accordingly. Please refer the below template on how to define get_custom_dataset().
+    6. For examples, please refer python files present in [dataset](https://github.com/quic/efficient-transformers/tree/main/QEfficient/finetune/dataset). In case of Samsum dataset, get_preprocessed_samsum() of efficient-transformers/QEfficient/finetune/dataset/samsum_dataset.py is called. 
+    7. In [dataset_config.py](https://github.com/quic/efficient-transformers/blob/main/QEfficient/finetune/configs/dataset_config.py), for custom_dataset class, pass the appropriate value for train_split and test_split. As an alternative, these values can be passed as command line arguments as well with the finetune command. For example "--train_split train".
+    8. While running fine tuning, pass argument "-–dataset custom_dataset" to finetune on custom dataset.   
 
 Template for get_custom_dataset() to be defined inside efficient-transformers/dataset/custom_dataset.py is as follows:
 
