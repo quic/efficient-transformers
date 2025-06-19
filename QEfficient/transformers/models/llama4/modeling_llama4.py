@@ -494,15 +494,15 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         is_sliding = kwargs.get("is_sliding")
 
         if past_key_value is not None:
-            chunk_postion_ids = position_ids
+            chunk_position_ids = position_ids
 
             if self.use_rope:
-                chunk_postion_ids = torch.where(
-                    chunk_postion_ids != -1, chunk_postion_ids % self.config.attention_chunk_size, chunk_postion_ids
+                chunk_position_ids = torch.where(
+                    chunk_position_ids != -1, chunk_position_ids % self.config.attention_chunk_size, chunk_position_ids
                 )
 
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"batch_index": batch_index, "position_ids": chunk_postion_ids, "is_sliding": is_sliding}
+            cache_kwargs = {"batch_index": batch_index, "position_ids": chunk_position_ids, "is_sliding": is_sliding}
             key_states, value_states = past_key_value.update_hybrid_chunked(
                 key_states, value_states, self.layer_idx, cache_kwargs
             )
@@ -652,11 +652,11 @@ class QEffLlama4TextModel(Llama4TextModel):
         causal_mask = _create_causal_mask(
             position_ids=position_ids, target_length=past_key_values.key_cache[3].shape[-2]
         )
-        chunked_position_ids = torch.where(
+        chunk_position_ids = torch.where(
             position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
         )
         target_length = min(past_key_values.key_cache[0].shape[-2], torch.tensor(self.config.attention_chunk_size))
-        chunk_causal_mask = _create_causal_mask(position_ids=chunked_position_ids, target_length=target_length)
+        chunk_causal_mask = _create_causal_mask(position_ids=chunk_position_ids, target_length=target_length)
 
         # embed positions
         hidden_states = inputs_embeds
