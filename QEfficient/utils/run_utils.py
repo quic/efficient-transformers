@@ -107,7 +107,7 @@ class ApiRunner:
         input_len = model_inputs["input_ids"].shape[-1]
 
         with torch.inference_mode():
-            generation = model_hf.generate(**model_inputs, max_new_tokens=12, do_sample=False)
+            generation = model_hf.generate(**model_inputs, max_new_tokens=self.gen_len, do_sample=False)
             generated_ids = generation[0][input_len:]
 
         generated_text = self.input_handler.tokenizer.decode(generated_ids, skip_special_tokens=True)

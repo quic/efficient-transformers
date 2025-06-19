@@ -75,7 +75,7 @@ test_models_config = [
         336,
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
         "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-        1,
+        4,
     ),
     (
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
@@ -86,7 +86,7 @@ test_models_config = [
         336,
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
         "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-        1,
+        4,
     ),
     (
         "google/gemma-3-4b-it",
