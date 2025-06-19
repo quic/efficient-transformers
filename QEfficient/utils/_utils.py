@@ -387,12 +387,14 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
     else:
         raise ValueError("Invalid model configuration: n_head/d_heads or num_key_value_heads not found.")
 
+    # TODO this needs to be made more generic
     is_chunked_attention = torch.tensor([bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool)
+    attention_chunk_size = getattr(config, "attention_chunk_size", seq_len)
     global_cache_shape = [batch_size, n_heads, seq_len, d_head]
     chunked_cache_shape = [
         batch_size,
         n_heads,
-        seq_len if seq_len < config.attention_chunk_size else config.attention_chunk_size,
+        seq_len if seq_len < attention_chunk_size else attention_chunk_size,
         d_head,
     ]
 
@@ -404,7 +406,6 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
         pkv = (new_layer_key_cache, new_layer_value_cache)
         past_key_values.append(pkv)
     return past_key_values
-
 
 def get_num_layers_from_config(config):
     """
