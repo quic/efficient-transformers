@@ -53,7 +53,7 @@ def ensure_lock_dir(lock_dir: str):
         os.makedirs(lock_dir)
 
 
-def acquire_device_lock(retry_interval: int = 10, retry_duration: int = 300) -> Optional[object]:
+def acquire_device_lock(retry_interval: int = 10, retry_duration: int = 600) -> Optional[object]:
     """
     Attempt to acquire a non-blocking exclusive lock on a device lock file.
     Retries every 10 seconds for up to 5 minutes.
@@ -85,7 +85,7 @@ def acquire_device_lock(retry_interval: int = 10, retry_duration: int = 300) -> 
             logger.error(f"Unexpected error acquiring lock for device check: {e}")
             return None
 
-    logger.warning("Failed to acquire lock for device check after 5 minutes.")
+    logger.warning(f"Failed to acquire lock for device check after {retry_duration//60} minutes.")
     return None
 
 
@@ -116,7 +116,7 @@ def __fetch_device_id(device_count):
     return None
 
 
-def get_available_device_id(retry_duration: int = 300, wait_time: int = 5) -> Optional[list[int]]:
+def get_available_device_id(retry_duration: int = 600, wait_time: int = 5) -> Optional[list[int]]:
     """
     Find an available Cloud AI 100 device ID using file-based locking.
 
