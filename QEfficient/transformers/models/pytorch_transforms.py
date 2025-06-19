@@ -5,8 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
+import warnings
 from types import MethodType
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple, Union
 
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
@@ -34,6 +35,14 @@ from transformers.models.gemma2.modeling_gemma2 import (
     Gemma2ForCausalLM,
     Gemma2Model,
     Gemma2RMSNorm,
+)
+from transformers.models.gemma3.modeling_gemma3 import (
+    Gemma3Attention,
+    Gemma3DecoderLayer,
+    Gemma3ForCausalLM,
+    Gemma3ForConditionalGeneration,
+    Gemma3RMSNorm,
+    Gemma3TextModel,
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
@@ -65,6 +74,18 @@ from transformers.models.llama.modeling_llama import (
     LlamaForCausalLM,
     LlamaModel,
     LlamaRMSNorm,
+)
+from transformers.models.llama4.modeling_llama4 import (
+    Llama4ForCausalLM,
+    Llama4ForConditionalGeneration,
+    Llama4TextAttention,
+    Llama4TextDecoderLayer,
+    Llama4TextExperts,
+    Llama4TextModel,
+    Llama4TextMoe,
+    Llama4TextRMSNorm,
+    Llama4VisionAttention,
+    Llama4VisionModel,
 )
 from transformers.models.llava.modeling_llava import (
     LlavaForConditionalGeneration,
@@ -131,8 +152,9 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperPositionalEmbedding,
 )
 
-from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ModuleMethodMapperTransform
+from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
+from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QeffCodeGenBlock,
@@ -156,6 +178,14 @@ from QEfficient.transformers.models.gemma2.modeling_gemma2 import (
     QEffGemma2DecoderLayer,
     QEffGemma2ForCausalLM,
     QEffGemma2Model,
+)
+from QEfficient.transformers.models.gemma3.modeling_gemma3 import (
+    QEffGemma3Attention,
+    QEffGemma3CustomRMSNormAIC,
+    QEffGemma3DecoderLayer,
+    QEffGemma3ForCausalLMModel,
+    QEffGemma3ForConditionalGeneration,
+    QEffGemma3TextModel,
 )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
@@ -189,12 +219,31 @@ from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
     QEffGraniteMoeRotaryEmbedding,
     QEffGraniteMoeTopKGating,
 )
+from QEfficient.transformers.models.grok_1.modeling_grok1 import (
+    QEFFGrok1CustomRMSNormAIC,
+    QEffGrok1DecoderLayer,
+    QEffGrok1Model,
+    QEffGrok1ModelForCausalLM,
+    QEffGrok1MoeBlock,
+    QEffGrok1MultiHeadAttention,
+)
 from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
     QEffLlamaForCausalLM,
     QEffLlamaModel,
+)
+from QEfficient.transformers.models.llama4.modeling_llama4 import (
+    QEffLlama4ForCausalLM,
+    QEffLlama4ForConditionalGeneration,
+    QEffLlama4TextAttention,
+    QEffLlama4TextDecoderLayer,
+    QEffLlama4TextExperts,
+    QEffLlama4TextModel,
+    QEffLlama4TextMoe,
+    QEffLlama4VisionAttention,
+    QEffLlama4VisionModel,
 )
 from QEfficient.transformers.models.llava.modeling_llava import (
     QEffLlavaForConditionalGeneration,
@@ -267,6 +316,7 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperPositionalEmbedding,
 )
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
+from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
 
 SPD_TARGET = "target"
@@ -277,6 +327,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         GemmaRMSNorm: GemmaCustomRMSNormAIC,
         Gemma2RMSNorm: GemmaCustomRMSNormAIC,
         LlamaRMSNorm: CustomRMSNormAIC,
+        Llama4TextRMSNorm: CustomRMSNormAIC,
         MistralRMSNorm: CustomRMSNormAIC,
         MixtralRMSNorm: CustomRMSNormAIC,
         Phi3RMSNorm: CustomRMSNormAIC,
@@ -284,6 +335,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
         GraniteMoeRMSNorm: CustomRMSNormAIC,
+        Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
     }
 
 
@@ -314,6 +366,16 @@ class KVCacheTransform(ModuleMappingTransform):
         LlamaDecoderLayer: QEffLlamaDecoderLayer,
         LlamaModel: QEffLlamaModel,
         LlamaForCausalLM: QEffLlamaForCausalLM,
+        # Llama4
+        Llama4TextAttention: QEffLlama4TextAttention,
+        Llama4ForCausalLM: QEffLlama4ForCausalLM,
+        Llama4TextDecoderLayer: QEffLlama4TextDecoderLayer,
+        Llama4TextModel: QEffLlama4TextModel,
+        Llama4TextMoe: QEffLlama4TextMoe,
+        Llama4ForConditionalGeneration: QEffLlama4ForConditionalGeneration,
+        Llama4VisionAttention: QEffLlama4VisionAttention,
+        Llama4VisionModel: QEffLlama4VisionModel,
+        Llama4TextExperts: QEffLlama4TextExperts,
         # Llava
         LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
         # Llava Next
@@ -328,6 +390,12 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
         Gemma2Model: QEffGemma2Model,
         Gemma2ForCausalLM: QEffGemma2ForCausalLM,
+        # Gemma3
+        Gemma3Attention: QEffGemma3Attention,
+        Gemma3DecoderLayer: QEffGemma3DecoderLayer,
+        Gemma3TextModel: QEffGemma3TextModel,
+        Gemma3ForCausalLM: QEffGemma3ForCausalLMModel,
+        Gemma3ForConditionalGeneration: QEffGemma3ForConditionalGeneration,
         # Granite
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
@@ -456,6 +524,43 @@ class SpDTransform:
         return model, transformed
 
 
+class SamplerTransform:
+    """
+    Add nodes at the output of any generic QEffForCausalLM model to enable the
+    sampling of next tokens at the device (instead of the host) and return the
+    next tokens and/or probability distributions.
+
+    Note: To achieve this, the generic QEffForCausalLM model must provide the
+    logits as output.
+
+    ``Mandatory`` Args:
+        :model (nn.Module): PyTorch model.
+
+    Returns:
+        :model (nn.Module): PyTorch model.
+        :transformed (bool): whether transformation was applied successfully.
+    """
+
+    # supported architectures
+    _module_mapping = {
+        # Llama
+        QEffLlamaForCausalLM,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+        transformed = False
+        if qaic_config is None or not qaic_config.get("include_sampler", False):
+            return model, transformed
+        elif (model_class := model.__class__) in cls._module_mapping:
+            model.old_forward = model.forward
+            model.forward = MethodType(sampler_forward, model)
+            transformed = True
+        else:
+            raise NotImplementedError(f"Model class {model_class} does not support on device sampling.")
+        return model, transformed
+
+
 class VlmKVOffloadTransform(ModuleMappingTransform):
     # supported architectures
     _module_mapping = {
@@ -472,7 +577,7 @@ class VlmNoKVOffloadTransform(ModuleMappingTransform):
     }
 
 
-class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
+class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_string_replace_method = {
         "InternVLChatModel": {
             "forward": QEffInternVLModel.forward,
@@ -485,5 +590,42 @@ class KVCacheModuleMethodMapperTransform(ModuleMethodMapperTransform):
             "get_qeff_language_decoder": QEffInternVLModel.get_qeff_language_decoder,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
+        # Mapping for grok1 model
+        "Grok1ModelForCausalLM": {"forward": QEffGrok1ModelForCausalLM.forward},
+        "Grok1Model": {
+            "forward": QEffGrok1Model.forward,
+            "__qeff_init__": QEffGrok1Model.__qeff_init__,
+        },
+        "DecoderLayer": {
+            "forward": QEffGrok1DecoderLayer.forward,
+            "__qeff_init__": QEffGrok1DecoderLayer.__qeff_init__,
+        },
+        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward},
+        "MultiHeadAttention": {
+            "forward": QEffGrok1MultiHeadAttention.forward,
+        },
+        "RMSNorm": {
+            "forward": QEFFGrok1CustomRMSNormAIC.forward,
+        },
     }
+
     _match_class_replace_method = {}
+
+
+class PoolingTransform:
+    """
+    Apply a pooling transformation to the model. This transformation appends a pooling layer to the model, allowing for the reduction of spatial dimensions in the output.
+    The pooling layer can be configured to use different pooling methods, such as max pooling or average pooling.
+    """
+
+    @classmethod
+    def apply(cls, model: nn.Module, pooling: Union[str, Callable]) -> Tuple[nn.Module, bool]:
+        transformed = False
+        pooling_method = (
+            POOLING_MAP[pooling]
+            if isinstance(pooling, str) and pooling in POOLING_MAP
+            else validate_user_pooling_function(pooling)
+        )
+        model = PooledModel(model, pooling_method)
+        warnings.warn("Pooling is applied to the model.")
+        return model, transformed

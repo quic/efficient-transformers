@@ -7,6 +7,8 @@
 
 *Latest news* :fire: <br>
 
+- [06/2025] Added support for Llama4 Multi-Model [meta-llama/Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct)
+- [06/2025] Added support of model `hpcai-tech/grok-1` [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)
 - [04/2025] Added support for [Granite Vision models](https://huggingface.co/collections/ibm-granite/granite-vision-models-67b3bd4ff90c915ba4cd2800)
 - [04/2025] Added support for [Granite MOE models](https://huggingface.co/ibm-granite/granite-3.0-1b-a400m-base)
 - [04/2025] Support for [SpD, multiprojection heads](https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding). Implemented post-attention hidden size projections to speculate tokens ahead of the base model
