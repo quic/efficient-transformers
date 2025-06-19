@@ -1419,6 +1419,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
 
+        self.comp_ctx_lengths = kwargs.pop("comp_ctx_lengths", None)
+
     @property
     def model_name(self) -> str:
         mname = self.model.__class__.__name__
@@ -1489,6 +1491,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         kv_offload = kwargs.pop("kv_offload", None)
 
+        comp_ctx_lengths = kwargs.pop("comp_ctx_lengths", None)
+
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         if qaic_config is not None:
@@ -1505,6 +1509,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             continuous_batching=continuous_batching,
             qaic_config=qaic_config,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
+            comp_ctx_lengths=comp_ctx_lengths,
             **kwargs,
         )
 
@@ -1550,6 +1555,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
+        if self.comp_ctx_lengths is not None:
+            example_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.long)
+            dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
+
         if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
             pkv_dynamic_axes = {
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
@@ -1665,6 +1674,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self,
         prefill_seq_len: int = 32,
         ctx_len: int = 128,
+        comp_ctx_lengths: Optional[int] = None,
         batch_size: int = 1,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
@@ -1675,6 +1685,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "ctx_len": ctx_len,
             "num_logits_to_keep": 1 if self.is_tlm else None,
         }
+        if comp_ctx_lengths is not None:
+            spec["comp_ctx_lengths"] = comp_ctx_lengths
+
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
         else:
@@ -1687,6 +1700,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self,
         prefill_seq_len: int = 32,
         ctx_len: int = 128,
+        comp_ctx_lengths: Optional[int] = None,
         batch_size: int = 1,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
@@ -1700,6 +1714,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "ctx_len": ctx_len,
             "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm else None,
         }
+        if comp_ctx_lengths is not None:
+            spec["comp_ctx_lengths"] = comp_ctx_lengths
 
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
@@ -1788,26 +1804,45 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # --- Specializations ---
         specializations = []
         if prefill_only is None or prefill_only or prefill_seq_len == 1:
+            ctx_for_specialization = self.comp_ctx_lengths[0] if self.comp_ctx_lengths is not None else None
+
             specializations.append(
                 self.build_prefill_specialization(
                     prefill_seq_len=prefill_seq_len,
                     ctx_len=ctx_len,
+                    comp_ctx_lengths=ctx_for_specialization,
                     batch_size=batch_size,
                     kv_cache_batch_size=kv_cache_batch_size,
                     full_batch_size=full_batch_size,
                 )
             )
         if prefill_only is None or not prefill_only:
-            decode_spec = self.build_decode_specialization(
-                prefill_seq_len=prefill_seq_len,
-                ctx_len=ctx_len,
-                batch_size=batch_size,
-                kv_cache_batch_size=kv_cache_batch_size,
-                full_batch_size=full_batch_size,
-                num_speculative_tokens=num_speculative_tokens,
-            )
-            if decode_spec:
-                specializations.append(decode_spec)
+            if self.comp_ctx_lengths is not None:
+                # Adding elements from self.comp_ctx_lengths to decode_specialization
+                for i in range(1, len(self.comp_ctx_lengths)):
+                    decode_spec = self.build_decode_specialization(
+                        prefill_seq_len=prefill_seq_len,
+                        ctx_len=ctx_len,
+                        comp_ctx_lengths=self.comp_ctx_lengths[i],
+                        batch_size=batch_size,
+                        kv_cache_batch_size=kv_cache_batch_size,
+                        full_batch_size=full_batch_size,
+                        num_speculative_tokens=num_speculative_tokens,
+                    )
+                    if decode_spec:
+                        specializations.append(decode_spec)
+
+            else:
+                decode_spec = self.build_decode_specialization(
+                    prefill_seq_len=prefill_seq_len,
+                    ctx_len=ctx_len,
+                    batch_size=batch_size,
+                    kv_cache_batch_size=kv_cache_batch_size,
+                    full_batch_size=full_batch_size,
+                    num_speculative_tokens=num_speculative_tokens,
+                )
+                if decode_spec:
+                    specializations.append(decode_spec)
 
         # --- Compilation ---
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
@@ -1867,6 +1902,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 tokenizer,
                 self.qpc_path,
                 prompt=prompts,
+                comp_ctx_lengths=self.comp_ctx_lengths,
                 device_id=device_id,
                 generation_len=generation_len,
                 is_tlm=self.is_tlm,

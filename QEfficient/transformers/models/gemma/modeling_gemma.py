@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple, Union
 
 import torch
@@ -27,6 +28,16 @@ from transformers.models.gemma.modeling_gemma import (
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+
+
+@dataclass
+class QEffBaseModelOutputWithPast(BaseModelOutputWithPast):
+    comp_ctx_len_out: Optional[torch.LongTensor] = None
+
+
+@dataclass
+class QEffCausalLMOutputWithPast(CausalLMOutputWithPast):
+    comp_ctx_len_out: Optional[torch.LongTensor] = None
 
 
 class QEffGemmaRotaryEmbedding(GemmaRotaryEmbedding):
@@ -135,6 +146,7 @@ class QEffGemmaAttention(GemmaAttention):
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
@@ -153,8 +165,17 @@ class QEffGemmaAttention(GemmaAttention):
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
+            if comp_ctx_lengths is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "cache_position": cache_position,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+                "CCL": attention_mask.shape[-1],
+            }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
@@ -187,6 +208,7 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
@@ -219,6 +241,7 @@ class QEffGemmaDecoderLayer(GemmaDecoderLayer):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             output_attentions=output_attentions,
             use_cache=use_cache,
@@ -257,6 +280,7 @@ class QEffGemmaModel(GemmaModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -318,6 +342,7 @@ class QEffGemmaModel(GemmaModel):
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
@@ -338,11 +363,13 @@ class QEffGemmaModel(GemmaModel):
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
-        output = BaseModelOutputWithPast(
+        comp_ctx_len_out = comp_ctx_lengths[comp_ctx_lengths.shape[-1] - 1 :] if comp_ctx_lengths is not None else None
+        output = QEffBaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
+            comp_ctx_len_out=comp_ctx_len_out,
         )
         return output if return_dict else output.to_tuple()
 
@@ -360,6 +387,7 @@ class QEffGemmaForCausalLM(GemmaForCausalLM):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -383,6 +411,7 @@ class QEffGemmaForCausalLM(GemmaForCausalLM):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
@@ -400,10 +429,12 @@ class QEffGemmaForCausalLM(GemmaForCausalLM):
         logits = self.lm_head(hidden_states).float()
         logits = logits.float()
 
-        return CausalLMOutputWithPast(
+        comp_ctx_len_out = comp_ctx_lengths[comp_ctx_lengths.shape[-1] - 1 :] if comp_ctx_lengths is not None else None
+        return QEffCausalLMOutputWithPast(
             loss=None,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+            comp_ctx_len_out=comp_ctx_len_out,
         )
