@@ -404,11 +404,6 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
         pkv = (new_layer_key_cache, new_layer_value_cache)
         past_key_values.append(pkv)
     return past_key_values
-    # padding_shape = [batch_size, n_heads, seq_len, d_head]
-    # if hasattr(config, "architectures") and config.architectures is not None:  # Check for Starcoder1 - 3D layout
-    #     if "GPTBigCodeForCausalLM" in config.architectures:
-    #         padding_shape = [batch_size, seq_len, d_head]
-    # return padding_shape
 
 
 def get_num_layers_from_config(config):

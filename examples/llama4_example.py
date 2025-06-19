@@ -14,7 +14,7 @@ from QEfficient import QEFFAutoModelForImageTextToText
 model_id = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 # For Testing Purpose Only
-config.text_config.num_hidden_layers = 1
+config.text_config.num_hidden_layers = 4
 config.vision_config.num_hidden_layers = 2
 
 model = AutoModelForImageTextToText.from_pretrained(model_id, attn_implementation="eager", config=config)

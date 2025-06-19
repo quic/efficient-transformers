@@ -91,13 +91,6 @@ class InputHandler:
             inputs["position_ids"] = torch.arange(input_len).view(1, input_len)
             inputs["batch_index"] = torch.arange(1).view(-1, 1)
 
-        # past_key_values = []
-        # for i in range(self.n_layer):
-        #     past_key = torch.zeros((self.padding_shape), dtype=torch.float32)
-        #     past_value = torch.zeros((self.padding_shape), dtype=torch.float32)
-        #     pkv = (past_key, past_value)
-        #     past_key_values.append(pkv)
-        # inputs["past_key_values"] = tuple(past_key_values)
         inputs["past_key_values"] = tuple(self.past_key_values)
 
         return inputs
@@ -164,15 +157,10 @@ class InputHandler:
             axis=1,
         ).astype(np.int64)
 
-        # for i in range(self.n_layer):
-        #     inputs["past_key." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
-        #     inputs["past_value." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
-
         for i in range(self.n_layer):
             cache_shape = self.global_shape if not self.is_chunked_attention[i] else self.sliding_shape
             inputs["past_key." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
             inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
-
         return inputs
 
         return inputs
