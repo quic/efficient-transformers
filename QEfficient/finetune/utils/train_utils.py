@@ -199,13 +199,12 @@ def train(
                             acc_helper.forward(preds, labels)
                     print("Mismatches detected:", verifier.get_perop_mismatch_count())
                 else:
-                    loss_weight = batch.get("loss_weight", 1)
+                    labels = batch["labels"]
+                    loss_weight = batch.get("loss_weight", torch.ones(size=[labels.shape[0]]).to(device))
+                    num_items_in_batch = torch.sum(loss_weight)
+                    padded_samples += loss_weight.shape[0] - num_items_in_batch
                     model_outputs = model(**batch)
-                    loss = model_outputs.loss  # Forward call
-                    loss *= loss_weight[0]
-                    # FIXME: This does not work for bs>1. Because model_outputs.loss is the average loss across all the samples.
-                    if loss_weight[0] == 0:
-                        padded_samples += 1
+                    loss = model_outputs.loss
                     if train_config.task_type == "seq_classification":
                         logits = model_outputs.logits
                         labels = batch["labels"][:, 0]
@@ -224,7 +223,6 @@ def train(
                 num_steps_in_cur_update = len(train_dataloader) % train_config.gradient_accumulation_steps
 
             loss = loss / num_steps_in_cur_update
-            loss = loss / get_num_ddp_devices()
             if train_config.enable_ddp:
                 if local_rank == 0:
                     if loss <= train_config.convergence_loss:
@@ -245,12 +243,13 @@ def train(
                 tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
 
             if train_config.save_metrics:
-                train_step_loss.append(loss.detach().float().item())
-                if train_config.task_type == "seq_classification":
-                    step_metric_val = float(acc_helper.compute())
-                else:
-                    step_metric_val = float(torch.exp(loss.detach().float()))
-                train_step_metric.append(step_metric_val)
+                if num_items_in_batch != 0:
+                    train_step_loss.append(loss.detach().float().item())
+                    if train_config.task_type == "seq_classification":
+                        step_metric_val = float(acc_helper.compute())
+                    else:
+                        step_metric_val = float(torch.exp(loss.detach().float()))
+                    train_step_metric.append(step_metric_val)
 
             if train_config.grad_scaler:
                 scaler.scale(loss).backward()  # backward pass
@@ -320,18 +319,20 @@ def train(
             else:
                 train_epoch_loss = total_loss / (len(train_dataloader) - padded_samples)
 
+        if train_config.task_type == "seq_classification":
+            train_epoch_metric = acc_helper.compute()
+            acc_helper.reset()
+        else:
+            train_epoch_metric = torch.exp(train_epoch_loss)
+
         train_loss.append(float(train_epoch_loss))
-        train_metric.append(float(metric_val))
+        train_metric.append(float(train_epoch_metric))
 
         if train_config.enable_ddp:
             dist.all_reduce(train_epoch_loss, op=dist.ReduceOp.SUM)
             train_epoch_loss /= get_num_ddp_devices()
-
-        if train_config.task_type == "seq_classification":
-            metric_val = acc_helper.compute()
-            acc_helper.reset()
-        else:
-            metric_val = torch.exp(train_epoch_loss)
+            dist.all_reduce(train_epoch_metric, op=dist.ReduceOp.SUM)
+            train_epoch_metric /= get_num_ddp_devices()
 
         # Update the learning rate as needed
         lr_scheduler.step()
@@ -367,7 +368,7 @@ def train(
                 model.save_pretrained(train_config.output_dir + f"/complete_epoch_{epoch + 1}")
 
             print(
-                f"Epoch {epoch + 1}: Train epoch loss: {train_epoch_loss:.4f}, Train metric: {metric_val:.4f}, Epoch time {epoch_end_time:.2f} sec"
+                f"Epoch {epoch + 1}: Train epoch loss: {train_epoch_loss:.4f}, Train metric: {train_epoch_metric:.4f}, Epoch time {epoch_end_time:.2f} sec"
             )
 
         # Saving the results every epoch to plot later
@@ -440,26 +441,26 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
                 if train_config.use_autocast
                 else nullcontext()
             ):
+                labels = batch["labels"]
+                loss_weight = batch.get("loss_weight", torch.ones(size=[labels.shape[0]]).to(device))
+                num_items_in_batch = torch.sum(loss_weight)
+                padded_samples += loss_weight.shape[0] - num_items_in_batch
                 outputs = model(**batch)
-            loss_weight = batch.get("loss_weight", 1)
-            loss = outputs.loss
-            loss *= loss_weight[0]
+                loss = outputs.loss
 
-            if loss_weight[0] == 0:
-                padded_samples += 1
+            if num_items_in_batch != 0:
+                if train_config.task_type == "seq_classification":
+                    logits = outputs.logits
+                    labels = batch["labels"][:, 0]
+                    preds = torch.nn.functional.softmax(logits, dim=-1)
+                    val_acc = acc_helper.forward(preds, labels)
+                    metric_val = val_acc.detach().float().item()
+                else:
+                    metric_val = float(torch.exp(loss.detach().float()))
 
-            if train_config.task_type == "seq_classification":
-                logits = outputs.logits
-                labels = batch["labels"][:, 0]
-                preds = torch.nn.functional.softmax(logits, dim=-1)
-                val_acc = acc_helper.forward(preds, labels)
-                metric_val = val_acc.detach().float().item()
-            else:
-                metric_val = float(torch.exp(loss.detach().float()))
-
-            if train_config.save_metrics:
-                val_step_loss.append(loss.detach().float().item())
-                val_step_metric.append(metric_val)
+                if train_config.save_metrics:
+                    val_step_loss.append(loss.detach().float().item())
+                    val_step_metric.append(metric_val)
 
             eval_loss += loss.detach().float()
 
