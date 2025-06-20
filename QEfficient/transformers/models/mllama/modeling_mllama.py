@@ -925,8 +925,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             return_dict=return_dict,
             cache_position=cache_position,
         )
-        # outputs["pixel_values"] = pixel_values
-        # breakpoint()
+
         return outputs.logits, image_idx, outputs.past_key_values, pixel_values
 
     def get_dummy_inputs(self, kv_offload: bool = False):
