@@ -411,16 +411,9 @@ class QEffGemma3TextModel(Gemma3TextModel):
                 last_cache_position = (
                     attention_mask.shape[-1] if attention_mask.dim() == 2 else cache_position[-1].item()
                 )
-        # causal_mask = _create_causal_mask(
-        #     position_ids=position_ids, target_length=past_seen_tokens, sliding_window=self.config.sliding_window
-        # )
         causal_mask = None
         # embed positions
         hidden_states = inputs_embeds
-
-        # create position embeddings to be shared across the decoder layers
-        # position_embeddings_global = self.rotary_emb(hidden_states, position_ids)
-        # position_embeddings_local = self.rotary_emb_local(hidden_states, position_ids)
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
@@ -433,8 +426,6 @@ class QEffGemma3TextModel(Gemma3TextModel):
                 layer_outputs = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     hidden_states,
-                    # position_embeddings_global,
-                    # position_embeddings_local,
                     causal_mask,
                     position_ids,
                     past_key_values,
@@ -446,8 +437,6 @@ class QEffGemma3TextModel(Gemma3TextModel):
             else:
                 layer_outputs = decoder_layer(
                     hidden_states,
-                    # position_embeddings_global=position_embeddings_global,
-                    # position_embeddings_local=position_embeddings_local,
                     attention_mask=causal_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_values,
@@ -565,16 +554,8 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
             logits = torch.tanh(logits)
             logits = logits * self.config.final_logit_softcapping
 
-        loss = None
-        if labels is not None:
-            loss = self.loss_function(logits, labels, self.vocab_size, **loss_kwargs)
-
-        if not return_dict:
-            output = (logits,) + outputs[1:]
-            return (loss,) + output if loss is not None else output
-
         return CausalLMOutputWithPast(
-            loss=loss,
+            loss=None,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
@@ -834,11 +815,6 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
-
-        # lang_inputs["past_key_values"] = [[] for _ in range(self.language_model.config.num_hidden_layers)]
-        # for i in range(self.language_model.config.num_hidden_layers):
-        #     for kv in ["key", "value"]:
-        #         lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
 
         inputs = {}
         if kv_offload:
