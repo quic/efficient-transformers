@@ -391,6 +391,13 @@ class QEffHybridCache(HybridCache):
 
 
 class QEffHybridChunkedCache(HybridChunkedCache):
+    def __len__(self):
+        """
+        Support for backwards-compatible `past_key_value` length, e.g. `len(past_key_value)`. This value corresponds
+        to the number of layers in the model.
+        """
+        return len(self.key_cache)
+
     def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
         """Returns the sequence length of the cached states. A layer index can be optionally passed."""
         # TODO: deprecate this function in favor of `cache_position`
@@ -406,7 +413,7 @@ class QEffHybridChunkedCache(HybridChunkedCache):
         """Converts the `HybridChunkedCache` instance into the its equivalent in the legacy cache format. Used for
         backward compatibility."""
         legacy_cache = ()
-        for layer_idx in range(self.len(self)):
+        for layer_idx in range(len(self)):
             legacy_cache += ((self.key_cache[layer_idx], self.value_cache[layer_idx]),)
         return legacy_cache
 
