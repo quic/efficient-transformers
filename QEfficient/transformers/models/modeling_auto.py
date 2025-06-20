@@ -51,7 +51,10 @@ from QEfficient.transformers.quantizers.quant_transforms import (
     FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
 )
-from QEfficient.utils import constants, get_padding_shape_from_config
+from QEfficient.utils import (
+    constants,
+    get_padding_shape_from_config,
+)
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
 
@@ -1564,11 +1567,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
                 2: "ctx_len",
             }
-            pkv_dynamic_sliding_axes = {
-                0: "full_batch_size" if self.continuous_batching else "batch_size",
-                2: "chunk_attn",
-            }
-
         output_names = []
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
             if self.model.qaic_config.get("return_pdfs", False):
@@ -1577,18 +1575,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             output_names.append("logits")
 
-        is_chunked_attention = torch.tensor(
-            [bool((i + 1) % 4) for i in range(self.model.config.num_hidden_layers)], dtype=torch.bool
-        )
+        if hasattr(self.model.config, "attention_chunk_size") or hasattr(self.model.config, "sliding_window"):
+            pkv_cache = self.model.get_dummy_pkv_cache(
+                self.model.config, fbs if self.continuous_batching else bs, seq_len
+            )
+            for i in range(self.num_layers):
+                for kv in ["key", "value"]:
+                    example_inputs["past_key_values"][i].append(torch.zeros(pkv_cache[0][0].shape, dtype=torch.float32))
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                    output_names.append(f"past_{kv}.{i}_RetainedState")
 
-        for i in range(self.model.config.num_hidden_layers):
-            for kv in ["key", "value"]:
-                apply_dynamic_axes = pkv_dynamic_axes if not is_chunked_attention[i] else pkv_dynamic_sliding_axes
-                example_inputs["past_key_values"][i].append(
-                    torch.zeros(kv_cache_shape[0][0].shape, dtype=torch.float32)
-                )
-                dynamic_axes[f"past_{kv}.{i}"] = apply_dynamic_axes
-                output_names.append(f"past_{kv}.{i}_RetainedState")
+        else:
+            for i in range(self.num_layers):
+                for kv in ["key", "value"]:
+                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                    output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -1689,7 +1691,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "batch_size": 1 if self.continuous_batching else batch_size,
             "seq_len": prefill_seq_len,
             "ctx_len": ctx_len,
-            "chunk_attn": self.model.config.attention_chunk_size,
             "num_logits_to_keep": 1 if self.is_tlm else None,
         }
         if self.continuous_batching:
@@ -1715,7 +1716,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "batch_size": full_batch_size if self.continuous_batching else batch_size,
             "seq_len": (num_speculative_tokens + 1) if self.is_tlm else 1,
             "ctx_len": ctx_len,
-            "chunk_attn": self.model.config.attention_chunk_size,
             "num_logits_to_keep": (num_speculative_tokens + 1) if self.is_tlm else None,
         }
 

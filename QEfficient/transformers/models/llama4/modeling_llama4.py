@@ -35,7 +35,7 @@ from transformers.models.llama4.modeling_llama4 import (
 from QEfficient.transformers.cache_utils import QEffHybridChunkedCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
-from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
+from QEfficient.utils._utils import IOInfo
 
 
 def eager_attention_forward_vision(
@@ -767,6 +767,30 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
             attentions=outputs.attentions,
         )
 
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+        n_heads = config.num_key_value_heads
+        d_head = config.head_dim
+        is_chunked_attention = torch.tensor(
+            [bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool
+        )
+        attention_chunk_size = getattr(config, "attention_chunk_size", seq_len)
+        global_cache_shape = [batch_size, n_heads, seq_len, d_head]
+        chunked_cache_shape = [
+            batch_size,
+            n_heads,
+            seq_len if seq_len < attention_chunk_size else attention_chunk_size,
+            d_head,
+        ]
+
+        past_key_values = []
+        for i in range(config.num_hidden_layers):
+            cache_shape = global_cache_shape if not is_chunked_attention[i] else chunked_cache_shape
+            new_layer_key_cache = torch.zeros(cache_shape, dtype=torch.float32)
+            new_layer_value_cache = torch.zeros(cache_shape, dtype=torch.float32)
+            pkv = (new_layer_key_cache, new_layer_value_cache)
+            past_key_values.append(pkv)
+        return past_key_values
+
 
 class QEffLlama4EncoderWrapper(nn.Module):
     def __init__(self, model):
@@ -987,6 +1011,30 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             return lang_output_names
         return output_names
 
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+        n_heads = config.num_key_value_heads
+        d_head = config.head_dim
+        is_chunked_attention = torch.tensor(
+            [bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool
+        )
+        attention_chunk_size = getattr(config, "attention_chunk_size", seq_len)
+        global_cache_shape = [batch_size, n_heads, seq_len, d_head]
+        chunked_cache_shape = [
+            batch_size,
+            n_heads,
+            seq_len if seq_len < attention_chunk_size else attention_chunk_size,
+            d_head,
+        ]
+
+        past_key_values = []
+        for i in range(config.num_hidden_layers):
+            cache_shape = global_cache_shape if not is_chunked_attention[i] else chunked_cache_shape
+            new_layer_key_cache = torch.zeros(cache_shape, dtype=torch.float32)
+            new_layer_value_cache = torch.zeros(cache_shape, dtype=torch.float32)
+            pkv = (new_layer_key_cache, new_layer_value_cache)
+            past_key_values.append(pkv)
+        return past_key_values
+
     def get_dummy_inputs(self, kv_offload: bool = False):
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", 336)
@@ -1033,7 +1081,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
         # Add data for KV
-        kv_cache_shape = get_padding_shape_from_config(
+        past_key_values = self.get_dummy_pkv_cache(
             config=self.language_model.config,
             batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
@@ -1042,7 +1090,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         lang_inputs["past_key_values"] = [[] for _ in range(self.language_model.config.num_hidden_layers)]
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
-                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape[0][0].shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(torch.zeros(past_key_values[0][0].shape, dtype=torch.float32))
 
         inputs = {}
         if kv_offload:

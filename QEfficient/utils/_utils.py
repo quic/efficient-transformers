@@ -283,6 +283,10 @@ def padding_check_and_fix(tokenizer: Union[PreTrainedTokenizer, PreTrainedTokeni
             tokenizer.pad_token_id = tokenizer.vocab_size - 1
 
 
+def get_sliding_window_layers(config):
+    return torch.tensor([bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool)
+
+
 def get_sliding_window_shapes(config, batch_size, seq_len):
     """
     Gets padding dims from model config - number of kv heads and d_head
@@ -329,12 +333,18 @@ def get_sliding_window_shapes(config, batch_size, seq_len):
     else:
         raise ValueError("Invalid model configuration: n_head/d_heads or num_key_value_heads not found.")
 
-    # is_chunked_attention = torch.tensor([bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool)
+    # TODO needs to fetch the head, d_head and batch size from padding shape
     global_cache_shape = [batch_size, n_heads, seq_len, d_head]
+    if hasattr(config, "attention_chunk_size"):
+        chunk_seq_len = config.attention_chunk_size
+    elif hasattr(config, "sliding_window"):
+        chunk_seq_len = config.sliding_window
+    else:
+        chunk_seq_len = seq_len
     chunked_cache_shape = [
         batch_size,
         n_heads,
-        seq_len if seq_len < config.attention_chunk_size else config.attention_chunk_size,
+        seq_len if seq_len < chunk_seq_len else chunk_seq_len,
         d_head,
     ]
 
@@ -386,26 +396,12 @@ def get_padding_shape_from_config(config, batch_size, seq_len):
         d_head = config.hidden_size // config.num_attention_heads
     else:
         raise ValueError("Invalid model configuration: n_head/d_heads or num_key_value_heads not found.")
+    padding_shape = [batch_size, n_heads, seq_len, d_head]
+    if hasattr(config, "architectures") and config.architectures is not None:  # Check for Starcoder1 - 3D layout
+        if "GPTBigCodeForCausalLM" in config.architectures:
+            padding_shape = [batch_size, seq_len, d_head]
+    return padding_shape
 
-    # TODO this needs to be made more generic
-    is_chunked_attention = torch.tensor([bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool)
-    attention_chunk_size = getattr(config, "attention_chunk_size", seq_len)
-    global_cache_shape = [batch_size, n_heads, seq_len, d_head]
-    chunked_cache_shape = [
-        batch_size,
-        n_heads,
-        seq_len if seq_len < attention_chunk_size else attention_chunk_size,
-        d_head,
-    ]
-
-    past_key_values = []
-    for i in range(config.num_hidden_layers):
-        cache_shape = global_cache_shape if not is_chunked_attention[i] else chunked_cache_shape
-        new_layer_key_cache = torch.zeros(cache_shape, dtype=torch.float32)
-        new_layer_value_cache = torch.zeros(cache_shape, dtype=torch.float32)
-        pkv = (new_layer_key_cache, new_layer_value_cache)
-        past_key_values.append(pkv)
-    return past_key_values
 
 def get_num_layers_from_config(config):
     """
