@@ -21,6 +21,8 @@ model = AutoModelForImageTextToText.from_pretrained(model_id, attn_implementatio
 model.eval()
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
+
+### For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
 qeff_model = QEFFAutoModelForImageTextToText(model, kv_offload=True)
 
 ### use skip_vision=Ture, if want to run only text, ow false ###
@@ -81,6 +83,21 @@ else:
     )
 
     ### IMAGE + TEXT ###
+    """
+    Multi_image Prompt :
+ 
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "url": Meta_logo},
+                # {"type": "text", "text": "Please analyze the provided image and generate a detailed description of its contents. "},
+                {"type": "image", "url": Google_logo},
+                {"type": "text", "text": "Analyze the key elements, colors, and objects in the two images. Discuss their similarities, differences, and how they complement or contrast each other. Reflect on the emotions or ideas they convey, considering the context, light, shadow, and composition."},
+            ]
+        },
+    ]
+    """
     image_url = (
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
     )
