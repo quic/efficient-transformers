@@ -135,9 +135,9 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
-    assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
-        "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
-    )
+    assert (
+        pytorch_hf_tokens == pytorch_kv_tokens
+    ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
@@ -164,13 +164,13 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         :, :gen_len
     ]  # Because we always run for single input and single batch size
     if prefill_only:
-        assert (ort_tokens[0][0] == cloud_ai_100_tokens[0][0]).all(), (
-            "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
-        )
+        assert (
+            ort_tokens[0][0] == cloud_ai_100_tokens[0][0]
+        ).all(), "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
     else:
-        assert (ort_tokens == cloud_ai_100_tokens).all(), (
-            "Tokens don't match for ONNXRT output and Cloud AI 100 output."
-        )
+        assert (
+            ort_tokens == cloud_ai_100_tokens
+        ).all(), "Tokens don't match for ONNXRT output and Cloud AI 100 output."
         assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
     if prefill_only is not None:
         return
@@ -247,9 +247,9 @@ def test_causal_lm_export_with_deprecated_api(model_name):
     new_api_ort_tokens = api_runner.run_kv_model_on_ort(new_api_onnx_model_path)
     old_api_ort_tokens = api_runner.run_kv_model_on_ort(old_api_onnx_model_path)
 
-    assert (new_api_ort_tokens == old_api_ort_tokens).all(), (
-        "New API output does not match old API output for ONNX export function"
-    )
+    assert (
+        new_api_ort_tokens == old_api_ort_tokens
+    ).all(), "New API output does not match old API output for ONNX export function"
 
 
 @pytest.mark.on_qaic
@@ -260,7 +260,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
-    if model_name == "microsoft/Phi-3-mini-4k-instruct":
+    if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8"}:
         n_layer = 2  # test only 2 layer models
     else:
         n_layer = 1
