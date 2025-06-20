@@ -580,7 +580,26 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+        n_heads = config.num_key_value_heads
+        d_head = config.head_dim
+        layer_switch = config.sliding_window_pattern if hasattr(config, "sliding_window_pattern") else 2  # 2 is for BC
+        is_sliding = torch.tensor(
+            [bool((i + 1) % layer_switch) for i in range(config.num_hidden_layers)], dtype=torch.bool
+        )
+        global_cache_shape = [batch_size, n_heads, seq_len, d_head]
+        if hasattr(config, "sliding_window"):
+            sliding_cache_shape = [batch_size, n_heads, min(config.sliding_window, seq_len), d_head]
+        past_key_values = []
+        cache_shape = global_cache_shape
+        for i in range(config.num_hidden_layers):
+            if hasattr(config, "sliding_window"):
+                cache_shape = global_cache_shape if not is_sliding[i] else sliding_cache_shape
+            new_layer_key_cache = torch.zeros(cache_shape, dtype=torch.float32)
+            new_layer_value_cache = torch.zeros(cache_shape, dtype=torch.float32)
+            pkv = (new_layer_key_cache, new_layer_value_cache)
+            past_key_values.append(pkv)
+        return past_key_values
 
 class QEffGemma3EncoderWrapper(nn.Module):
     def __init__(self, model):
@@ -747,7 +766,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             return lang_output_names
         return output_names
 
-    def get_pkv_input_with_sliding_window(self, config, batch_size, seq_len):
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
         layer_switch = config.sliding_window_pattern if hasattr(config, "sliding_window_pattern") else 2  # 2 is for BC
@@ -808,7 +827,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
         # Add data for KV
-        lang_inputs["past_key_values"] = self.get_pkv_input_with_sliding_window(
+        lang_inputs["past_key_values"] = self.get_dummy_pkv_cache(
             config=self.language_model.config,
             batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
