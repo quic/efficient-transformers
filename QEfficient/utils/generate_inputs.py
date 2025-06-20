@@ -9,6 +9,7 @@ from typing import List
 import numpy as np
 import torch
 
+from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
 from QEfficient.utils import (
     get_num_layers_from_config,
     get_padding_shape_from_config,
@@ -39,6 +40,7 @@ class InputHandler:
         self.prompt_len = prompt_len
         self.ctx_len = ctx_len
         self.full_batch_size = full_batch_size
+        self.config = config
         self.n_layer = get_num_layers_from_config(config)
         self.padding_shape = get_padding_shape_from_config(
             config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
@@ -160,10 +162,15 @@ class InputHandler:
             axis=1,
         ).astype(np.int64)
 
-        for i in range(self.n_layer):
-            cache_shape = self.global_shape if not self.is_chunked_attention[i] else self.sliding_shape
-            inputs["past_key." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
-            inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
+        if hasattr(self.config, "model_type") and self.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH:
+            for i in range(self.n_layer):
+                cache_shape = self.global_shape if not self.is_chunked_attention[i] else self.sliding_shape
+                inputs["past_key." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
+                inputs["past_value." + str(i)] = np.zeros((cache_shape), dtype=np.float32)
+        else:
+            for i in range(self.n_layer):
+                inputs["past_key." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
+                inputs["past_value." + str(i)] = np.zeros((self.padding_shape), dtype=np.float32)
         return inputs
 
     def update_ort_inputs(self, inputs, ort_outputs):
