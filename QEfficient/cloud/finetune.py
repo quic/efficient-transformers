@@ -20,6 +20,7 @@ import torch.utils.data
 from peft import PeftModel, get_peft_model
 from torch.optim.lr_scheduler import StepLR
 from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
+from QEfficient.finetune.loss.loss_factory import get_loss
 
 from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.utils.config_utils import (
@@ -121,6 +122,7 @@ def load_model_and_tokenizer(
             attn_implementation="sdpa",
             torch_dtype=torch.float16,
         )
+        model.loss_function = get_loss(train_config.task_type)(dataset_config.num_labels)
 
         if not hasattr(model, "base_model_prefix"):
             raise RuntimeError("Given huggingface model does not have 'base_model_prefix' attribute.")
@@ -138,6 +140,7 @@ def load_model_and_tokenizer(
             attn_implementation="sdpa",
             torch_dtype=torch.float16,
         )
+        model.loss_function = get_loss(train_config.task_type)()
 
     tokenizer = AutoTokenizer.from_pretrained(
         train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name
