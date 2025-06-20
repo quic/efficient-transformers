@@ -467,14 +467,16 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     # Compute average loss and metric
     eval_loss = eval_loss / (len(eval_dataloader) - padded_samples)
 
-    if train_config.enable_ddp:
-        dist.all_reduce(eval_loss, op=dist.ReduceOp.SUM)
-        eval_loss /= get_num_ddp_devices()
-
     if train_config.task_type == "seq_classification":
         eval_metric = acc_helper.compute()
     else:
         eval_metric = torch.exp(eval_loss)
+
+    if train_config.enable_ddp:
+        dist.all_reduce(eval_loss, op=dist.ReduceOp.SUM)
+        eval_loss /= get_num_ddp_devices()
+        dist.all_reduce(eval_metric, op=dist.ReduceOp.SUM)
+        eval_metric /= get_num_ddp_devices()
 
     return eval_loss, eval_metric, val_step_loss, val_step_metric
 
