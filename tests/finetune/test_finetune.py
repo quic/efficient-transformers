@@ -7,17 +7,17 @@
 
 import os
 import shutil
+from pathlib import Path
 
 import numpy as np
 import pytest
+import requests
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
 import QEfficient
 import QEfficient.cloud.finetune
 from QEfficient.cloud.finetune import main as finetune
-from pathlib import Path
-import requests
 
 alpaca_json_path = Path.cwd() / "alpaca_data.json"
 
