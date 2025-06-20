@@ -1090,7 +1090,6 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         for i in self.config.text_config.cross_attention_layers:
             vision_output_names.append(f"past_key.{i}")
             vision_output_names.append(f"past_value.{i}")
-
         lang_output_names = [
             "logits",
             *[f"past_{kv}.{i}_RetainedState" for i in range(num_hidden_layers) for kv in ["key", "value"]],
