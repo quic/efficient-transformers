@@ -73,7 +73,6 @@ else:
         img_size=896,
         num_cores=16,
         num_devices=8,
-        max_num_tiles=17,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
