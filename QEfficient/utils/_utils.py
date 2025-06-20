@@ -335,12 +335,16 @@ def get_sliding_window_shapes(config, batch_size, seq_len):
 
     # TODO needs to fetch the head, d_head and batch size from padding shape
     global_cache_shape = [batch_size, n_heads, seq_len, d_head]
+    chunk_seq_len = None
     if hasattr(config, "attention_chunk_size"):
         chunk_seq_len = config.attention_chunk_size
     elif hasattr(config, "sliding_window"):
         chunk_seq_len = config.sliding_window
-    else:
+
+    # Added the check because in case of mistralai/Mixtral-8x7B-Instruct-v0.1 the sliding window value is set to Null
+    if chunk_seq_len is None:
         chunk_seq_len = seq_len
+
     chunked_cache_shape = [
         batch_size,
         n_heads,
