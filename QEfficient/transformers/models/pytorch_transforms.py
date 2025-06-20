@@ -504,6 +504,7 @@ class SpDTransform:
     def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
         transformed = False
         kwargs.pop("pretrained_model_name_or_path")
+
         if qaic_config is None or (speculative_model_type := qaic_config.get("speculative_model_type")) is None:
             return model, transformed
         elif speculative_model_type not in (
