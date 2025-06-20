@@ -1155,7 +1155,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             inputs["pixel_values"] = inputs["pixel_values"].astype("float16")
 
         inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
-        # not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
         inputs["image_idx"] = np.array([[0]])
 
         qpc_session.activate()
