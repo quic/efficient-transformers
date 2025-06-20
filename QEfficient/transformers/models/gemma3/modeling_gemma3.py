@@ -580,6 +580,7 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
@@ -600,6 +601,7 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
             pkv = (new_layer_key_cache, new_layer_value_cache)
             past_key_values.append(pkv)
         return past_key_values
+
 
 class QEffGemma3EncoderWrapper(nn.Module):
     def __init__(self, model):
