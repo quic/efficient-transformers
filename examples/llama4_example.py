@@ -83,21 +83,6 @@ else:
     )
 
     ### IMAGE + TEXT ###
-    """
-    Multi_image Prompt :
- 
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "url": Meta_logo},
-                # {"type": "text", "text": "Please analyze the provided image and generate a detailed description of its contents. "},
-                {"type": "image", "url": Google_logo},
-                {"type": "text", "text": "Analyze the key elements, colors, and objects in the two images. Discuss their similarities, differences, and how they complement or contrast each other. Reflect on the emotions or ideas they convey, considering the context, light, shadow, and composition."},
-            ]
-        },
-    ]
-    """
     image_url = (
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
     )
