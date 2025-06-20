@@ -28,7 +28,7 @@ qeff_model = QEFFAutoModelForImageTextToText(model, kv_offload=True)
 ### For multi-image, the value of max_num_tiles should be the sum of the num_tiles values across all the images ###
 qeff_model.compile(
     prefill_seq_len=128,
-    ctx_len=3072,
+    ctx_len=5376,
     img_size=336,
     num_cores=16,
     num_devices=8,
