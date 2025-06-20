@@ -35,6 +35,7 @@ from QEfficient.generation.text_generation_inference import (
     calculate_latency,
     get_compilation_dims,
 )
+from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
@@ -1575,7 +1576,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             output_names.append("logits")
 
-        if hasattr(self.model.config, "attention_chunk_size") or hasattr(self.model.config, "sliding_window"):
+        # TODO Update the get_padding_shape_from_config method to handle the case when the model config has attention_chunk_size or sliding_window and it should return a list of shapes for each layer
+        if (
+            hasattr(self.model.config, "model_type")
+            and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
+        ):
             pkv_cache = self.model.get_dummy_pkv_cache(
                 self.model.config, fbs if self.continuous_batching else bs, seq_len
             )
