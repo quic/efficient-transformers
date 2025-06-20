@@ -391,13 +391,6 @@ class QEffHybridCache(HybridCache):
 
 
 class QEffHybridChunkedCache(HybridChunkedCache):
-    def __len__(self):
-        """
-        Support for backwards-compatible `past_key_value` length, e.g. `len(past_key_value)`. This value corresponds
-        to the number of layers in the model.
-        """
-        return len(self.key_cache)
-
     def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
         """Returns the sequence length of the cached states. A layer index can be optionally passed."""
         # TODO: deprecate this function in favor of `cache_position`
@@ -413,8 +406,7 @@ class QEffHybridChunkedCache(HybridChunkedCache):
         """Converts the `HybridChunkedCache` instance into the its equivalent in the legacy cache format. Used for
         backward compatibility."""
         legacy_cache = ()
-        # breakpoint()
-        for layer_idx in range(len(self)):
+        for layer_idx in range(self.len(self)):
             legacy_cache += ((self.key_cache[layer_idx], self.value_cache[layer_idx]),)
         return legacy_cache
 
@@ -449,13 +441,15 @@ class QEffHybridChunkedCache(HybridChunkedCache):
             is_sliding_layer = torch.tensor(bool(self.is_sliding[layer_idx]))
 
             # Update the position_ids to handle the sliding window
-            N = self.key_cache[layer_idx].shape[2]
+            layer_ctx_len = self.key_cache[layer_idx].shape[2]
             kv_position_ids = torch.where(
-                (~is_sliding_layer | (position_ids == -1)), position_ids, position_ids % (N - 1)
+                (~is_sliding_layer | (position_ids == -1)), position_ids, position_ids % (layer_ctx_len - 1)
             )
 
             kv_position_ids = torch.where(
-                is_sliding_layer & (position_ids.max() >= (N - 1) * 2), (position_ids + 1) % N, kv_position_ids
+                is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1) * 2),
+                (position_ids + 1) % layer_ctx_len,
+                kv_position_ids,
             )
 
             valid_mask = (kv_position_ids != -1).unsqueeze(1).unsqueeze(-1)
@@ -468,7 +462,7 @@ class QEffHybridChunkedCache(HybridChunkedCache):
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
 
             # Original Gather
-            ctx_len = min(N, k_out.shape[2])
+            ctx_len = min(layer_ctx_len, k_out.shape[2])
             ctx_indices = torch.arange(ctx_len)[None, None, ...]
             gather_limit = kv_position_ids.max(1, keepdim=True).values.unsqueeze(1)
             invalid_mask = ctx_indices > gather_limit
@@ -479,13 +473,13 @@ class QEffHybridChunkedCache(HybridChunkedCache):
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
             # Rolling indices for sliding window
-            all_indices = torch.arange(N) + kv_position_ids.max() + 1
-            rolling_indices = torch.where(all_indices > N - 1, all_indices % N, all_indices)
+            all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
+            rolling_indices = torch.where(all_indices > layer_ctx_len - 1, all_indices % layer_ctx_len, all_indices)
             final_indices = torch.where(
-                (is_sliding_layer & (position_ids.max() >= (N - 1))), rolling_indices, ctx_indices
+                (is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), rolling_indices, ctx_indices
             )
             k_out = CtxGatherFunc.apply(k_out, final_indices)
             v_out = CtxGatherFunc.apply(v_out, final_indices)
             ctx_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
-            v_out = torch.where((is_sliding_layer & (position_ids.max() >= (N - 1))), v_out, ctx_v_out)
+            v_out = torch.where((is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), v_out, ctx_v_out)
         return k_out, v_out
