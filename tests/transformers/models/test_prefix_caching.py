@@ -15,6 +15,7 @@ from QEfficient.generation.text_generation_inference import TextGeneration
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
+from QEfficient.utils.device_utils import get_available_device_id
 
 test_models = ["gpt2"]
 
@@ -69,7 +70,7 @@ def prefix_caching_inference(model_name, qpc_path):
     prompts = [pref + suff for pref, suff in zip(prefixes, suffixes1)]
 
     # generation for batch_indices = 0, 1
-    prompts_exec_info = generator.generate(prompts)
+    prompts_exec_info = generator.generate(prompts, device_ids=get_available_device_id())
     ##############################
     # generation for batch_indices
     ##############################
