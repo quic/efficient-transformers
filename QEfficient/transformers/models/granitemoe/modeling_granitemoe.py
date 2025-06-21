@@ -29,6 +29,7 @@ from transformers.models.granitemoe.modeling_granitemoe import (
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 class QEffGraniteMoeRotaryEmbedding(GraniteMoeRotaryEmbedding):
@@ -153,7 +154,9 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
         if attention_mask is not None:
-            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+            attn_weights = torch.where(
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            )
 
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         dropout = 0.0 if not self.training else self.attention_dropout

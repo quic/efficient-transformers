@@ -25,6 +25,9 @@ ONNX_EXPORT_IMAGE_LENGHT = 560
 ONNX_EXPORT_IMAGE_DEPTH = 3
 ONNX_EXPORT_CTX_LEN = 1024
 
+# Minimum value for causal mask
+MIN_MASKED_ATTENTION_VALUE = float("-inf")
+
 
 # Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
 def get_models_dir():
