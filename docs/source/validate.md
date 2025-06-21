@@ -76,6 +76,9 @@
 
 | Architecture            | Model Family | Representative Models                      |
 |-------------------------|--------------|--------------------------------------------|
+| **Gemma3ForConditionalGeneration** |Gemma3| [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it) |
+| **Qwen3MoeForCausalLM** |Qwen3| [Qwen/Qwen3-MoE-15B-A2B]() |
+| **Mistral3ForConditionalGeneration**|Mistral 3.1| [mistralai/Mistral-Small-3.1-24B-Base-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Base-2503) |
 | **BaichuanForCausalLM** | Baichuan2    | [baichuan-inc/Baichuan2-7B-Base](https://huggingface.co/baichuan-inc/Baichuan2-7B-Base)             |
 | **CohereForCausalLM**   | Command-R    | [CohereForAI/c4ai-command-r-v01](https://huggingface.co/CohereForAI/c4ai-command-r-v01)             |
 | **DbrxForCausalLM**     | DBRX         | [databricks/dbrx-base](https://huggingface.co/databricks/dbrx-base)                       |
