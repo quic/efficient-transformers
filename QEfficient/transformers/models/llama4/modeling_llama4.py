@@ -312,8 +312,7 @@ class QEffLlama4TextRotaryEmbedding(nn.Module):
         self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
         # self.max_seq_len_cached = config.max_position_embeddings
-        # TODO: vbaddi Shouldn't for rope, the max posision_embeddings be original embeddings for rope,
-        # chunk size 8192 always? and Revisit when >8K Chunked attention is enabled.
+        # TODO: max sequence length cached should be taken before export and model should be exported with that paramter.
         self.max_seq_len_cached = constants.LLAMA4_MAX_POSITION_EMBEDDINGS
 
         # Get inverse frequency and scaling function (handles yarn/etc)
@@ -883,7 +882,6 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         kv_offload: bool = False,
         **compiler_options,
     ):
-        # TODO: check if this should be named num_patches or something else
         max_num_tiles = compiler_options.pop("max_num_tiles", None)
         if max_num_tiles is None:
             logger.warning(
