@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 from dataclasses import dataclass
 
 
@@ -96,3 +97,6 @@ class TrainConfig:
 
     dump_root_dir: str = "mismatches/step_"
     opByOpVerifier: bool = False
+
+    dump_logs: bool = True
+    log_level: str = logging.INFO

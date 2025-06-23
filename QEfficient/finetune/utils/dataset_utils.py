@@ -11,6 +11,7 @@ from transformers.data import DataCollatorForSeq2Seq
 
 from QEfficient.finetune.data.sampler import DistributedLengthBasedBatchSampler
 from QEfficient.finetune.dataset.dataset_config import DATALOADER_COLLATE_FUNC, DATASET_PREPROC
+from QEfficient.finetune.utils.logging_utils import logger
 
 
 def get_preprocessed_dataset(
@@ -72,7 +73,7 @@ def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"
         print("custom_data_collator is used")
         dl_kwargs["collate_fn"] = custom_data_collator
 
-    print(f"length of dataset_{split}", len(dataset))
+    logger.log_rank_zero(f"Length of {split} dataset is {len(dataset)}")
 
     # Create data loader
     dataloader = torch.utils.data.DataLoader(

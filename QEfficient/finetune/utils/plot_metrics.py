@@ -11,6 +11,8 @@ import os
 
 import matplotlib.pyplot as plt
 
+from QEfficient.finetune.utils.logging_utils import logger
+
 
 def plot_metric(data, metric_name, x_label, y_label, title, colors):
     plt.figure(figsize=(7, 6))
@@ -67,14 +69,14 @@ def plot_metrics_by_step(data, metric_name, x_label, y_label, colors):
 
 def plot_metrics(file_path):
     if not os.path.exists(file_path):
-        print(f"File {file_path} does not exist.")
+        logger.error(f"File {file_path} does not exist.")
         return
 
     with open(file_path, "r") as f:
         try:
             data = json.load(f)
         except json.JSONDecodeError:
-            print("Invalid JSON file.")
+            logger.error("Invalid JSON file.")
             return
 
     directory = os.path.dirname(file_path)

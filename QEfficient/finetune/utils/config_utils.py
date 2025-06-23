@@ -18,6 +18,7 @@ import QEfficient.finetune.configs.dataset_config as datasets
 from QEfficient.finetune.configs.peft_config import LoraConfig
 from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
+from QEfficient.finetune.utils.logging_utils import logger
 
 
 def update_config(config, **kwargs):
@@ -46,8 +47,7 @@ def update_config(config, **kwargs):
                         raise ValueError(f"Config '{config_name}' does not have parameter: '{param_name}'")
             else:
                 config_type = type(config).__name__
-                # FIXME (Meet): Once logger is available put this in debug level.
-                print(f"[WARNING]: Unknown parameter '{k}' for config type '{config_type}'")
+                logger.debug(f"Unknown parameter '{k}' for config type '{config_type}'")
 
 
 def generate_peft_config(train_config: TrainConfig, peft_config_file: str = None, **kwargs) -> Any:

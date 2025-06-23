@@ -10,6 +10,8 @@ from pathlib import Path
 from datasets import load_dataset
 from torch.utils.data import Dataset
 
+from QEfficient.finetune.utils.logging_utils import logger
+
 
 class grammar(Dataset):
     def __init__(self, tokenizer, csv_name=None, context_length=None):
@@ -20,8 +22,8 @@ class grammar(Dataset):
                 delimiter=",",
             )
         except Exception as e:
-            print(
-                "Loading of grammar dataset failed! Please see [here](https://github.com/meta-llama/llama-recipes/blob/main/src/llama_recipes/datasets/grammar_dataset/grammar_dataset_process.ipynb) for details on how to download the dataset."
+            logger.raise_runtimeerror(
+                "Loading of grammar dataset failed! Please check (https://github.com/meta-llama/llama-recipes/blob/main/src/llama_recipes/datasets/grammar_dataset/grammar_dataset_process.ipynb) for details on how to download the dataset."
             )
             raise e
 
@@ -36,7 +38,7 @@ class grammar(Dataset):
         # Create prompt and tokenize contexts and questions
 
         if self.print_text:
-            print("Input Text: ", self.clean_text(example_batch["text"]))
+            logger.info("Input Text: ", self.clean_text(example_batch["text"]))
 
         input_ = example_batch["input"]
         target_ = example_batch["target"]
@@ -71,9 +73,9 @@ def get_dataset(dataset_config, tokenizer, csv_name=None, context_length=None):
     """cover function for handling loading the working dataset"""
     """dataset loading"""
     currPath = Path.cwd() / "datasets_grammar" / "grammar_train.csv"
-    print(f"Loading dataset {currPath}")
+    logger.info(f"Loading dataset {currPath}")
     csv_name = str(currPath)
-    print(csv_name)
+    logger.info(csv_name)
     dataset = grammar(tokenizer=tokenizer, csv_name=csv_name, context_length=context_length)
 
     return dataset
