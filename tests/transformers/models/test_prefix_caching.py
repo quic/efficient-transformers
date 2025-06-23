@@ -175,7 +175,6 @@ def prefix_caching_inference(model_name, qpc_path):
         decode_inputs["input_ids"] = next_token_id
         decode_inputs["position_ids"][0][0] += 1
 
-    # TODO: add a check if this matches normal execution for same prompt
     ##############
     # Now run decode on 1st index again with mod_inputs and check if output is correct
     ##############

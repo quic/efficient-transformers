@@ -218,8 +218,6 @@ def fix_onnx_fp16(
         :str: Updated base name of exported ONNX model.
     """
     model = onnx.load(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
-    # TODO: Remove this `fix_onnx_fp16` function and replace with this transform
-    # as we're not utilizing the validations done in this function
     model, fp16_fix = FP16ClipTransform.apply(model, onnx_base_dir=gen_models_path)
 
     if fp16_fix:
@@ -256,8 +254,6 @@ def fix_onnx_fp16(
         if ort_outputs is not None:
             for oname, orto, ortof in zip(output_names, ort_outputs, ort_outputs_fixed):
                 fix_diff = np.abs(orto.astype(np.float32) - ortof.astype(np.float32)).max()
-                # TODO: need to the debug this
-                # info(oname, fix_diff)
                 close_outputs.append(fix_diff < 1e-5)
     else:
         info("No constants out of FP16 range")
