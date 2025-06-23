@@ -89,11 +89,13 @@ def train(
     else:
         tensorboard_updates = SummaryWriter()
 
+    device_type = torch.device(device).type
+
     if train_config.grad_scaler:
         if device.startswith("qaic"):
             scaler = QAicGradScaler()
         else:
-            scaler = GradScaler(torch.device(device).type)
+            scaler = GradScaler(device_type)
 
     loss_0_counter = torch.tensor([0]).to(device)
 
@@ -173,7 +175,7 @@ def train(
             batch = {k: v.to(device) for k, v in batch.items()}  # move the batch elements to qaic device
 
             with (
-                torch.autocast(device_type=torch.device(device).type, dtype=torch.float16)
+                torch.autocast(device_type=device_type, dtype=torch.float16)
                 if train_config.use_autocast
                 else nullcontext()
             ):
@@ -206,7 +208,7 @@ def train(
                         acc_helper.forward(preds, labels)
 
             total_loss += loss.detach().float()
-            # Accumalate graidents
+            # Accumalate gradients
             loss = loss / train_config.gradient_accumulation_steps
             if train_config.enable_ddp:
                 if local_rank == 0:
@@ -417,6 +419,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     val_step_metric = []
 
     eval_loss = 0.0  # Initialize evaluation loss
+    device_type = torch.device(device).type
 
     for step, batch in enumerate(tqdm(eval_dataloader, colour="green", desc="evaluating Epoch", dynamic_ncols=True)):
         #  stop when the maximum number of eval steps is reached
@@ -429,7 +432,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
         with torch.no_grad():
             # Forward pass and compute loss
             with (
-                torch.autocast(device_type=torch.device(device).type, dtype=torch.float16)
+                torch.autocast(device_type=device_type, dtype=torch.float16)
                 if train_config.use_autocast
                 else nullcontext()
             ):

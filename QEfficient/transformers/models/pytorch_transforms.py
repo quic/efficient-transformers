@@ -236,7 +236,10 @@ from QEfficient.transformers.models.grok_1.modeling_grok1 import (
     QEffGrok1MoeBlock,
     QEffGrok1MultiHeadAttention,
 )
-from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
+from QEfficient.transformers.models.internvl.modeling_internvl import (
+    QEffInternVisionEmbeddings,
+    QEffInternVLModel,
+)
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
