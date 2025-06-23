@@ -486,7 +486,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable(self.model.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEffVisionEncoderForTextImageToTextModel": True}))
-
         if hasattr(self.model, "model"):
             mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
         else:
@@ -555,7 +554,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEffCausalLMForTextImageToTextModel": True}))
-        mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
+        if hasattr(self.model, "model"):
+            mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
+        else:
+            mhash.update(to_hashable(self.model.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -2119,7 +2121,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             raise TypeError("Please run compile API first!")
 
         inputs = self.auto_correct_inputs(inputs)
-
         if self.qpc_session is None:
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
