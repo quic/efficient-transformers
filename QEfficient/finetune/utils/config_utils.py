@@ -14,12 +14,10 @@ from typing import Any, Dict
 import yaml
 from peft import LoraConfig as PeftLoraConfig
 
-from QEfficient.finetune.utils.helper import get_num_ddp_devices
 import QEfficient.finetune.configs.dataset_config as datasets
 from QEfficient.finetune.configs.peft_config import LoraConfig
 from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
-from QEfficient.finetune.utils.helper import get_rank
 
 
 def update_config(config, **kwargs):

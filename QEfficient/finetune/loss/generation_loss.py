@@ -5,11 +5,13 @@
 #
 # -----------------------------------------------------------------------------
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
-from typing import Optional
-from QEfficient.finetune.loss.common import BaseLoss
 from transformers.loss.loss_utils import fixed_cross_entropy
+
+from QEfficient.finetune.loss.common import BaseLoss
 
 
 class ForCausalLMLoss(BaseLoss):

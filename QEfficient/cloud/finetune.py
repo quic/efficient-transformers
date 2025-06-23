@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
 import random
 import warnings
 from typing import Any, Dict, Optional, Union
@@ -19,21 +18,18 @@ import torch.utils.data
 from peft import PeftModel, get_peft_model
 from torch.optim.lr_scheduler import StepLR
 from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
-from QEfficient.finetune.loss.loss_factory import get_loss
 
 from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.finetune.loss.loss_factory import get_loss
 from QEfficient.finetune.utils.config_utils import (
     generate_dataset_config,
     generate_peft_config,
     update_config,
-    pad_dataset,
-    update_config,
 )
 from QEfficient.finetune.utils.dataset_utils import get_dataloader
+from QEfficient.finetune.utils.helper import get_rank, is_rank_zero
 from QEfficient.finetune.utils.parser import get_finetune_parser
-from QEfficient.finetune.utils.helper import is_rank_zero, get_num_ddp_devices
 from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
-from QEfficient.finetune.utils.helper import get_rank
 from QEfficient.utils._utils import login_and_download_hf_lm
 
 # Try importing QAIC-specific module, proceed without it if unavailable

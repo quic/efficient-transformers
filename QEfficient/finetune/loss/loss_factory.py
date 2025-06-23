@@ -9,7 +9,6 @@
 from QEfficient.finetune.loss.generation_loss import ForCausalLMLoss
 from QEfficient.finetune.loss.seq_cls_loss import ForSequenceClassificationLoss
 
-
 loss_fn_dict = {
     "seq_classification": ForSequenceClassificationLoss,
     "generation": ForCausalLMLoss,

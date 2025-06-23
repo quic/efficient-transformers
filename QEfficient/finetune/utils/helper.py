@@ -7,7 +7,6 @@
 
 import os
 
-
 TASK_TYPE = ["generation", "seq_classification"]
 PEFT_METHOD = ["lora"]
 DEVICE = ["qaic", "cpu", "cuda"]

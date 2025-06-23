@@ -5,11 +5,13 @@
 #
 # -----------------------------------------------------------------------------
 
-import torch
-from torch.nn import MSELoss, BCEWithLogitsLoss
 from typing import Optional
-from QEfficient.finetune.loss.common import BaseLoss
+
+import torch
+from torch.nn import BCEWithLogitsLoss, MSELoss
 from transformers.loss.loss_utils import fixed_cross_entropy
+
+from QEfficient.finetune.loss.common import BaseLoss
 
 
 class ForSequenceClassificationLoss(BaseLoss):
