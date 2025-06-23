@@ -841,6 +841,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
+        image_idx: Optional[torch.LongTensor] = None,
         pixel_values: Optional[torch.FloatTensor] = None,
         aspect_ratio_mask: Optional[torch.Tensor] = None,
         aspect_ratio_ids: Optional[torch.Tensor] = None,
@@ -924,8 +925,8 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             return_dict=return_dict,
             cache_position=cache_position,
         )
-        outputs["pixel_values"] = pixel_values
-        return outputs
+
+        return outputs.logits, image_idx, outputs.past_key_values, pixel_values
 
     def get_dummy_inputs(self, kv_offload: bool = False):
         BS = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
@@ -961,6 +962,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         # lang_inputs
         lang_inputs = {
             "input_ids": torch.zeros((BS, SEQ_LEN), dtype=torch.int64),
+            "image_idx": torch.zeros((1, 1), dtype=torch.int64),
             "cross_attention_mask": torch.zeros((BS, SEQ_LEN, MAX_NUM_IMG, max_num_img_tiles), dtype=torch.int64),
             "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
         }
@@ -1087,7 +1089,6 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         for i in self.config.text_config.cross_attention_layers:
             vision_output_names.append(f"past_key.{i}")
             vision_output_names.append(f"past_value.{i}")
-
         lang_output_names = [
             "logits",
             *[f"past_{kv}.{i}_RetainedState" for i in range(num_hidden_layers) for kv in ["key", "value"]],
@@ -1096,6 +1097,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
             lang_output_names.append("pixel_values_RetainedState")
 
         output_names = {}
+        lang_output_names.insert(1, "image_idx_output")
         if kv_offload:
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
