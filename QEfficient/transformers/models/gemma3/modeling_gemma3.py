@@ -687,7 +687,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                 "mm_tokens_per_image": mm_tokens_per_image,
             },
         ]
-
+        compiler_options.pop("skip_vision", None)
         specializations = {}
 
         if kv_offload:
