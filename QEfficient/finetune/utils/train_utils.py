@@ -387,6 +387,11 @@ def train(
             )
     avg_epoch_time = sum(epoch_times) / len(epoch_times)
     avg_checkpoint_time = sum(checkpoint_times) / len(checkpoint_times) if len(checkpoint_times) > 0 else 0
+    results["last_epoch_train_loss"] = train_epoch_loss
+    results["last_epoch_train_metric"] = train_epoch_metric
+    if train_config.run_validation:
+        results["last_epoch_eval_loss"] = eval_loss
+        results["last_epoch_eval_metric"] = eval_metric
     results["avg_epoch_time"] = avg_epoch_time
     results["avg_checkpoint_time"] = avg_checkpoint_time
     if train_config.save_metrics:
