@@ -11,6 +11,8 @@ from transformers.data import DataCollatorForSeq2Seq
 
 from QEfficient.finetune.data.sampler import DistributedLengthBasedBatchSampler
 from QEfficient.finetune.dataset.dataset_config import DATALOADER_COLLATE_FUNC, DATASET_PREPROC
+from QEfficient.finetune.utils.config_utils import pad_dataset
+from QEfficient.finetune.utils.helper import get_num_ddp_devices
 
 
 def get_preprocessed_dataset(
@@ -64,6 +66,10 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
 
 def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"):
     dataset = get_preprocessed_dataset(tokenizer, dataset_config, split, context_length=train_config.context_length)
+
+    total_devices = get_num_ddp_devices()
+    dataset = pad_dataset(dataset, train_config.train_batch_size, total_devices)
+
     dl_kwargs = get_dataloader_kwargs(train_config, dataset, tokenizer, split)
 
     # FIXME (Meet): Add custom data collator registration from the outside by the user.

@@ -13,6 +13,12 @@ from transformers.loss.loss_utils import fixed_cross_entropy
 
 from QEfficient.finetune.loss.common import BaseLoss
 
+# Note: Below code is taken from https://github.com/huggingface/transformers/blob/2166b6b4ff09f6dd3867ab982f262f66482aa968/src/transformers/loss/loss_utils.py#L45
+#       The original code is modified to take loss_weight into consideration.
+#       It will apply a boolean value to the loss for each item in the batch.
+#       This is helpful when we explicitly want to set loss for a particular
+#       sample in batch to zero. E.g. when padding of dataset is done.
+
 
 class ForCausalLMLoss(BaseLoss):
     def __init__(self):
