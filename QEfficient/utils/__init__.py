@@ -25,6 +25,7 @@ from QEfficient.utils._utils import (  # noqa: F401
     load_hf_processor,
     load_hf_tokenizer,
     login_and_download_hf_lm,
+    make_serializable,
     onnx_exists,
     padding_check_and_fix,
     qpc_exists,
