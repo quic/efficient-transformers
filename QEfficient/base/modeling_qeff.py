@@ -5,7 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
-import hashlib
+# import hashlib
 import inspect
 import logging
 import shutil
@@ -45,12 +45,23 @@ class QEFFBaseModel(ABC):
     def _transform_names(cls) -> List[str]:
         return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
-    def __init__(self, model: torch.nn.Module) -> None:
+    def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
         self.model = model
+
+        # Store Model parameters to Calculate Hash for caching
+        self.model_params = {}
+        self.model_params.update(kwargs)
+        self.model_params["config"] = self.model.config.to_diff_dict()
+        self.model_params["_transform_names"] = self._transform_names()
+        self.compile_params = {}
+
+        if hasattr(self.model.config, "architectures"):
+            self.model_architecture = self.model.config.architectures[0]
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
+        self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
 
         # Apply the transformations
         any_transformed = False
@@ -66,10 +77,6 @@ class QEFFBaseModel(ABC):
     @property
     @abstractmethod
     def model_name(self) -> str: ...
-
-    @property
-    @abstractmethod
-    def model_hash(self) -> str: ...
 
     @abstractmethod
     def export(self, export_dir: Optional[str] = None) -> Path:
@@ -134,8 +141,18 @@ class QEFFBaseModel(ABC):
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
         """
-        export_dir = Path(export_dir or (QEFF_HOME / self.model_name))
-        export_dir = export_dir.with_name(export_dir.name + "-" + self.model_hash)
+        self.model_params["output_names"] = output_names
+        self.model_params["dynamic_axes"] = dynamic_axes
+
+        if export_kwargs is not None:
+            self.model_params.update(export_kwargs)
+        if onnx_transform_kwargs is not None:
+            self.model_params.update(onnx_transform_kwargs)
+        export_dir = Path(export_dir or (QEFF_HOME / self.model_architecture / self.model_name))
+
+        export_hash = hash_dict_params(self.model_params)
+        export_hash = export_hash.hexdigest()[:16]
+        export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         onnx_path = export_dir / f"{self.model_name}.onnx"
         if onnx_path.is_file():
             self.onnx_path = onnx_path
@@ -145,6 +162,17 @@ class QEFFBaseModel(ABC):
         tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
 
+        model_params_json = export_dir / "model_params.json"
+        with open(model_params_json, "w") as fp:
+            json.dump(
+                {
+                    "model_params": [
+                        {k: make_serializable(self.model_params[k]) for k in sorted(self.model_params.keys())}
+                    ]
+                },
+                fp,
+                indent=4,
+            )
         # Create input_names from example_inputs
 
         input_names = []
@@ -240,12 +268,10 @@ class QEFFBaseModel(ABC):
             :mdp_ts_num_devices (int): Number of devices to partition to use Multi-Device Partitioning with tensor-slicing.
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
-            :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
-            :compiler_options: Pass any compiler option as input.
-                Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+            :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
+            :compiler_options: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
-                For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
         if onnx_path is None and self.onnx_path is None:
             self.export()
@@ -257,11 +283,6 @@ class QEFFBaseModel(ABC):
             raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
 
         if enable_qnn:
-            if compiler_options:
-                logger.warning(
-                    f"Extra arguments to QNN compilation are supported only via qnn_config file. Ignoring {compiler_options}"
-                )
-
             self.qpc_path = qnn_compile(
                 onnx_path=onnx_path,
                 qpc_base_path=compile_dir,
@@ -302,10 +323,10 @@ class QEFFBaseModel(ABC):
         compile_hash = hashlib.sha256(to_hashable(command))
 
         if specializations is not None:
-            compile_hash.update(to_hashable(specializations))
+            self.compile_params.update({"specializations": specializations})
 
         if custom_io is not None:
-            compile_hash.update(to_hashable(custom_io))
+            self.compile_params.update({"custom_io": custom_io})
 
         if num_speculative_tokens:
             compile_hash.update(to_hashable({"num_speculative_tokens": num_speculative_tokens}))
@@ -315,8 +336,10 @@ class QEFFBaseModel(ABC):
         compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
 
         # Check if already compiled
+        compile_hash = hash_dict_params(self.compile_params)
         compile_hash = compile_hash.hexdigest()[:16]
         compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
+
         qpc_path = compile_dir / "qpc"
         qpc_path.mkdir(parents=True, exist_ok=True)
 
