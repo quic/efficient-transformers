@@ -580,6 +580,19 @@ def model_swap(func):
     return wrapper
 
 
+# Ensure input obj is JSON serializable
+def make_serializable(obj):
+    if isinstance(obj, (int, float, str, bool, type(None))):
+        return obj
+    elif isinstance(obj, (list, tuple)):
+        return [make_serializable(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {key: make_serializable(value) for key, value in obj.items()}
+    elif hasattr(obj, "__dict__"):
+        return make_serializable(vars(obj))
+    return str(obj)
+
+
 @dataclass
 class IOInfo:
     name: str
@@ -666,18 +679,6 @@ def create_and_dump_qconfigs(
     onnx_path = str(onnx_path)
     specializations_file_path = str(os.path.join(os.path.dirname(qpc_path), "specializations.json"))
     compile_dir = str(os.path.dirname(qpc_path))
-
-    # Ensure all objects in the configs dictionary are JSON serializable
-    def make_serializable(obj):
-        if isinstance(obj, (int, float, str, bool, type(None))):
-            return obj
-        elif isinstance(obj, (list, tuple)):
-            return [make_serializable(item) for item in obj]
-        elif isinstance(obj, dict):
-            return {key: make_serializable(value) for key, value in obj.items()}
-        elif hasattr(obj, "__dict__"):
-            return make_serializable(vars(obj))
-        return str(obj)
 
     qconfigs = {
         "huggingface_config": make_serializable(huggingface_config),
