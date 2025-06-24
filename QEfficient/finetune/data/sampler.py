@@ -7,7 +7,6 @@
 import random
 from itertools import islice
 
-import numpy as np
 import torch
 
 
