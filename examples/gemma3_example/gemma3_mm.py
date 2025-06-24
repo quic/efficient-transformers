@@ -60,7 +60,7 @@ if skip_vision:
     )
 
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, device_ids=[0], generation_len=100)
+    output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
@@ -104,8 +104,7 @@ else:
     )
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, device_ids=[0], generation_len=100)
+    output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
-    print()
