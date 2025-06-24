@@ -62,24 +62,30 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
     return kwargs
 
 
-def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"):
-    dataset = get_preprocessed_dataset(tokenizer, dataset_config, split, context_length=train_config.context_length)
-    dataset = dataset.select(range(0, 10))
+def padding_dataset(train_config, dataset):
     dataset = dataset.map(lambda x: {"input_length": len(x["input_ids"])})
-    dataset = dataset.sort("input_length")
-    dataset = dataset.remove_columns("input_length")
+    if train_config.enable_sorting_for_ddp:
+        dataset = dataset.sort("input_length")
+        dataset = dataset.remove_columns("input_length")
     dummy_row = next(iter(dataset))
     dummy_row["labels"] = [-100] * len(dummy_row["labels"])
     padding_size = 0
     num_replicas = dist.get_world_size()
-    if len(dataset) % num_replicas > 0:
-        padding_size = num_replicas - len(dataset) % num_replicas
+    if len(dataset) % (num_replicas * train_config.train_batch_size) > 0:
+        padding_size = num_replicas - (len(dataset) % (num_replicas * train_config.train_batch_size))
 
     dummy_data = [dummy_row.copy() for _ in range(padding_size)]
     dummy_dataset = datasets.Dataset.from_list(dummy_data)
     combined_dataset = datasets.concatenate_datasets([dataset, dummy_dataset])
+    return combined_dataset
 
-    dl_kwargs = get_dataloader_kwargs(train_config, combined_dataset, tokenizer, split)
+
+def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"):
+    dataset = get_preprocessed_dataset(tokenizer, dataset_config, split, context_length=train_config.context_length)
+    if train_config.enable_ddp:
+        dataset = padding_dataset(train_config, dataset)
+
+    dl_kwargs = get_dataloader_kwargs(train_config, dataset, tokenizer, split)
 
     # FIXME (Meet): Add custom data collator registration from the outside by the user.
     custom_data_collator = get_custom_data_collator(tokenizer, dataset_config)
@@ -92,7 +98,7 @@ def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"
     # Create data loader
 
     dataloader = torch.utils.data.DataLoader(
-        combined_dataset,
+        dataset,
         num_workers=train_config.num_workers_dataloader,
         pin_memory=True,
         **dl_kwargs,

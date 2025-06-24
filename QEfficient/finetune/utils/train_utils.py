@@ -151,7 +151,7 @@ def train(
 
         # enable profile for qaic
         qaic_profile.start_profiling(device, 1) if train_config.use_profiler else None
-
+        num_dummy_samples = 0
         for step, batch in enumerate(train_dataloader):
             # resume training from a particular checkpoint, assuming the dataset is not shuffled
             if train_config.use_peft and train_config.from_peft_checkpoint:
@@ -194,6 +194,7 @@ def train(
                         loss = model_outputs.loss  # Forward call
                         if (batch["labels"] != -100).sum() == 0:
                             loss = loss.nan_to_num(nan=0.0)
+                            num_dummy_samples += 1
 
                         if train_config.task_type == "seq_classification":
                             logits = model_outputs.logits
@@ -206,6 +207,7 @@ def train(
                     loss = model_outputs.loss  # Forward call
                     if (batch["labels"] != -100).sum() == 0:
                         loss = loss.nan_to_num(nan=0.0)
+                        num_dummy_samples += 1
 
                     if train_config.task_type == "seq_classification":
                         logits = model_outputs.logits
@@ -243,7 +245,15 @@ def train(
                 train_step_metric.append(step_metric_val)
 
             # Accumalate gradients
-            loss = loss / train_config.gradient_accumulation_steps
+            complete_accum_steps = (
+                len(train_dataloader) - len(train_dataloader) % train_config.gradient_accumulation_steps
+            )
+            if step < complete_accum_steps:
+                num_samples_in_cur_update = train_config.gradient_accumulation_steps
+            else:
+                num_samples_in_cur_update = len(train_dataloader) % train_config.gradient_accumulation_steps
+
+            loss = loss / num_samples_in_cur_update
 
             if train_config.grad_scaler:
                 scaler.scale(loss).backward()  # backward pass
@@ -304,14 +314,22 @@ def train(
 
         if loss_0_counter.item() == train_config.convergence_counter:
             if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
-                train_epoch_loss = total_loss / (step - intermediate_step)
+                train_epoch_loss = (
+                    0.0 if total_loss == 0.0 else total_loss / (step - intermediate_step - num_dummy_samples)
+                )
             else:
-                train_epoch_loss = total_loss / step
+                train_epoch_loss = 0.0 if total_loss == 0.0 else total_loss / (step - num_dummy_samples)
         else:
             if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
-                train_epoch_loss = total_loss / (len(train_dataloader) - intermediate_step)
+                train_epoch_loss = (
+                    0.0
+                    if total_loss == 0.0
+                    else total_loss / (len(train_dataloader) - intermediate_step - num_dummy_samples)
+                )
             else:
-                train_epoch_loss = total_loss / len(train_dataloader)
+                train_epoch_loss = (
+                    0.0 if total_loss == 0.0 else total_loss / (len(train_dataloader) - num_dummy_samples)
+                )
 
         if train_config.task_type == "seq_classification":
             metric_val = acc_helper.compute()
@@ -429,6 +447,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     eval_loss = 0.0  # Initialize evaluation loss
     device_type = torch.device(device).type
 
+    num_dummy_samples = 0
     for step, batch in enumerate(tqdm(eval_dataloader, colour="green", desc="evaluating Epoch", dynamic_ncols=True)):
         #  stop when the maximum number of eval steps is reached
         if train_config.max_eval_step > 0 and step > train_config.max_eval_step:
@@ -449,6 +468,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
 
             if (batch["labels"] != -100).sum() == 0:
                 loss = loss.nan_to_num(nan=0.0)
+                num_dummy_samples += 1
 
             if train_config.task_type == "seq_classification":
                 logits = outputs.logits
@@ -466,7 +486,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
             eval_loss += loss.detach().float()
 
     # Compute average loss and metric
-    eval_epoch_loss = eval_loss / len(eval_dataloader)
+    eval_epoch_loss = 0.0 if eval_loss == 0.0 else eval_loss / (len(eval_dataloader) - num_dummy_samples)
     if train_config.task_type == "seq_classification":
         eval_metric = acc_helper.compute()
     else:
