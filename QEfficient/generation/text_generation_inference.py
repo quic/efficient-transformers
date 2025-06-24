@@ -753,8 +753,8 @@ class QEffTextGenerationBase:
     def initialize_ccl(self, decode_inputs):
         max_ccl_id = len(self.comp_ctx_lengths) - 1
         max_position_id = np.max(decode_inputs["position_ids"])
-        ccl_id = 2
-        for i in range(2, len(self.comp_ctx_lengths)):
+        ccl_id = 1
+        for i in range(1, len(self.comp_ctx_lengths)):
             if max_position_id < self.comp_ctx_lengths[i]:
                 ccl_id = i
                 break
