@@ -72,7 +72,7 @@ else:
         ctx_len=3072,
         img_size=896,
         num_cores=16,
-        num_devices=8,
+        num_devices=1,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
@@ -104,7 +104,7 @@ else:
     )
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3], generation_len=100)
+    output = qeff_model.generate(inputs=inputs, device_ids=[0], generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
