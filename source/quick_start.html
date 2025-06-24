@@ -150,32 +150,32 @@
 </tr>
 </thead>
 <tbody>
+<tr class="row-even"><td><p>Context Length Specializations (upcoming)</p></td>
+<td><p>Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Block Attention (in progress)</p></td>
+<td><p>Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG.</p></td>
+</tr>
 <tr class="row-even"><td><p><a class="reference external" href="https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding">SpD, multiprojection heads</a></p></td>
-<td><p>Implemented post-attention hidden size projections to speculate tokens ahead of the base model.</p></td>
+<td><p>Implemented post-attention hidden size projections to speculate tokens ahead of the base model. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/multiprojs_spd_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/374">QNN Compilation support</a></p></td>
-<td><p>Enabled for AutoModel classes QNN compilation capabilities for multi-models, embedding models and causal models</p></td>
+<td><p>Enabled for AutoModel classes QNN compilation capabilities for multi-models, embedding models and causal models.</p></td>
 </tr>
-<tr class="row-even"><td><p>Disaggregated serving</p></td>
-<td><p>It support for separate prefill and decode compilation for encoder (vision) and language models. <a class="reference external" href="https://github.com/quic/efficient-transformers/pull/365">isaggregated serving</a>.</p></td>
+<tr class="row-even"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/365">Disaggregated serving</a></p></td>
+<td><p>It support for separate prefill and decode compilation for encoder (vision) and language models.</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/368">GGUF model execution</a></p></td>
-<td><p>Supported GGUF model execution (without quantized weights)</p></td>
+<td><p>Supported GGUF model execution (without quantized weights). Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/basic_gguf_models.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
 <tr class="row-even"><td><p>Replication of KV</p></td>
-<td><p>Enabled FP8 model support on <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/scripts/replicate_kv_head">replicate_kv_heads script</a></p></td>
+<td><p>Enabled FP8 model support on <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/scripts/replicate_kv_head">replicate_kv_heads script</a>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/338">gradient checkpointing</a></p></td>
 <td><p>Supports gradient checkpointing in the finetuning script</p></td>
 </tr>
-<tr class="row-even"><td><p>Context Length Specializations (upcoming)</p></td>
-<td><p>Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text.</p></td>
-</tr>
-<tr class="row-odd"><td><p>Swift KV <a class="reference external" href="https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct">Snowflake/Llama-3.1-SwiftKV-8B-Instruct</a></p></td>
+<tr class="row-even"><td><p>Swift KV <a class="reference external" href="https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct">Snowflake/Llama-3.1-SwiftKV-8B-Instruct</a></p></td>
 <td><p>Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. Support for both <a class="reference external" href="https://github.com/quic/efficient-transformers/pull/367">continuous and non-continuous batching execution</a> in SwiftKV</p></td>
-</tr>
-<tr class="row-even"><td><p>Block Attention (in progress)</p></td>
-<td><p>Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG.</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="python_api.html#qeffautomodelforimagetexttotext"><span class="std std-ref">Vision Language Model</span></a></p></td>
 <td><p>Provides support for the AutoModelForImageTextToText class from the transformers library, enabling advanced vision-language tasks. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
