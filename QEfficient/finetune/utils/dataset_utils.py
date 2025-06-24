@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-
+import datasets
 import torch
 import torch.distributed as dist
 from transformers.data import DataCollatorForSeq2Seq
@@ -64,19 +64,35 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
 
 def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"):
     dataset = get_preprocessed_dataset(tokenizer, dataset_config, split, context_length=train_config.context_length)
-    dl_kwargs = get_dataloader_kwargs(train_config, dataset, tokenizer, split)
+    dataset = dataset.select(range(0, 10))
+    dataset = dataset.map(lambda x: {"input_length": len(x["input_ids"])})
+    dataset = dataset.sort("input_length")
+    dataset = dataset.remove_columns("input_length")
+    dummy_row = next(iter(dataset))
+    dummy_row["labels"] = [-100] * len(dummy_row["labels"])
+    padding_size = 0
+    num_replicas = dist.get_world_size()
+    if len(dataset) % num_replicas > 0:
+        padding_size = num_replicas - len(dataset) % num_replicas
+
+    dummy_data = [dummy_row.copy() for _ in range(padding_size)]
+    dummy_dataset = datasets.Dataset.from_list(dummy_data)
+    combined_dataset = datasets.concatenate_datasets([dataset, dummy_dataset])
+
+    dl_kwargs = get_dataloader_kwargs(train_config, combined_dataset, tokenizer, split)
 
     # FIXME (Meet): Add custom data collator registration from the outside by the user.
     custom_data_collator = get_custom_data_collator(tokenizer, dataset_config)
+
     if custom_data_collator:
         print("custom_data_collator is used")
         dl_kwargs["collate_fn"] = custom_data_collator
 
     print(f"length of dataset_{split}", len(dataset))
-
     # Create data loader
+
     dataloader = torch.utils.data.DataLoader(
-        dataset,
+        combined_dataset,
         num_workers=train_config.num_workers_dataloader,
         pin_memory=True,
         **dl_kwargs,

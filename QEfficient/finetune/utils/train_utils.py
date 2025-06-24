@@ -192,6 +192,9 @@ def train(
                     ) as verifier:
                         model_outputs = model(**batch)
                         loss = model_outputs.loss  # Forward call
+                        if (batch["labels"] != -100).sum() == 0:
+                            loss = loss.nan_to_num(nan=0.0)
+
                         if train_config.task_type == "seq_classification":
                             logits = model_outputs.logits
                             labels = batch["labels"][:, 0]
@@ -201,6 +204,9 @@ def train(
                 else:
                     model_outputs = model(**batch)
                     loss = model_outputs.loss  # Forward call
+                    if (batch["labels"] != -100).sum() == 0:
+                        loss = loss.nan_to_num(nan=0.0)
+
                     if train_config.task_type == "seq_classification":
                         logits = model_outputs.logits
                         labels = batch["labels"][:, 0]
@@ -208,8 +214,7 @@ def train(
                         acc_helper.forward(preds, labels)
 
             total_loss += loss.detach().float()
-            # Accumalate gradients
-            loss = loss / train_config.gradient_accumulation_steps
+
             if train_config.enable_ddp:
                 if local_rank == 0:
                     if loss <= train_config.convergence_loss:
@@ -236,6 +241,9 @@ def train(
                 else:
                     step_metric_val = float(torch.exp(loss.detach().float()))
                 train_step_metric.append(step_metric_val)
+
+            # Accumalate gradients
+            loss = loss / train_config.gradient_accumulation_steps
 
             if train_config.grad_scaler:
                 scaler.scale(loss).backward()  # backward pass
@@ -438,6 +446,9 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
             ):
                 outputs = model(**batch)
             loss = outputs.loss
+
+            if (batch["labels"] != -100).sum() == 0:
+                loss = loss.nan_to_num(nan=0.0)
 
             if train_config.task_type == "seq_classification":
                 logits = outputs.logits

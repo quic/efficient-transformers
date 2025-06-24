@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-
 import random
 from itertools import islice
 
@@ -22,16 +21,14 @@ class LengthBasedBatchSampler(torch.utils.data.BatchSampler):
         self.batch_size = batch_size
         self.drop_last = drop_last
         self.shuffle = shuffle
+        self.data_source = data_source
 
     def __iter__(self):
-        ids = np.argsort(self.lengths, kind="mergesort")
+        ids = [i for i in range(len(self.data_source))]
         if self.drop_last:
             ids = ids[: len(ids) // self.batch_size * self.batch_size]
 
         batches = [ids[i : i + self.batch_size] for i in range(0, len(ids), self.batch_size)]
-
-        if self.shuffle:
-            random.shuffle(batches)
 
         for b in batches:
             yield b
@@ -49,7 +46,7 @@ class DistributedLengthBasedBatchSampler(torch.utils.data.BatchSampler):
     ) -> None:
         random.seed(seed)
         self.batch_sampler = LengthBasedBatchSampler(
-            data_source, batch_size=batch_size, drop_last=True, shuffle=shuffle
+            data_source, batch_size=batch_size, drop_last=False, shuffle=shuffle
         )
         self.num_replicas = num_replicas
         self.rank = rank
