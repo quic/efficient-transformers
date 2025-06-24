@@ -54,7 +54,7 @@ configs = [
         1.00232565,  # expected_train_metric
         0.02060609,  # expected_eval_loss
         1.02081990,  # expected_eval_metric
-        id="llama_config",  # config name
+        id="llama_config_samsum",  # config name
     ),
     pytest.param(
         "meta-llama/Llama-3.2-1B",  # model_name
@@ -72,7 +72,7 @@ configs = [
         1.0043447,  # expected_train_metric
         0.0117334,  # expected_eval_loss
         1.0118025,  # expected_eval_metric
-        id="llama_config",  # config name
+        id="llama_config_gsm8k",  # config name
     ),
     pytest.param(
         "meta-llama/Llama-3.2-1B",  # model_name
@@ -90,7 +90,7 @@ configs = [
         1.0006101,  # expected_train_metric
         0.0065296,  # expected_eval_loss
         1.0065510,  # expected_eval_metric
-        id="llama_config",  # config name
+        id="llama_config_alpaca",  # config name
     ),
     pytest.param(
         "google-bert/bert-base-uncased",  # model_name
@@ -108,7 +108,7 @@ configs = [
         0.55554199,  # expected_train_metric
         0.00738618,  # expected_eval_loss
         0.70825195,  # expected_eval_metric
-        id="bert_config",  # config name
+        id="bert_config_imdb",  # config name
     ),
 ]
 
