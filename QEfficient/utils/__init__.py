@@ -11,6 +11,7 @@ from QEfficient.transformers.quantizers.auto import (  # noqa: F401
 )
 from QEfficient.utils._utils import (  # noqa: F401
     check_and_assign_cache_dir,
+    custom_format_warning,
     dump_qconfig,
     get_num_layers_from_config,
     get_num_layers_vlm,
@@ -18,6 +19,8 @@ from QEfficient.utils._utils import (  # noqa: F401
     get_padding_shape_from_config,
     get_padding_shape_vlm,
     get_qpc_dir_path,
+    get_sliding_window_layers,
+    get_sliding_window_shapes,
     hf_download,
     load_hf_processor,
     load_hf_tokenizer,
