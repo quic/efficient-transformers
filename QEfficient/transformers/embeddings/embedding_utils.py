@@ -92,10 +92,10 @@ class PooledModel(nn.Module):
         self.pooling_fn = pooling_fn
 
     def forward(
-        self, input_ids: Optional[torch.Tensor] = None, attention_mask: Optional[torch.Tensor] = None, **kwargs
+        self, input_ids: Optional[torch.Tensor] = None, position_ids: Optional[torch.Tensor] = None, **kwargs
     ):
-        output = self.base_model(input_ids, attention_mask, **kwargs)
-        return self.pooling_fn(output[0], attention_mask)
+        output = self.base_model(input_ids, position_ids, **kwargs)
+        return self.pooling_fn(output[0], position_ids)
 
 
 def validate_user_pooling_function(user_function):
@@ -119,7 +119,7 @@ def validate_user_pooling_function(user_function):
         raise TypeError("Provided pooling function is not callable.")
 
     sig = inspect.signature(user_function)
-    required_args = {"last_hidden_states", "attention_mask"}
+    required_args = {"last_hidden_states", "position_ids"}
     if not required_args.issubset(sig.parameters.keys()):
         raise ValueError(f"Pooling function must accept arguments: {required_args}")
     return user_function

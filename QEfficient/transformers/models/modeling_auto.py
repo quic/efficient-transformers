@@ -267,10 +267,10 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
+            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
         }
 
-        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "attention_mask": {0: "batch_size", 1: "seq_len"}}
+        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "position_ids": {0: "batch_size", 1: "seq_len"}}
 
         output_names = ["output"]
 
@@ -404,8 +404,12 @@ class QEFFAutoModel(QEFFTransformersBase):
                 inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
             )
         )
+        
+        
+        position_ids = np.where(attention_mask == 1, np.arange(attention_mask.shape[1]), -1)
 
-        inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
+        
+        inputs = dict(input_ids=input_ids, position_ids=position_ids, )
 
         # TODO: Remove try and catch after compiler fix
         try:
