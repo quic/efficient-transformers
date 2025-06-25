@@ -44,7 +44,9 @@ def update_config(config, **kwargs):
                     if hasattr(config, param_name):
                         setattr(config, param_name, v)
                     else:
-                        raise ValueError(f"Config '{config_name}' does not have parameter: '{param_name}'")
+                        logger.raise_error(
+                            f"Config '{config_name}' does not have parameter: '{param_name}'", ValueError
+                        )
             else:
                 config_type = type(config).__name__
                 logger.debug(f"Unknown parameter '{k}' for config type '{config_type}'")
@@ -70,7 +72,7 @@ def generate_peft_config(train_config: TrainConfig, peft_config_file: str = None
     else:
         config_map = {"lora": (LoraConfig, PeftLoraConfig)}
         if train_config.peft_method not in config_map:
-            raise RuntimeError(f"Peft config not found: {train_config.peft_method}")
+            logger.raise_error(f"Peft config not found: {train_config.peft_method}", RuntimeError)
 
         config_cls, peft_config_cls = config_map[train_config.peft_method]
         if config_cls is None:
@@ -119,7 +121,7 @@ def validate_config(config_data: Dict[str, Any], config_type: str = "lora") -> N
         - Ensures types match expected values (int, float, list, etc.).
     """
     if config_type.lower() != "lora":
-        raise ValueError(f"Unsupported config_type: {config_type}. Only 'lora' is supported.")
+        logger.raise_error(f"Unsupported config_type: {config_type}. Only 'lora' is supported.", ValueError)
 
     required_fields = {
         "r": int,
@@ -136,26 +138,28 @@ def validate_config(config_data: Dict[str, Any], config_type: str = "lora") -> N
     # Check for missing required fields
     missing_fields = [field for field in required_fields if field not in config_data]
     if missing_fields:
-        raise ValueError(f"Missing required fields in {config_type} config: {missing_fields}")
+        logger.raise_error(f"Missing required fields in {config_type} config: {missing_fields}", ValueError)
 
     # Validate types of required fields
     for field, expected_type in required_fields.items():
         if not isinstance(config_data[field], expected_type):
-            raise ValueError(
+            logger.raise_error(
                 f"Field '{field}' in {config_type} config must be of type {expected_type.__name__}, "
-                f"got {type(config_data[field]).__name__}"
+                f"got {type(config_data[field]).__name__}",
+                ValueError,
             )
 
     # Validate target_modules contains strings
     if not all(isinstance(mod, str) for mod in config_data["target_modules"]):
-        raise ValueError("All elements in 'target_modules' must be strings")
+        logger.raise_error("All elements in 'target_modules' must be strings", ValueError)
 
     # Validate types of optional fields if present
     for field, expected_type in optional_fields.items():
         if field in config_data and not isinstance(config_data[field], expected_type):
-            raise ValueError(
+            logger.raise_error(
                 f"Field '{field}' in {config_type} config must be of type {expected_type.__name__}, "
-                f"got {type(config_data[field]).__name__}"
+                f"got {type(config_data[field]).__name__}",
+                ValueError,
             )
 
 
@@ -173,7 +177,7 @@ def load_config_file(config_path: str) -> Dict[str, Any]:
         ValueError: If the file format is unsupported.
     """
     if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Config file not found: {config_path}")
+        logger.raise_error(f"Config file not found: {config_path}", FileNotFoundError)
 
     with open(config_path, "r") as f:
         if config_path.endswith(".yaml") or config_path.endswith(".yml"):
@@ -181,4 +185,4 @@ def load_config_file(config_path: str) -> Dict[str, Any]:
         elif config_path.endswith(".json"):
             return json.load(f)
         else:
-            raise ValueError("Unsupported config file format. Use .yaml, .yml, or .json")
+            logger.raise_error("Unsupported config file format. Use .yaml, .yml, or .json", ValueError)

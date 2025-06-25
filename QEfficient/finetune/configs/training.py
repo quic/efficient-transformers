@@ -95,7 +95,6 @@ class TrainConfig:
     use_profiler: bool = False  # Enable pytorch profiler, can not be used with flop counter at the same time.
     # profiler_dir: str = "PATH/to/save/profiler/results" # will be used if using profiler
 
-    dump_root_dir: str = "mismatches/step_"
     opByOpVerifier: bool = False
 
     dump_logs: bool = True

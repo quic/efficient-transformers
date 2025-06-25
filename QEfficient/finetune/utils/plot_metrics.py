@@ -69,14 +69,14 @@ def plot_metrics_by_step(data, metric_name, x_label, y_label, colors):
 
 def plot_metrics(file_path):
     if not os.path.exists(file_path):
-        logger.error(f"File {file_path} does not exist.")
+        logger.raise_error(f"File {file_path} does not exist.", FileNotFoundError)
         return
 
     with open(file_path, "r") as f:
         try:
             data = json.load(f)
         except json.JSONDecodeError:
-            logger.error("Invalid JSON file.")
+            logger.raise_error("Invalid JSON file.", json.JSONDecodeError)
             return
 
     directory = os.path.dirname(file_path)

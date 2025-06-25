@@ -10,29 +10,29 @@ import os
 from datetime import datetime
 
 from QEfficient.finetune.utils.helper import is_rank_zero
-from QEfficient.utils.constants import ROOT_DIR
 
 
 class FTLogger:
-    def __init__(self, level=logging.DEBUG):
+    def __init__(self):
         self.logger = logging.getLogger("QEfficient")
         if not getattr(self.logger, "_custom_methods_added", False):
             self._bind_custom_methods()
             self.logger._custom_methods_added = True  # Prevent adding handlers/methods twice
 
     def _bind_custom_methods(self):
-        def raise_runtimeerror(message):
+        def raise_error(message, errortype=RuntimeError):
             self.logger.error(message)
-            raise RuntimeError(message)
+            raise errortype(message)
 
         def log_rank_zero(msg: str, level: int = logging.INFO):
             if not is_rank_zero:
                 return
             self.logger.log(level, msg, stacklevel=2)
 
-        def prepare_dump_logs(dump_logs=False, level=logging.INFO):
+        def prepare_for_logs(output_path, dump_logs=False, level=logging.INFO):
+            self.logger.setLevel(level)
             if dump_logs:
-                logs_path = os.path.join(ROOT_DIR, "logs")
+                logs_path = os.path.join(output_path, "logs")
                 if not os.path.exists(logs_path):
                     os.makedirs(logs_path, exist_ok=True)
                 file_name = f"log-file-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}" + ".txt"
@@ -44,9 +44,9 @@ class FTLogger:
                 fh.setFormatter(formatter)
                 self.logger.addHandler(fh)
 
-        self.logger.raise_runtimeerror = raise_runtimeerror
+        self.logger.raise_error = raise_error
         self.logger.log_rank_zero = log_rank_zero
-        self.logger.prepare_dump_logs = prepare_dump_logs
+        self.logger.prepare_for_logs = prepare_for_logs
 
     def get_logger(self):
         return self.logger

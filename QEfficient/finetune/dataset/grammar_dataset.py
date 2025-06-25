@@ -21,11 +21,11 @@ class grammar(Dataset):
                 data_files={"train": [csv_name]},  # "eval": "grammar_validation.csv"},
                 delimiter=",",
             )
-        except Exception as e:
-            logger.raise_runtimeerror(
-                "Loading of grammar dataset failed! Please check (https://github.com/meta-llama/llama-recipes/blob/main/src/llama_recipes/datasets/grammar_dataset/grammar_dataset_process.ipynb) for details on how to download the dataset."
+        except FileNotFoundError:
+            logger.raise_error(
+                "Loading of grammar dataset failed! Please check (https://github.com/meta-llama/llama-recipes/blob/main/src/llama_recipes/datasets/grammar_dataset/grammar_dataset_process.ipynb) for details on how to download the dataset.",
+                FileNotFoundError,
             )
-            raise e
 
         self.context_length = context_length
         self.tokenizer = tokenizer

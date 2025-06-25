@@ -26,7 +26,7 @@ try:
 
     device = "qaic:0"
 except ImportError as e:
-    logger.warning(f"{e}. Moving ahead without these qaic modules.")
+    logger.log_rank_zero(f"{e}. Moving ahead without these qaic modules.")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Suppress all warnings
@@ -78,7 +78,7 @@ def main(**kwargs):
     # If there is a mismatch between tokenizer vocab size and embedding matrix,
     # throw a warning and then expand the embedding matrix
     if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
-        logger.warning("Resizing the embedding matrix to match the tokenizer vocab size.")
+        logger.log_rank_zero("Resizing the embedding matrix to match the tokenizer vocab size.")
         model.resize_token_embeddings(len(tokenizer))
 
     print_model_size(model)
@@ -86,8 +86,9 @@ def main(**kwargs):
     if train_config.run_validation:
         eval_dataloader = get_dataloader(tokenizer, dataset_config, train_config, split="test")
         if len(eval_dataloader) == 0:
-            raise ValueError(
-                f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"
+            logger.raise_error(
+                f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})",
+                ValueError,
             )
         else:
             logger.log_rank_zero(f"Number of Validation Set Batches loaded = {len(eval_dataloader)}")

@@ -18,7 +18,7 @@ def get_preprocessed_dataset(
     tokenizer, dataset_config, split: str = "train", context_length: int = None
 ) -> torch.utils.data.Dataset:
     if dataset_config.dataset not in DATASET_PREPROC:
-        raise NotImplementedError(f"{dataset_config.dataset} is not (yet) implemented")
+        logger.raise_error(f"{dataset_config.dataset} is not (yet) implemented", NotImplementedError)
 
     def get_split():
         return dataset_config.train_split if split == "train" else dataset_config.test_split
@@ -39,8 +39,9 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
     if train_config.enable_ddp:
         if train_config.enable_sorting_for_ddp:
             if train_config.context_length:
-                raise ValueError(
-                    "Sorting cannot be done with padding, Please disable sorting or pass context_length as None to disable padding"
+                logger.raise_error(
+                    "Sorting cannot be done with padding, Please disable sorting or pass context_length as None to disable padding",
+                    ValueError,
                 )
             else:
                 kwargs["batch_sampler"] = DistributedLengthBasedBatchSampler(

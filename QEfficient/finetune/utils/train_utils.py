@@ -85,8 +85,9 @@ def train(
     max_steps_reached = False  # Flag to indicate max training steps reached
 
     tensorboard_updates = None
+    tensorboard_log_dir = train_config.output_dir + "/runs/" + f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     if is_rank_zero():
-        tensorboard_updates = SummaryWriter()
+        tensorboard_updates = SummaryWriter(log_dir=tensorboard_log_dir)
 
     device_type = torch.device(device).type
 
@@ -181,7 +182,7 @@ def train(
                         atol=1e-1,
                         use_ref_output_on_mismatch=True,
                         filter_config=qaic_debug.DispatchFilterConfig.default(device),
-                        dump_root_dir=train_config.dump_root_dir + str(step),
+                        dump_root_dir=train_config.output_dir + "/mismatches/step_" + str(step),
                     ) as verifier:
                         model_outputs = model(**batch)
                         loss = model_outputs.loss  # Forward call

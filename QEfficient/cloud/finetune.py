@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 import random
 import warnings
 from typing import Any, Dict, Optional, Union
@@ -40,7 +41,7 @@ from QEfficient.utils._utils import hf_download
 try:
     import torch_qaic  # noqa: F401
 except ImportError as e:
-    logger.log_rank_zero(f"{e}. Moving ahead without these qaic modules.")
+    logger.log_rank_zero(f"{e}. Moving ahead without these qaic modules.", logging.WARNING)
 
 
 # Suppress all warnings
@@ -121,7 +122,7 @@ def load_model_and_tokenizer(
         )
 
         if not hasattr(model, "base_model_prefix"):
-            logger.raise_runtimeerror("Given huggingface model does not have 'base_model_prefix' attribute.")
+            logger.raise_error("Given huggingface model does not have 'base_model_prefix' attribute.", RuntimeError)
 
         for param in getattr(model, model.base_model_prefix).parameters():
             param.requires_grad = False
@@ -146,7 +147,7 @@ def load_model_and_tokenizer(
     # If there is a mismatch between tokenizer vocab size and embedding matrix,
     # throw a warning and then expand the embedding matrix
     if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
-        logger.log_rank_zero("Resizing the embedding matrix to match the tokenizer vocab size.", logger.WARNING)
+        logger.log_rank_zero("Resizing the embedding matrix to match the tokenizer vocab size.", logging.WARNING)
         model.resize_token_embeddings(len(tokenizer))
 
     print_model_size(model)
@@ -161,8 +162,8 @@ def load_model_and_tokenizer(
         if hasattr(model, "supports_gradient_checkpointing") and model.supports_gradient_checkpointing:
             model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"preserve_rng_state": False})
         else:
-            logger.raise_runtimeerror(
-                "Given model doesn't support gradient checkpointing. Please disable it and run it."
+            logger.raise_error(
+                "Given model doesn't support gradient checkpointing. Please disable it and run it.", RuntimeError
             )
 
     model = apply_peft(model, train_config, peft_config_file, **kwargs)
@@ -237,8 +238,9 @@ def setup_dataloaders(
     if train_config.run_validation:
         eval_dataloader = get_dataloader(tokenizer, dataset_config, train_config, split="val")
         if len(eval_dataloader) == 0:
-            logger.raise_runtimeerror(
-                f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"
+            logger.raise_error(
+                f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})",
+                ValueError,
             )
         else:
             logger.log_rank_zero(f"Number of Validation Set Batches loaded = {len(eval_dataloader)}")
@@ -280,8 +282,7 @@ def main(peft_config_file: str = None, **kwargs) -> None:
     dataset_config = generate_dataset_config(train_config.dataset)
     update_config(dataset_config, **kwargs)
 
-    logger.prepare_dump_logs(train_config.dump_logs)
-    logger.setLevel(train_config.log_level)
+    logger.prepare_for_logs(train_config.output_dir, train_config.dump_logs, train_config.log_level)
 
     setup_distributed_training(train_config)
     setup_seeds(train_config.seed)
