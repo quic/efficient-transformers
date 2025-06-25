@@ -5,51 +5,153 @@
 #
 # -----------------------------------------------------------------------------
 
+import fcntl
 import math
+import os
 import re
 import subprocess
+import time
+from typing import Optional
 
-from QEfficient.utils.constants import Constants
+from QEfficient.utils.constants import LOCK_DIR, Constants
 from QEfficient.utils.logging_utils import logger
 
 
-def is_networks_loaded(stdout):
-    # Check is the networks are loaded on the device.
-    network_loaded = re.search(r"Networks Active:(\d+)", stdout)
-    if network_loaded and int(network_loaded.group(1)) > 0:
-        return True
-    return False
+def is_device_loaded(stdout: str) -> bool:
+    try:
+        match = re.search(r"Networks Loaded:(\d+)", stdout)
+        return int(match.group(1)) > 0 if match else False
+
+    except (ValueError, AttributeError):
+        return False
 
 
-def get_available_device_id():
+def release_device_lock(lock_file):
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
+        lock_file.close()
+
+    except Exception as e:
+        logger.error(f"Error releasing lock: {e}")
+
+
+def get_device_count():
+    command = ["/opt/qti-aic/tools/qaic-util", "-q"]
+
+    try:
+        result = subprocess.run(command, capture_output=True, text=True)
+        qids = re.findall(r"QID (\d+)", result.stdout)
+        return max(map(int, qids)) + 1 if qids else 0
+
+    except OSError:
+        logger.warning("ERROR while fetching the device", command)
+        return 0
+
+
+def ensure_lock_dir(lock_dir: str):
+    if not os.path.exists(lock_dir):
+        os.makedirs(lock_dir)
+
+
+def acquire_device_lock(retry_interval: int = 10, retry_duration: int = 600) -> Optional[object]:
     """
-    API to check available device id.
+    Attempt to acquire a non-blocking exclusive lock on a device lock file.
+    Retries every 10 seconds for up to 5 minutes.
 
-    Return:
-        :int: Available device id.
+    Args:
+        device_id (int): The device ID to lock.
+
+    Returns:
+        file object if lock is acquired, else None.
     """
+    ensure_lock_dir(LOCK_DIR)
+    lock_file_path = os.path.join(LOCK_DIR, "device_check.lock")
+    start_time = time.time()
 
-    device_id = 0
-    result = None
+    while (time.time() - start_time) < retry_duration:
+        lock_file = open(lock_file_path, "w")
 
-    # FIXME: goes into infinite loop when user doesn't have permission and the command gives permission denied.
-    # To reproduce change the ownership of available devices.
-    while 1:
-        command = ["/opt/qti-aic/tools/qaic-util", "-q", "-d", f"{device_id}"]
         try:
-            result = subprocess.run(command, capture_output=True, text=True)
-        except OSError:
-            logger.warning("Not a Cloud AI 100 device, Command not found", command)
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            logger.debug("Lock acquired for device check")
+            return lock_file
+
+        except BlockingIOError:
+            lock_file.close()
+            logger.debug(f"Device check is locked. Retrying in {retry_interval} seconds...")
+            time.sleep(retry_interval)
+
+        except Exception as e:
+            logger.error(f"Unexpected error acquiring lock for device check: {e}")
             return None
-        if result:
-            if "Status:Error" in result.stdout or is_networks_loaded(result.stdout):
-                device_id += 1
-            elif "Status:Ready" in result.stdout:
-                logger.info("device is available.")
-                return [device_id]
-            elif "Failed to find requested device ID" in result.stdout:
-                logger.warning("Failed to find requested device ID")
-                return None
+
+    logger.warning(f"Failed to acquire lock for device check after {retry_duration//60} minutes.")
+    return None
+
+
+def __fetch_device_id(device_count):
+    for device_id in range(device_count):
+        try:
+            device_query_cmd = ["/opt/qti-aic/tools/qaic-util", "-q", "-d", str(device_id)]
+            result = subprocess.run(device_query_cmd, capture_output=True, text=True)
+
+            if "Failed to find requested device ID" in result.stdout:
+                logger.warning(f"Device ID {device_id} not found.")
+                continue
+
+            if "Status:Error" in result.stdout or not is_device_loaded(result.stdout):
+                logger.debug(f"Device {device_id} is not available.")
+                continue
+
+            logger.info(f"Device ID {device_id} is available and locked.")
+            return [device_id]
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout while querying device {device_id}.")
+        except OSError as e:
+            logger.error(f"OSError while querying device {device_id}: {e}")
+            return None
+        except Exception as e:
+            logger.exception(f"Unexpected error while checking device {device_id}: {e}")
+    return None
+
+
+def get_available_device_id(retry_duration: int = 600, wait_time: int = 5) -> Optional[list[int]]:
+    """
+    Find an available Cloud AI 100 device ID using file-based locking.
+
+    Args:
+        max_retry_count (int): Maximum number of retries.
+        wait_time (int): Seconds to wait between retries.
+
+    Returns:
+        list[int] | None: List containing available device ID, or None if not found.
+    """
+    device_count = get_device_count()
+
+    if device_count == 0:
+        logger.warning("No Cloud AI 100 devices found or platform SDK not installed.")
+        return None
+
+    lock_file = acquire_device_lock()
+
+    if lock_file:
+        start_time = time.time()
+
+        while (time.time() - start_time) < retry_duration:
+            device_id = __fetch_device_id(device_count)
+
+            if device_id:
+                release_device_lock(lock_file)
+                return device_id
+
+            time.sleep(wait_time)
+
+    if lock_file:
+        release_device_lock(lock_file)
+
+    logger.warning("No available device found after all retries.")
+    return None
 
 
 def is_qpc_size_gt_32gb(params: int, mxfp6: bool) -> bool:
