@@ -9,8 +9,7 @@ import logging
 import os
 from datetime import datetime
 
-import torch.distributed as dist
-
+from QEfficient.finetune.utils.helper import is_rank_zero
 from QEfficient.utils.constants import ROOT_DIR
 
 
@@ -27,8 +26,7 @@ class FTLogger:
             raise RuntimeError(message)
 
         def log_rank_zero(msg: str, level: int = logging.INFO):
-            rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
-            if rank != 0:
+            if not is_rank_zero:
                 return
             self.logger.log(level, msg, stacklevel=2)
 

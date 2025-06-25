@@ -19,6 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.finetune.utils.helper import is_rank_zero
 from QEfficient.finetune.utils.logging_utils import logger
 
 try:
@@ -84,7 +85,7 @@ def train(
     max_steps_reached = False  # Flag to indicate max training steps reached
 
     tensorboard_updates = None
-    if (not train_config.enable_ddp) or (local_rank == 0):
+    if is_rank_zero():
         tensorboard_updates = SummaryWriter()
 
     device_type = torch.device(device).type
@@ -202,20 +203,14 @@ def train(
             total_loss += loss.detach().float()
             # Accumalate gradients
             loss = loss / train_config.gradient_accumulation_steps
-            if train_config.enable_ddp:
-                if local_rank == 0:
-                    if loss <= train_config.convergence_loss:
-                        loss_0_counter += 1
-                    else:
-                        loss_0_counter = torch.tensor([0]).to(device)
-                dist.broadcast(loss_0_counter, src=0)
-            else:
+            if is_rank_zero():
                 if loss <= train_config.convergence_loss:
                     loss_0_counter += 1
                 else:
                     loss_0_counter = torch.tensor([0]).to(device)
-
-            if (not train_config.enable_ddp) or (local_rank == 0):
+            if train_config.enable_ddp:
+                dist.broadcast(loss_0_counter, src=0)
+            if is_rank_zero():
                 tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
 
             if train_config.save_metrics:
@@ -303,7 +298,7 @@ def train(
             eval_epoch_loss, eval_metric, temp_val_loss, temp_step_metric = evaluation_helper(
                 model, train_config, eval_dataloader, device
             )
-            if (not train_config.enable_ddp) or (local_rank == 0):
+            if is_rank_zero():
                 tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
 
             if train_config.save_metrics:

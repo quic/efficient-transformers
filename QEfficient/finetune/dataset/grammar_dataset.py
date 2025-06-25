@@ -38,7 +38,7 @@ class grammar(Dataset):
         # Create prompt and tokenize contexts and questions
 
         if self.print_text:
-            logger.info("Input Text: ", self.clean_text(example_batch["text"]))
+            logger.log_rank_zero("Input Text: ", self.clean_text(example_batch["text"]))
 
         input_ = example_batch["input"]
         target_ = example_batch["target"]
@@ -73,9 +73,6 @@ def get_dataset(dataset_config, tokenizer, csv_name=None, context_length=None):
     """cover function for handling loading the working dataset"""
     """dataset loading"""
     currPath = Path.cwd() / "datasets_grammar" / "grammar_train.csv"
-    logger.info(f"Loading dataset {currPath}")
-    csv_name = str(currPath)
-    logger.info(csv_name)
-    dataset = grammar(tokenizer=tokenizer, csv_name=csv_name, context_length=context_length)
+    dataset = grammar(tokenizer=tokenizer, csv_name=str(currPath), context_length=context_length)
 
     return dataset

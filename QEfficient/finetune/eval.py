@@ -84,18 +84,13 @@ def main(**kwargs):
     print_model_size(model)
 
     if train_config.run_validation:
-        # TODO: vbaddi enable packing later in entire infra.
-        # if train_config.batching_strategy == "packing":
-        #    dataset_val = ConcatDataset(dataset_val, chunk_size=train_config.context_length)
-
         eval_dataloader = get_dataloader(tokenizer, dataset_config, train_config, split="test")
-        logger.log_rank_zero(f"Num of Validation Set Batches loaded = {len(eval_dataloader)}")
         if len(eval_dataloader) == 0:
             raise ValueError(
                 f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"
             )
         else:
-            logger.log_rank_zero(f"Num of Validation Set Batches loaded = {len(eval_dataloader)}")
+            logger.log_rank_zero(f"Number of Validation Set Batches loaded = {len(eval_dataloader)}")
 
     model.to(device)
     _ = evaluation(model, train_config, eval_dataloader, None, tokenizer, device)
