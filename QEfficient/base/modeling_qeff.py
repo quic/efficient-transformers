@@ -22,8 +22,7 @@ from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils import constants, dump_qconfig
-from QEfficient.utils._utils import create_json, generate_mdp_partition_config, load_json
+from QEfficient.utils import constants, create_json, dump_qconfig, generate_mdp_partition_config, load_json
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
 logger = logging.getLogger(__name__)
@@ -309,11 +308,8 @@ class QEFFBaseModel(ABC):
         if mdp_ts_json_path is not None:
             compile_hash.update(to_hashable(load_json(str(mdp_ts_json_path))))
 
-        elif mdp_ts_json is not None:
-            compile_hash.update(to_hashable(mdp_ts_json))
-
-        else:
-            compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
+        compile_hash.update(to_hashable(mdp_ts_json))
+        compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
 
         # Check if already compiled
         compile_hash = compile_hash.hexdigest()[:16]
