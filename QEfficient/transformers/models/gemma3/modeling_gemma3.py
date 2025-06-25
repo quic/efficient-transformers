@@ -238,9 +238,9 @@ class QEffGemma3Attention(Gemma3Attention):
                 )
             kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         if self.is_sliding:
-            cos, sin = self.rotary_emb_local(value_states, seq_len=constants.GEMMA3_MAX_POSITION_EMBEDDINGS)
+            cos, sin = self.rotary_emb_local(value_states, seq_len=self.config.max_position_embeddings)
         else:
-            cos, sin = self.rotary_emb(value_states, seq_len=constants.GEMMA3_MAX_POSITION_EMBEDDINGS)
+            cos, sin = self.rotary_emb(value_states, seq_len=self.config.max_position_embeddings)
 
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
         if past_key_value is not None:
