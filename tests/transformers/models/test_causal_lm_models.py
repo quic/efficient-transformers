@@ -47,7 +47,7 @@ test_models_qaic = [
     "neuralmagic/Llama-3.2-3B-Instruct-FP8",  # float quantized compressed-tensor per tensor both weight and activations
     "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
     "ibm-granite/granite-3.1-2b-instruct",
-    "ibm-granite/granite-guardian-3.1-2b",
+    # "ibm-granite/granite-guardian-3.1-2b",
     "hpcai-tech/grok-1",
 ]
 
@@ -66,7 +66,7 @@ test_dummy_model_configs = [
         51200,
         {"num_key_value_heads": 1, "rotary_dim": 16},
     ),
-    # ("microsoft/Phi-3-mini-4k-instruct","phi3", 128, 1, 2, 64, 256, 32064, {}), ouput not matching
+    ("microsoft/Phi-3-mini-4k-instruct", "phi3", 128, 1, 2, 64, 256, 32064, {"num_key_value_heads": 1}),
     ("tiiuae/falcon-7b", "falcon", 128, 1, 2, 64, 256, 65024, {"num_key_value_heads": 1}),
     ("Qwen/Qwen2-0.5B", "qwen2", 128, 1, 2, 64, 256, 151936, {"num_key_value_heads": 1}),
     ("bigcode/starcoder2-3b", "starcoder2", 128, 1, 2, 64, 256, 49152, {"num_key_value_heads": 1}),
@@ -103,7 +103,7 @@ test_dummy_model_configs = [
         64,
         256,
         256000,
-        {"num_key_value_heads": 1, "_name_or_path": "unsloth/gemma-2b"},
+        {"num_key_value_heads": 1},
     ),
     (
         "unsloth/gemma-2-2b",
@@ -114,10 +114,10 @@ test_dummy_model_configs = [
         64,
         256,
         256000,
-        {"num_key_value_heads": 1, "_name_or_path": "unsloth/gemma-2-2b"},
+        {"num_key_value_heads": 1},
     ),
-    # ("TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ", "llama",  128, 1, 2, 64, 256, 32003, {"num_key_value_heads": 1, "architectures": ["LlamaForCausalLM"], "pad_token_id": 0}),
-    # ("TheBloke/Llama-2-7B-GPTQ", "llama", 128, 1, 2, 64, 256, 32000, {"num_key_value_heads": 2}),
+    ("TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ", "llama", 128, 1, 2, 64, 256, 32003, {}),
+    ("TheBloke/Llama-2-7B-GPTQ", "llama", 128, 1, 2, 64, 256, 32000, {}),
     (
         "ibm-granite/granite-20b-code-base",
         "gpt_bigcode",
@@ -129,8 +129,8 @@ test_dummy_model_configs = [
         49152,
         {"num_key_value_heads": 1, "activation_function": "gelu", "architectures": ["GPTBigCodeForCausalLM"]},
     ),
-    # ("neuralmagic/Llama-3.2-3B-Instruct-FP8", "llama", 128, 1, 2, 64, 256, 128256, {"num_key_value_heads": 2}),
-    # ("neuralmagic/Qwen2-0.5B-Instruct-FP8", "qwen2", 128, 1, 2, 64, 256, 151936, {"num_key_value_heads": 1,"quantization_config": {"activation_scheme": "static","ignored_layers": [  "lm_head" ],"quant_method": "fp8"}}),
+    ("neuralmagic/Llama-3.2-3B-Instruct-FP8", "llama", 128, 1, 2, 64, 256, 128256, {}),
+    ("neuralmagic/Qwen2-0.5B-Instruct-FP8", "qwen2", 128, 2, 2, 64, 256, 151936, {}),
     # ("ibm-granite/granite-3.1-2b-instruct", "granite", 128, 1, 2, 64, 256, 49155, {"num_key_value_heads": 2}),
     ("ibm-granite/granite-guardian-3.1-2b", "granite", 128, 1, 2, 64, 256, 49155, {"num_key_value_heads": 1}),
 ]
@@ -280,7 +280,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if model_hf is None:
         model_hf, _ = load_causal_lm_model(model_config)
     model_hf_cb = copy.deepcopy(model_hf)
-
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
     batch_size = len(Constants.INPUT_STR)
@@ -426,14 +425,23 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(test_dummy_model_config, 
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
-
-    torch.manual_seed(42)
-    model_hf = AutoModelForCausalLM.from_config(
-        test_dummy_model_config,
-        attn_implementation="eager",
-    )
-    model_hf.eval()
-    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(test_dummy_model_name, model_hf=model_hf)
+    if test_dummy_model_name in {
+        "neuralmagic/Qwen2-0.5B-Instruct-FP8",
+        "neuralmagic/Llama-3.2-3B-Instruct-FP8",
+        "TheBloke/Llama-2-7B-GPTQ",
+        "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
+    }:
+        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+            model_name=test_dummy_model_name, n_layer=test_dummy_model_config.num_hidden_layers
+        )
+    else:
+        torch.manual_seed(42)
+        model_hf = AutoModelForCausalLM.from_config(
+            test_dummy_model_config,
+            attn_implementation="eager",
+        )
+        model_hf.eval()
+        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(test_dummy_model_name, model_hf=model_hf)
 
 
 @pytest.mark.nightly
