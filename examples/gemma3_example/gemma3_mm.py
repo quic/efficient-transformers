@@ -16,15 +16,14 @@ config = AutoConfig.from_pretrained(model_id)
 # For Testing Purpose Only
 config.text_config.num_hidden_layers = 1
 config.vision_config.num_hidden_layers = 2
-HF_TOKEN = ""
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
 
-### For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
+# pass HF_TOKEN if gated model
+# For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, config=config, attn_implementation="eager", token=HF_TOKEN, kv_offload=True
+    model_id, config=config, attn_implementation="eager", kv_offload=True
 )
-
 
 ### use skip_vision=Ture, if want to run only text, or false ###
 skip_vision = True
@@ -62,7 +61,6 @@ if skip_vision:
         return_tensors="pt",
     )
 
-    streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(tokenizer.batch_decode(output.generated_ids))
 
@@ -104,6 +102,5 @@ else:
         return_tensors="pt",
     )
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-    streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(tokenizer.batch_decode(output.generated_ids))
