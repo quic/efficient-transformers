@@ -21,16 +21,20 @@ from QEfficient import QEFFAutoModel as AutoModel
 
 import torch
 
+# def max_pooling(last_hidden_states: torch.Tensor, position_ids: torch.Tensor) -> torch.Tensor:
+#     # Expand position_ids to match the shape of last_hidden_states
+#     position_mask_expanded = position_ids.unsqueeze(-1).expand(last_hidden_states.size()).float()
+    
+#     # Mask out positions with a special value (e.g., -1e9) where position_id is 0
+#     last_hidden_states[position_mask_expanded == 0] = -1e9
+    
+#     # Apply max pooling across the sequence length dimension
+#     return torch.max(last_hidden_states, dim=1)[0]
 def max_pooling(last_hidden_states: torch.Tensor, position_ids: torch.Tensor) -> torch.Tensor:
-    # Expand position_ids to match the shape of last_hidden_states
-    position_mask_expanded = position_ids.unsqueeze(-1).expand(last_hidden_states.size()).float()
-    
-    # Mask out positions with a special value (e.g., -1e9) where position_id is 0
-    last_hidden_states[position_mask_expanded == 0] = -1e9
-    
-    # Apply max pooling across the sequence length dimension
-    return torch.max(last_hidden_states, dim=1)[0]
-
+    # Create a mask where position_ids > 0 (or use a different condition based on your data)
+    position_mask = (position_ids > 0).unsqueeze(-1).expand(last_hidden_states.size()).float()
+    last_hidden_states[position_mask == 0] = -1e9
+    return torch.max(last_hidden_states, 1)[0]
 
 # Sentences we want sentence embeddings for
 sentences = "This is an example sentence"

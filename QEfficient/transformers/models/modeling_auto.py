@@ -38,6 +38,7 @@ from QEfficient.generation.text_generation_inference import (
 from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
+    EmbeddingTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
@@ -160,7 +161,7 @@ class QEFFAutoModel(QEFFTransformersBase):
     """
 
     _hf_auto_class = AutoModel
-    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
+    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, EmbeddingTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, pooling=None, **kwargs):
@@ -396,36 +397,37 @@ class QEFFAutoModel(QEFFTransformersBase):
         # To handle single seq_len as we can't fetch allowed shapes for single seq_len
         self.seq_len = self.qpc_session.bindings[0].dims[1] if not hasattr(self, "seq_len") else self.seq_len
 
+        qpc_inputs = {}
         input_ids = np.array(
             torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - input_ids_len), "constant", 0)
         )
-        attention_mask = np.array(
-            torch.nn.functional.pad(
-                inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
+        qpc_inputs["input_ids"] = input_ids
+        qpc_input_names=self.qpc_session.input_names
+        
+        if "position_ids" in qpc_input_names:
+            attention_mask = np.array(
+                torch.nn.functional.pad(
+                    inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
+                )
             )
-        )
-        
-        
-        position_ids = np.where(attention_mask == 1, np.arange(attention_mask.shape[1]), -1)
-
-        
-        inputs = dict(input_ids=input_ids, position_ids=position_ids, )
+            position_ids = np.where(attention_mask == 1, np.arange(attention_mask.shape[1]), -1)
+            qpc_inputs["position_ids"] = position_ids
 
         # TODO: Remove try and catch after compiler fix
         try:
             outputs = {
-                "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(np.float32),
+                "output": np.random.randn(*list(self.qpc_session.bindings[-1].dims)).astype(np.float32),
             }
             self.qpc_session.set_buffers(outputs)
-            outputs = self.qpc_session.run(inputs)
+            outputs = self.qpc_session.run(qpc_inputs)
         except Exception:
             outputs = {
-                "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[1]).astype(
+                "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[-1].dims[1]).astype(
                     np.float32
                 ),
             }
             self.qpc_session.set_buffers(outputs)
-            outputs = self.qpc_session.run(inputs)
+            outputs = self.qpc_session.run(qpc_inputs)
         return outputs
 
     def pytorch_feature_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:

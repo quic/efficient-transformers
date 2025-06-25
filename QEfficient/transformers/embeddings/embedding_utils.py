@@ -80,6 +80,13 @@ POOLING_MAP = {
 }
 
 
+def embedding_forward(
+        self, input_ids: Optional[torch.Tensor] = None, position_ids: Optional[torch.Tensor] = None, **kwargs
+    ):
+    print("Forward swapped with new one")
+    output = self.old_forward(input_ids=input_ids, position_ids=position_ids, **kwargs)
+    return output[0]
+
 class PooledModel(nn.Module):
     """
     Adds pooling functionality to embedding model.
