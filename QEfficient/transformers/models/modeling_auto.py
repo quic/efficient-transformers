@@ -1415,7 +1415,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
-        self.pretrained_model_name_or_path = kwargs.pop("pretrained_model_name_or_path", None)
+        self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         self.is_tlm = transformed
 
