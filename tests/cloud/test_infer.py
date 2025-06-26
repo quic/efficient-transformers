@@ -120,6 +120,7 @@ def test_infer_qnn(mocker, config):
     local_config = config.copy()
     local_config.update(
         full_batch_size=None,
+        qnn_config=None,
     )
     check_infer(mocker=mocker, **local_config)
 

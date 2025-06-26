@@ -155,7 +155,7 @@ def test_export_compile_execute_fb(mocker, config):
 def test_export_compile_execute_qnn(mocker, config):
     # testing export -> compile -> infer without full_batch_size in QNN enviroment
     local_config = config.copy()
-    local_config.update(full_batch_size=None, enable_qnn=False, qnn_config=None)
+    local_config.update(full_batch_size=None, qnn_config=None)
     check_export_compile_execute(mocker=mocker, **local_config)
 
 
