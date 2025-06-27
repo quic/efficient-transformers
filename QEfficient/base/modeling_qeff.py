@@ -389,7 +389,7 @@ class QEFFBaseModel(ABC):
         try:
             subprocess.run(command, capture_output=True, check=True)
 
-            # Dumping compile paramters in a JSON file after successful ONNX export
+            # Dumping compile paramters in a JSON file after successful QPC compilation
             compile_params_json = compile_dir / "compile_params.json"
             with open(compile_params_json, "w") as fp:
                 json.dump(
