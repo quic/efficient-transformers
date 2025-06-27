@@ -9,12 +9,13 @@ import inspect
 import json
 import os
 from dataclasses import asdict
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+from collections import namedtuple
 
 import yaml
 from peft import LoraConfig as PeftLoraConfig
 
-import QEfficient.finetune.configs.dataset_config as datasets
+import QEfficient.finetune.configs.dataset_config as qeff_datasets
 from QEfficient.finetune.configs.peft_config import LoraConfig
 from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
@@ -86,11 +87,14 @@ def generate_peft_config(train_config: TrainConfig, **kwargs) -> Any:
     return peft_config
 
 
-def generate_dataset_config(dataset_name: str) -> Any:
+def generate_dataset_config(dataset_name: str, custom_dataset_config: Optional[str] = None) -> Any:
     """Generate a dataset configuration based on the specified dataset.
 
     Args:
         dataset_name (str): Name of the dataset to be used for finetuning.
+        custom_dataset_config (str): Dataset config json file for custom datset.
+            This file contains dataset specific arguments to be used in dataset
+            preprocessing step.
 
     Returns:
         Any: A dataset configuration object.
@@ -101,7 +105,15 @@ def generate_dataset_config(dataset_name: str) -> Any:
     supported_datasets = DATASET_PREPROC.keys()
     assert dataset_name in supported_datasets, f"Given dataset '{dataset_name}' is not supported."
     # FIXME (Meet): Replace below logic by creating using auto registry of datasets.
-    dataset_config = {k: v for k, v in inspect.getmembers(datasets)}[dataset_name]()
+    dataset_config = {k: v for k, v in inspect.getmembers(qeff_datasets)}[dataset_name]()
+    if dataset_name == "custom_dataset":
+        custom_dataset_dict = asdict(dataset_config)
+        custom_dataset_dict_override = load_config_file(custom_dataset_config)
+        # Override existing and add new params to dataset_config.
+        custom_dataset_dict.update(custom_dataset_dict_override)
+
+        custom_dataset_class = namedtuple("custom_dataset", custom_dataset_dict.keys())
+        dataset_config = custom_dataset_class(**custom_dataset_dict)
     return dataset_config
 
 

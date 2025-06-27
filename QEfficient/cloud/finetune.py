@@ -21,6 +21,7 @@ from torch.optim.lr_scheduler import StepLR
 from transformers import AutoModel, AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
 
 from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.finetune.utils.helper import parse_unk_args
 from QEfficient.finetune.utils.config_utils import (
     generate_dataset_config,
     generate_peft_config,
@@ -133,7 +134,7 @@ def load_model_and_tokenizer(
         model = AutoModelForSequenceClassification.from_pretrained(
             pretrained_model_path,
             num_labels=dataset_config.num_labels,
-            attn_implementation="sdpa",
+            attn_implementation="eager",
             torch_dtype=torch.float16,
         )
 
@@ -151,7 +152,7 @@ def load_model_and_tokenizer(
         model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_path,
             use_cache=False,
-            attn_implementation="sdpa",
+            attn_implementation="eager",
             torch_dtype=torch.float16,
             device_map=device_map,
         )
@@ -288,11 +289,10 @@ def main(**kwargs) -> None:
                 --model_name "meta-llama/Llama-3.2-1B" \\
                 --lr 5e-4
     """
-    # TODO:Remove TrainConfig() and update_config() as all params are passed in kwargs by parser
     train_config = TrainConfig()
     update_config(train_config, **kwargs)
-    dataset_config = generate_dataset_config(train_config.dataset)
-    update_config(dataset_config, **kwargs)
+    dataset_config_file = kwargs.pop("dataset_config", None)
+    dataset_config = generate_dataset_config(train_config.dataset, dataset_config_file)
 
     logger.prepare_for_logs(train_config.output_dir, train_config.dump_logs, train_config.log_level)
 
@@ -341,6 +341,7 @@ def main(**kwargs) -> None:
 
 if __name__ == "__main__":
     parser = get_finetune_parser()
-    args = parser.parse_args()
+    args, unk_args = parser.parse_known_args()
+    unk_args_dict = parse_unk_args(unk_args)
     args_dict = vars(args)
-    main(**args_dict)
+    main(**args_dict, **unk_args_dict)
