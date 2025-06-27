@@ -29,8 +29,6 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
 # Fused kernels
 # Use separate functions for each case because conditionals prevent kernel fusion.
-# TODO: Could have better fused kernels depending on scaling, dropout and head mask.
-#  Is it doable without writing 32 functions?
 @torch.jit.script
 def upcast_masked_softmax(
     x: torch.Tensor, mask: torch.Tensor, mask_value: torch.Tensor, scale: float, softmax_dtype: torch.dtype
