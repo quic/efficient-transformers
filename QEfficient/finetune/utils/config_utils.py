@@ -103,6 +103,24 @@ def generate_dataset_config(dataset_name: str) -> Any:
     return dataset_config
 
 
+def pad_dataset(dataset, batch_size, num_replicas):
+    loss_weight_column = [1] * len(dataset)
+    dataset = dataset.add_column("loss_weight", loss_weight_column)
+    remainder = len(dataset) % (batch_size * num_replicas)
+    if remainder == 0:
+        return dataset
+
+    print("Padding dataset to make it divisible by batch_size * num_ddp_devices.")
+    print(f"Dataset length before padding: {len(dataset)}")
+    sample_input = dataset[0]
+    sample_input["loss_weight"] = 0
+    num_pads = (batch_size * num_replicas) - remainder
+    for _ in range(num_pads):
+        dataset = dataset.add_item(sample_input)
+    print(f"Dataset length after padding: {len(dataset)}")
+    return dataset
+
+
 def validate_config(config_data: Dict[str, Any], config_type: str = "lora") -> None:
     """Validate the provided YAML/JSON configuration for required fields and types.
 
