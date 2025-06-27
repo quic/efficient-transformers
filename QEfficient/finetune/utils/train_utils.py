@@ -111,7 +111,7 @@ def train(
             num_classes = model.classifier.out_features
         acc_helper = torchmetrics.classification.MulticlassAccuracy(num_classes=num_classes).to(device)
 
-    autocast_ctx = get_autocast_ctx(device_type, train_config.use_autocast, dtype=torch.float16)
+    autocast_ctx = get_autocast_ctx(train_config.use_autocast, device_type, dtype=torch.float16)
     op_verifier_ctx = partial(get_op_verifier_ctx, train_config.opByOpVerifier, device, train_config.dump_root_dir)
 
     # Start the training loop
@@ -416,7 +416,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     eval_loss = 0.0  # Initialize evaluation loss
     device_type = torch.device(device).type
 
-    autocast_ctx = get_autocast_ctx(device_type, train_config.use_autocast, dtype=torch.float16)
+    autocast_ctx = get_autocast_ctx(train_config.use_autocast, device_type, dtype=torch.float16)
     for step, batch in enumerate(tqdm(eval_dataloader, colour="green", desc="evaluating Epoch", dynamic_ncols=True)):
         #  stop when the maximum number of eval steps is reached
         if train_config.max_eval_step > 0 and step > train_config.max_eval_step:
