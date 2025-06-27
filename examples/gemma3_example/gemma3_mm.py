@@ -7,7 +7,7 @@
 
 import torch
 import transformers
-from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, TextStreamer
+from transformers import AutoConfig, AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
@@ -16,12 +16,14 @@ config = AutoConfig.from_pretrained(model_id)
 # For Testing Purpose Only
 config.text_config.num_hidden_layers = 1
 config.vision_config.num_hidden_layers = 2
-
-model = AutoModelForImageTextToText.from_pretrained(model_id, attn_implementation="eager", config=config)
-model.eval()
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
-qeff_model = QEFFAutoModelForImageTextToText(model, kv_offload=True)
+
+# pass HF_TOKEN if gated model
+# For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
+qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+    model_id, config=config, attn_implementation="eager", kv_offload=True
+)
 
 ### use skip_vision=Ture, if want to run only text, or false ###
 skip_vision = True
@@ -59,9 +61,7 @@ if skip_vision:
         return_tensors="pt",
     )
 
-    streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, device_ids=[0], generation_len=100)
-    print(output.generated_ids)
+    output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
 
@@ -72,7 +72,7 @@ else:
         ctx_len=3072,
         img_size=896,
         num_cores=16,
-        num_devices=8,
+        num_devices=1,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
@@ -103,9 +103,6 @@ else:
         return_tensors="pt",
     )
     inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-    streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3], generation_len=100)
-    print(output.generated_ids)
+    output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
-    print()
