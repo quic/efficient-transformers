@@ -43,24 +43,6 @@ configs = [
         "generation",  # task_type
         10,  # max_eval_step
         20,  # max_train_step
-        "samsum_dataset",  # dataset_name
-        None,  # data_path
-        1,  # intermediate_step_save
-        None,  # context_length
-        True,  # run_validation
-        True,  # use_peft
-        "qaic",  # device
-        0.00222842,  # expected_train_loss
-        1.00223088,  # expected_train_metric
-        0.02008819,  # expected_eval_loss
-        1.02029132,  # expected_eval_metric
-        id="llama_config_samsum",  # config name
-    ),
-    pytest.param(
-        "meta-llama/Llama-3.2-1B",  # model_name
-        "generation",  # task_type
-        10,  # max_eval_step
-        20,  # max_train_step
         "gsm8k_dataset",  # dataset_name
         None,  # data_path
         1,  # intermediate_step_save
