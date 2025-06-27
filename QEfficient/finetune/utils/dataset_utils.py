@@ -85,7 +85,11 @@ def padding_dataset(train_config, dataset):
 def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"):
     dataset = get_preprocessed_dataset(tokenizer, dataset_config, split, context_length=train_config.context_length)
 
-    if train_config.enable_ddp or train_config.train_batch_size > 1:
+    if (
+        train_config.enable_ddp
+        or (split == "train" and train_config.train_batch_size > 1)
+        or (split != "train" and train_config.val_batch_size > 1)
+    ):
         dataset = padding_dataset(train_config, dataset)
 
     dl_kwargs = get_dataloader_kwargs(train_config, dataset, tokenizer, split)
