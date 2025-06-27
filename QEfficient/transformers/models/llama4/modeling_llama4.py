@@ -313,6 +313,9 @@ class QEffLlama4TextRotaryEmbedding(nn.Module):
 
         # self.max_seq_len_cached = config.max_position_embeddings
         # TODO: max sequence length cached should be taken before export and model should be exported with that paramter.
+        logger.warning(
+            f"max_seq_len_cached is set to {constants.LLAMA4_MAX_POSITION_EMBEDDINGS}, this is the maximum sequence length supported for the model"
+        )
         self.max_seq_len_cached = constants.LLAMA4_MAX_POSITION_EMBEDDINGS
 
         # Get inverse frequency and scaling function (handles yarn/etc)
@@ -899,6 +902,13 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 else constants.LLAMA4_ATTENTION_CHUNK_SIZE
             ),
         )
+        if (
+            prefill_seq_len > constants.LLAMA4_MAX_POSITION_EMBEDDINGS
+            or ctx_len > constants.LLAMA4_MAX_POSITION_EMBEDDINGS
+        ):
+            logger.error(
+                f"max_seq_len_cached is set to {constants.LLAMA4_MAX_POSITION_EMBEDDINGS}, Your prefill_seq_len is {prefill_seq_len} and ctx_len is {ctx_len}."
+            )
 
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
             img_size = getattr(self.config.vision_config, "image_size")
