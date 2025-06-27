@@ -19,13 +19,14 @@ from utils.dataset_utils import get_dataloader
 from utils.train_utils import evaluation, print_model_size
 
 from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.finetune.utils.logging_utils import logger
 
 try:
     import torch_qaic  # noqa: F401
 
     device = "qaic:0"
 except ImportError as e:
-    print(f"Warning: {e}. Moving ahead without these qaic modules.")
+    logger.log_rank_zero(f"{e}. Moving ahead without these qaic modules.")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Suppress all warnings
@@ -77,25 +78,20 @@ def main(**kwargs):
     # If there is a mismatch between tokenizer vocab size and embedding matrix,
     # throw a warning and then expand the embedding matrix
     if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
-        print("WARNING: Resizing the embedding matrix to match the tokenizer vocab size.")
+        logger.log_rank_zero("Resizing the embedding matrix to match the tokenizer vocab size.")
         model.resize_token_embeddings(len(tokenizer))
 
-    print_model_size(model, train_config)
+    print_model_size(model)
 
     if train_config.run_validation:
-        # TODO: vbaddi enable packing later in entire infra.
-        # if train_config.batching_strategy == "packing":
-        #    dataset_val = ConcatDataset(dataset_val, chunk_size=train_config.context_length)
-
         eval_dataloader = get_dataloader(tokenizer, dataset_config, train_config, split="test")
-
-        print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
         if len(eval_dataloader) == 0:
-            raise ValueError(
-                f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"
+            logger.raise_error(
+                f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})",
+                ValueError,
             )
         else:
-            print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
+            logger.log_rank_zero(f"Number of Validation Set Batches loaded = {len(eval_dataloader)}")
 
     model.to(device)
     _ = evaluation(model, train_config, eval_dataloader, None, tokenizer, device)

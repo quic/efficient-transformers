@@ -19,6 +19,8 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.finetune.utils.helper import is_rank_zero
+from QEfficient.finetune.utils.logging_utils import logger
 
 try:
     import torch_qaic  # noqa: F401
@@ -27,7 +29,7 @@ try:
     import torch_qaic.utils as qaic_utils  # noqa: F401
     from torch.qaic.amp import GradScaler as QAicGradScaler
 except ImportError as e:
-    print(f"Warning: {e}. Moving ahead without these qaic modules.")
+    logger.log_rank_zero(f"{e}. Moving ahead without these qaic modules.")
 
 from torch.amp import GradScaler
 
@@ -83,11 +85,9 @@ def train(
     max_steps_reached = False  # Flag to indicate max training steps reached
 
     tensorboard_updates = None
-    if train_config.enable_ddp:
-        if local_rank == 0:
-            tensorboard_updates = SummaryWriter()
-    else:
-        tensorboard_updates = SummaryWriter()
+    tensorboard_log_dir = train_config.output_dir + "/runs/" + f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    if is_rank_zero():
+        tensorboard_updates = SummaryWriter(log_dir=tensorboard_log_dir)
 
     device_type = torch.device(device).type
 
@@ -113,27 +113,21 @@ def train(
     # Start the training loop
     for epoch in range(train_config.num_epochs):
         if loss_0_counter.item() == train_config.convergence_counter:
-            if train_config.enable_ddp:
-                print(
-                    f"Not proceeding with epoch {epoch + 1} on device {local_rank} since loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps."
-                )
-                break
-            else:
-                print(
-                    f"Not proceeding with epoch {epoch + 1} since loss value has been <= {train_config.convergence_loss}  for last {loss_0_counter.item()} steps."
-                )
-                break
+            logger.log_rank_zero(
+                f"Skipping epoch {epoch + 1} since loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps."
+            )
+            break
 
         if train_config.use_peft and train_config.from_peft_checkpoint:
             intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
             if epoch < intermediate_epoch:
-                print(f"Skipping epoch {epoch + 1} since fine tuning has already completed for it.")
+                logger.log_rank_zero(f"Skipping epoch {epoch + 1} since fine tuning has already completed for it.")
                 # to bring the count of train_step in sync with where it left off
                 total_train_steps += len(train_dataloader)
                 continue
 
-        print(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
-        print(f"train_config.max_train_step: {train_config.max_train_step}")
+        logger.log_rank_zero(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
+        logger.log_rank_zero(f"train_config.max_train_step: {train_config.max_train_step}")
         # stop when the maximum number of training steps is reached
         if max_steps_reached:
             break
@@ -160,8 +154,8 @@ def train(
                 # to bring the count of train_step in sync with where it left off
                 if epoch == intermediate_epoch and step == 0:
                     total_train_steps += intermediate_step
-                    print(
-                        f"skipping first {intermediate_step} steps for epoch {epoch + 1}, since fine tuning has already completed for them."
+                    logger.log_rank_zero(
+                        f"Skipping first {intermediate_step} steps for epoch {epoch + 1}, since fine tuning has already completed for it."
                     )
                 if epoch == intermediate_epoch and step < intermediate_step:
                     total_train_steps += 1
@@ -188,7 +182,7 @@ def train(
                         atol=1e-1,
                         use_ref_output_on_mismatch=True,
                         filter_config=qaic_debug.DispatchFilterConfig.default(device),
-                        dump_root_dir=train_config.dump_root_dir + str(step),
+                        dump_root_dir=train_config.output_dir + "/mismatches/step_" + str(step),
                     ) as verifier:
                         model_outputs = model(**batch)
                         loss = model_outputs.loss  # Forward call
@@ -197,7 +191,7 @@ def train(
                             labels = batch["labels"][:, 0]
                             preds = torch.nn.functional.softmax(logits, dim=-1)
                             acc_helper.forward(preds, labels)
-                    print("Mismatches detected:", verifier.get_perop_mismatch_count())
+                    logger.info("Mismatches detected:", verifier.get_perop_mismatch_count())
                 else:
                     model_outputs = model(**batch)
                     loss = model_outputs.loss  # Forward call
@@ -210,23 +204,14 @@ def train(
             total_loss += loss.detach().float()
             # Accumalate gradients
             loss = loss / train_config.gradient_accumulation_steps
-            if train_config.enable_ddp:
-                if local_rank == 0:
-                    if loss <= train_config.convergence_loss:
-                        loss_0_counter += 1
-                    else:
-                        loss_0_counter = torch.tensor([0]).to(device)
-                dist.broadcast(loss_0_counter, src=0)
-            else:
+            if is_rank_zero():
                 if loss <= train_config.convergence_loss:
                     loss_0_counter += 1
                 else:
                     loss_0_counter = torch.tensor([0]).to(device)
-
             if train_config.enable_ddp:
-                if local_rank == 0:
-                    tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
-            else:
+                dist.broadcast(loss_0_counter, src=0)
+            if is_rank_zero():
                 tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
 
             if train_config.save_metrics:
@@ -277,18 +262,11 @@ def train(
                     val_step_metric,
                     val_metric,
                 )
-            if train_config.enable_ddp:
-                if loss_0_counter.item() == train_config.convergence_counter:
-                    print(
-                        f"Loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps. Hence, stopping the fine tuning on device {local_rank}."
-                    )
-                    break
-            else:
-                if loss_0_counter.item() == train_config.convergence_counter:
-                    print(
-                        f"Loss value has been  <= {train_config.convergence_loss}  for last {loss_0_counter.item()} steps. Hence, stopping the fine tuning."
-                    )
-                    break
+            if loss_0_counter.item() == train_config.convergence_counter:
+                logger.log_rank_zero(
+                    f"Loss value has been <= {train_config.convergence_loss} for last {loss_0_counter.item()} steps.Hence,stopping the fine tuning."
+                )
+                break
 
         pbar.close()
         epoch_end_time = time.perf_counter() - epoch_start_time
@@ -318,18 +296,10 @@ def train(
         lr_scheduler.step()
 
         if train_config.run_validation:
-            if train_config.enable_ddp:
-                dist.barrier()
-                eval_epoch_loss, eval_metric, temp_val_loss, temp_step_metric = evaluation_helper(
-                    model, train_config, eval_dataloader, device
-                )
-                if local_rank == 0:
-                    tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
-
-            else:
-                eval_epoch_loss, eval_metric, temp_val_loss, temp_step_metric = evaluation_helper(
-                    model, train_config, eval_dataloader, device
-                )
+            eval_epoch_loss, eval_metric, temp_val_loss, temp_step_metric = evaluation_helper(
+                model, train_config, eval_dataloader, device
+            )
+            if is_rank_zero():
                 tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
 
             if train_config.save_metrics:
@@ -347,15 +317,15 @@ def train(
         if train_config.run_validation:
             if eval_epoch_loss < best_val_loss:
                 best_val_loss = eval_epoch_loss
-                print(f"best eval loss on epoch {epoch + 1} is {best_val_loss}")
+                logger.log_rank_zero(f"best eval loss on epoch {epoch + 1} is {best_val_loss}")
             val_loss.append(float(eval_epoch_loss))
             val_metric.append(float(eval_metric))
         if train_config.task_type == "seq_classification":
-            print(
+            logger.log_rank_zero(
                 f"Epoch {epoch + 1}: train_acc={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
             )
         else:
-            print(
+            logger.log_rank_zero(
                 f"Epoch {epoch + 1}: train_metric={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
             )
 
@@ -403,6 +373,9 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
 
     Returns: eval_epoch_loss, eval_metric, eval_step_loss, eval_step_metric
     """
+    if train_config.enable_ddp:
+        dist.barrier()
+
     model.eval()
 
     if train_config.task_type == "seq_classification":
@@ -462,7 +435,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
         eval_metric = torch.exp(eval_epoch_loss)
 
     # Print evaluation metrics
-    print(f" {eval_metric.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
+    logger.log_rank_zero(f"{eval_metric.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
 
     return eval_epoch_loss, eval_metric, val_step_loss, val_step_metric
 
@@ -475,18 +448,28 @@ def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
     return longest_seq_length, longest_seq_ix
 
 
-def print_model_size(model, config) -> None:
+def print_model_size(model) -> None:
     """
     Print model name, the number of trainable parameters and initialization time.
 
     Args:
-        model: The PyTorch model.
-        model_name (str): Name of the model.
+        model: PyTorch model.
     """
-
-    print(f"--> Model {config.model_name}")
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"\n--> {config.model_name} has {total_params / 1e6} Million params\n")
+    logger.log_rank_zero(f"Model has {total_params / 1e6} Million params.")
+
+
+def print_trainable_parameters(model) -> None:
+    """
+    Print the number of trainable parameters, all params and percentage of trainablke params.
+
+    Args:
+        model: The PyTorch model.
+    """
+    trainable_params, all_param = model.get_nb_trainable_parameters()
+    logger.log_rank_zero(
+        f"Trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}"
+    )
 
 
 def save_to_json(

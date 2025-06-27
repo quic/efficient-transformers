@@ -5,7 +5,13 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
+
 TASK_TYPE = ["generation", "seq_classification"]
 PEFT_METHOD = ["lora"]
 DEVICE = ["qaic", "cpu", "cuda"]
 BATCHING_STRATEGY = ["padding", "packing"]
+
+
+def is_rank_zero():
+    return int(os.getenv("LOCAL_RANK", 0)) == 0
