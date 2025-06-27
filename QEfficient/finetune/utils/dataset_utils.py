@@ -54,10 +54,10 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
                 dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=False
             )
             kwargs["batch_size"] = batch_size
-            kwargs["drop_last"] = True
+            kwargs["drop_last"] = False
     else:
         kwargs["batch_size"] = batch_size
-        kwargs["drop_last"] = True
+        kwargs["drop_last"] = False
     kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
     return kwargs
 
@@ -68,11 +68,13 @@ def padding_dataset(train_config, dataset):
         dataset = dataset.sort("input_length")
         dataset = dataset.remove_columns("input_length")
     dummy_row = next(iter(dataset))
-    dummy_row["labels"] = [-100] * len(dummy_row["labels"])
+    dummy_row["labels"] = torch.tensor([-100] * len(dummy_row["labels"]))
     padding_size = 0
-    num_replicas = dist.get_world_size()
-    if len(dataset) % (num_replicas * train_config.train_batch_size) > 0:
-        padding_size = num_replicas - (len(dataset) % (num_replicas * train_config.train_batch_size))
+    num_replicas = 1
+    if train_config.enable_ddp:
+        num_replicas = dist.get_world_size()
+    remainder = len(dataset) % (num_replicas * train_config.train_batch_size)
+    padding_size = (num_replicas * train_config.train_batch_size) - remainder
 
     dummy_data = [dummy_row.copy() for _ in range(padding_size)]
     dummy_dataset = datasets.Dataset.from_list(dummy_data)
@@ -82,7 +84,8 @@ def padding_dataset(train_config, dataset):
 
 def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"):
     dataset = get_preprocessed_dataset(tokenizer, dataset_config, split, context_length=train_config.context_length)
-    if train_config.enable_ddp:
+
+    if train_config.enable_ddp or train_config.train_batch_size > 1:
         dataset = padding_dataset(train_config, dataset)
 
     dl_kwargs = get_dataloader_kwargs(train_config, dataset, tokenizer, split)

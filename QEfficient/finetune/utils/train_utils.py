@@ -194,7 +194,14 @@ def train(
                         loss = model_outputs.loss  # Forward call
                         if (batch["labels"] != -100).sum() == 0:
                             loss = loss.nan_to_num(nan=0.0)
-                            num_dummy_samples += 1
+                            num_dummy_samples += train_config.train_batch_size
+                        else:
+                            num_dummy_samples_per_batch = (
+                                (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
+                            )
+                            if num_dummy_samples_per_batch > 0:
+                                num_dummy_samples += num_dummy_samples_per_batch
+                                loss = loss * train_config.train_batch_size / num_dummy_samples_per_batch
 
                         if train_config.task_type == "seq_classification":
                             logits = model_outputs.logits
@@ -207,7 +214,14 @@ def train(
                     loss = model_outputs.loss  # Forward call
                     if (batch["labels"] != -100).sum() == 0:
                         loss = loss.nan_to_num(nan=0.0)
-                        num_dummy_samples += 1
+                        num_dummy_samples += train_config.val_batch_size
+                    else:
+                        num_dummy_samples_per_batch = (
+                            (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
+                        )
+                        if num_dummy_samples_per_batch > 0:
+                            num_dummy_samples += num_dummy_samples_per_batch
+                            loss = loss * train_config.val_batch_size / num_dummy_samples_per_batch
 
                     if train_config.task_type == "seq_classification":
                         logits = model_outputs.logits
@@ -315,20 +329,29 @@ def train(
         if loss_0_counter.item() == train_config.convergence_counter:
             if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
                 train_epoch_loss = (
-                    0.0 if total_loss == 0.0 else total_loss / (step - intermediate_step - num_dummy_samples)
+                    0.0
+                    if total_loss == 0.0
+                    else total_loss / (step - intermediate_step - num_dummy_samples / train_config.train_batch_size)
                 )
             else:
-                train_epoch_loss = 0.0 if total_loss == 0.0 else total_loss / (step - num_dummy_samples)
+                train_epoch_loss = (
+                    0.0
+                    if total_loss == 0.0
+                    else total_loss / (step - num_dummy_samples / train_config.train_batch_size)
+                )
         else:
             if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
                 train_epoch_loss = (
                     0.0
                     if total_loss == 0.0
-                    else total_loss / (len(train_dataloader) - intermediate_step - num_dummy_samples)
+                    else total_loss
+                    / (len(train_dataloader) - intermediate_step - (num_dummy_samples / train_config.train_batch_size))
                 )
             else:
                 train_epoch_loss = (
-                    0.0 if total_loss == 0.0 else total_loss / (len(train_dataloader) - num_dummy_samples)
+                    0.0
+                    if total_loss == 0.0
+                    else total_loss / (len(train_dataloader) - (num_dummy_samples / train_config.train_batch_size))
                 )
 
         if train_config.task_type == "seq_classification":
@@ -469,6 +492,13 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
             if (batch["labels"] != -100).sum() == 0:
                 loss = loss.nan_to_num(nan=0.0)
                 num_dummy_samples += 1
+            else:
+                num_dummy_samples_per_batch = (
+                    (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
+                )
+                if num_dummy_samples_per_batch > 0:
+                    num_dummy_samples += num_dummy_samples_per_batch
+                    loss = loss * train_config.val_batch_size / num_dummy_samples_per_batch
 
             if train_config.task_type == "seq_classification":
                 logits = outputs.logits
@@ -486,7 +516,11 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
             eval_loss += loss.detach().float()
 
     # Compute average loss and metric
-    eval_epoch_loss = 0.0 if eval_loss == 0.0 else eval_loss / (len(eval_dataloader) - num_dummy_samples)
+    eval_epoch_loss = (
+        0.0
+        if eval_loss == 0.0
+        else eval_loss / (len(eval_dataloader) - num_dummy_samples / train_config.val_batch_size)
+    )
     if train_config.task_type == "seq_classification":
         eval_metric = acc_helper.compute()
     else:
