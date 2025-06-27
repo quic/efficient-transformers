@@ -383,6 +383,19 @@ class QEFFBaseModel(ABC):
         logger.info(f"Running compiler: {' '.join(command)}")
         try:
             subprocess.run(command, capture_output=True, check=True)
+
+            # Dumping compile paramters in a JSON file after successful ONNX export
+            compile_params_json = compile_dir / "compile_params.json"
+            with open(compile_params_json, "w") as fp:
+                json.dump(
+                    {
+                        "compile_params": {
+                            k: make_serializable(self.compile_params[k]) for k in sorted(self.compile_params.keys())
+                        }
+                    },
+                    fp,
+                    indent=4,
+                )
         except subprocess.CalledProcessError as e:
             raise RuntimeError(
                 "\n".join(
