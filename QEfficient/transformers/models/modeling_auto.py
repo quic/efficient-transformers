@@ -171,8 +171,6 @@ class QEFFAutoModel(QEFFTransformersBase):
         self.model.base_model.config.use_cache = True
         self.model_params["qeff_class"] = self.__class__.__name__
 
-        # self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
-
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path, pooling=None, *args, **kwargs):
@@ -913,7 +911,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             self.model.config.vision_config.use_flash_attn = "false"
         else:
             self.model.config.text_config.use_cache = True
-        self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
 
     @classmethod
     def from_pretrained(
