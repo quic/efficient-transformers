@@ -72,7 +72,6 @@ def check_infer(mocker, generation_len=32, **kwargs):
         mxint8=ms.mxint8,
         full_batch_size=ms.full_batch_size,
         enable_qnn=ms.enable_qnn,
-        qnn_config=ms.qnn_config,
         image_url=kwargs["image_url"],
     )
 
