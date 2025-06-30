@@ -227,7 +227,10 @@ from QEfficient.transformers.models.grok_1.modeling_grok1 import (
     QEffGrok1MoeBlock,
     QEffGrok1MultiHeadAttention,
 )
-from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
+from QEfficient.transformers.models.internvl.modeling_internvl import (
+    QEffInternVisionEmbeddings,
+    QEffInternVLModel,
+)
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
@@ -500,6 +503,7 @@ class SpDTransform:
     @classmethod
     def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
         transformed = False
+        pretrained_model_name_or_path_temp = kwargs.pop("pretrained_model_name_or_path", None)
         if qaic_config is None or (speculative_model_type := qaic_config.get("speculative_model_type")) is None:
             return model, transformed
         elif speculative_model_type not in (
@@ -521,6 +525,7 @@ class SpDTransform:
             raise NotImplementedError(
                 f"model class {model_class} does not yet support returning multiple logits to keep."
             )
+        kwargs["pretrained_model_name_or_path"] = pretrained_model_name_or_path_temp
         return model, transformed
 
 

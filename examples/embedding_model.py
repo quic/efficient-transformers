@@ -27,12 +27,10 @@ sentences = "This is an example sentence"
 tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
 
-# You can specify the pooling strategy either as a string (e.g., "mean") or by passing a custom pooling function.
+# You can specify the pooling strategy either as a string (e.g., "max") or by passing a custom pooling function.
 # If no pooling is specified, the model will return its default output (typically token embeddings).
 qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling=max_pooling)
-
-# Example: Using mean pooling by specifying it as a string.
-# This will return sentence embeddings computed using mean pooling.
+# qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling="max")
 # qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
 # Here seq_len can be list of seq_len or single int
