@@ -9,7 +9,7 @@ import datasets
 
 
 def get_preprocessed_samsum(dataset_config, tokenizer, split, context_length=None):
-    dataset = datasets.load_dataset("knkarthick/samsum", split=split, trust_remote_code=True)
+    dataset = datasets.load_dataset("Samsung/samsum", split=split, trust_remote_code=True)
 
     prompt = "Summarize this dialog:\n{dialog}\n---\nSummary:\n"
 

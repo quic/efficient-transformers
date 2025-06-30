@@ -49,7 +49,6 @@ class DistributedLengthBasedBatchSampler(torch.utils.data.BatchSampler):
         num_replicas: int,
         rank: int,
         shuffle: bool = True,
-        bool=True,
         seed: int = 0,
     ) -> None:
         random.seed(seed)
