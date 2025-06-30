@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+import os
+
 import datasets
 import torch
 import torch.distributed as dist
@@ -62,6 +64,10 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
     return kwargs
 
 
+def get_num_ddp_devices():
+    return int(os.getenv("WORLD_SIZE", 1))
+
+
 def padding_dataset(train_config, dataset):
     dataset = dataset.map(lambda x: {"input_length": len(x["input_ids"])})
     if train_config.enable_sorting_for_ddp:
@@ -70,9 +76,7 @@ def padding_dataset(train_config, dataset):
     dummy_row = next(iter(dataset))
     dummy_row["labels"] = torch.tensor([-100] * len(dummy_row["labels"]))
     padding_size = 0
-    num_replicas = 1
-    if train_config.enable_ddp:
-        num_replicas = dist.get_world_size()
+    num_replicas = get_num_ddp_devices()
     remainder = len(dataset) % (num_replicas * train_config.train_batch_size)
     padding_size = (num_replicas * train_config.train_batch_size) - remainder
 

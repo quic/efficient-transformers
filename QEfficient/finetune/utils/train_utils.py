@@ -214,14 +214,14 @@ def train(
                     loss = model_outputs.loss  # Forward call
                     if (batch["labels"] != -100).sum() == 0:
                         loss = loss.nan_to_num(nan=0.0)
-                        num_dummy_samples += train_config.val_batch_size
+                        num_dummy_samples += train_config.train_batch_size
                     else:
                         num_dummy_samples_per_batch = (
                             (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
                         )
                         if num_dummy_samples_per_batch > 0:
                             num_dummy_samples += num_dummy_samples_per_batch
-                            loss = loss * train_config.val_batch_size / num_dummy_samples_per_batch
+                            loss = loss * train_config.train_batch_size / num_dummy_samples_per_batch
 
                     if train_config.task_type == "seq_classification":
                         logits = model_outputs.logits
