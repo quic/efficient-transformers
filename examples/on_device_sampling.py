@@ -32,14 +32,24 @@ def main(args, **kwargs):
             return_pdfs = args.override_qaic_config.get("aic_return_pdfs", None) == "true"
             max_top_k_ids = int(args.override_qaic_config.get("max_top_k_ids", 512))
             sampling_params = {
-                "repetition_penalties": np.array(args.repetition_penalties, dtype=np.float32).reshape(-1, 1),
-                "presence_penalties": np.array(args.presence_penalties, dtype=np.float32).reshape(-1, 1),
-                # "frequency_penalties": np.array(args.frequency_penalties, dtype=np.float32).reshape(-1, 1),
-                "temperatures": np.array(args.temperatures, dtype=np.float32).reshape(-1, 1),
-                "top_ks": np.array(args.top_ks, dtype=np.int32).reshape(-1, 1),
-                "top_ps": np.array(args.top_ps, dtype=np.float32).reshape(-1, 1),
-                "min_ps": np.array(args.min_ps, dtype=np.float32).reshape(-1, 1),
-                "random_numbers": np.array(args.random_numbers, dtype=np.float32).reshape(-1, 1),
+                "repetition_penalties": np.array(args.repetition_penalty, dtype=np.float32)
+                .repeat(args.full_batch_size)
+                .reshape(-1, 1),
+                "presence_penalties": np.array(args.presence_penalty, dtype=np.float32)
+                .repeat(args.full_batch_size)
+                .reshape(-1, 1),
+                # "frequency_penalties": np.array(args.frequency_penalty, dtype=np.float32)
+                # .repeat(args.full_batch_size)
+                # .reshape(-1, 1),
+                "temperatures": np.array(args.temperature, dtype=np.float32)
+                .repeat(args.full_batch_size)
+                .reshape(-1, 1),
+                "top_ks": np.array(args.top_k, dtype=np.int32).repeat(args.full_batch_size).reshape(-1, 1),
+                "top_ps": np.array(args.top_p, dtype=np.float32).repeat(args.full_batch_size).reshape(-1, 1),
+                "min_ps": np.array(args.min_p, dtype=np.float32).repeat(args.full_batch_size).reshape(-1, 1),
+                "random_numbers": np.array(args.random_number, dtype=np.float32)
+                .repeat(args.full_batch_size)
+                .reshape(-1, 1),
             }
 
     # Load model with On Device Sampler enabled
@@ -179,61 +189,56 @@ if __name__ == "__main__":
     # ---On Device Sampling---
     sampling_group = parser.add_argument_group("Sampling parameters")
     sampling_group.add_argument(
-        "--repetition-penalties",
-        type=lambda data: [float(x) for x in data.split(",")],
+        "--repetition-penalty",
+        type=float,
         default=None,
-        help="Comma-separated list of floating point values where each value is a sampling "
-        "parameter that penalizes new tokens based on whether they appear in the prompt and the "
-        "generated text so far. Values > 1 encourage the model to use new tokens, while values < 1 "
-        "encourage the model to repeat tokens.",
+        help="Sampling parameter that penalizes new tokens based on whether they appear in the "
+        "prompt and the generated text so far. Values > 1 encourage the model to use new tokens, "
+        "while values < 1 encourage the model to repeat tokens.",
     )
     sampling_group.add_argument(
-        "--presence-penalties",
-        type=lambda data: [float(x) for x in data.split(",")],
+        "--presence-penalty",
+        type=float,
         default=None,
-        help="Comma-separated list of floating point values where each value is a sampling "
-        "parameter that penalizes new tokens based on whether they appear in the generated text "
-        "so far. Values > 0 encourage the model to use new tokens, while values < 0 encourage the "
-        "model to repeat tokens.",
+        help="Sampling parameter that penalizes new tokens based on whether they appear in the "
+        "generated text so far. Values > 0 encourage the model to use new tokens, while values < "
+        "0 encourage the model to repeat tokens.",
     )
     sampling_group.add_argument(
-        "--temperatures",
-        type=lambda data: [float(x) for x in data.split(",")],
-        default=None,
-        help="Comma-separated list of floating point values where each value is a sampling "
-        "parameter that controls the randomness of the sampling. Lower values make the model more "
-        "deterministic, while higher values make the model more random. Zero means greedy sampling.",
+        "--temperature",
+        type=float,
+        default=0.0,
+        help="Sampling parameter that controls the randomness of the sampling. Lower"
+        "values make the model more deterministic, while higher values make"
+        "the model more random. Zero means greedy sampling.",
     )
     sampling_group.add_argument(
-        "--top-ks",
-        type=lambda data: [int(x) for x in data.split(",")],
+        "--top-k",
+        type=int,
         default=None,
-        help="Comma-separated list of integer values where each value is a sampling parameter that "
-        "controls the number of top tokens to consider. Set to -1 to consider all tokens.",
+        help="Sampling parameter that controls the number of top tokens to consider. Set to -1 "
+        "to consider all tokens.",
     )
     sampling_group.add_argument(
-        "--top-ps",
-        type=lambda data: [float(x) for x in data.split(",")],
+        "--top-p",
+        type=float,
         default=None,
-        help="Comma-separated list of floating point values where each value is a sampling "
-        "parameter that controls the cumulative probability of the top tokens to consider. Must be "
-        "in (0, 1]. Set to 1.0 to consider all tokens.",
+        help="Sampling parameter that controls the cumulative probability of the top tokens to "
+        "consider. Must be in (0, 1]. Set to 1.0 to consider all tokens.",
     )
     sampling_group.add_argument(
-        "--min-ps",
-        type=lambda data: [float(x) for x in data.split(",")],
+        "--min-p",
+        type=float,
         default=None,
-        help="Comma-separated list of floating point values where each value is a sampling "
-        "parameter that represents the minumum probability for a token to be considered, relative "
-        "to the probability of the most likely token. Must be in [0, 1]. Set to 0.0 to disable "
-        "this.",
+        help="Sampling parameter that represents the minumum probability for a token to be "
+        "considered, relative to the probability of the most likely token. Must be in [0, 1]. "
+        "Set to 0.0 to disable this.",
     )
     sampling_group.add_argument(
-        "--random-numbers",
-        type=lambda data: [float(x) for x in data.split(",")],
+        "--random-number",
+        type=float,
         default=None,
-        help="Comma-separated list of floating point values where each value is a sampling "
-        "parameter that represents the random seeds to use for random sampling. Must be in [-1, 1].",
+        help="Sampling parameter that represents the random seed to use for random sampling. " "Must be in [-1, 1].",
     )
     args, compiler_options = parser.parse_known_args()
 
