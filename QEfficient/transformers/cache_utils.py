@@ -288,7 +288,6 @@ class QEffEncoderDecoderCache(EncoderDecoderCache):
 class QEffHybridCache(HybridCache):
     def __init__(self, config, batch_size, max_cache_len):
         super().__init__(config, batch_size, max_cache_len=max_cache_len)
-        # breakpoint()
         self.key_cache: List[torch.Tensor] = []
         self.value_cache: List[torch.Tensor] = []
 
@@ -327,7 +326,6 @@ class QEffHybridCache(HybridCache):
         """Converts the `DynamicCache` instance into the its equivalent in the legacy cache format. Used for
         backward compatibility."""
         legacy_cache = ()
-        # breakpoint()
         for layer_idx in range(len(self)):
             legacy_cache += ((self.key_cache[layer_idx], self.value_cache[layer_idx]),)
         return legacy_cache
