@@ -890,18 +890,7 @@ class QEffTextGenerationBase:
             outputs = self._session.run(decode_inputs)
 
             # Prepare inputs for next iteration
-            if self.include_sampler:
-                if self.return_pdfs:
-                    next_token_id = outputs["probs"].argmax(2)
-                else:
-                    next_token_id = outputs["next_tokens"].reshape(
-                        outputs["next_tokens"].shape[0], outputs["next_tokens"].shape[1]
-                    )
-            else:  # Perform Greedy Sampling on Host
-                logits = outputs["logits"]
-                if len(logits.shape) == 2:
-                    logits = np.expand_dims(logits, 1)
-                next_token_id = logits.argmax(2)
+            next_token_id = self._fetch_next_token_id(outputs)
 
             for decode_batch_id in range(self.full_batch_size):
                 if (
@@ -968,6 +957,11 @@ class QEffTextGenerationBase:
                 (self.batch_size, self._decode_seq_len, self._vocab_size), dtype=np.float32
             )
             self._session.set_buffers({"logits": logits_out_placeholder})
+        else:
+            self._set_output_buffers(
+                batch_size=self.batch_size,
+                sequence_length=self._decode_seq_len,
+            )
         finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
         num_token = 0
         for num_token in range(1, generation_len):
@@ -980,10 +974,12 @@ class QEffTextGenerationBase:
                 self._write_io_dir = None
 
             # Prepare inputs for next iteration
-            decode_inputs["input_ids"] = outputs["logits"].argmax(2)
+            decode_inputs["input_ids"] = self._fetch_next_token_id(outputs)
             decode_inputs["position_ids"][:, -1] += 1
             self.generated_ids[:, num_token] = decode_inputs["input_ids"][:, -1]
             finished_sequences |= decode_inputs["input_ids"] == self.tokenizer.eos_token_id
+            if self.include_sampler:
+                decode_inputs["last_accepted_output_tokens"] = decode_inputs["input_ids"]
 
             if finished_sequences.all():
                 break

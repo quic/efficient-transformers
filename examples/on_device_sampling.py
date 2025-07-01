@@ -16,6 +16,11 @@ from QEfficient.utils import load_hf_tokenizer
 def main(args, **kwargs):
     print(args.__dict__)
 
+    if args.full_batch_size is None:
+        raise ValueError(
+            "On Device Sampling is only supported with Continuous Batching. Please specify --full-batch-size."
+        )
+
     # Get sampling inputs
     include_sampler = None
     return_pdfs = None
