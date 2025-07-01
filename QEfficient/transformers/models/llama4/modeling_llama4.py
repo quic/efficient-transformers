@@ -906,7 +906,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             prefill_seq_len > constants.LLAMA4_MAX_POSITION_EMBEDDINGS
             or ctx_len > constants.LLAMA4_MAX_POSITION_EMBEDDINGS
         ):
-            logger.error(
+            raise ValueError(
                 f"max_seq_len_cached is set to {constants.LLAMA4_MAX_POSITION_EMBEDDINGS}, Your prefill_seq_len is {prefill_seq_len} and ctx_len is {ctx_len}."
             )
 
