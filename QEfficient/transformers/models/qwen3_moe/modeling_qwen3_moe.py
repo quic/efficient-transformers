@@ -29,8 +29,6 @@ from transformers.models.qwen3_moe.modeling_qwen3_moe import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 
-# from QEfficient.transformers.models.llama.modeling_llama import qeff_apply_rotary_pos_emb
-
 
 class QEffQwen3MoeRotaryEmbedding(Qwen3MoeRotaryEmbedding):
     def __init__(self, config: Qwen3MoeConfig, device=None):
@@ -137,7 +135,8 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
             weights.append(top_w[:, i])
 
         # I = self.config.ffn_dim
-        Inter = 768  # TODO: Find a way to identify from config # Intermediate Size
+        Inter = self.config.ffn_dim  # TODO: Find a way to identify from config # Intermediate Size
+        breakpoint()
         upgate = []
         expert_out = []
         for i in range(self.top_k):
@@ -323,16 +322,12 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
-        # if use_cache and past_key_values is None:
-        #     past_key_values = DynamicCache()
-
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
         past_key_values_length = 0
         if past_key_values is not None:
             past_key_values_length = past_key_values[0][0].shape[2]
-            # seq_length_with_past = seq_length_with_past + past_key_values_length
 
         past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
@@ -342,9 +337,6 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values_length)
 
         hidden_states = inputs_embeds
-        # breakpoint()
-        # create position embeddings to be shared across the decoder layers
-        # position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
@@ -365,7 +357,6 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
                 output_router_logits=output_router_logits,
                 use_cache=use_cache,
                 cache_position=cache_position,
-                # position_embeddings=position_embeddings,
             )
 
             hidden_states = layer_outputs[0]
@@ -442,7 +433,7 @@ class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
         ```"""
-        # breakpoint()
+
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_router_logits = (
             output_router_logits if output_router_logits is not None else self.config.output_router_logits
@@ -451,7 +442,7 @@ class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
-        # breakpoint()
+
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs: MoeModelOutputWithPast = self.model(
             input_ids=input_ids,
@@ -469,25 +460,6 @@ class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
         )
 
         hidden_states = outputs.last_hidden_state
-        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
-        # slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-        # logits = self.lm_head(hidden_states[:, slice_indices, :])
-
-        # loss = None
-        # if labels is not None:
-        #     loss = self.loss_function(logits, labels, self.vocab_size, **kwargs)
-
-        # aux_loss = None
-        # if output_router_logits:
-        #     aux_loss = load_balancing_loss_func(
-        #         outputs.router_logits,
-        #         self.num_experts,
-        #         self.num_experts_per_tok,
-        #         attention_mask,
-        #     )
-        #     if labels is not None:
-        #         loss += self.router_aux_loss_coef * aux_loss.to(loss.device)  # make sure to reside in the same device
-        # breakpoint()
         logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
         logits = self.lm_head(hidden_states)
