@@ -840,6 +840,24 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         if vision_inputs:
             vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
+
+        if hasattr(self.model, "get_expected_patch_count"):
+            try:
+                expected_patches = self.model.get_expected_patch_count()
+                if vision_inputs["pixel_values"].shape[0] != expected_patches:
+                    logger.info(
+                        f"Padding pixel_values from {vision_inputs['pixel_values'].shape[0]} to {expected_patches} patches"
+                    )
+                    single_patch = np.expand_dims(vision_inputs["pixel_values"][0], axis=0)
+                    while vision_inputs["pixel_values"].shape[0] < expected_patches:
+                        vision_inputs["pixel_values"] = np.concatenate(
+                            (vision_inputs["pixel_values"], single_patch), axis=0
+                        )
+            except Exception as e:
+                logger.warning(f"Failed to get expected patch count: {e}. Proceeding with original pixel_values shape.")
+        else:
+            logger.debug("Model does not have get_expected_patch_count method. Using original pixel_values shape.")
+
         vision_start = perf_counter()
 
         vision_outputs = {}
