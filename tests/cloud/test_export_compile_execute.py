@@ -96,7 +96,6 @@ def check_export_compile_execute(
 
     with open(((onnx_model_path.parent) / "custom_io.yaml"), "w") as file:
         yaml.dump(data, file)
-
     # Compile model
     qpc_path = QEfficient.compile(
         onnx_path=onnx_model_path,
@@ -114,7 +113,6 @@ def check_export_compile_execute(
         full_batch_size=model_setup.full_batch_size,
         enable_qnn=model_setup.enable_qnn,
     )
-
     # Execute model
     execute(
         model_name=model_setup.model_name,

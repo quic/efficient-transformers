@@ -12,7 +12,7 @@ from QEfficient.cloud.infer import main as infer
 
 configs = [
     {
-        "model_name": "gpt2",
+        "model_name": "lu-vae/llama-68m-fft",
         "num_cores": 16,
         "prompt": "My name is",
         "prompts_txt_file_path": "examples/prompts.txt",
@@ -78,7 +78,6 @@ def check_infer(mocker, generation_len=32, **kwargs):
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
-@pytest.mark.usefixtures("clean_up_after_test")
 @pytest.mark.parametrize("config", configs)
 def test_infer(mocker, config):
     """
@@ -100,7 +99,6 @@ def test_infer(mocker, config):
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
-@pytest.mark.usefixtures("clean_up_after_test")
 @pytest.mark.parametrize("config", configs)
 def test_infer_fb(mocker, config):
     # testing infer with full_batch_size
@@ -112,7 +110,6 @@ def test_infer_fb(mocker, config):
 @pytest.mark.on_qaic
 @pytest.mark.cli
 @pytest.mark.qnn
-@pytest.mark.usefixtures("clean_up_after_test")
 @pytest.mark.parametrize("config", configs)
 def test_infer_qnn(mocker, config):
     # testing infer without full_batch_size in QNN enviroment
@@ -127,7 +124,6 @@ def test_infer_qnn(mocker, config):
 @pytest.mark.on_qaic
 @pytest.mark.cli
 @pytest.mark.qnn
-@pytest.mark.usefixtures("clean_up_after_test")
 @pytest.mark.parametrize("config", configs)
 def test_infer_qnn_fb(mocker, config):
     # testing infer with full_batch_size in QNN enviroment
@@ -138,7 +134,6 @@ def test_infer_qnn_fb(mocker, config):
 @pytest.mark.on_qaic
 @pytest.mark.cli
 @pytest.mark.multimodal
-@pytest.mark.usefixtures("clean_up_after_test")
 @pytest.mark.parametrize("config", configs)
 def test_infer_vlm(mocker, config):
     # testing infer for MM models
@@ -147,8 +142,6 @@ def test_infer_vlm(mocker, config):
         {
             "model_name": "llava-hf/llava-1.5-7b-hf",
             "prompt": "Describe the image.",
-            "prompt_len": 1024,
-            "ctx_len": 2048,
             "full_batch_size": None,
             "enable_qnn": False,
             "qnn_config": None,

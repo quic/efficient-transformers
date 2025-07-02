@@ -8,8 +8,6 @@
 import os
 import shutil
 
-import pytest
-
 from QEfficient.utils import get_onnx_dir_name
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
@@ -148,12 +146,6 @@ def qeff_models_clean_up():
     if os.path.exists(QEFF_MODELS_DIR):
         shutil.rmtree(QEFF_MODELS_DIR)
         logger.info(f"\n.............Cleaned up {QEFF_MODELS_DIR}")
-
-
-@pytest.fixture
-def clean_up_after_test():
-    yield
-    qeff_models_clean_up()
 
 
 def pytest_sessionstart(session):
