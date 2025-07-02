@@ -4,8 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-import os
-
 import datasets
 import torch
 import torch.distributed as dist
@@ -13,6 +11,7 @@ from transformers.data import DataCollatorForSeq2Seq
 
 from QEfficient.finetune.data.sampler import DistributedLengthBasedBatchSampler
 from QEfficient.finetune.dataset.dataset_config import DATALOADER_COLLATE_FUNC, DATASET_PREPROC
+from QEfficient.finetune.utils.helper import get_num_ddp_devices
 
 
 def get_preprocessed_dataset(
@@ -64,11 +63,7 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
     return kwargs
 
 
-def get_num_ddp_devices():
-    return int(os.getenv("WORLD_SIZE", 1))
-
-
-def padding_dataset(train_config, dataset):
+def padding_dataset(train_config, dataset, batch_size):
     dataset = dataset.map(lambda x: {"input_length": len(x["input_ids"])})
     if train_config.enable_sorting_for_ddp:
         dataset = dataset.sort("input_length")
@@ -77,8 +72,8 @@ def padding_dataset(train_config, dataset):
     dummy_row["labels"] = torch.tensor([-100] * len(dummy_row["labels"]))
     padding_size = 0
     num_replicas = get_num_ddp_devices()
-    remainder = len(dataset) % (num_replicas * train_config.train_batch_size)
-    padding_size = (num_replicas * train_config.train_batch_size) - remainder
+    remainder = len(dataset) % (num_replicas * batch_size)
+    padding_size = (num_replicas * batch_size) - remainder
 
     dummy_data = [dummy_row.copy() for _ in range(padding_size)]
     dummy_dataset = datasets.Dataset.from_list(dummy_data)
@@ -89,12 +84,8 @@ def padding_dataset(train_config, dataset):
 def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"):
     dataset = get_preprocessed_dataset(tokenizer, dataset_config, split, context_length=train_config.context_length)
 
-    if (
-        train_config.enable_ddp
-        or (split == "train" and train_config.train_batch_size > 1)
-        or (split != "train" and train_config.val_batch_size > 1)
-    ):
-        dataset = padding_dataset(train_config, dataset)
+    batch_size = train_config.train_batch_size if split == "train" else train_config.val_batch_size
+    dataset = padding_dataset(train_config, dataset, batch_size)
 
     dl_kwargs = get_dataloader_kwargs(train_config, dataset, tokenizer, split)
 
