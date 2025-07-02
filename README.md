@@ -10,7 +10,7 @@
 - [06/2025] Added support for Llama4 Multi-Model [meta-llama/Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct)
 - [06/2025] Added support for Gemma3 Multi-Modal-Model [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)
 - [06/2025] Added support of model `hpcai-tech/grok-1` [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)
-- [06/2025] Added support for sentence embedding, Flexible Pooling configuration and compilation with multiple sequence lengths, [Embedding model](https://github.com/quic/efficient-transformers/pull/424).
+- [06/2025] Added support for sentence embedding which improves efficiency, Flexible/Custom Pooling configuration and compilation with multiple sequence lengths, [Embedding model](https://github.com/quic/efficient-transformers/pull/424).
 
 <details>
 <summary>More</summary>
