@@ -268,8 +268,8 @@ class QEFFBaseModel(ABC):
                 specializations=specializations,
                 custom_io=custom_io,
                 device_group=list(range(mdp_ts_num_devices)),
-                num_cores=compiler_options.get("aic_num_cores", 16),
-                mxfp6=compiler_options.get("mxfp6_matmul", False),
+                num_cores=compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES),
+                mxfp6=compiler_options.get("mxfp6_matmul", constants.DEFAULT_AIC_MXPF6_MATMUL),
                 mxint8=mxint8_kv_cache,
                 qnn_config=qnn_config,
             )
@@ -290,9 +290,14 @@ class QEFFBaseModel(ABC):
             command.append(f"{option}={value}")
 
         # Create a dummy mdp_ts_json if mdp-load-partition-config not provided and num_devices > 1
-        mdp_ts_json = None
-        if mdp_ts_json_path is None and mdp_ts_num_devices > 1:
-            mdp_ts_json = generate_mdp_partition_config(mdp_ts_num_devices, compiler_options.get("aic_num_cores", 16))
+        if mdp_ts_json_path is not None:
+            mdp_ts_json = load_json(str(mdp_ts_json_path))
+        elif mdp_ts_num_devices > 1:
+            mdp_ts_json = generate_mdp_partition_config(
+                mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+            )
+        else:
+            mdp_ts_json = None
 
         compile_hash = hashlib.sha256(to_hashable(command))
 
@@ -305,9 +310,7 @@ class QEFFBaseModel(ABC):
         if num_speculative_tokens:
             compile_hash.update(to_hashable({"num_speculative_tokens": num_speculative_tokens}))
 
-        if mdp_ts_json_path is not None:
-            compile_hash.update(to_hashable(load_json(str(mdp_ts_json_path))))
-
+        # Hash the MDP partition config and the number of devices.
         compile_hash.update(to_hashable(mdp_ts_json))
         compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
 
