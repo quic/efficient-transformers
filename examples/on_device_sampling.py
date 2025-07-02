@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 import argparse
 import re
+from pprint import pprint
 
 import numpy as np
 
@@ -14,57 +15,48 @@ from QEfficient.utils import load_hf_tokenizer
 
 
 def main(args, **kwargs):
-    print(args.__dict__)
-
-    if args.full_batch_size is None:
-        raise ValueError(
-            "On Device Sampling is only supported with Continuous Batching. Please specify --full-batch-size."
-        )
+    pprint(args.__dict__)
 
     # Get sampling inputs
     include_sampler = None
     return_pdfs = None
     max_top_k_ids = None
     sampling_params = None
+    bs = args.full_batch_size if args.full_batch_size is not None else args.batch_size
     if args.override_qaic_config is not None:
         include_sampler = args.override_qaic_config.get("aic_include_sampler", None) == "true"
         if include_sampler is not None:
             return_pdfs = args.override_qaic_config.get("aic_return_pdfs", None) == "true"
             max_top_k_ids = int(args.override_qaic_config.get("max_top_k_ids", 512))
             sampling_params = {
-                "repetition_penalties": np.array(args.repetition_penalty, dtype=np.float32)
-                .repeat(args.full_batch_size)
-                .reshape(-1, 1),
-                "presence_penalties": np.array(args.presence_penalty, dtype=np.float32)
-                .repeat(args.full_batch_size)
-                .reshape(-1, 1),
-                # "frequency_penalties": np.array(args.frequency_penalty, dtype=np.float32)
-                # .repeat(args.full_batch_size)
-                # .reshape(-1, 1),
-                "temperatures": np.array(args.temperature, dtype=np.float32)
-                .repeat(args.full_batch_size)
-                .reshape(-1, 1),
-                "top_ks": np.array(args.top_k, dtype=np.int32).repeat(args.full_batch_size).reshape(-1, 1),
-                "top_ps": np.array(args.top_p, dtype=np.float32).repeat(args.full_batch_size).reshape(-1, 1),
-                "min_ps": np.array(args.min_p, dtype=np.float32).repeat(args.full_batch_size).reshape(-1, 1),
-                "random_numbers": np.array(args.random_number, dtype=np.float32)
-                .repeat(args.full_batch_size)
-                .reshape(-1, 1),
+                "repetition_penalties": np.array(args.repetition_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
+                "presence_penalties": np.array(args.presence_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
+                # "frequency_penalties": np.array(args.frequency_penalty, dtype=np.float32).repeat(bs).reshape(-1, 1),
+                "temperatures": np.array(args.temperature, dtype=np.float32).repeat(bs).reshape(-1, 1),
+                "top_ks": np.array(args.top_k, dtype=np.int32).repeat(bs).reshape(-1, 1),
+                "top_ps": np.array(args.top_p, dtype=np.float32).repeat(bs).reshape(-1, 1),
+                "min_ps": np.array(args.min_p, dtype=np.float32).repeat(bs).reshape(-1, 1),
+                "random_numbers": np.array(args.random_number, dtype=np.float32).repeat(bs).reshape(-1, 1),
             }
+    qaic_config = {
+        k: v
+        for k, v in {
+            "include_sampler": include_sampler,
+            "return_pdfs": return_pdfs,
+            "max_top_k_ids": max_top_k_ids,
+        }.items()
+        if v is not None
+    }
+    print("qaic_config:")
+    pprint(qaic_config)
+    print("sampling_params:")
+    pprint(sampling_params)
 
     # Load model with On Device Sampler enabled
     qeff_model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=args.model_name,
-        full_batch_size=args.full_batch_size,
-        qaic_config={
-            k: v
-            for k, v in {
-                "include_sampler": include_sampler,
-                "return_pdfs": return_pdfs,
-                "max_top_k_ids": max_top_k_ids,
-            }.items()
-            if v is not None
-        },
+        continuous_batching=args.full_batch_size is not None,
+        qaic_config=qaic_config,
     )
     print(f"{args.model_name} optimized for AI 100 \n", qeff_model)
 
@@ -87,7 +79,7 @@ def main(args, **kwargs):
     if not args.prompt:
         args.prompt = [
             "Hi",
-        ] * args.full_batch_size
+        ] * bs
     qeff_model.generate(
         tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=args.model_name),
         prompts=args.prompt,
@@ -103,7 +95,7 @@ def main(args, **kwargs):
 if __name__ == "__main__":
     """
     Example usage:
-
+    1. For continuous batching:
         python3.10 examples/on_device_sampling.py \
             --model-name 'meta-llama/Llama-3.1-8B' \
             --prompt-len 128 \
@@ -115,13 +107,33 @@ if __name__ == "__main__":
             --mxint8-kv-cache \
             --mxfp6-matmul \
             --override-qaic-config "aic_include_sampler:true aic_return_pdfs:false max_top_k_ids:512" \
-            --repetition-penalties 1.9,1.0 \
-            --presence-penalties 0.8,0.11 \
-            --temperatures 0.67,0.52 \
-            --top-ks 54720,23095 \
-            --top-ps 0.89,0.56 \
-            --min-ps 0.6,0.71 \
-            --random-numbers 0.26,0.87
+            --repetition-penalty 1.9 \
+            --presence-penalty 0.8 \
+            --temperature 0.67 \
+            --top-k 54720 \
+            --top-p 0.89 \
+            --min-p 0.6 \
+            --random-number 0.26
+
+    2. For non-continuous batching:
+        python3.10 examples/on_device_sampling.py \
+            --model-name 'meta-llama/Llama-3.1-8B' \
+            --prompt-len 128 \
+            --ctx-len 256 \
+            --generation-len 20 \
+            --batch-size 2 \
+            --device-group [0,1,2,3] \
+            --num-cores 16 \
+            --mxint8-kv-cache \
+            --mxfp6-matmul \
+            --override-qaic-config "aic_include_sampler:true aic_return_pdfs:false max_top_k_ids:512" \
+            --repetition-penalty 1.9 \
+            --presence-penalty 0.8 \
+            --temperature 0.67 \
+            --top-k 54720 \
+            --top-p 0.89 \
+            --min-p 0.6 \
+            --random-number 0.26
     """
 
     parser = argparse.ArgumentParser(description="Run QEfficient model with On Device Sampling")

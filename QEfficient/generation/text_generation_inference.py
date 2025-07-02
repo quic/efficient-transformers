@@ -350,6 +350,10 @@ def cloud_ai_100_exec_kv(
         next tokens. For Speculative Decoding Target Language Model,
         `return_pdfs`=True always. Otherwise, `return_pdfs`=True for Speculative
         Decoding Draft Language Model and `return_pdfs`=False for regular model.
+        sampling_params (Dict[str, Any]): A dictionary of sampling parameters supported by the QAIC backend.
+        The dictionary should contain the following keys:
+        `repetition_penalties`, `presence_penalties`, `temperatures`, `top_ks`, `top_ps`,
+        `min_ps`, and `random_numbers`. Each value should be a numpy array of shape (batch_size, 1).
 
     Returns:
         :CloudAI100ExecInfo: Object holding execution output and performance details.
