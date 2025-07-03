@@ -85,8 +85,7 @@ def padding_dataset(train_config, dataset, batch_size):
     if isinstance(dataset, datasets.Dataset):
         combined_dataset = datasets.concatenate_datasets([dataset, dummy_dataset])
     else:
-        combined_dataset = dataset + dummy_dataset
-
+        combined_dataset = dataset + list(dummy_dataset)
     return combined_dataset
 
 
