@@ -66,7 +66,6 @@ class QEffInternVLModel(nn.Module):
         kv_offload: bool = False,
         **compiler_options,
     ):
-        # TODO: check if this should be named num_patches or something else
         num_patches = compiler_options.pop("num_patches", None)
         if num_patches is None:
             logger.warning(
