@@ -456,6 +456,7 @@ class QEffTextGenerationBase:
             if session_input_name in sampler_inputs:
                 count += 1
                 if count == len(sampler_inputs):
+                    self.include_sampler = True
                     break
         if count == 0:
             self.include_sampler = False
@@ -465,8 +466,7 @@ class QEffTextGenerationBase:
                 f"on the QAIC device (only {count}/{len(sampler_inputs)} inputs provided). Partial "
                 "sampling support is not available. Please check the QPC and try again."
             )
-        else:  # count == len(sampler_inputs)
-            self.include_sampler = True
+
         if include_sampler and not self.include_sampler:
             logger.warning_once(
                 "User entered `include_sampler`=True. But the provided QPC is not compiled "
