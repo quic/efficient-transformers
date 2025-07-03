@@ -228,8 +228,7 @@ if __name__ == "__main__":
         "--top-k",
         type=int,
         default=None,
-        help="Sampling parameter that controls the number of top tokens to consider. Set to -1 "
-        "to consider all tokens.",
+        help="Sampling parameter that controls the number of top tokens to consider. Set to -1 to consider all tokens.",
     )
     sampling_group.add_argument(
         "--top-p",
@@ -250,7 +249,7 @@ if __name__ == "__main__":
         "--random-number",
         type=float,
         default=None,
-        help="Sampling parameter that represents the random seed to use for random sampling. " "Must be in [-1, 1].",
+        help="Sampling parameter that represents the random seed to use for random sampling. Must be in [-1, 1].",
     )
     args, compiler_options = parser.parse_known_args()
 
