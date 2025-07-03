@@ -337,21 +337,20 @@ def train(
                 train_epoch_loss = (
                     0.0
                     if total_loss == 0.0
-                    else total_loss / (step - num_dummy_samples / train_config.train_batch_size)
+                    else total_loss / (step + 1 - num_dummy_samples / train_config.train_batch_size)
                 )
         else:
             if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
                 train_epoch_loss = (
                     0.0
                     if total_loss == 0.0
-                    else total_loss
-                    / (len(train_dataloader) - intermediate_step - (num_dummy_samples / train_config.train_batch_size))
+                    else total_loss / (step - intermediate_step - (num_dummy_samples / train_config.train_batch_size))
                 )
             else:
                 train_epoch_loss = (
                     0.0
                     if total_loss == 0.0
-                    else total_loss / (len(train_dataloader) - (num_dummy_samples / train_config.train_batch_size))
+                    else total_loss / (step + 1 - (num_dummy_samples / train_config.train_batch_size))
                 )
 
         if train_config.task_type == "seq_classification":
@@ -517,9 +516,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
 
     # Compute average loss and metric
     eval_epoch_loss = (
-        0.0
-        if eval_loss == 0.0
-        else eval_loss / (len(eval_dataloader) - num_dummy_samples / train_config.val_batch_size)
+        0.0 if eval_loss == 0.0 else eval_loss / (step + 1 - num_dummy_samples / train_config.val_batch_size)
     )
     if train_config.task_type == "seq_classification":
         eval_metric = acc_helper.compute()
