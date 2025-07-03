@@ -50,10 +50,10 @@ configs = [
         True,  # run_validation
         True,  # use_peft
         "qaic",  # device
-        0.0043353,  # expected_train_loss
-        1.0043447,  # expected_train_metric
-        0.0117334,  # expected_eval_loss
-        1.0118025,  # expected_eval_metric
+        1.5427961,  # expected_train_loss
+        4.6776514,  # expected_train_metric
+        1.2898713,  # expected_eval_loss
+        3.6323189,  # expected_eval_metric
         id="llama_config_gsm8k",  # config name
     ),
     pytest.param(
@@ -68,10 +68,10 @@ configs = [
         True,  # run_validation
         True,  # use_peft
         "qaic",  # device
-        0.0006099,  # expected_train_loss
-        1.0006101,  # expected_train_metric
-        0.0065296,  # expected_eval_loss
-        1.0065510,  # expected_eval_metric
+        1.4348667,  # expected_train_loss
+        4.1990857,  # expected_train_metric
+        1.5941212,  # expected_eval_loss
+        4.9239997,  # expected_eval_metric
         id="llama_config_alpaca",  # config name
     ),
     pytest.param(
@@ -86,9 +86,9 @@ configs = [
         True,  # run_validation
         False,  # use_peft
         "qaic",  # device
-        0.00052981,  # expected_train_loss
+        0.63060283,  # expected_train_loss
         0.55554199,  # expected_train_metric
-        0.00738618,  # expected_eval_loss
+        0.61503016,  # expected_eval_loss
         0.70825195,  # expected_eval_metric
         id="bert_config_imdb",  # config name
     ),
@@ -149,6 +149,7 @@ def test_finetune_llama(
         download_alpaca()
 
     results = finetune(**kwargs)
+
     assert np.allclose(results["avg_train_loss"], expected_train_loss, atol=1e-3), "Train loss is not matching."
     assert np.allclose(results["avg_train_metric"], expected_train_metric, atol=1e-3), "Train metric is not matching."
     assert np.allclose(results["avg_eval_loss"], expected_eval_loss, atol=1e-3), "Eval loss is not matching."

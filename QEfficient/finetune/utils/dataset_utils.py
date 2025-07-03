@@ -64,10 +64,15 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
 
 
 def padding_dataset(train_config, dataset, batch_size):
-    dataset = dataset.map(lambda x: {"input_length": len(x["input_ids"])})
-    if train_config.enable_sorting_for_ddp:
-        dataset = dataset.sort("input_length")
-        dataset = dataset.remove_columns("input_length")
+    if train_config.enable_ddp and train_config.enable_sorting_for_ddp:
+        if isinstance(dataset, datasets.Dataset):
+            # Hugging Face Dataset transformation
+            dataset = dataset.map(lambda x: {"input_length": len(x["input_ids"])})
+            dataset = dataset.sort("input_length")
+
+        else:
+            dataset = sorted(dataset, key=lambda x: len(x["input_ids"]))
+
     dummy_row = next(iter(dataset))
     dummy_row["labels"] = torch.tensor([-100] * len(dummy_row["labels"]))
     padding_size = 0
@@ -77,7 +82,11 @@ def padding_dataset(train_config, dataset, batch_size):
 
     dummy_data = [dummy_row.copy() for _ in range(padding_size)]
     dummy_dataset = datasets.Dataset.from_list(dummy_data)
-    combined_dataset = datasets.concatenate_datasets([dataset, dummy_dataset])
+    if isinstance(dataset, datasets.Dataset):
+        combined_dataset = datasets.concatenate_datasets([dataset, dummy_dataset])
+    else:
+        combined_dataset = dataset + dummy_dataset
+
     return combined_dataset
 
 
