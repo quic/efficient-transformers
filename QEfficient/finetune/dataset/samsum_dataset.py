@@ -7,6 +7,8 @@
 
 import datasets
 
+from QEfficient.finetune.dataset.helper import IGNORE_INDEX
+
 
 def get_preprocessed_samsum(dataset_config, tokenizer, split, context_length=None):
     dataset = datasets.load_dataset("knkarthick/samsum", split=split, trust_remote_code=True)
@@ -35,10 +37,15 @@ def get_preprocessed_samsum(dataset_config, tokenizer, split, context_length=Non
             pad_to_max_length=True,
         )
 
+        labels = [IGNORE_INDEX] * len(prompt) + summary
+        # sentence: <bos> <prompt> <summary> <eos> <pad>
+        # labels  : -100  -100     <summary> <eos> <pad>
+        # Here, if pad token is not available then eos is used as pad token.
+
         sample = {
             "input_ids": prompt + summary,
             "attention_mask": [1] * (len(prompt) + len(summary)),
-            "labels": [-100] * len(prompt) + summary,
+            "labels": labels,
         }
 
         return sample

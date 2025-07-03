@@ -20,12 +20,14 @@ from torch.optim.lr_scheduler import StepLR
 from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.finetune.loss.loss_factory import get_loss
 from QEfficient.finetune.utils.config_utils import (
     generate_dataset_config,
     generate_peft_config,
     update_config,
 )
 from QEfficient.finetune.utils.dataset_utils import get_dataloader
+from QEfficient.finetune.utils.helper import get_rank, is_rank_zero
 from QEfficient.finetune.utils.parser import get_finetune_parser
 from QEfficient.finetune.utils.train_utils import get_longest_seq_length, print_model_size, train
 from QEfficient.utils._utils import login_and_download_hf_lm
@@ -67,7 +69,7 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
     dist_backend_map = {"cpu": "gloo", "qaic": "qccl", "cuda": "gloo"}
     dist.init_process_group(backend=dist_backend_map[torch_device.type])
     # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
-    getattr(torch, torch_device.type).set_device(dist.get_rank())
+    getattr(torch, torch_device.type).set_device(get_rank())
 
 
 def setup_seeds(seed: int) -> None:
@@ -114,6 +116,7 @@ def load_model_and_tokenizer(
             attn_implementation="sdpa",
             torch_dtype=torch.float16,
         )
+        model.loss_function = get_loss(train_config.task_type)(dataset_config.num_labels)
 
         if not hasattr(model, "base_model_prefix"):
             raise RuntimeError("Given huggingface model does not have 'base_model_prefix' attribute.")
@@ -131,6 +134,7 @@ def load_model_and_tokenizer(
             attn_implementation="sdpa",
             torch_dtype=torch.float16,
         )
+        model.loss_function = get_loss(train_config.task_type)()
 
     tokenizer = AutoTokenizer.from_pretrained(
         train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name
@@ -192,7 +196,9 @@ def apply_peft(
     else:
         peft_config = generate_peft_config(train_config, peft_config_file, **kwargs)
         model = get_peft_model(model, peft_config)
-    model.print_trainable_parameters()
+
+    if is_rank_zero():
+        model.print_trainable_parameters()
 
     return model
 
@@ -290,7 +296,7 @@ def main(peft_config_file: str = None, **kwargs) -> None:
     optimizer = optim.AdamW(model.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
     if train_config.enable_ddp:
-        model = nn.parallel.DistributedDataParallel(model, device_ids=[dist.get_rank()])
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[get_rank()])
     results = train(
         model,
         tokenizer,
@@ -299,7 +305,7 @@ def main(peft_config_file: str = None, **kwargs) -> None:
         optimizer,
         scheduler,
         train_config,
-        dist.get_rank() if train_config.enable_ddp else None,
+        get_rank() if train_config.enable_ddp else None,
     )
     if train_config.enable_ddp:
         dist.destroy_process_group()
