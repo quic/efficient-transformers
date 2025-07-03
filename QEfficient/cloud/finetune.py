@@ -82,6 +82,7 @@ def setup_seeds(seed: int) -> None:
     Notes:
         - Sets seeds for PyTorch, Python's random module, and NumPy.
     """
+    torch.use_deterministic_algorithms(True)
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -314,7 +315,12 @@ def main(peft_config_file: str = None, **kwargs) -> None:
     )
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
     if train_config.enable_ddp:
-        model = nn.parallel.DistributedDataParallel(model)  # , device_ids=[dist.get_rank()])
+        ignore_names = set()
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                ignore_names.add(name)
+        torch.nn.parallel.DistributedDataParallel._set_params_and_buffers_to_ignore_for_model(model, ignore_names)
+        model = nn.parallel.DistributedDataParallel(model)
 
     results = train(
         model,
