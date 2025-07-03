@@ -1,0 +1,66 @@
+digraph DAG {
+	rankdir=TB;
+"/language_model/Mul/__5" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : /language_model/Mul/__5\lInput : index64\<1 x 1\>\lOutput : index64\<1 x 1\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"/language_model/Mul/__2" [
+	label = "{{<LHS>LHS|<RHS>RHS}|{Mul\lname : /language_model/Mul/__2\lLHS : index64\<1 x 1\>\lRHS : index64\<1 x 1\>\lusers : 1\lResult : index64\<1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PeachPuff1
+penwidth = 2];
+
+"/Reshape/__6" [
+	label = "{{<Input>Input}|{Reshape\lname : /Reshape/__6\lInput : index64\<1\>\lDims : [1, 1]\lusers : 1\lResult : index64\<1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"/Range/__1" [
+	label = "{{Constant\lname : \"/Range/__1\"\loutput : index64\<1\>\lusers : 8\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/language_model/Mul/__3" [
+	label = "{{<Input>Input}|{Reshape\lname : /language_model/Mul/_broadcast_input_1.reshape__3\lInput : index64\<1\>\lDims : [1, 1]\lusers : 1\lResult : index64\<1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"/language_model/Gather_1/__3" [
+	label = "{{<Input>Input}|{Slice\lname : /language_model/Gather_1/__3\lInput : index64\<3\>\lStart : [1]\lusers : 1\lResult : index64\<1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Coral
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Shape/__1" [
+	label = "{{Constant\lname : \"/language_model/model/layers.0/self_attn/Shape/__1\"\loutput : index64\<3\>\lusers : 2\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/language_model/Mul/__2" [
+	label = "{{Placeholder\lname : \"/language_model/Mul/__2\"\loutput : index64\<1 x 1\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"/language_model/Mul/__2" :"Output"  -> "/language_model/Mul/__5" :"Output"  [dir="both"];
+"/language_model/model/layers.0/self_attn/Shape/__1" :"Output"  -> "/language_model/Gather_1/__3" :"Input" ;
+"/language_model/Gather_1/__3" :"Result"  -> "/language_model/Mul/__3" :"Input" ;
+"/language_model/Mul/__3" :"Result"  -> "/language_model/Mul/__2" :"RHS" ;
+"/Range/__1" :"Output"  -> "/Reshape/__6" :"Input" ;
+"/Reshape/__6" :"Result"  -> "/language_model/Mul/__2" :"LHS" ;
+"/language_model/Mul/__2" :"Result"  -> "/language_model/Mul/__5" :"Input" ;
+}

@@ -1,0 +1,66 @@
+digraph DAG {
+	rankdir=TB;
+"/language_model/model/layers.0/self_attn/Where_9/__33" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : /language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__33\lInput : bool\<1 x 1 x 1 x 1\>\lOutput : bool\<1 x 1 x 1 x 1\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Where_9/__31" [
+	label = "{{<Input>Input}|{Reshape\lname : /language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__31\lInput : bool\<\>\lDims : [1, 1, 1, 1]\lusers : 1\lResult : bool\<1 x 1 x 1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Greater/__5" [
+	label = "{{<LHS>LHS|<RHS>RHS}|{CmpLT\lname : /language_model/model/layers.0/self_attn/Greater/__5\lLHS : index64\<\>\lRHS : index64\<\>\lusers : 1\lResult : bool\<\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose2
+penwidth = 2];
+
+"/language_model/model/Constant_8/__1" [
+	label = "{{Constant\lname : \"/language_model/model/Constant_8/__1\"\loutput : index64\<\>\lusers : 2\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Gather_16/__40" [
+	label = "{{<Input>Input}|{Reshape\lname : /language_model/model/layers.0/self_attn/Gather_16/.res__40\lInput : index64\<1\>\lDims : []\lusers : 1\lResult : index64\<\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Gather_16/__41" [
+	label = "{{<Input>Input}|{Slice\lname : /language_model/model/layers.0/self_attn/Gather_16/__41\lInput : index64\<4\>\lStart : [2]\lusers : 1\lResult : index64\<1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Coral
+penwidth = 2];
+
+"/language_model/model/Shape/__1" [
+	label = "{{Constant\lname : \"/language_model/model/Shape/__1\"\loutput : index64\<4\>\lusers : 8\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Where_9/__31" [
+	label = "{{Placeholder\lname : \"/language_model/model/layers.0/self_attn/Where_9/__31\"\loutput : bool\<1 x 1 x 1 x 1\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"/language_model/model/Shape/__1" :"Output"  -> "/language_model/model/layers.0/self_attn/Gather_16/__41" :"Input" ;
+"/language_model/model/layers.0/self_attn/Gather_16/__40" :"Result"  -> "/language_model/model/layers.0/self_attn/Greater/__5" :"RHS" ;
+"/language_model/model/Constant_8/__1" :"Output"  -> "/language_model/model/layers.0/self_attn/Greater/__5" :"LHS" ;
+"/language_model/model/layers.0/self_attn/Where_9/__31" :"Output"  -> "/language_model/model/layers.0/self_attn/Where_9/__33" :"Output"  [dir="both"];
+"/language_model/model/layers.0/self_attn/Gather_16/__41" :"Result"  -> "/language_model/model/layers.0/self_attn/Gather_16/__40" :"Input" ;
+"/language_model/model/layers.0/self_attn/Greater/__5" :"Result"  -> "/language_model/model/layers.0/self_attn/Where_9/__31" :"Input" ;
+"/language_model/model/layers.0/self_attn/Where_9/__31" :"Result"  -> "/language_model/model/layers.0/self_attn/Where_9/__33" :"Input" ;
+}

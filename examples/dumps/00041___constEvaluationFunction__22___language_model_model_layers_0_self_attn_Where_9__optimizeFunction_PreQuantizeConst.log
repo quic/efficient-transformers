@@ -1,0 +1,40 @@
+====== [Graph:__constEvaluationFunction__22__/language_model/model/layers.0/self_attn/Where_9/]
+__constEvaluationFunction__22__/language_model/model/layers.0/self_attn/Where_9/: Graph Ordered by PostOrderVisitor
+
+/language_model/model/Constant_8/__1 Constant HasData: 1
+  index64<> 0KB /language_model/model/Constant_8/__1:Output
+
+/language_model/model/Shape/__1 Constant HasData: 1
+  index64<4> 0KB /language_model/model/Shape/__1:Output
+
+/language_model/model/layers.0/self_attn/Gather_16/__41 Slice Start: [2]
+  index64<1> 0KB /language_model/model/layers.0/self_attn/Gather_16/__41:Result
+  Input: index64<4> 0KB /language_model/model/Shape/__1:Output
+
+/language_model/model/layers.0/self_attn/Gather_16/.res__40 Reshape
+  index64<> 0KB /language_model/model/layers.0/self_attn/Gather_16/.res__40:Result
+  Input: index64<1> 0KB /language_model/model/layers.0/self_attn/Gather_16/__41:Result
+
+/language_model/model/layers.0/self_attn/Greater/__5 CmpLT
+  bool<> 0KB /language_model/model/layers.0/self_attn/Greater/__5:Result
+  LHS: index64<> 0KB /language_model/model/Constant_8/__1:Output
+  RHS: index64<> 0KB /language_model/model/layers.0/self_attn/Gather_16/.res__40:Result
+
+/language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__31 Reshape
+  bool<1 x 1 x 1 x 1> 0KB /language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__31:Result
+  Input: bool<> 0KB /language_model/model/layers.0/self_attn/Greater/__5:Result
+
+/language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__31 Placeholder
+  bool<1 x 1 x 1 x 1> 0KB /language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__31:Output
+
+/language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__33 Save
+  Input: bool<1 x 1 x 1 x 1> 0KB /language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__31:Result
+  Output: bool<1 x 1 x 1 x 1> 0KB /language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__31:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               2              40
+               Placeholder               1               1
+                      Save               1               0
+                     CmpLT               1               1
+                   Reshape               2               9
+                     Slice               1               8

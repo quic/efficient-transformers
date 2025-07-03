@@ -495,15 +495,14 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         if past_key_value is not None:
             chunk_position_ids = position_ids
 
-            if self.use_rope:
-                chunk_position_ids = torch.where(
-                    chunk_position_ids != -1, chunk_position_ids % self.config.attention_chunk_size, chunk_position_ids
-                )
+            # if self.use_rope:
+            #     chunk_position_ids = torch.where(
+            #         chunk_position_ids != -1, chunk_position_ids % self.config.attention_chunk_size, chunk_position_ids
+            #     )
 
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"batch_index": batch_index, "position_ids": chunk_position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
-
         attention_interface: Callable = eager_attention_forward
 
         attn_output, attn_weights = attention_interface(

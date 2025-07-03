@@ -1,0 +1,201 @@
+digraph DAG {
+	rankdir=TB;
+"n8/" [
+	label = "{{<Data>Data|<Indices>Indices}|{Gather\lname : n8/\lData : index64\<2\>\lIndices : index64\<1\>\lBatchDims : 0\lusers : 1\lResult : index64\<1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Thistle1
+penwidth = 2];
+
+"n6/" [
+	label = "{{Constant\lname : \"n6/\"\loutput : index64\<2\>\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"n7/" [
+	label = "{{Constant\lname : \"n7/\"\loutput : index64\<1\>\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"n5/" [
+	label = "{{<Data>Data|<Indices>Indices}|{Gather\lname : n5/\lData : index64\<4\>\lIndices : index64\<1\>\lBatchDims : 0\lusers : 1\lResult : index64\<1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Thistle1
+penwidth = 2];
+
+"n3/" [
+	label = "{{Constant\lname : \"n3/\"\loutput : index64\<4\>\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"n4/" [
+	label = "{{Constant\lname : \"n4/\"\loutput : index64\<1\>\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"n24/" [
+	label = "{{<Data>Data|<Indices>Indices|<Slices>Slices}|{ScatterND\lname : n24/\lData : float\<1 x 8 x 8192 x 128\>\lIndices : index64\<1 x 8 x 1 x 3\>\lSlices : float\<1 x 8 x 1 x 128\>\lBatchDims : 0\lusers : 1\lResult : float\<1 x 8 x 8192 x 128\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Wheat1
+penwidth = 2];
+
+"QAicGraph_seq_len_1_CtxScatter_0_data/" [
+	label = "{{Placeholder\lname : \"QAicGraph_seq_len_1_CtxScatter_0_data/\"\loutput : float\<1 x 8 x 8192 x 128\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"n23/" [
+	label = "{{<Inputs0>Inputs0|<Inputs1>Inputs1|<Inputs2>Inputs2}|{Concat\lname : n23/\lDim : 3\lusers : 1\lInputs0 : index64\<1 x 8 x 1 x 1\>\lInputs1 : index64\<1 x 8 x 1 x 1\>\lInputs2 : index64\<1 x 8 x 1 x 1\>\lResult : index64\<1 x 8 x 1 x 3\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"n15/" [
+	label = "{{<Input>Input}|{Tile\lname : n15/_1\lInput : index64\<1 x 1 x 1 x 1\>\lCount : 8\lAxis : 1\lusers : 1\lResult : index64\<1 x 8 x 1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Khaki1
+penwidth = 2];
+
+"n14/" [
+	label = "{{<Input>Input}|{Reshape\lname : n14/.expanddims\lInput : index64\<1\>\lDims : [1, 1, 1, 1]\lusers : 1\lResult : index64\<1 x 1 x 1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"n12/" [
+	label = "{{Constant\lname : \"n12/\"\loutput : index64\<1\>\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"n18/" [
+	label = "{{<Input>Input}|{Reshape\lname : n18/.expanddims\lInput : index64\<8\>\lDims : [1, 8, 1, 1]\lusers : 1\lResult : index64\<1 x 8 x 1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"n16/" [
+	label = "{{Constant\lname : \"n16/\"\loutput : index64\<8\>\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"n22/" [
+	label = "{{<Input>Input}|{Tile\lname : n22/_1\lInput : index64\<1 x 1 x 1 x 1\>\lCount : 8\lAxis : 1\lusers : 1\lResult : index64\<1 x 8 x 1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Khaki1
+penwidth = 2];
+
+"n21/" [
+	label = "{{<Input>Input}|{Reshape\lname : n21/.expanddims\lInput : index64\<1 x 1\>\lDims : [1, 1, 1, 1]\lusers : 1\lResult : index64\<1 x 1 x 1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"QAicGraph_seq_len_1_CtxScatter_0_position_ids/" [
+	label = "{{Placeholder\lname : \"QAicGraph_seq_len_1_CtxScatter_0_position_ids/\"\loutput : index64\<1 x 1\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"QAicGraph_seq_len_1_CtxScatter_0_updates/" [
+	label = "{{Placeholder\lname : \"QAicGraph_seq_len_1_CtxScatter_0_updates/\"\loutput : float\<1 x 8 x 1 x 128\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"n2/" [
+	label = "{{<Data>Data|<Indices>Indices}|{Gather\lname : n2/\lData : index64\<4\>\lIndices : index64\<1\>\lBatchDims : 0\lusers : 1\lResult : index64\<1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Thistle1
+penwidth = 2];
+
+"n0/" [
+	label = "{{Constant\lname : \"n0/\"\loutput : index64\<4\>\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"n1/" [
+	label = "{{Constant\lname : \"n1/\"\loutput : index64\<1\>\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"n11/" [
+	label = "{{<Inputs0>Inputs0|<Inputs1>Inputs1|<Inputs2>Inputs2|<Inputs3>Inputs3}|{Concat\lname : n11/\lDim : 0\lusers : 0\lInputs0 : index64\<1\>\lInputs1 : index64\<1\>\lInputs2 : index64\<1\>\lInputs3 : index64\<1\>\lResult : index64\<4\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"n10/" [
+	label = "{{Constant\lname : \"n10/\"\loutput : index64\<1\>\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"QAicGraph_seq_len_1_CtxScatter_0_return_val/__1" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : QAicGraph_seq_len_1_CtxScatter_0_return_val/__1\lInput : float\<1 x 8 x 8192 x 128\>\lOutput : float\<1 x 8 x 8192 x 128\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"QAicGraph_seq_len_1_CtxScatter_0_return_val/" [
+	label = "{{Placeholder\lname : \"QAicGraph_seq_len_1_CtxScatter_0_return_val/\"\loutput : float\<1 x 8 x 8192 x 128\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"QAicGraph_seq_len_1_CtxScatter_0_return_val/" :"Output"  -> "QAicGraph_seq_len_1_CtxScatter_0_return_val/__1" :"Output"  [dir="both"];
+"n10/" :"Output"  -> "n11/" :"Inputs3" ;
+"n8/" :"Result"  -> "n11/" :"Inputs2" ;
+"n5/" :"Result"  -> "n11/" :"Inputs1" ;
+"n2/" :"Result"  -> "n11/" :"Inputs0" ;
+"n0/" :"Output"  -> "n2/" :"Data" ;
+"QAicGraph_seq_len_1_CtxScatter_0_updates/" :"Output"  -> "n24/" :"Slices" ;
+"n24/" :"Result"  -> "QAicGraph_seq_len_1_CtxScatter_0_return_val/__1" :"Input" ;
+"QAicGraph_seq_len_1_CtxScatter_0_position_ids/" :"Output"  -> "n21/" :"Input" ;
+"n6/" :"Output"  -> "n8/" :"Data" ;
+"n7/" :"Output"  -> "n8/" :"Indices" ;
+"n3/" :"Output"  -> "n5/" :"Data" ;
+"n1/" :"Output"  -> "n2/" :"Indices" ;
+"n4/" :"Output"  -> "n5/" :"Indices" ;
+"n21/" :"Result"  -> "n22/" :"Input" ;
+"QAicGraph_seq_len_1_CtxScatter_0_data/" :"Output"  -> "n24/" :"Data" ;
+"n23/" :"Result"  -> "n24/" :"Indices" ;
+"n15/" :"Result"  -> "n23/" :"Inputs0" ;
+"n14/" :"Result"  -> "n15/" :"Input" ;
+"n12/" :"Output"  -> "n14/" :"Input" ;
+"n18/" :"Result"  -> "n23/" :"Inputs1" ;
+"n16/" :"Output"  -> "n18/" :"Input" ;
+"n22/" :"Result"  -> "n23/" :"Inputs2" ;
+}

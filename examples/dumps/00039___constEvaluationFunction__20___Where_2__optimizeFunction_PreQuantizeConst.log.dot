@@ -1,0 +1,66 @@
+digraph DAG {
+	rankdir=TB;
+"/Where_2/__20" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : /Where_2/_broadcast_input_0.reshape__20\lInput : bool\<1 x 1 x 1\>\lOutput : bool\<1 x 1 x 1\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"/Where_2/__18" [
+	label = "{{<Input>Input}|{Reshape\lname : /Where_2/_broadcast_input_0.reshape__18\lInput : bool\<\>\lDims : [1, 1, 1]\lusers : 1\lResult : bool\<1 x 1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"/Equal_2/__5" [
+	label = "{{<LHS>LHS|<RHS>RHS}|{CmpEQ\lname : /Equal_2/__5\lLHS : index64\<\>\lRHS : index64\<\>\lusers : 1\lResult : bool\<\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=GhostWhite
+penwidth = 2];
+
+"/Gather_4/__15" [
+	label = "{{<Input>Input}|{Reshape\lname : /Gather_4/.res__15\lInput : index64\<1\>\lDims : []\lusers : 1\lResult : index64\<\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"/Gather_4/__16" [
+	label = "{{<Input>Input}|{Slice\lname : /Gather_4/__16\lInput : index64\<2\>\lStart : [1]\lusers : 1\lResult : index64\<1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Coral
+penwidth = 2];
+
+"/Shape_2/__2" [
+	label = "{{Constant\lname : \"/Shape_2/__2\"\loutput : index64\<2\>\lusers : 3\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/Constant_2/__1" [
+	label = "{{Constant\lname : \"/Constant_2/__1\"\loutput : index64\<\>\lusers : 4\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/Where_2/__18" [
+	label = "{{Placeholder\lname : \"/Where_2/__18\"\loutput : bool\<1 x 1 x 1\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"/Where_2/__18" :"Output"  -> "/Where_2/__20" :"Output"  [dir="both"];
+"/Constant_2/__1" :"Output"  -> "/Equal_2/__5" :"RHS" ;
+"/Shape_2/__2" :"Output"  -> "/Gather_4/__16" :"Input" ;
+"/Gather_4/__16" :"Result"  -> "/Gather_4/__15" :"Input" ;
+"/Equal_2/__5" :"Result"  -> "/Where_2/__18" :"Input" ;
+"/Gather_4/__15" :"Result"  -> "/Equal_2/__5" :"LHS" ;
+"/Where_2/__18" :"Result"  -> "/Where_2/__20" :"Input" ;
+}

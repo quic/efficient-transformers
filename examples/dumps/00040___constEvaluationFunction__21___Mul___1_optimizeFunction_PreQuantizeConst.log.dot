@@ -1,0 +1,66 @@
+digraph DAG {
+	rankdir=TB;
+"/Reshape/__11" [
+	label = "{{<Input>Input}|{Reshape\lname : /Reshape/__11\lInput : index64\<1\>\lDims : [1, 1]\lusers : 1\lResult : index64\<1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"/Range/__1" [
+	label = "{{Constant\lname : \"/Range/__1\"\loutput : index64\<1\>\lusers : 6\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/Mul/__20" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : /Mul/__20\lInput : index64\<1 x 1\>\lOutput : index64\<1 x 1\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"/Mul/__17" [
+	label = "{{<LHS>LHS|<RHS>RHS}|{Mul\lname : /Mul/__17\lLHS : index64\<1 x 1\>\lRHS : index64\<1 x 1\>\lusers : 1\lResult : index64\<1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PeachPuff1
+penwidth = 2];
+
+"/Mul/__18" [
+	label = "{{<Input>Input}|{Reshape\lname : /Mul/_broadcast_input_1.reshape__18\lInput : index64\<1\>\lDims : [1, 1]\lusers : 1\lResult : index64\<1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"/Gather_1/__10" [
+	label = "{{<Input>Input}|{Slice\lname : /Gather_1/__10\lInput : index64\<3\>\lStart : [1]\lusers : 1\lResult : index64\<1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Coral
+penwidth = 2];
+
+"/Shape_1/__1" [
+	label = "{{Constant\lname : \"/Shape_1/__1\"\loutput : index64\<3\>\lusers : 2\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/Mul/__17" [
+	label = "{{Placeholder\lname : \"/Mul/__17\"\loutput : index64\<1 x 1\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"/Shape_1/__1" :"Output"  -> "/Gather_1/__10" :"Input" ;
+"/Gather_1/__10" :"Result"  -> "/Mul/__18" :"Input" ;
+"/Mul/__18" :"Result"  -> "/Mul/__17" :"RHS" ;
+"/Reshape/__11" :"Result"  -> "/Mul/__17" :"LHS" ;
+"/Mul/__17" :"Result"  -> "/Mul/__20" :"Input" ;
+"/Mul/__17" :"Output"  -> "/Mul/__20" :"Output"  [dir="both"];
+"/Range/__1" :"Output"  -> "/Reshape/__11" :"Input" ;
+}

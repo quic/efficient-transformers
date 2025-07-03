@@ -1,0 +1,22 @@
+====== [Graph:__constEvaluationFunction__27__/language_model/model/layers.0/self_attn/Mod_2/]
+__constEvaluationFunction__27__/language_model/model/layers.0/self_attn/Mod_2/: Graph Ordered by PostOrderVisitor
+
+/language_model/model/Shape/__1 Constant HasData: 1
+  index64<4> 0KB /language_model/model/Shape/__1:Output
+
+/language_model/model/layers.0/self_attn/Gather_16/__67 Slice Start: [2]
+  index64<1> 0KB /language_model/model/layers.0/self_attn/Gather_16/__67:Result
+  Input: index64<4> 0KB /language_model/model/Shape/__1:Output
+
+/language_model/model/layers.0/self_attn/Mod_2/.reshape__7 Placeholder
+  index64<1> 0KB /language_model/model/layers.0/self_attn/Mod_2/.reshape__7:Output
+
+/language_model/model/layers.0/self_attn/Mod_2/.reshape__9 Save
+  Input: index64<1> 0KB /language_model/model/layers.0/self_attn/Gather_16/__67:Result
+  Output: index64<1> 0KB /language_model/model/layers.0/self_attn/Mod_2/.reshape__7:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               1              32
+               Placeholder               1               8
+                      Save               1               0
+                     Slice               1               8

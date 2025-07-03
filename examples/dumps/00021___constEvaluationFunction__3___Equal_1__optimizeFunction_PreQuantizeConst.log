@@ -1,0 +1,22 @@
+====== [Graph:__constEvaluationFunction__3__/Equal_1/]
+__constEvaluationFunction__3__/Equal_1/: Graph Ordered by PostOrderVisitor
+
+/Constant_5/__1 Constant HasData: 1
+  index64<> 0KB /Constant_5/__1:Output
+
+/Equal_1/_broadcast_input_1.reshape__2 Reshape
+  index64<1 x 1> 0KB /Equal_1/_broadcast_input_1.reshape__2:Result
+  Input: index64<> 0KB /Constant_5/__1:Output
+
+/Equal_1/_broadcast_input_1.reshape__2 Placeholder
+  index64<1 x 1> 0KB /Equal_1/_broadcast_input_1.reshape__2:Output
+
+/Equal_1/_broadcast_input_1.reshape__4 Save
+  Input: index64<1 x 1> 0KB /Equal_1/_broadcast_input_1.reshape__2:Result
+  Output: index64<1 x 1> 0KB /Equal_1/_broadcast_input_1.reshape__2:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               1               8
+               Placeholder               1               8
+                      Save               1               0
+                   Reshape               1               8

@@ -1,0 +1,26 @@
+====== [Graph:__constEvaluationFunction__25__/language_model/model/layers.0/self_attn/Mul_8/]
+__constEvaluationFunction__25__/language_model/model/layers.0/self_attn/Mul_8/: Graph Ordered by PostOrderVisitor
+
+/language_model/model/layers.0/self_attn/Sub_2/.constfold__16 Constant HasData: 1
+  index64<> 0KB /language_model/model/layers.0/self_attn/Sub_2/.constfold__16:Output
+
+/language_model/model/Constant/__1 Constant HasData: 1
+  index64<> 0KB /language_model/model/Constant/__1:Output
+
+/language_model/model/layers.0/self_attn/Mul_8/__9 Mul
+  index64<> 0KB /language_model/model/layers.0/self_attn/Mul_8/__9:Result
+  LHS: index64<> 0KB /language_model/model/layers.0/self_attn/Sub_2/.constfold__16:Output
+  RHS: index64<> 0KB /language_model/model/Constant/__1:Output
+
+/language_model/model/layers.0/self_attn/Mul_8/__9 Placeholder
+  index64<> 0KB /language_model/model/layers.0/self_attn/Mul_8/__9:Output
+
+/language_model/model/layers.0/self_attn/Mul_8/__11 Save
+  Input: index64<> 0KB /language_model/model/layers.0/self_attn/Mul_8/__9:Result
+  Output: index64<> 0KB /language_model/model/layers.0/self_attn/Mul_8/__9:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               2              16
+               Placeholder               1               8
+                      Save               1               0
+                       Mul               1               8

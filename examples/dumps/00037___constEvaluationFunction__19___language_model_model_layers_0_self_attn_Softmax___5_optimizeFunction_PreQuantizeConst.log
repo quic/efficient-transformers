@@ -1,0 +1,22 @@
+====== [Graph:__constEvaluationFunction__19__/language_model/model/layers.0/self_attn/Softmax/__5]
+__constEvaluationFunction__19__/language_model/model/layers.0/self_attn/Softmax/__5: Graph Ordered by PostOrderVisitor
+
+/language_model/model/layers.0/self_attn/Softmax/.selected__13 Splat SplatValue: 0
+  index32<1 x 1> 0KB /language_model/model/layers.0/self_attn/Softmax/.selected__13:Result
+
+/language_model/model/layers.0/self_attn/Softmax/.selected_converted__12 ConvertTo
+  index64<1 x 1> 0KB /language_model/model/layers.0/self_attn/Softmax/.selected_converted__12:Result
+  Input: index32<1 x 1> 0KB /language_model/model/layers.0/self_attn/Softmax/.selected__13:Result
+
+/language_model/model/layers.0/self_attn/Softmax/.selected_converted__12 Placeholder
+  index64<1 x 1> 0KB /language_model/model/layers.0/self_attn/Softmax/.selected_converted__12:Output
+
+/language_model/model/layers.0/self_attn/Softmax/.selected_converted__15 Save
+  Input: index64<1 x 1> 0KB /language_model/model/layers.0/self_attn/Softmax/.selected_converted__12:Result
+  Output: index64<1 x 1> 0KB /language_model/model/layers.0/self_attn/Softmax/.selected_converted__12:Output
+
+Op summary (name, count, output bytes): 
+               Placeholder               1               8
+                      Save               1               0
+                     Splat               1               4
+                 ConvertTo               1               8

@@ -1,0 +1,22 @@
+====== [Graph:__constEvaluationFunction__11__/language_model/model/layers.0/self_attn/Or/]
+__constEvaluationFunction__11__/language_model/model/layers.0/self_attn/Or/: Graph Ordered by PostOrderVisitor
+
+Constant_8558/__1 Constant HasData: 1
+  bool<> 0KB Constant_8558/__1:Output
+
+/language_model/model/layers.0/self_attn/Or/_broadcast_input_0.reshape__2 Reshape
+  bool<1 x 1> 0KB /language_model/model/layers.0/self_attn/Or/_broadcast_input_0.reshape__2:Result
+  Input: bool<> 0KB Constant_8558/__1:Output
+
+/language_model/model/layers.0/self_attn/Or/_broadcast_input_0.reshape__2 Placeholder
+  bool<1 x 1> 0KB /language_model/model/layers.0/self_attn/Or/_broadcast_input_0.reshape__2:Output
+
+/language_model/model/layers.0/self_attn/Or/_broadcast_input_0.reshape__4 Save
+  Input: bool<1 x 1> 0KB /language_model/model/layers.0/self_attn/Or/_broadcast_input_0.reshape__2:Result
+  Output: bool<1 x 1> 0KB /language_model/model/layers.0/self_attn/Or/_broadcast_input_0.reshape__2:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               1               1
+               Placeholder               1               1
+                      Save               1               0
+                   Reshape               1               1

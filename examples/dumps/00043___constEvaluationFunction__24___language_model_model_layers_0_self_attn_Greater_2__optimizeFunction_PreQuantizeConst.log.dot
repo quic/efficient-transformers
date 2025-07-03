@@ -1,0 +1,34 @@
+digraph DAG {
+	rankdir=TB;
+"/language_model/model/layers.0/self_attn/Greater_2/__15" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : /language_model/model/layers.0/self_attn/Greater_2/_broadcast_input_0.reshape__15\lInput : index64\<1\>\lOutput : index64\<1\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Greater_2/__13" [
+	label = "{{<Input>Input}|{Reshape\lname : /language_model/model/layers.0/self_attn/Greater_2/_broadcast_input_0.reshape__13\lInput : index64\<\>\lDims : [1]\lusers : 1\lResult : index64\<1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Sub_2/__16" [
+	label = "{{Constant\lname : \"/language_model/model/layers.0/self_attn/Sub_2/__16\"\loutput : index64\<\>\lusers : 4\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Greater_2/__13" [
+	label = "{{Placeholder\lname : \"/language_model/model/layers.0/self_attn/Greater_2/__13\"\loutput : index64\<1\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Sub_2/__16" :"Output"  -> "/language_model/model/layers.0/self_attn/Greater_2/__13" :"Input" ;
+"/language_model/model/layers.0/self_attn/Greater_2/__13" :"Output"  -> "/language_model/model/layers.0/self_attn/Greater_2/__15" :"Output"  [dir="both"];
+"/language_model/model/layers.0/self_attn/Greater_2/__13" :"Result"  -> "/language_model/model/layers.0/self_attn/Greater_2/__15" :"Input" ;
+}

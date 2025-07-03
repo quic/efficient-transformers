@@ -1,0 +1,42 @@
+digraph DAG {
+	rankdir=TB;
+"/language_model/model/layers.0/self_attn/Mod/__15" [
+	label = "{{<Input>Input}|{Reshape\lname : /language_model/model/layers.0/self_attn/Mod/.reshape__15\lInput : index64\<1\>\lDims : [1, 1]\lusers : 1\lResult : index64\<1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Gather_16/__61" [
+	label = "{{<Input>Input}|{Slice\lname : /language_model/model/layers.0/self_attn/Gather_16/__61\lInput : index64\<4\>\lStart : [2]\lusers : 1\lResult : index64\<1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Coral
+penwidth = 2];
+
+"/language_model/model/Shape/__1" [
+	label = "{{Constant\lname : \"/language_model/model/Shape/__1\"\loutput : index64\<4\>\lusers : 8\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Mod/__14" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : /language_model/model/layers.0/self_attn/Mod/.reshape__14\lInput : index64\<1 x 1\>\lOutput : index64\<1 x 1\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Mod/__12" [
+	label = "{{Placeholder\lname : \"/language_model/model/layers.0/self_attn/Mod/__12\"\loutput : index64\<1 x 1\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Mod/__12" :"Output"  -> "/language_model/model/layers.0/self_attn/Mod/__14" :"Output"  [dir="both"];
+"/language_model/model/layers.0/self_attn/Mod/__15" :"Result"  -> "/language_model/model/layers.0/self_attn/Mod/__14" :"Input" ;
+"/language_model/model/Shape/__1" :"Output"  -> "/language_model/model/layers.0/self_attn/Gather_16/__61" :"Input" ;
+"/language_model/model/layers.0/self_attn/Gather_16/__61" :"Result"  -> "/language_model/model/layers.0/self_attn/Mod/__15" :"Input" ;
+}

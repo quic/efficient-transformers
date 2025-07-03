@@ -1,0 +1,50 @@
+digraph DAG {
+	rankdir=TB;
+"n15/__2325" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : n15/_2.tile.reshape__2325\lInput : index32\<1 x 8 x 128 x 1\>\lOutput : index32\<1 x 8 x 128 x 1\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"n15/__2321" [
+	label = "{{<Input>Input}|{Reshape\lname : n15/_2.tile.reshape__2321\lInput : index32\<1 x 1 x 1024 x 1\>\lDims : [1, 8, 128, 1]\lusers : 1\lResult : index32\<1 x 8 x 128 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"n15/__2322" [
+	label = "{{<Big>Big|<Small>Small}|{InsertTensor\lname : n15/_2.tile__2322\lBig : index32\<1 x 1 x 1024 x 1\>\lSmall : index32\<1 x 1 x 1 x 1\>\lStart : [0, 0, 0, 0]\lCount : 1024\lAxis : 2\lusers : 1\lResult : index32\<1 x 1 x 1024 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose2
+penwidth = 2];
+
+"n15/__2323" [
+	label = "{{Splat\lname : n15/_2.tile_zero__2323\lValue : 0\lusers : 1\lResult : index32\<1 x 1 x 1024 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Khaki1
+penwidth = 2];
+
+"/Range/__99" [
+	label = "{{Constant\lname : \"/Range/__99\"\loutput : index32\<1 x 1 x 1 x 1\>\lusers : 2\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"n15/__2321" [
+	label = "{{Placeholder\lname : \"n15/__2321\"\loutput : index32\<1 x 8 x 128 x 1\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"/Range/__99" :"Output"  -> "n15/__2322" :"Small" ;
+"n15/__2323" :"Result"  -> "n15/__2322" :"Big" ;
+"n15/__2322" :"Result"  -> "n15/__2321" :"Input" ;
+"n15/__2321" :"Output"  -> "n15/__2325" :"Output"  [dir="both"];
+"n15/__2321" :"Result"  -> "n15/__2325" :"Input" ;
+}

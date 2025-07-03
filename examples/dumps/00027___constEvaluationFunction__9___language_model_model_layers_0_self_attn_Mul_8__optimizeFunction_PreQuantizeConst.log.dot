@@ -1,0 +1,42 @@
+digraph DAG {
+	rankdir=TB;
+"/language_model/model/layers.0/self_attn/Mul_8/__3" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : /language_model/model/layers.0/self_attn/Mul_8/__3\lInput : index64\<\>\lOutput : index64\<\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Mul_8/__1" [
+	label = "{{<LHS>LHS|<RHS>RHS}|{Mul\lname : /language_model/model/layers.0/self_attn/Mul_8/__1\lLHS : index64\<\>\lRHS : index64\<\>\lusers : 1\lResult : index64\<\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PeachPuff1
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Sub_2/__8" [
+	label = "{{Constant\lname : \"/language_model/model/layers.0/self_attn/Sub_2/__8\"\loutput : index64\<\>\lusers : 4\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/language_model/model/Constant/__1" [
+	label = "{{Constant\lname : \"/language_model/model/Constant/__1\"\loutput : index64\<\>\lusers : 580\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Mul_8/__1" [
+	label = "{{Placeholder\lname : \"/language_model/model/layers.0/self_attn/Mul_8/__1\"\loutput : index64\<\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Mul_8/__1" :"Output"  -> "/language_model/model/layers.0/self_attn/Mul_8/__3" :"Output"  [dir="both"];
+"/language_model/model/Constant/__1" :"Output"  -> "/language_model/model/layers.0/self_attn/Mul_8/__1" :"RHS" ;
+"/language_model/model/layers.0/self_attn/Sub_2/__8" :"Output"  -> "/language_model/model/layers.0/self_attn/Mul_8/__1" :"LHS" ;
+"/language_model/model/layers.0/self_attn/Mul_8/__1" :"Result"  -> "/language_model/model/layers.0/self_attn/Mul_8/__3" :"Input" ;
+}

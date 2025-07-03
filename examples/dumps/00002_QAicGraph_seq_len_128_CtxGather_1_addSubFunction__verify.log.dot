@@ -1,0 +1,73 @@
+digraph DAG {
+	rankdir=TB;
+"n8/__1" [
+	label = "{{<Data>Data|<Indices>Indices}|{GatherND\lname : n8/__1\lData : float\<1 x 8 x 8192 x 128\>\lIndices : index64\<1 x 8 x 8192 x 1\>\lBatchDims : 2\lusers : 1\lResult : float\<1 x 8 x 8192 x 128\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Wheat1
+penwidth = 2];
+
+"QAicGraph_seq_len_128_CtxGather_1_data/" [
+	label = "{{Placeholder\lname : \"QAicGraph_seq_len_128_CtxGather_1_data/\"\loutput : float\<1 x 8 x 8192 x 128\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"n7/__1" [
+	label = "{{<Input>Input}|{Reshape\lname : n7/.expanddims__1\lInput : index64\<1 x 8 x 8192\>\lDims : [1, 8, 8192, 1]\lusers : 1\lResult : index64\<1 x 8 x 8192 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"n5/__1" [
+	label = "{{<Input>Input}|{Tile\lname : n5/_1__1\lInput : index64\<1 x 1 x 8192\>\lCount : 8\lAxis : 1\lusers : 1\lResult : index64\<1 x 8 x 8192\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Khaki1
+penwidth = 2];
+
+"QAicGraph_seq_len_128_CtxGather_1_ctx_indices/" [
+	label = "{{Placeholder\lname : \"QAicGraph_seq_len_128_CtxGather_1_ctx_indices/\"\loutput : index64\<1 x 1 x 8192\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"n4/__1" [
+	label = "{{<Input>Input}|{Slice\lname : n4/__1\lInput : index64\<4\>\lStart : [0]\lusers : 0\lResult : index64\<3\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Coral
+penwidth = 2];
+
+"n0/__1" [
+	label = "{{Constant\lname : \"n0/__1\"\loutput : index64\<4\>\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"QAicGraph_seq_len_128_CtxGather_1_return_val/__1" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : QAicGraph_seq_len_128_CtxGather_1_return_val/__1\lInput : float\<1 x 8 x 8192 x 128\>\lOutput : float\<1 x 8 x 8192 x 128\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"QAicGraph_seq_len_128_CtxGather_1_return_val/" [
+	label = "{{Placeholder\lname : \"QAicGraph_seq_len_128_CtxGather_1_return_val/\"\loutput : float\<1 x 8 x 8192 x 128\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"QAicGraph_seq_len_128_CtxGather_1_return_val/" :"Output"  -> "QAicGraph_seq_len_128_CtxGather_1_return_val/__1" :"Output"  [dir="both"];
+"n8/__1" :"Result"  -> "QAicGraph_seq_len_128_CtxGather_1_return_val/__1" :"Input" ;
+"n0/__1" :"Output"  -> "n4/__1" :"Input" ;
+"QAicGraph_seq_len_128_CtxGather_1_ctx_indices/" :"Output"  -> "n5/__1" :"Input" ;
+"n5/__1" :"Result"  -> "n7/__1" :"Input" ;
+"n7/__1" :"Result"  -> "n8/__1" :"Indices" ;
+"QAicGraph_seq_len_128_CtxGather_1_data/" :"Output"  -> "n8/__1" :"Data" ;
+}

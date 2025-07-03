@@ -1,0 +1,40 @@
+====== [Graph:__constEvaluationFunction__4__/Mul/__1]
+__constEvaluationFunction__4__/Mul/__1: Graph Ordered by PostOrderVisitor
+
+/Range/__1 Constant HasData: 1
+  index64<1> 0KB /Range/__1:Output
+
+/Reshape/__1 Reshape
+  index64<1 x 1> 0KB /Reshape/__1:Result
+  Input: index64<1> 0KB /Range/__1:Output
+
+/Shape_1/__1 Constant HasData: 1
+  index64<3> 0KB /Shape_1/__1:Output
+
+/Gather_1/__3 Slice Start: [1]
+  index64<1> 0KB /Gather_1/__3:Result
+  Input: index64<3> 0KB /Shape_1/__1:Output
+
+/Mul/_broadcast_input_1.reshape__3 Reshape
+  index64<1 x 1> 0KB /Mul/_broadcast_input_1.reshape__3:Result
+  Input: index64<1> 0KB /Gather_1/__3:Result
+
+/Mul/__2 Mul
+  index64<1 x 1> 0KB /Mul/__2:Result
+  LHS: index64<1 x 1> 0KB /Reshape/__1:Result
+  RHS: index64<1 x 1> 0KB /Mul/_broadcast_input_1.reshape__3:Result
+
+/Mul/__2 Placeholder
+  index64<1 x 1> 0KB /Mul/__2:Output
+
+/Mul/__5 Save
+  Input: index64<1 x 1> 0KB /Mul/__2:Result
+  Output: index64<1 x 1> 0KB /Mul/__2:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               2              32
+               Placeholder               1               8
+                      Save               1               0
+                       Mul               1               8
+                   Reshape               2              16
+                     Slice               1               8

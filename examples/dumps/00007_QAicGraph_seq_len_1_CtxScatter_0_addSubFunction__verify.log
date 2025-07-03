@@ -1,0 +1,109 @@
+====== [Graph:QAicGraph_seq_len_1_CtxScatter_0]
+QAicGraph_seq_len_1_CtxScatter_0: Graph Ordered by PostOrderVisitor
+
+n0/ Constant HasData: 1
+  index64<4> 0KB n0/:Output
+
+n1/ Constant HasData: 1
+  index64<1> 0KB n1/:Output
+
+n2/ Gather BatchDims: 0
+  index64<1> 0KB n2/:Result
+  Data: index64<4> 0KB n0/:Output
+  Indices: index64<1> 0KB n1/:Output
+
+n3/ Constant HasData: 1
+  index64<4> 0KB n3/:Output
+
+n4/ Constant HasData: 1
+  index64<1> 0KB n4/:Output
+
+n5/ Gather BatchDims: 0
+  index64<1> 0KB n5/:Result
+  Data: index64<4> 0KB n3/:Output
+  Indices: index64<1> 0KB n4/:Output
+
+n6/ Constant HasData: 1
+  index64<2> 0KB n6/:Output
+
+n7/ Constant HasData: 1
+  index64<1> 0KB n7/:Output
+
+n8/ Gather BatchDims: 0
+  index64<1> 0KB n8/:Result
+  Data: index64<2> 0KB n6/:Output
+  Indices: index64<1> 0KB n7/:Output
+
+n10/ Constant HasData: 1
+  index64<1> 0KB n10/:Output
+
+n11/ Concat Dim: 0
+  index64<4> 0KB n11/:Result
+  Inputs0: index64<1> 0KB n2/:Result
+  Inputs1: index64<1> 0KB n5/:Result
+  Inputs2: index64<1> 0KB n8/:Result
+  Inputs3: index64<1> 0KB n10/:Output
+
+QAicGraph_seq_len_1_CtxScatter_0_data/ Placeholder
+  float<1 x 8 x 8192 x 128> 32768KB QAicGraph_seq_len_1_CtxScatter_0_data/:Output
+
+n12/ Constant HasData: 1
+  index64<1> 0KB n12/:Output
+
+n14/.expanddims Reshape
+  index64<1 x 1 x 1 x 1> 0KB n14/.expanddims:Result
+  Input: index64<1> 0KB n12/:Output
+
+n15/_1 Tile Count: 8 Axis: 1
+  index64<1 x 8 x 1 x 1> 0KB n15/_1:Result
+  Input: index64<1 x 1 x 1 x 1> 0KB n14/.expanddims:Result
+
+n16/ Constant HasData: 1
+  index64<8> 0KB n16/:Output
+
+n18/.expanddims Reshape
+  index64<1 x 8 x 1 x 1> 0KB n18/.expanddims:Result
+  Input: index64<8> 0KB n16/:Output
+
+QAicGraph_seq_len_1_CtxScatter_0_position_ids/ Placeholder
+  index64<1 x 1> 0KB QAicGraph_seq_len_1_CtxScatter_0_position_ids/:Output
+
+n21/.expanddims Reshape
+  index64<1 x 1 x 1 x 1> 0KB n21/.expanddims:Result
+  Input: index64<1 x 1> 0KB QAicGraph_seq_len_1_CtxScatter_0_position_ids/:Output
+
+n22/_1 Tile Count: 8 Axis: 1
+  index64<1 x 8 x 1 x 1> 0KB n22/_1:Result
+  Input: index64<1 x 1 x 1 x 1> 0KB n21/.expanddims:Result
+
+n23/ Concat Dim: 3
+  index64<1 x 8 x 1 x 3> 0KB n23/:Result
+  Inputs0: index64<1 x 8 x 1 x 1> 0KB n15/_1:Result
+  Inputs1: index64<1 x 8 x 1 x 1> 0KB n18/.expanddims:Result
+  Inputs2: index64<1 x 8 x 1 x 1> 0KB n22/_1:Result
+
+QAicGraph_seq_len_1_CtxScatter_0_updates/ Placeholder
+  float<1 x 8 x 1 x 128> 4KB QAicGraph_seq_len_1_CtxScatter_0_updates/:Output
+
+n24/ ScatterND BatchDims: 0
+  float<1 x 8 x 8192 x 128> 32768KB n24/:Result
+  Data: float<1 x 8 x 8192 x 128> 32768KB QAicGraph_seq_len_1_CtxScatter_0_data/:Output
+  Indices: index64<1 x 8 x 1 x 3> 0KB n23/:Result
+  Slices: float<1 x 8 x 1 x 128> 4KB QAicGraph_seq_len_1_CtxScatter_0_updates/:Output
+
+QAicGraph_seq_len_1_CtxScatter_0_return_val/ Placeholder
+  float<1 x 8 x 8192 x 128> 32768KB QAicGraph_seq_len_1_CtxScatter_0_return_val/:Output
+
+QAicGraph_seq_len_1_CtxScatter_0_return_val/__1 Save
+  Input: float<1 x 8 x 8192 x 128> 32768KB n24/:Result
+  Output: float<1 x 8 x 8192 x 128> 32768KB QAicGraph_seq_len_1_CtxScatter_0_return_val/:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               9             184
+               Placeholder               4      67,112,968
+                      Save               1               0
+                    Gather               3              24
+                 ScatterND               1      33,554,432
+                   Reshape               3              80
+                    Concat               2             224
+                      Tile               2             128

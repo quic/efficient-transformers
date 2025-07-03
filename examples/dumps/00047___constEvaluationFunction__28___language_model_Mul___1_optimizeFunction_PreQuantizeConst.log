@@ -1,0 +1,40 @@
+====== [Graph:__constEvaluationFunction__28__/language_model/Mul/__1]
+__constEvaluationFunction__28__/language_model/Mul/__1: Graph Ordered by PostOrderVisitor
+
+/Range/__1 Constant HasData: 1
+  index64<1> 0KB /Range/__1:Output
+
+/Reshape/__16 Reshape
+  index64<1 x 1> 0KB /Reshape/__16:Result
+  Input: index64<1> 0KB /Range/__1:Output
+
+/language_model/model/layers.0/self_attn/Shape/__2 Constant HasData: 1
+  index64<3> 0KB /language_model/model/layers.0/self_attn/Shape/__2:Output
+
+/language_model/Gather_1/__10 Slice Start: [1]
+  index64<1> 0KB /language_model/Gather_1/__10:Result
+  Input: index64<3> 0KB /language_model/model/layers.0/self_attn/Shape/__2:Output
+
+/language_model/Mul/_broadcast_input_1.reshape__17 Reshape
+  index64<1 x 1> 0KB /language_model/Mul/_broadcast_input_1.reshape__17:Result
+  Input: index64<1> 0KB /language_model/Gather_1/__10:Result
+
+/language_model/Mul/__16 Mul
+  index64<1 x 1> 0KB /language_model/Mul/__16:Result
+  LHS: index64<1 x 1> 0KB /Reshape/__16:Result
+  RHS: index64<1 x 1> 0KB /language_model/Mul/_broadcast_input_1.reshape__17:Result
+
+/language_model/Mul/__16 Placeholder
+  index64<1 x 1> 0KB /language_model/Mul/__16:Output
+
+/language_model/Mul/__19 Save
+  Input: index64<1 x 1> 0KB /language_model/Mul/__16:Result
+  Output: index64<1 x 1> 0KB /language_model/Mul/__16:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               2              32
+               Placeholder               1               8
+                      Save               1               0
+                       Mul               1               8
+                   Reshape               2              16
+                     Slice               1               8

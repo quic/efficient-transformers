@@ -1,0 +1,52 @@
+====== [Graph:QAicGraph_seq_len_128_CtxGather_1]
+
+originalInputPlaceholders:
+  QAicGraph_seq_len_128_CtxGather_1_data/: float<1 x 8 x 8192 x 128>
+  QAicGraph_seq_len_128_CtxGather_1_ctx_indices/: index64<1 x 1 x 8192>
+
+originalOutputPlaceholders:
+  QAicGraph_seq_len_128_CtxGather_1_return_val/: float<1 x 8 x 8192 x 128>
+
+QAicGraph_seq_len_128_CtxGather_1: Graph Ordered by PostOrderVisitor
+
+n0/__1 Constant HasData: 1
+  index64<4> 0KB n0/__1:Output
+
+n4/__1 Slice Start: [0]
+  index64<3> 0KB n4/__1:Result
+  Input: index64<4> 0KB n0/__1:Output
+
+QAicGraph_seq_len_128_CtxGather_1_data/ Placeholder
+  float<1 x 8 x 8192 x 128> 32768KB QAicGraph_seq_len_128_CtxGather_1_data/:Output
+
+QAicGraph_seq_len_128_CtxGather_1_ctx_indices/ Placeholder
+  index64<1 x 1 x 8192> 64KB QAicGraph_seq_len_128_CtxGather_1_ctx_indices/:Output
+
+n5/_1__1 Tile Count: 8 Axis: 1
+  index64<1 x 8 x 8192> 512KB n5/_1__1:Result
+  Input: index64<1 x 1 x 8192> 64KB QAicGraph_seq_len_128_CtxGather_1_ctx_indices/:Output
+
+n7/.expanddims__1 Reshape
+  index64<1 x 8 x 8192 x 1> 512KB n7/.expanddims__1:Result
+  Input: index64<1 x 8 x 8192> 512KB n5/_1__1:Result
+
+n8/__1 GatherND BatchDims: 2
+  float<1 x 8 x 8192 x 128> 32768KB n8/__1:Result
+  Data: float<1 x 8 x 8192 x 128> 32768KB QAicGraph_seq_len_128_CtxGather_1_data/:Output
+  Indices: index64<1 x 8 x 8192 x 1> 512KB n7/.expanddims__1:Result
+
+QAicGraph_seq_len_128_CtxGather_1_return_val/ Placeholder
+  float<1 x 8 x 8192 x 128> 32768KB QAicGraph_seq_len_128_CtxGather_1_return_val/:Output
+
+QAicGraph_seq_len_128_CtxGather_1_return_val/__1 Save
+  Input: float<1 x 8 x 8192 x 128> 32768KB n8/__1:Result
+  Output: float<1 x 8 x 8192 x 128> 32768KB QAicGraph_seq_len_128_CtxGather_1_return_val/:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               1              32
+               Placeholder               3      67,174,400
+                      Save               1               0
+                  GatherND               1      33,554,432
+                   Reshape               1         524,288
+                     Slice               1              24
+                      Tile               1         524,288

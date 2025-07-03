@@ -1,0 +1,40 @@
+====== [Graph:__constEvaluationFunction__0__/Where_2/]
+__constEvaluationFunction__0__/Where_2/: Graph Ordered by PostOrderVisitor
+
+/Shape_2/__1 Constant HasData: 1
+  index64<2> 0KB /Shape_2/__1:Output
+
+/Gather_4/__4 Slice Start: [1]
+  index64<1> 0KB /Gather_4/__4:Result
+  Input: index64<2> 0KB /Shape_2/__1:Output
+
+/Gather_4/.res__3 Reshape
+  index64<> 0KB /Gather_4/.res__3:Result
+  Input: index64<1> 0KB /Gather_4/__4:Result
+
+/Constant_2/__1 Constant HasData: 1
+  index64<> 0KB /Constant_2/__1:Output
+
+/Equal_2/__1 CmpEQ
+  bool<> 0KB /Equal_2/__1:Result
+  LHS: index64<> 0KB /Gather_4/.res__3:Result
+  RHS: index64<> 0KB /Constant_2/__1:Output
+
+/Where_2/_broadcast_input_0.reshape__3 Reshape
+  bool<1 x 1 x 1> 0KB /Where_2/_broadcast_input_0.reshape__3:Result
+  Input: bool<> 0KB /Equal_2/__1:Result
+
+/Where_2/_broadcast_input_0.reshape__3 Placeholder
+  bool<1 x 1 x 1> 0KB /Where_2/_broadcast_input_0.reshape__3:Output
+
+/Where_2/_broadcast_input_0.reshape__5 Save
+  Input: bool<1 x 1 x 1> 0KB /Where_2/_broadcast_input_0.reshape__3:Result
+  Output: bool<1 x 1 x 1> 0KB /Where_2/_broadcast_input_0.reshape__3:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               2              24
+               Placeholder               1               1
+                      Save               1               0
+                     CmpEQ               1               1
+                   Reshape               2               9
+                     Slice               1               8

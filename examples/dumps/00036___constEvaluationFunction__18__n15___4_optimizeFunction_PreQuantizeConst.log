@@ -1,0 +1,27 @@
+====== [Graph:__constEvaluationFunction__18__n15/__4]
+__constEvaluationFunction__18__n15/__4: Graph Ordered by PostOrderVisitor
+
+n15/_1.zero__770 Splat SplatValue: 0
+  index32<1 x 8 x 1 x 1> 0KB n15/_1.zero__770:Result
+
+/Range/__3 Constant HasData: 1
+  index32<1 x 1 x 1 x 1> 0KB /Range/__3:Output
+
+n15/_1.tile__769 InsertTensor Start: [0, 0, 0, 0] Count: 8 Axis: 1
+  index32<1 x 8 x 1 x 1> 0KB n15/_1.tile__769:Result
+  Big: index32<1 x 8 x 1 x 1> 0KB n15/_1.zero__770:Result
+  Small: index32<1 x 1 x 1 x 1> 0KB /Range/__3:Output
+
+n15/_1.tile__769 Placeholder
+  index32<1 x 8 x 1 x 1> 0KB n15/_1.tile__769:Output
+
+n15/_1.tile__772 Save
+  Input: index32<1 x 8 x 1 x 1> 0KB n15/_1.tile__769:Result
+  Output: index32<1 x 8 x 1 x 1> 0KB n15/_1.tile__769:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               1               4
+               Placeholder               1              32
+                      Save               1               0
+                     Splat               1              32
+              InsertTensor               1              32

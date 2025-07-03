@@ -1,0 +1,42 @@
+digraph DAG {
+	rankdir=TB;
+"/language_model/model/layers.0/self_attn/Mod/__5" [
+	label = "{{<Input>Input}|{Reshape\lname : /language_model/model/layers.0/self_attn/Mod/.reshape__5\lInput : index64\<1\>\lDims : [1, 1]\lusers : 1\lResult : index64\<1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Gather_16/__24" [
+	label = "{{<Input>Input}|{Slice\lname : /language_model/model/layers.0/self_attn/Gather_16/__24\lInput : index64\<4\>\lStart : [2]\lusers : 1\lResult : index64\<1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Coral
+penwidth = 2];
+
+"/language_model/model/Shape/__1" [
+	label = "{{Constant\lname : \"/language_model/model/Shape/__1\"\loutput : index64\<4\>\lusers : 550\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Mod/__4" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : /language_model/model/layers.0/self_attn/Mod/.reshape__4\lInput : index64\<1 x 1\>\lOutput : index64\<1 x 1\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Mod/__2" [
+	label = "{{Placeholder\lname : \"/language_model/model/layers.0/self_attn/Mod/__2\"\loutput : index64\<1 x 1\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Mod/__2" :"Output"  -> "/language_model/model/layers.0/self_attn/Mod/__4" :"Output"  [dir="both"];
+"/language_model/model/layers.0/self_attn/Mod/__5" :"Result"  -> "/language_model/model/layers.0/self_attn/Mod/__4" :"Input" ;
+"/language_model/model/Shape/__1" :"Output"  -> "/language_model/model/layers.0/self_attn/Gather_16/__24" :"Input" ;
+"/language_model/model/layers.0/self_attn/Gather_16/__24" :"Result"  -> "/language_model/model/layers.0/self_attn/Mod/__5" :"Input" ;
+}

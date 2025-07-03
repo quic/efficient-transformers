@@ -1,0 +1,58 @@
+digraph DAG {
+	rankdir=TB;
+"/language_model/model/layers.0/self_attn/Sub_2/__11" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : /language_model/model/layers.0/self_attn/Sub_2/__11\lInput : index64\<\>\lOutput : index64\<\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Sub_2/__9" [
+	label = "{{<LHS>LHS|<RHS>RHS}|{Sub\lname : /language_model/model/layers.0/self_attn/Sub_2/__9\lLHS : index64\<\>\lRHS : index64\<\>\lusers : 1\lResult : index64\<\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose2
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Gather_16/__50" [
+	label = "{{<Input>Input}|{Reshape\lname : /language_model/model/layers.0/self_attn/Gather_16/.res__50\lInput : index64\<1\>\lDims : []\lusers : 1\lResult : index64\<\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Gather_16/__51" [
+	label = "{{<Input>Input}|{Slice\lname : /language_model/model/layers.0/self_attn/Gather_16/__51\lInput : index64\<4\>\lStart : [2]\lusers : 1\lResult : index64\<1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Coral
+penwidth = 2];
+
+"/language_model/model/Shape/__1" [
+	label = "{{Constant\lname : \"/language_model/model/Shape/__1\"\loutput : index64\<4\>\lusers : 8\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/Constant_2/__1" [
+	label = "{{Constant\lname : \"/Constant_2/__1\"\loutput : index64\<\>\lusers : 4\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Sub_2/__9" [
+	label = "{{Placeholder\lname : \"/language_model/model/layers.0/self_attn/Sub_2/__9\"\loutput : index64\<\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Sub_2/__9" :"Output"  -> "/language_model/model/layers.0/self_attn/Sub_2/__11" :"Output"  [dir="both"];
+"/language_model/model/Shape/__1" :"Output"  -> "/language_model/model/layers.0/self_attn/Gather_16/__51" :"Input" ;
+"/language_model/model/layers.0/self_attn/Gather_16/__51" :"Result"  -> "/language_model/model/layers.0/self_attn/Gather_16/__50" :"Input" ;
+"/language_model/model/layers.0/self_attn/Gather_16/__50" :"Result"  -> "/language_model/model/layers.0/self_attn/Sub_2/__9" :"LHS" ;
+"/Constant_2/__1" :"Output"  -> "/language_model/model/layers.0/self_attn/Sub_2/__9" :"RHS" ;
+"/language_model/model/layers.0/self_attn/Sub_2/__9" :"Result"  -> "/language_model/model/layers.0/self_attn/Sub_2/__11" :"Input" ;
+}

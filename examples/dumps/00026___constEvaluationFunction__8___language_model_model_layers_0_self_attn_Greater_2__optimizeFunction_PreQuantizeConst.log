@@ -1,0 +1,22 @@
+====== [Graph:__constEvaluationFunction__8__/language_model/model/layers.0/self_attn/Greater_2/]
+__constEvaluationFunction__8__/language_model/model/layers.0/self_attn/Greater_2/: Graph Ordered by PostOrderVisitor
+
+/language_model/model/layers.0/self_attn/Sub_2/.constfold__8 Constant HasData: 1
+  index64<> 0KB /language_model/model/layers.0/self_attn/Sub_2/.constfold__8:Output
+
+/language_model/model/layers.0/self_attn/Greater_2/_broadcast_input_0.reshape__2 Reshape
+  index64<1> 0KB /language_model/model/layers.0/self_attn/Greater_2/_broadcast_input_0.reshape__2:Result
+  Input: index64<> 0KB /language_model/model/layers.0/self_attn/Sub_2/.constfold__8:Output
+
+/language_model/model/layers.0/self_attn/Greater_2/_broadcast_input_0.reshape__2 Placeholder
+  index64<1> 0KB /language_model/model/layers.0/self_attn/Greater_2/_broadcast_input_0.reshape__2:Output
+
+/language_model/model/layers.0/self_attn/Greater_2/_broadcast_input_0.reshape__4 Save
+  Input: index64<1> 0KB /language_model/model/layers.0/self_attn/Greater_2/_broadcast_input_0.reshape__2:Result
+  Output: index64<1> 0KB /language_model/model/layers.0/self_attn/Greater_2/_broadcast_input_0.reshape__2:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               1               8
+               Placeholder               1               8
+                      Save               1               0
+                   Reshape               1               8

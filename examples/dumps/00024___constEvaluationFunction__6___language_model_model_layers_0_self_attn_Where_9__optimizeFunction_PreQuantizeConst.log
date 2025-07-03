@@ -1,0 +1,40 @@
+====== [Graph:__constEvaluationFunction__6__/language_model/model/layers.0/self_attn/Where_9/]
+__constEvaluationFunction__6__/language_model/model/layers.0/self_attn/Where_9/: Graph Ordered by PostOrderVisitor
+
+/language_model/model/Constant_8/__1 Constant HasData: 1
+  index64<> 0KB /language_model/model/Constant_8/__1:Output
+
+/language_model/model/Shape/__1 Constant HasData: 1
+  index64<4> 0KB /language_model/model/Shape/__1:Output
+
+/language_model/model/layers.0/self_attn/Gather_16/__4 Slice Start: [2]
+  index64<1> 0KB /language_model/model/layers.0/self_attn/Gather_16/__4:Result
+  Input: index64<4> 0KB /language_model/model/Shape/__1:Output
+
+/language_model/model/layers.0/self_attn/Gather_16/.res__3 Reshape
+  index64<> 0KB /language_model/model/layers.0/self_attn/Gather_16/.res__3:Result
+  Input: index64<1> 0KB /language_model/model/layers.0/self_attn/Gather_16/__4:Result
+
+/language_model/model/layers.0/self_attn/Greater/__1 CmpLT
+  bool<> 0KB /language_model/model/layers.0/self_attn/Greater/__1:Result
+  LHS: index64<> 0KB /language_model/model/Constant_8/__1:Output
+  RHS: index64<> 0KB /language_model/model/layers.0/self_attn/Gather_16/.res__3:Result
+
+/language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__11 Reshape
+  bool<1 x 1 x 1 x 1> 0KB /language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__11:Result
+  Input: bool<> 0KB /language_model/model/layers.0/self_attn/Greater/__1:Result
+
+/language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__11 Placeholder
+  bool<1 x 1 x 1 x 1> 0KB /language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__11:Output
+
+/language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__13 Save
+  Input: bool<1 x 1 x 1 x 1> 0KB /language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__11:Result
+  Output: bool<1 x 1 x 1 x 1> 0KB /language_model/model/layers.0/self_attn/Where_9/_broadcast_input_0.reshape__11:Output
+
+Op summary (name, count, output bytes): 
+                  Constant               2              40
+               Placeholder               1               1
+                      Save               1               0
+                     CmpLT               1               1
+                   Reshape               2               9
+                     Slice               1               8

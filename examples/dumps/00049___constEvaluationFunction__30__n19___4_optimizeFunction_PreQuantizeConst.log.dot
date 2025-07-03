@@ -1,0 +1,42 @@
+digraph DAG {
+	rankdir=TB;
+"n19/__771" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : n19/_2.tile__771\lInput : index32\<1 x 8 x 128 x 1\>\lOutput : index32\<1 x 8 x 128 x 1\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"n19/__769" [
+	label = "{{<Big>Big|<Small>Small}|{InsertTensor\lname : n19/_2.tile__769\lBig : index32\<1 x 8 x 128 x 1\>\lSmall : index32\<1 x 8 x 1 x 1\>\lStart : [0, 0, 0, 0]\lCount : 128\lAxis : 2\lusers : 1\lResult : index32\<1 x 8 x 128 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose2
+penwidth = 2];
+
+"n15/__2342" [
+	label = "{{Splat\lname : n15/_2.zero__2342\lValue : 0\lusers : 1\lResult : index32\<1 x 8 x 128 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Khaki1
+penwidth = 2];
+
+"n16/__3" [
+	label = "{{Constant\lname : \"n16/__3\"\loutput : index32\<1 x 8 x 1 x 1\>\lusers : 3\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"n19/__769" [
+	label = "{{Placeholder\lname : \"n19/__769\"\loutput : index32\<1 x 8 x 128 x 1\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"n16/__3" :"Output"  -> "n19/__769" :"Small" ;
+"n15/__2342" :"Result"  -> "n19/__769" :"Big" ;
+"n19/__769" :"Output"  -> "n19/__771" :"Output"  [dir="both"];
+"n19/__769" :"Result"  -> "n19/__771" :"Input" ;
+}

@@ -1,0 +1,34 @@
+digraph DAG {
+	rankdir=TB;
+"/language_model/model/layers.0/self_attn/Or/__4" [
+	label = "{{<Input>Input|<Output>Output}|{Save\lname : /language_model/model/layers.0/self_attn/Or/_broadcast_input_0.reshape__4\lInput : bool\<1 x 1\>\lOutput : bool\<1 x 1\>\lusers : 0\l}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=PowderBlue
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Or/__2" [
+	label = "{{<Input>Input}|{Reshape\lname : /language_model/model/layers.0/self_attn/Or/_broadcast_input_0.reshape__2\lInput : bool\<\>\lDims : [1, 1]\lusers : 1\lResult : bool\<1 x 1\>\l}|{<Result>Result}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Yellow2
+penwidth = 2];
+
+"Constant_8558/__1" [
+	label = "{{Constant\lname : \"Constant_8558/__1\"\loutput : bool\<\>\lusers : 38\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=Snow3 color=DeepSkyBlue4
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Or/__2" [
+	label = "{{Placeholder\lname : \"/language_model/model/layers.0/self_attn/Or/__2\"\loutput : bool\<1 x 1\>\ltrainable : 0\lstatic : 0\lusers : 1\l}|{<Output>Output}}"
+	shape = "record"
+	style="filled,rounded"
+	fillcolor=MistyRose1
+penwidth = 2];
+
+"/language_model/model/layers.0/self_attn/Or/__2" :"Output"  -> "/language_model/model/layers.0/self_attn/Or/__4" :"Output"  [dir="both"];
+"Constant_8558/__1" :"Output"  -> "/language_model/model/layers.0/self_attn/Or/__2" :"Input" ;
+"/language_model/model/layers.0/self_attn/Or/__2" :"Result"  -> "/language_model/model/layers.0/self_attn/Or/__4" :"Input" ;
+}
