@@ -32,7 +32,7 @@ from transformers.models.llama4.modeling_llama4 import (
     repeat_kv,
 )
 
-from QEfficient.transformers.cache_utils import QEffHybridChunkedCache
+from QEfficient.transformers.cache_utils import CacheManager
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
@@ -638,7 +638,7 @@ class QEffLlama4TextModel(Llama4TextModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = QEffHybridChunkedCache.from_legacy_cache(self.config, past_key_values)
+            past_key_values = CacheManager.cache_manager(self.config, past_key_values)
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
