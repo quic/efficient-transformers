@@ -182,7 +182,7 @@ class QEFFBaseModel(ABC):
                 dynamic_axes=dynamic_axes,
                 opset_version=constants.ONNX_EXPORT_OPSET,
                 **export_kwargs,
-                verbose=True
+                verbose=True,
             )
             logger.info("Pytorch export successful")
 

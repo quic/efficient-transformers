@@ -443,108 +443,100 @@ class QEffHybridChunkedCache(HybridChunkedCache):
             k_out, v_out = key_states, value_states
 
         else:
+            layer_ctx_len = self.key_cache[layer_idx].shape[2]
+
             position_ids = cache_kwargs.get("position_ids")
             is_sliding_layer = torch.tensor(bool(self.is_sliding[layer_idx]))
-            
-            self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], position_ids, key_states)
-            
-            self.value_cache[layer_idx] = CtxScatterFunc.apply(
-                self.value_cache[layer_idx], position_ids, value_states
-            )
-            k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx] 
-            # print(torch.where(self.key_cache[4].shape[-2]))
+
+            scatter_position_id = position_ids
             if is_sliding_layer:
-                KV_values= torch.where(self.key_cache[3].shape[-2] > 8192, self.update_hybrid_cache(position_ids,is_sliding_layer, k_out, v_out,layer_idx), self.update_dynamic_cache( position_ids, k_out, v_out) )
+                scatter_position_id = position_ids % layer_ctx_len
+
+            self.key_cache[layer_idx] = CtxScatterFunc.apply(self.key_cache[layer_idx], scatter_position_id, key_states)
+
+            self.value_cache[layer_idx] = CtxScatterFunc.apply(
+                self.value_cache[layer_idx], scatter_position_id, value_states
+            )
+            k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+            if is_sliding_layer:
+                kv_position_ids = torch.where(
+                    (~is_sliding_layer | (position_ids == -1)), position_ids, position_ids % (layer_ctx_len)
+                )
+
+                kv_position_ids = torch.where(
+                    is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1) * 2),
+                    (position_ids + 1) % layer_ctx_len,
+                    kv_position_ids,
+                )
+                ctx_len = min(layer_ctx_len, k_out.shape[2])
+                ctx_indices = torch.arange(ctx_len)[None, None, ...]
+                gather_limit = kv_position_ids.max(1, keepdim=True).values.unsqueeze(1)
+                invalid_mask = ctx_indices > gather_limit
+
+                if torch.onnx.is_in_onnx_export():
+                    invalid_idx_value = torch.iinfo(torch.int32).max
+                else:
+                    invalid_idx_value = 0
+
+                ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+                # Rolling indices for sliding window
+                all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
+                rolling_indices = torch.where(all_indices > layer_ctx_len - 1, all_indices % layer_ctx_len, all_indices)
+                final_indices = torch.where(
+                    (is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), rolling_indices, ctx_indices
+                )
+
+                # print("k_out", k_out.shape, "v_out", v_out.shape)
+                k_out = torch.where(
+                    self.key_cache[3].shape[-2] > 8192,
+                    self.update_hybrid_cache_k_out(k_out, final_indices),
+                    self.update_dynamic_cache_k_out(k_out, ctx_indices),
+                )
+                v_out = torch.where(
+                    self.key_cache[3].shape[-2] > 8192,
+                    self.update_hybrid_cache_v_out(
+                        v_out, final_indices, invalid_mask, layer_ctx_len, position_ids, is_sliding_layer
+                    ),
+                    self.update_dynamic_cache_v_out(v_out, ctx_indices, invalid_mask),
+                )
+
             else:
-                KV_values = self.update_dynamic_cache( position_ids, k_out, v_out)
-            k_out, v_out = torch.split(KV_values,1,dim=0)
-            print(k_out.shape, layer_idx)
+                ctx_len = k_out.shape[2]
+                ctx_indices = torch.arange(ctx_len)[None, None, ...]
+                gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+                invalid_mask = ctx_indices > gather_limit
+
+                if torch.onnx.is_in_onnx_export():
+                    invalid_idx_value = torch.iinfo(torch.int32).max
+                else:
+                    invalid_idx_value = 0
+
+                ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+                k_out = self.update_dynamic_cache_k_out(k_out, ctx_indices)
+                v_out = self.update_dynamic_cache_v_out(v_out, ctx_indices, invalid_mask)
+
         return k_out, v_out
 
-    def update_hybrid_cache(self, position_ids,  is_sliding_layer, k_out, v_out, layer_idx):
-        # Original Gather
-        layer_ctx_len = self.key_cache[layer_idx].shape[2]
-        kv_position_ids = torch.where(
-                (~is_sliding_layer | (position_ids == -1)), position_ids, position_ids % (layer_ctx_len)
-            )
-
-        kv_position_ids = torch.where(
-            is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1) * 2),
-            (position_ids + 1) % layer_ctx_len,
-            kv_position_ids,
-        )
-
-        layer_ctx_len = self.key_cache[layer_idx].shape[2]
-        ctx_len = min(layer_ctx_len, k_out.shape[2])
-        ctx_indices = torch.arange(ctx_len)[None, None, ...]
-        gather_limit = kv_position_ids.max(1, keepdim=True).values.unsqueeze(1)
-        invalid_mask = ctx_indices > gather_limit
-        if torch.onnx.is_in_onnx_export():
-            invalid_idx_value = torch.iinfo(torch.int32).max
-        else:
-            invalid_idx_value = 0
-        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
-
-        # Rolling indices for sliding window
-        all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
-        rolling_indices = torch.where(all_indices > layer_ctx_len - 1, all_indices % layer_ctx_len, all_indices)
-        final_indices = torch.where(
-            (is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), rolling_indices, ctx_indices
-        )
+    def update_hybrid_cache_k_out(self, k_out, final_indices):
         k_out = CtxGatherFunc.apply(k_out, final_indices)
+        return k_out
+
+    def update_hybrid_cache_v_out(
+        self, v_out, final_indices, invalid_mask, layer_ctx_len, position_ids, is_sliding_layer
+    ):
         v_out = CtxGatherFunc.apply(v_out, final_indices)
         ctx_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         v_out = torch.where((is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), v_out, ctx_v_out)
-        
-        return torch.concat([k_out, v_out], dim=0)
 
-    # def update_dynamic_cache(self, position_ids,  k_out, v_out,):
-    #     # Original Gather
-    #     ctx_len = k_out.shape[2]
-    #     ctx_indices = torch.arange(ctx_len)[None, None, ...]
-    #     gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
-    #     invalid_mask = ctx_indices > gather_limit
+        return v_out
 
-    #     if torch.onnx.is_in_onnx_export():
-    #         invalid_idx_value = torch.iinfo(torch.int32).max
-    #     else:
-    #         invalid_idx_value = 0
-
-    #     ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
-    #     k_out = CtxGatherFunc.apply(k_out, ctx_indices)
-    #     v_out = CtxGatherFunc.apply(v_out, ctx_indices)
-    #     v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
-    #     return torch.concat([k_out, v_out], dim=0)
-    
-    def update_dynamic_cache_k_out(self, position_ids,  k_out):
-        # Original Gather
-        ctx_len = k_out.shape[2]
-        ctx_indices = torch.arange(ctx_len)[None, None, ...]
-        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
-        invalid_mask = ctx_indices > gather_limit
-
-        if torch.onnx.is_in_onnx_export():
-            invalid_idx_value = torch.iinfo(torch.int32).max
-        else:
-            invalid_idx_value = 0
-
-        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+    def update_dynamic_cache_k_out(self, k_out, ctx_indices):
         k_out = CtxGatherFunc.apply(k_out, ctx_indices)
         return k_out
-    
-    def update_dynamic_cache_v_out(self, position_ids, v_out,):
-        # Original Gather
-        ctx_len = v_out.shape[2]
-        ctx_indices = torch.arange(ctx_len)[None, None, ...]
-        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
-        invalid_mask = ctx_indices > gather_limit
 
-        if torch.onnx.is_in_onnx_export():
-            invalid_idx_value = torch.iinfo(torch.int32).max
-        else:
-            invalid_idx_value = 0
-
-        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+    def update_dynamic_cache_v_out(self, v_out, ctx_indices, invalid_mask):
         v_out = CtxGatherFunc.apply(v_out, ctx_indices)
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return v_out
