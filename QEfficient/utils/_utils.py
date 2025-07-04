@@ -568,6 +568,32 @@ def create_json(file_path: str, json_data: object):
         print(f"Failed to create JSON File {file_path}: {e}")
 
 
+def generate_mdp_partition_config(num_devices: int, num_cores: int) -> str:
+    """
+    Generates an MDP partition configuration JSON file using the create_json utility.
+
+    Args:
+        num_devices (int): Number of devices.
+        num_cores (int): Number of cores per device.
+        output_dir (str): Directory where the JSON file will be saved.
+
+    Returns:
+        str: Path to the generated JSON file.
+    """
+
+    mdp_config = {
+        "connections": [{"devices": list(range(num_devices)), "type": "p2p"}],
+        "partitions": [
+            {
+                "name": "Partition0",
+                "devices": [{"deviceId": d, "numCores": num_cores} for d in range(num_devices)],
+            }
+        ],
+    }
+
+    return mdp_config
+
+
 def model_swap(func):
     def wrapper(*args, **kwargs):
         if "model" in kwargs and kwargs["model"] is not None:

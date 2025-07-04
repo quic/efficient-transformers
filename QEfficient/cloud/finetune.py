@@ -82,7 +82,7 @@ def setup_seeds(seed: int) -> None:
     Notes:
         - Sets seeds for PyTorch, Python's random module, and NumPy.
     """
-    torch.use_deterministic_algorithms(True)
+    # torch.use_deterministic_algorithms(True)
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -144,7 +144,6 @@ def load_model_and_tokenizer(
                 torch_dtype=torch.float16,
                 device_map=device_map,
             )
-            print(model.hf_device_map)
         else:
             model = AutoModelForCausalLM.from_pretrained(
                 pretrained_model_path,
