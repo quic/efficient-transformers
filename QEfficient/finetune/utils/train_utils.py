@@ -352,7 +352,6 @@ def train(
                     if total_loss == 0.0
                     else total_loss / (step + 1 - (num_dummy_samples / train_config.train_batch_size))
                 )
-
         if train_config.task_type == "seq_classification":
             metric_val = acc_helper.compute()
             acc_helper.reset()
@@ -437,7 +436,6 @@ def train(
     results["avg_checkpoint_time"] = avg_checkpoint_time
     if train_config.save_metrics:
         results["metrics_filename"] = metrics_filename
-
     return results
 
 
@@ -513,7 +511,6 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
                 val_step_metric.append(metric_val)
 
             eval_loss += loss.detach().float()
-
     # Compute average loss and metric
     eval_epoch_loss = (
         0.0 if eval_loss == 0.0 else eval_loss / (step + 1 - num_dummy_samples / train_config.val_batch_size)
