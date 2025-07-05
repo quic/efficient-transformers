@@ -255,17 +255,13 @@ def get_finetune_parser():
         help="Enable distributed data parallel training. This will load the replicas of model on given number of devices and train the model. This should be used using torchrun interface. Please check docs for exact usage.",
     )
     parser.add_argument(
-        "--dump_root_dir",
-        "--dump-root-dir",
-        required=False,
-        type=str,
-        default="mismatches/step_",
-        help="Directory for mismatch dumps by opByOpVerifier",
-    )
-    parser.add_argument(
         "--opByOpVerifier",
         action="store_true",
-        help="Enable operation-by-operation verification w.r.t reference device(cpu). It is a context manager interface that captures and verifies each operator against reference device. In case results of test & reference do not match under given tolerances, a standalone unittest is generated at dump_root_dir.",
+        help=argparse.SUPPRESS,
+        # This is for debugging purpose only.
+        # Enables operation-by-operation verification w.r.t reference device(cpu).
+        # It is a context manager interface that captures and verifies each operator against reference device.
+        # In case results of test & reference do not match under given tolerances, a standalone unittest is generated at dump_root_dir.
     )
 
     return parser
