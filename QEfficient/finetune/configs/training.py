@@ -81,8 +81,6 @@ class TrainConfig:
     save_metrics: bool = True  # saves training metrics to a json file for later plotting
     intermediate_step_save: int = 1000
     batching_strategy: str = "packing"
-    enable_ddp: bool = False
-    enable_sorting_for_ddp: bool = True
     convergence_counter: int = 5  # its value should be >= 1, stop fine tuning when loss <= convergence_loss (defined below) for #convergence_counter steps
     convergence_loss: float = (
         1e-4  # if loss value is <= convergence_loss for #convergence_counter consecutive steps, fine tuning stops
@@ -94,5 +92,10 @@ class TrainConfig:
     use_profiler: bool = False  # Enable pytorch profiler, can not be used with flop counter at the same time.
     # profiler_dir: str = "PATH/to/save/profiler/results" # will be used if using profiler
 
+    # dist-related
+    enable_pp: bool = False
+    num_pp_stages: int = 1
+    enable_ddp: bool = False
+    enable_sorting_for_ddp: bool = True
     dump_root_dir: str = "mismatches/step_"
     opByOpVerifier: bool = False
