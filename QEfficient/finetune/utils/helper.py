@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-
 import os
 
 TASK_TYPE = ["generation", "seq_classification"]
@@ -15,3 +14,7 @@ BATCHING_STRATEGY = ["padding", "packing"]
 
 def is_rank_zero():
     return int(os.getenv("LOCAL_RANK", 0)) == 0
+
+
+def get_num_ddp_devices():
+    return int(os.getenv("WORLD_SIZE", 1))
