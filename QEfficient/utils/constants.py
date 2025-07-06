@@ -25,6 +25,10 @@ ONNX_EXPORT_IMAGE_LENGHT = 560
 ONNX_EXPORT_IMAGE_DEPTH = 3
 ONNX_EXPORT_CTX_LEN = 1024
 
+# Compiler defaults
+DEFAULT_AIC_NUM_CORES = 16
+DEFAULT_AIC_MXPF6_MATMUL = False
+
 
 # Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
 def get_models_dir():
@@ -56,10 +60,12 @@ def get_models_dir():
 
 QEFF_MODELS_DIR = get_models_dir()
 
-ONNX_EXPORT_EXAMPLE_BATCH_SIZE = 1
-ONNX_EXPORT_EXAMPLE_SEQ_LEN = 32
-ONNX_EXPORT_EXAMPLE_FBS = 4
-ONNX_EXPORT_EXAMPLE_NLK = 2  # Number of Logits to Keep
+ONNX_EXPORT_EXAMPLE_REPETITION_PENALTIES = 0.5
+ONNX_EXPORT_EXAMPLE_PRESENCE_PENALTIES = 0.5
+ONNX_EXPORT_EXAMPLE_TEMPERATURES = 0.80
+ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS = 512
+ONNX_EXPORT_EXAMPLE_TOP_PS = 0.80
+ONNX_EXPORT_EXAMPLE_MIN_PS = 0.99
 ONNX_EXPORT_OPSET = 13
 
 COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-aic-hw-version=2.0"]
@@ -86,6 +92,14 @@ GRANITEVISION_PREFIL_SEQ_LEN = GRANITEVISION_SEQ_LEN = 5500
 GRANITEVISION_CTX_LEN = 6000
 GRANITEVISION_NUM_CHANNELS = 3
 
+VISION_MXFP6_MATMUL = False
+# Llama4 Constants
+LLAMA4_ATTENTION_CHUNK_SIZE = 8192
+LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
+
+# Gemma3 Constant
+GEMMA3_MAX_POSITION_EMBEDDINGS = 32768
+
 
 class Constants:
     # Export Constants.
@@ -97,6 +111,7 @@ class Constants:
     MAX_QPC_LIMIT = 30
     MAX_RETRIES = 10  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
     NUM_SPECULATIVE_TOKENS = 2
+    MAX_TOP_K_IDS = ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS
     SDK_APPS_XML = "/opt/qti-aic/versions/apps.xml"  # This xml file is parsed to find out the SDK apps version.
     SDK_PLATFORM_XML = (
         "/opt/qti-aic/versions/platform.xml"  # This xml file is parsed to find out the SDK platform version.
@@ -129,7 +144,7 @@ class QnnConstants:
     # Converter Arguments
     FLOAT_BITWIDTH = 16
     FLOAT_BIAS_BITWIDTH = 32
-    CONVERTER_DEFAULT_ARGS = "--preserve_io_datatype --onnx_skip_simplification "
+    CONVERTER_DEFAULT_ARGS = "--preserve_io_datatype --onnx_skip_simplification --target_backend AIC "
 
     # Context-Binary-Generator Arguments
     LOG_LEVEL = "error"

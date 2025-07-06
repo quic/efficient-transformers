@@ -110,7 +110,7 @@ class ApiRunner:
         print("Original HF Model Outputs (Torch CPU): \n")
         print("Prompt:", repr(self.input_handler.prompt))
         print("Completion:", repr(generated_text))
-        return generated_ids
+        return generated_ids.numpy()
 
     def run_kv_model_on_pytorch(self, model):
         """

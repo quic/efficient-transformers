@@ -23,19 +23,35 @@ For other models, there is comprehensive documentation to inspire upon the chang
 ***Latest news*** : <br>
 
 - [coming soon] Support for more popular [models](models_coming_soon)<br>
-- [01/2025] [FP8 models support](https://huggingface.co/collections/neuralmagic/fp8-llms-for-vllm-666742ed2b78b7ac8df13127) Added support for inference of FP8 models.
+- [06/2025] Added support for Llama4 Multi-Model [meta-llama/Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct)
+- [06/2025] Added support for Gemma3 Multi-Modal-Model [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)
+- [06/2025] Added support of model `hpcai-tech/grok-1` [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)
+- [06/2025] Added support for sentence embedding which improves efficiency, Flexible/Custom Pooling configuration and compilation with multiple sequence lengths, [Embedding model](https://github.com/quic/efficient-transformers/pull/424).
 
-- [01/2025] Added support for [Ibm-Granite](https://huggingface.co/ibm-granite/granite-3.1-8b-instruct)
-- [11/2024] [finite adapters support](https://github.com/quic/efficient-transformers/pull/153) allows mixed adapter usage for peft models.
-- [11/2024] [Speculative decoding TLM](https://github.com/quic/efficient-transformers/pull/119) QEFFAutoModelForCausalLM model can be compiled for returning more than 1 logits during decode for TLM.
-- [11/2024] Added support for [Meta-Llama-3.3-70B-Instruct](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct), [Meta-Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) and [Meta-Llama-3.2-3B](https://huggingface.co/meta-llama/Llama-3.2-3B)
-- [09/2024] [AWQ](https://arxiv.org/abs/2306.00978)/[GPTQ](https://arxiv.org/abs/2210.17323) 4-bit quantized models are supported
-- [09/2024] Now we support [PEFT](https://huggingface.co/docs/peft/index) models
 <details>
 <summary>More</summary>
 
-- [01/2025] Added support for [Ibm-Granite](https://huggingface.co/ibm-granite/granite-3.1-8b-instruct)
-- [01/2025] Added support for [Ibm-Granite-Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-8b)
+- [04/2025] Added support for [Granite Vision models](https://huggingface.co/collections/ibm-granite/granite-vision-models-67b3bd4ff90c915ba4cd2800)
+- [04/2025] Added support for [Granite MOE models](https://huggingface.co/ibm-granite/granite-3.0-1b-a400m-base)
+- [04/2025] Support for [SpD, multiprojection heads](https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding). Implemented post-attention hidden size projections to speculate tokens ahead of the base model
+- [04/2025] [QNN Compilation support](https://github.com/quic/efficient-transformers/pull/374) for AutoModel classes. QNN compilation capabilities for multi-models, embedding models and causal models.
+- [04/2025] Added support for separate prefill and decode compilation for encoder (vision) and language models. This feature will be utilized for [disaggregated serving](https://github.com/quic/efficient-transformers/pull/365).
+- [04/2025] SwiftKV Support for both [continuous and non-continuous batching execution](https://github.com/quic/efficient-transformers/pull/367) in SwiftKV.
+- [04/2025] Support for [GGUF model execution](https://github.com/quic/efficient-transformers/pull/368) (without quantized weights) 
+- [04/2025] Enabled FP8 model support on [replicate_kv_heads script](https://github.com/quic/efficient-transformers/tree/main/scripts/replicate_kv_head)
+- [04/2025] Added support for [gradient checkpointing](https://github.com/quic/efficient-transformers/pull/338) in the finetuning script
+- [03/2025] Added support for swiftkv model [Snowflake/Llama-3.1-SwiftKV-8B-Instruct](https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct)
+- [02/2025] [VLMs support](https://github.com/quic/efficient-transformers/pull/267) added for the models [InternVL-1B](https://huggingface.co/OpenGVLab/InternVL2_5-1B), [Llava](https://huggingface.co/llava-hf/llava-1.5-7b-hf) and [Mllama](https://huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct)
+- [01/2025] [FP8 models support](https://huggingface.co/collections/neuralmagic/fp8-llms-for-vllm-666742ed2b78b7ac8df13127) Added support for inference of FP8 models.
+
+- [01/2025] Added support for [Ibm-Granite] (https://huggingface.co/ibm-granite/granite-3.1-8b-instruct)
+- [11/2024] [finite adapters support](https://github.com/quic/efficient-transformers/pull/153) allows mixed adapter usage for peft models.
+- [11/2024] [Speculative decoding TLM](https://github.com/quic/efficient-transformers/pull/119) QEFFAutoModelForCausalLM model can be compiled for returning more than 1 logits during decode for TLM.
+- [11/2024] Added support for [Meta-Llama-3.3-70B-Instruct](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct), [Meta-Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) and [Meta-Llama-3.2-3B](https://huggingface.co/meta-llama/Llama-3.2-3B)
+- [09/2024] [AWQ](https://arxiv.org/abs/2306.00978)/[GPTQ](https://arxiv.org/abs/2210.17323) 4-bit quantized models are supported <br>
+- [09/2024] Now we support [PEFT](https://huggingface.co/docs/peft/index) models
+- [01/2025] Added support for [Ibm-Granite] (https://huggingface.co/ibm-granite/granite-3.1-8b-instruct)
+- [01/2025] Added support for [Ibm-Granite-Guardian] (https://huggingface.co/ibm-granite/granite-guardian-3.1-8b)
 - [09/2024] Added support for [Gemma-2-Family](https://huggingface.co/collections/google/gemma-2-release-667d6600fd5220e7b967f315)<br>
 - [09/2024] Added support for [CodeGemma-Family](https://huggingface.co/collections/google/codegemma-release-66152ac7b683e2667abdee11)
 - [09/2024] Added support for [Gemma-Family](https://huggingface.co/collections/google/gemma-release-65d5efbccdbb8c4202ec078b)

@@ -66,55 +66,44 @@ def generate_qnn_specialization(
                 raise AttributeError(f"ERROR: {input_shape} Shape not Found")
             shapes.append(shape)
 
-        # Filling shape value for nodes with shape size != 2, example: past_key / past_value nodes.
-        if len(shapes) != 2:
+        shape_list = []
+        prefill_decode_shapes = False
+        if len(specializations) > 1 and (node.name in ["input_ids", "position_ids"]):
+            prefill_decode_shapes = True
+        for input_shape in shapes:
+            # If shape contains the parameter string, it value is extracted from the specialization file.
+            if isinstance(input_shape, str):
+                if input_shape in specializations[0]:
+                    shape_list.append(int(specializations[0][input_shape]))
+                    if (
+                        not prefill_decode_shapes
+                        and len(specializations) > 1
+                        and input_shape in specializations[1]
+                        and specializations[0][input_shape] != specializations[1][input_shape]
+                    ):
+                        prefill_decode_shapes = True
+                else:
+                    raise AttributeError(f"ERROR: {input_shape} is required in specializations")
+            # If shape contains the value, then that value is used as it is.
+            else:
+                shape_list.append(input_shape)
+        # Calculated shape is now assigned to the input node.
+        input_info["Shape"] = str(shape_list).replace("[", "(").replace("]", ")")
+
+        if prefill_decode_shapes:
             shape_list = []
             for input_shape in shapes:
                 # If shape contains the parameter string, it value is extracted from the specialization file.
                 if isinstance(input_shape, str):
-                    if input_shape in specializations[0]:
-                        shape_list.append(int(specializations[0][input_shape]))
+                    if input_shape in specializations[1]:
+                        shape_list.append(int(specializations[1][input_shape]))
                     else:
                         raise AttributeError(f"ERROR: {input_shape} is required in specializations")
                 # If shape contains the value, then that value is used as it is.
                 else:
                     shape_list.append(input_shape)
-
             # Calculated shape is now assigned to the input node.
-            input_info["Shape"] = str(shape_list).replace("[", "(").replace("]", ")")
-        # If shape value for nodes is with shape size == 2, example: input_ids, position_ids, etc.
-        else:
-            shape_list = []
-            for input_shape in shapes:
-                if isinstance(input_shape, str):
-                    if input_shape in specializations[0]:
-                        shape_list.append(int(specializations[0][input_shape]))
-                    else:
-                        raise AttributeError(f"ERROR: {input_shape} is required in specializations")
-                else:
-                    shape_list.append(input_shape)
-            # If specializations file contains more than one parameters list, then first list is used for prefill and second one for decode graph.
-            if len(specializations) > 1:
-                prefill_shape_list = shape_list
-                decode_shape_list = []
-                for input_shape in shapes:
-                    if isinstance(input_shape, str):
-                        if input_shape in specializations[1]:
-                            decode_shape_list.append(int(specializations[1][input_shape]))
-                        else:
-                            raise AttributeError(f"ERROR: {input_shape} is required in specializations")
-                    else:
-                        decode_shape_list.append(input_shape)
-
-                input_info["Shape"] = (
-                    str(prefill_shape_list).replace("[", "(").replace("]", ")")
-                    + ", "
-                    + str(decode_shape_list).replace("[", "(").replace("]", ")")
-                )
-
-            # If specializations file contains only one parameters list, then that list is used for decode graph information.
-            else:
-                input_info["Shape"] = str(shape_list).replace("[", "(").replace("]", ")")
+            input_info["Shape"] += ", " + str(shape_list).replace("[", "(").replace("]", ")")
 
         # Finally, input node is created with its name, and desired model parameters {DataType, Shape}
         input_nodes_info.append({"Name": node.name, "Desired Model Parameters": input_info})
@@ -173,10 +162,10 @@ def generate_data_format_config(
 
     for input in onnx_model.graph.input:
         if "past_key" in input.name or "past_value" in input.name:
-            kv_nodes.append((input.name).replace(".", "_"))
+            kv_nodes.append(input.name)
     for output in onnx_model.graph.output:
         if "past_key" in output.name or "past_value" in output.name:
-            kv_nodes.append((output.name).replace(".", "_"))
+            kv_nodes.append(output.name)
             kv_overrides = {}
 
     kv_overrides["graphs"] = [

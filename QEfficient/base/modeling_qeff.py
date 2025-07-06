@@ -7,7 +7,6 @@
 
 import hashlib
 import inspect
-import json
 import logging
 import shutil
 import subprocess
@@ -23,7 +22,7 @@ from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils import constants, dump_qconfig
+from QEfficient.utils import constants, create_json, dump_qconfig, generate_mdp_partition_config, load_json
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
 logger = logging.getLogger(__name__)
@@ -241,10 +240,12 @@ class QEFFBaseModel(ABC):
             :mdp_ts_num_devices (int): Number of devices to partition to use Multi-Device Partitioning with tensor-slicing.
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
-            :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
-            :compiler_options: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+            :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
+            :compiler_options: Pass any compiler option as input.
+                Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
+                For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
         if onnx_path is None and self.onnx_path is None:
             self.export()
@@ -256,14 +257,19 @@ class QEFFBaseModel(ABC):
             raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
 
         if enable_qnn:
+            if compiler_options:
+                logger.warning(
+                    f"Extra arguments to QNN compilation are supported only via qnn_config file. Ignoring {compiler_options}"
+                )
+
             self.qpc_path = qnn_compile(
                 onnx_path=onnx_path,
                 qpc_base_path=compile_dir,
                 specializations=specializations,
                 custom_io=custom_io,
                 device_group=list(range(mdp_ts_num_devices)),
-                num_cores=compiler_options.get("aic_num_cores", 16),
-                mxfp6=compiler_options.get("mxfp6_matmul", False),
+                num_cores=compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES),
+                mxfp6=compiler_options.get("mxfp6_matmul", constants.DEFAULT_AIC_MXPF6_MATMUL),
                 mxint8=mxint8_kv_cache,
                 qnn_config=qnn_config,
             )
@@ -271,8 +277,8 @@ class QEFFBaseModel(ABC):
             return self.qpc_path
 
         command = constants.COMPILER + [f"-m={onnx_path}"]
-        if mdp_ts_json_path := compiler_options.pop("mdp_ts_json_path", None):
-            mdp_ts_num_devices = None
+
+        if mdp_ts_json_path := compiler_options.pop("mdp_load_partition_config", None):
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
         for key, value in compiler_options.items():
@@ -282,6 +288,17 @@ class QEFFBaseModel(ABC):
                     command.append(option)
                 continue
             command.append(f"{option}={value}")
+
+        # Create a dummy mdp_ts_json if mdp-load-partition-config not provided and num_devices > 1
+        if mdp_ts_json_path is not None:
+            mdp_ts_json = load_json(str(mdp_ts_json_path))
+        elif mdp_ts_num_devices > 1:
+            mdp_ts_json = generate_mdp_partition_config(
+                mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+            )
+        else:
+            mdp_ts_json = None
+
         compile_hash = hashlib.sha256(to_hashable(command))
 
         if specializations is not None:
@@ -293,11 +310,16 @@ class QEFFBaseModel(ABC):
         if num_speculative_tokens:
             compile_hash.update(to_hashable({"num_speculative_tokens": num_speculative_tokens}))
 
+        # Hash the MDP partition config and the number of devices.
+        compile_hash.update(to_hashable(mdp_ts_json))
+        compile_hash.update(to_hashable({"mdp_ts_num_devices": mdp_ts_num_devices}))
+
         # Check if already compiled
         compile_hash = compile_hash.hexdigest()[:16]
         compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
         qpc_path = compile_dir / "qpc"
         qpc_path.mkdir(parents=True, exist_ok=True)
+
         if qpc_path.is_dir():
             if (qpc_path / "programqpc.bin").is_file():
                 self.qpc_path = qpc_path
@@ -305,15 +327,19 @@ class QEFFBaseModel(ABC):
             # Probably compilation failure last time, delete directory to start over
             shutil.rmtree(qpc_path)
 
+        # write the MDP partition config file if not provided
+        if mdp_ts_json is not None:
+            mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
+            create_json(str(mdp_ts_json_path), mdp_ts_json)
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+
         # Write specializations.json file
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
-            with open(specializations_json, "w") as fp:
-                json.dump(
-                    {"specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]},
-                    fp,
-                    indent=4,
-                )
+            specializations_data = {
+                "specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]
+            }
+            create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
 
         # Write custom_io.yaml file
@@ -323,26 +349,6 @@ class QEFFBaseModel(ABC):
                 for io_name, dtype in custom_io.items():
                     fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
             command.append(f"-custom-IO-list-file={custom_io_yaml}")
-
-        # Write mdp_config.json file
-        if not mdp_ts_json_path and mdp_ts_num_devices > 1:
-            num_cores = compiler_options.get("aic_num_cores", 16)
-            mdp_ts_json = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
-            with open(mdp_ts_json, "w") as fp:
-                json.dump(
-                    {
-                        "connections": [{"devices": list(range(mdp_ts_num_devices)), "type": "p2p"}],
-                        "partitions": [
-                            {
-                                "name": "Partition0",
-                                "devices": [{"deviceId": d, "numCores": num_cores} for d in range(mdp_ts_num_devices)],
-                            }
-                        ],
-                    },
-                    fp,
-                    indent=4,
-                )
-            command.append(f"-mdp-load-partition-config={mdp_ts_json}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
