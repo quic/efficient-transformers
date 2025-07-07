@@ -174,7 +174,11 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         width = self.config.vision_config.image_size
         patch_size = self.config.vision_config.patch_size
         kernel_size = self.config.spatial_merge_size
-        vision_size = ((height // patch_size) * (width // patch_size)) // (kernel_size * kernel_size)
+        vision_size = (
+            ((height // patch_size) * (width // patch_size))
+            * (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
+            // (kernel_size * kernel_size)
+        )
         inputs_shapes["vision_embeds"] = (
             vision_size,
             self.language_model.config.hidden_size,
@@ -244,7 +248,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         patch_size = self.config.vision_config.patch_size
         kernel_size = self.config.spatial_merge_size
-        vision_size = ((height // patch_size) * (width // patch_size)) // (kernel_size * kernel_size)
+        vision_size = ((height // patch_size) * (width // patch_size)) * (batch_size) // (kernel_size * kernel_size)
 
         vision = [
             {
