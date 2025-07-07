@@ -106,8 +106,17 @@ class QNN:
         for key, value in config_data.items():
             if key == QnnConstants.CONVERTER_ARGS_EXTENSION_STR:
                 self.check_extension_arg(key, value, QnnConstants.IMMUTABLE_CONVERTER_ARGS)
-            if key == QnnConstants.CONTEXT_BIN_ARGS_EXTENSION_STR:
+            elif key == QnnConstants.CONTEXT_BIN_ARGS_EXTENSION_STR:
                 self.check_extension_arg(key, value, QnnConstants.IMMUTABLE_CONTEXT_BIN_GEN_ARGS)
+            elif key == QnnConstants.QNN_COMPILATION_BACKEND_STR:
+                immutable_param = [
+                    sub_key for sub_key in value.keys() if sub_key in QnnConstants.IMMUTABLE_COMPILATION_BACKEND_ARGS
+                ]
+                if immutable_param:
+                    raise AttributeError(
+                        f"Immutable Parameters {immutable_param} found in {QnnConstants.QNN_COMPILATION_BACKEND_STR}. Please remove them from QNN Configuration file."
+                    )
+
             self.qnn_config[key] = value
 
     def create_qnn_tensor_slicing_json(self) -> str:

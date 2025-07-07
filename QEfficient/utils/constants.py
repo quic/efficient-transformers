@@ -190,6 +190,10 @@ class QnnConstants:
         "--config_file ",
     ]
 
+    IMMUTABLE_COMPILATION_BACKEND_ARGS = [
+        "compiler_mxfp6_matmul_weights",
+    ]
+
     QNN_SAMPLE_CONFIG = {
         "converter_args_extension": "--onnx_defer_loading",
         "context_binary_generator_args_extension": "--log_level debug",
