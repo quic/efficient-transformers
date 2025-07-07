@@ -280,7 +280,7 @@ Once we have compiled the QPC, we can now use the precompiled QPC in execute API
 <section id="qefficient-cloud-finetune">
 <h3>QEfficient.cloud.finetune<a class="headerlink" href="#qefficient-cloud-finetune" title="Permalink to this heading"></a></h3>
 <p>You can run the finetune with set of predefined existing datasets on QAIC using the eager pipeline</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.finetune<span class="w"> </span>--device<span class="w"> </span>qaic:0<span class="w"> </span>--use-peft<span class="w"> </span>--output_dir<span class="w"> </span>./meta-sam<span class="w"> </span>--num_epochs<span class="w"> </span><span class="m">2</span><span class="w"> </span>--context_length<span class="w"> </span><span class="m">256</span><span class="w"> </span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.finetune<span class="w"> </span>--device<span class="w"> </span>qaic:0<span class="w"> </span>--use-peft<span class="w"> </span>--output_dir<span class="w"> </span>./meta-sam<span class="w"> </span>--num_epochs<span class="w"> </span><span class="m">2</span><span class="w"> </span>--context_length<span class="w"> </span><span class="m">256</span>
 </pre></div>
 </div>
 <p>For more details on finetune, checkout the subsection.</p>
@@ -318,6 +318,26 @@ Once we have compiled the QPC, we can now use the precompiled QPC in execute API
 <li><p>Enabled QNN by passing enable_qnn flag, add –enable_qnn in the cli command.</p></li>
 <li><p>An optional config file can be passed to override the default parameters.</p></li>
 </ul>
+<p><strong>Default Parameters</strong></p>
+<p>QNN Converter Stage:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>&quot;--float_bias_bitwidth 32 --float_bitwidth 16 --preserve_io_datatype --onnx_skip_simplification --target_backend AIC&quot;
+</pre></div>
+</div>
+<p>QNN Context Binary Stage:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>LOG_LEVEL = &quot;error&quot;
+COMPILER_COMPILATION_TARGET = &quot;hardware&quot;
+COMPILER_CONVERT_TO_FP16 = True
+COMPILER_DO_DDR_TO_MULTICAST = True
+COMPILER_HARDWARE_VERSION = &quot;2.0&quot;
+COMPILER_PERF_WARNINGS = False
+COMPILER_PRINT_DDR_STATS = False
+COMPILER_PRINT_PERF_METRICS = False
+COMPILER_RETAINED_STATE = True
+COMPILER_STAT_LEVEL = 10
+COMPILER_STATS_BATCH_SIZE = 1
+COMPILER_TIME_PASSES = False
+</pre></div>
+</div>
 <p><strong>CLI Inference Command</strong></p>
 <p>Without QNN Config</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>gpt2<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--mxfp6<span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;My name is&quot;</span><span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first<span class="w"> </span>--enable_qnn
