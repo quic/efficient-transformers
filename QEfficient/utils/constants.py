@@ -25,6 +25,10 @@ ONNX_EXPORT_IMAGE_LENGHT = 560
 ONNX_EXPORT_IMAGE_DEPTH = 3
 ONNX_EXPORT_CTX_LEN = 1024
 
+# Compiler defaults
+DEFAULT_AIC_NUM_CORES = 16
+DEFAULT_AIC_MXPF6_MATMUL = False
+
 
 # Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
 def get_models_dir():
