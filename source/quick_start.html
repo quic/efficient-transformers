@@ -153,58 +153,79 @@
 <tr class="row-even"><td><p>Context Length Specializations (upcoming)</p></td>
 <td><p>Increases the maximum context length that models can handle, allowing for better performance on tasks requiring long sequences of text.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Swift KV (upcoming)</p></td>
-<td><p>Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput.</p></td>
-</tr>
-<tr class="row-even"><td><p>Block Attention (in progress)</p></td>
+<tr class="row-odd"><td><p>Block Attention (in progress)</p></td>
 <td><p>Reduces inference latency and computational cost by dividing context into blocks and reusing key-value states, particularly useful in RAG.</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="python_api.html#qeffautomodelforimagetexttotext"><span class="std std-ref">Vision Language Model</span></a></p></td>
+<tr class="row-even"><td><p>Sentence embedding, Flexible Pooling configuration and compilation with multiple sequence lengths</p></td>
+<td><p>Supports standard/custom pooling with AI 100 acceleration and sentence embedding. Enables efficient sentence embeddings via Efficient-Transformers. Compile with one or multiple seq_len; optimal graph auto-selected at runtime. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/embedding_model.py">sample script</a> for more <strong>details</strong>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding">SpD, multiprojection heads</a></p></td>
+<td><p>Implemented post-attention hidden size projections to speculate tokens ahead of the base model. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/multiprojs_spd_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/374">QNN Compilation support</a></p></td>
+<td><p>Enabled for AutoModel classes QNN compilation capabilities for multi-models, embedding models and causal models.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/365">Disaggregated serving</a></p></td>
+<td><p>It support for separate prefill and decode compilation for encoder (vision) and language models.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/368">GGUF model execution</a></p></td>
+<td><p>Supported GGUF model execution (without quantized weights). Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/basic_gguf_models.py">sample script</a> for more <strong>details</strong>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Replication of KV</p></td>
+<td><p>Enabled FP8 model support on <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/scripts/replicate_kv_head">replicate_kv_heads script</a>.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference external" href="https://github.com/quic/efficient-transformers/pull/338">gradient checkpointing</a></p></td>
+<td><p>Supports gradient checkpointing in the finetuning script</p></td>
+</tr>
+<tr class="row-odd"><td><p>Swift KV <a class="reference external" href="https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct">Snowflake/Llama-3.1-SwiftKV-8B-Instruct</a></p></td>
+<td><p>Reduces computational overhead during inference by optimizing key-value pair processing, leading to improved throughput. Support for both <a class="reference external" href="https://github.com/quic/efficient-transformers/pull/367">continuous and non-continuous batching execution</a> in SwiftKV</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="python_api.html#qeffautomodelforimagetexttotext"><span class="std std-ref">Vision Language Model</span></a></p></td>
 <td><p>Provides support for the AutoModelForImageTextToText class from the transformers library, enabling advanced vision-language tasks. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="python_api.html#qeffautomodelforspeechseq2seq"><span class="std std-ref">Speech Sequence to Sequence Model</span></a></p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="python_api.html#qeffautomodelforspeechseq2seq"><span class="std std-ref">Speech Sequence to Sequence Model</span></a></p></td>
 <td><p>Provides support for the QEFFAutoModelForSpeechSeq2Seq Facilitates speech-to-text sequence models. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/speech_to_text/run_whisper_speech_to_text.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Support for FP8 Execution</p></td>
+<tr class="row-even"><td><p>Support for FP8 Execution</p></td>
 <td><p>Enables execution with FP8 precision, significantly improving performance and reducing memory usage for computational tasks.</p></td>
 </tr>
-<tr class="row-even"><td><p>Prefill caching</p></td>
+<tr class="row-odd"><td><p>Prefill caching</p></td>
 <td><p>Enhances inference speed by caching key-value pairs for shared prefixes, reducing redundant computations and improving efficiency.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Prompt-Lookup Decoding</p></td>
+<tr class="row-even"><td><p>Prompt-Lookup Decoding</p></td>
 <td><p>Speeds up text generation by using overlapping parts of the input prompt and the generated text, making the process faster without losing quality. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/pld_spd_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="python_api.html#qeffautopeftmodelforcausallm"><span class="std std-ref">PEFT LoRA support</span></a></p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="python_api.html#qeffautopeftmodelforcausallm"><span class="std std-ref">PEFT LoRA support</span></a></p></td>
 <td><p>Enables parameter-efficient fine-tuning using low-rank adaptation techniques, reducing the computational and memory requirements for fine-tuning large models. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/peft_models.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="#qnn-compilation"><span class="xref myst">QNN support</span></a></p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="#qnn-compilation"><span class="xref myst">QNN support</span></a></p></td>
 <td><p>Enables compilation using QNN SDK, making Qeff adaptable for various backends in the future.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="python_api.html#qeffautomodel"><span class="std std-ref">Embedding model support</span></a></p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="python_api.html#qeffautomodel"><span class="std std-ref">Embedding model support</span></a></p></td>
 <td><p>Facilitates the generation of vector embeddings for retrieval tasks.</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="#draft-based-speculative-decoding"><span class="xref myst">Speculative Decoding</span></a></p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="#draft-based-speculative-decoding"><span class="xref myst">Speculative Decoding</span></a></p></td>
 <td><p>Accelerates text generation by using a draft model to generate preliminary predictions, which are then verified by the target model, reducing latency and improving efficiency. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/draft_spd_inference.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="python_api.html#qeffautoloramodelforcausallm"><span class="std std-ref">Finite lorax</span></a></p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="python_api.html#qeffautoloramodelforcausallm"><span class="std std-ref">Finite lorax</span></a></p></td>
 <td><p>Users can activate multiple LoRA adapters and compile them with the base model. At runtime, they can specify which prompt should use which adapter, enabling mixed adapter usage within the same batch. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/lora_models.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Python and CPP Inferencing API support</p></td>
+<tr class="row-even"><td><p>Python and CPP Inferencing API support</p></td>
 <td><p>Provides flexibility while running inference with Qeff and enabling integration with various applications and improving accessibility for developers. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/cpp_execution/text_inference_using_cpp.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="#continuous-batching"><span class="xref myst">Continuous batching</span></a></p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="#continuous-batching"><span class="xref myst">Continuous batching</span></a></p></td>
 <td><p>Optimizes throughput and latency by dynamically batching requests, ensuring efficient use of computational resources.</p></td>
 </tr>
-<tr class="row-odd"><td><p>AWQ and GPTQ support</p></td>
+<tr class="row-even"><td><p>AWQ and GPTQ support</p></td>
 <td><p>Supports advanced quantization techniques, improving model efficiency and performance on AI 100.</p></td>
 </tr>
-<tr class="row-even"><td><p>Support serving successive requests in same session</p></td>
+<tr class="row-odd"><td><p>Support serving successive requests in same session</p></td>
 <td><p>An API that yields tokens as they are generated, facilitating seamless integration with various applications and enhancing accessibility for developers.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Perplexity calculation</p></td>
+<tr class="row-even"><td><p>Perplexity calculation</p></td>
 <td><p>A script for computing the perplexity of a model, allowing for the evaluation of model performance and comparison across different models and datasets. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/scripts/perplexity_computation/calculate_perplexity.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
-<tr class="row-even"><td><p>KV Heads Replication Script</p></td>
+<tr class="row-odd"><td><p>KV Heads Replication Script</p></td>
 <td><p>A sample script for replicating key-value (KV) heads for the Llama-3-8B-Instruct model, running inference with the original model, replicating KV heads, validating changes, and exporting the modified model to ONNX format. Refer <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/scripts/replicate_kv_head/replicate_kv_heads.py">sample script</a> for more <strong>details</strong>.</p></td>
 </tr>
 </tbody>
@@ -259,7 +280,7 @@ Once we have compiled the QPC, we can now use the precompiled QPC in execute API
 <section id="qefficient-cloud-finetune">
 <h3>QEfficient.cloud.finetune<a class="headerlink" href="#qefficient-cloud-finetune" title="Permalink to this heading"></a></h3>
 <p>You can run the finetune with set of predefined existing datasets on QAIC using the eager pipeline</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.finetune<span class="w"> </span>--device<span class="w"> </span>qaic:0<span class="w"> </span>--use-peft<span class="w"> </span>--output_dir<span class="w"> </span>./meta-sam<span class="w"> </span>--num_epochs<span class="w"> </span><span class="m">2</span><span class="w"> </span>--context_length<span class="w"> </span><span class="m">256</span><span class="w"> </span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.finetune<span class="w"> </span>--device<span class="w"> </span>qaic:0<span class="w"> </span>--use-peft<span class="w"> </span>--output_dir<span class="w"> </span>./meta-sam<span class="w"> </span>--num_epochs<span class="w"> </span><span class="m">2</span><span class="w"> </span>--context_length<span class="w"> </span><span class="m">256</span>
 </pre></div>
 </div>
 <p>For more details on finetune, checkout the subsection.</p>
@@ -297,6 +318,26 @@ Once we have compiled the QPC, we can now use the precompiled QPC in execute API
 <li><p>Enabled QNN by passing enable_qnn flag, add –enable_qnn in the cli command.</p></li>
 <li><p>An optional config file can be passed to override the default parameters.</p></li>
 </ul>
+<p><strong>Default Parameters</strong></p>
+<p>QNN Converter Stage:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>&quot;--float_bias_bitwidth 32 --float_bitwidth 16 --preserve_io_datatype --onnx_skip_simplification --target_backend AIC&quot;
+</pre></div>
+</div>
+<p>QNN Context Binary Stage:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>LOG_LEVEL = &quot;error&quot;
+COMPILER_COMPILATION_TARGET = &quot;hardware&quot;
+COMPILER_CONVERT_TO_FP16 = True
+COMPILER_DO_DDR_TO_MULTICAST = True
+COMPILER_HARDWARE_VERSION = &quot;2.0&quot;
+COMPILER_PERF_WARNINGS = False
+COMPILER_PRINT_DDR_STATS = False
+COMPILER_PRINT_PERF_METRICS = False
+COMPILER_RETAINED_STATE = True
+COMPILER_STAT_LEVEL = 10
+COMPILER_STATS_BATCH_SIZE = 1
+COMPILER_TIME_PASSES = False
+</pre></div>
+</div>
 <p><strong>CLI Inference Command</strong></p>
 <p>Without QNN Config</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>gpt2<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--mxfp6<span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;My name is&quot;</span><span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first<span class="w"> </span>--enable_qnn
@@ -407,17 +448,18 @@ Please raise an <a class="reference external" href="https://github.com/quic/effi
 <section id="draft-based-speculative-decoding">
 <h3>Draft-Based Speculative Decoding<a class="headerlink" href="#draft-based-speculative-decoding" title="Permalink to this heading"></a></h3>
 <p>Draft-based speculative decoding is a technique where a small Draft Language Model (DLM) makes <code class="docutils literal notranslate"><span class="pre">num_speculative_tokens</span></code> autoregressive speculations ahead of the Target Language Model (TLM). The objective is to predict what the TLM would have predicted if it would have been used instead of the DLM. This approach is beneficial when the autoregressive decode phase of the TLM is memory bound and thus, we can leverage the extra computing resources of our hardware by batching the speculations of the DLM as an input to TLM to validate the speculations.</p>
-<p>To export and compile both DLM/TLM, add corresponding <code class="docutils literal notranslate"><span class="pre">is_tlm</span></code> and <code class="docutils literal notranslate"><span class="pre">num_speculative_tokens</span></code> for TLM and export DLM as you would any other QEfficient LLM model:</p>
+<p>To export and compile both DLM/TLM, add corresponding <code class="docutils literal notranslate"><span class="pre">qaic_config</span></code> and <code class="docutils literal notranslate"><span class="pre">num_speculative_tokens</span></code> for TLM and export DLM as you would any other QEfficient LLM model:</p>
 <div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">tlm_name</span> <span class="o">=</span> <span class="s2">&quot;meta-llama/Llama-2-70b-chat-hf&quot;</span>
 <span class="n">dlm_name</span> <span class="o">=</span> <span class="s2">&quot;TinyLlama/TinyLlama-1.1B-Chat-v1.0&quot;</span>
 <span class="n">k</span> <span class="o">=</span> <span class="mi">3</span> <span class="c1"># DLM will make `k` speculations</span>
-<span class="n">tlm</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">tlm_name</span><span class="p">,</span> <span class="n">is_tlm</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">qaic_config</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">speculative_model_type</span><span class="o">=</span><span class="s2">&quot;target&quot;</span><span class="p">)</span>
+<span class="n">tlm</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">tlm_name</span><span class="p">,</span> <span class="n">qaic_config</span><span class="o">=</span><span class="n">qaic_config</span><span class="p">)</span>
 <span class="n">dlm</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">dlm_name</span><span class="p">)</span>
 <span class="n">tlm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">num_speculative_tokens</span><span class="o">=</span><span class="n">k</span><span class="p">)</span>
 <span class="n">dlm</span><span class="o">.</span><span class="n">compile</span><span class="p">()</span>
 </pre></div>
 </div>
-<p>The <code class="docutils literal notranslate"><span class="pre">is_tlm</span></code> flag is fed during the instantiation of the model because slight changes to the ONNX graph are required. Once complete, the user can specify <code class="docutils literal notranslate"><span class="pre">num_speculative_tokens</span></code> to define the actual number of speculations that the TLM will take as input during the decode phase. As for the DLM, no new changes are required at the ONNX or compile level.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">qaic_config</span></code> dictionary is fed during the instantiation of the model because slight changes to the ONNX graph are required. Once complete, the user can specify <code class="docutils literal notranslate"><span class="pre">num_speculative_tokens</span></code> to define the actual number of speculations that the TLM will take as input during the decode phase. As for the DLM, no new changes are required at the ONNX or compile level.</p>
 </section>
 </section>
 </section>
