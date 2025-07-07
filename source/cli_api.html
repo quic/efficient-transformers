@@ -45,7 +45,11 @@
   </form>
 </div>
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
-              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+              <p class="caption" role="heading"><span class="caption-text">Release Docs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="release_docs.html">Release Notes</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="validate.html">Validated Models</a></li>
@@ -199,6 +203,14 @@
 </dd>
 <dt class="field-even">qnn_config (str)<span class="colon">:</span></dt>
 <dd class="field-even"><p>Path of QNN Config parameters file. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-odd">trust_remote_code (bool)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Trust remote code execution. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-even">kwargs<span class="colon">:</span></dt>
+<dd class="field-even"><p>Pass any compiler option as input. Any flag that is supported by <cite>qaic-exec</cite> can be passed. Params are converted to flags as below:
+-allocator_dealloc_delay=1 -&gt; -allocator-dealloc-delay=1
+-qpc_crc=True -&gt; -qpc-crc</p>
 </dd>
 </dl>
 </dd>
@@ -360,10 +372,25 @@ Generates tensor-slicing configuration if multiple devices are passed in <code c
 <section id="qefficient-cloud-finetune">
 <h2><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code><a class="headerlink" href="#qefficient-cloud-finetune" title="Permalink to this heading"></a></h2>
 <blockquote>
-<div><span class="target" id="module-QEfficient.cloud.finetune.main"></span><p>Helper function to finetune the model on QAic.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.finetune<span class="w"> </span>OPTIONS
+<div><span class="target" id="module-QEfficient.cloud.finetune.main"></span><p>Fine-tune a model on QAIC hardware with configurable training and LoRA parameters.</p>
+<dl>
+<dt>Args:</dt><dd><p>peft_config_file (str, optional): Path to YAML/JSON file containing PEFT (LoRA) config. Defaults to None.
+kwargs: Additional arguments to override TrainConfig.</p>
+</dd>
+<dt>Example:</dt><dd><div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Using a YAML config file for PEFT</span>
+python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.finetune<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model_name<span class="w"> </span><span class="s2">&quot;meta-llama/Llama-3.2-1B&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--lr<span class="w"> </span>5e-4<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--peft_config_file<span class="w"> </span><span class="s2">&quot;lora_config.yaml&quot;</span>
+
+<span class="c1"># Using default LoRA config</span>
+python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.finetune<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model_name<span class="w"> </span><span class="s2">&quot;meta-llama/Llama-3.2-1B&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--lr<span class="w"> </span>5e-4
 </pre></div>
 </div>
+</dd>
+</dl>
 </div></blockquote>
 </section>
 </section>
@@ -403,6 +430,7 @@ Generates tensor-slicing configuration if multiple devices are passed in <code c
         <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
         <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
+        <dd><a href="release/v1.20/index.html">release/v1.20(beta)</a></dd>
       </dl>
     </div>
 </div><script>

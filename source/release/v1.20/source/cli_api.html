@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Command Line Interface Use (CLI) &mdash; efficient-transformers main documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
+      <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=547657ed" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js?v=d01aebe5"></script>
+        <script src="../_static/doctools.js?v=888ff710"></script>
+        <script src="../_static/sphinx_highlight.js?v=4825356b"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Python API" href="python_api.html" />
+    <link rel="prev" title="Quick Start" href="quick_start.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            efficient-transformers
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Release Docs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="release_docs.html">Release Notes</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
+<li class="toctree-l1"><a class="reference internal" href="validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="validate.html#models-coming-soon">Models Coming Soon</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Installation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Pre-requisites</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html#installation">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html#sanity-check">Sanity Check</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Upgrade Efficient-Transformers</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="upgrade.html">Using GitHub Repository</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Command Line Interface Use (CLI)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.cloud.infer.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-QEfficient.cloud.execute.main"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#qefficient-cloud-compile"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#qefficient-cloud-export"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#qefficient-cloud-finetune"><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="python_api.html">Python API</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="finetune.html">Finetune Infra</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html">Train anywhere, Infer on Qualcomm Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#how-to-quadruple-llm-decoding-performance-with-speculative-decoding-spd-and-microscaling-mx-formats-on-qualcomm-cloud-ai-100">How to Quadruple LLM Decoding Performance with Speculative Decoding (SpD) and Microscaling (MX) Formats on Qualcomm® Cloud AI 100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#power-efficient-acceleration-for-large-language-models-qualcomm-cloud-ai-sdk">Power-efficient acceleration for large language models – Qualcomm Cloud AI SDK</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-100-accelerates-large-language-model-inference-by-2x-using-microscaling-mx-formats">Qualcomm Cloud AI 100 Accelerates Large Language Model Inference by ~2x Using Microscaling (Mx) Formats</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs.html#qualcomm-cloud-ai-introduces-efficient-transformers-one-api-infinite-possibilities">Qualcomm Cloud AI Introduces Efficient Transformers: One API, Infinite Possibilities</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="reference.html">Qualcomm Cloud AI home</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference.html#qualcomm-cloud-ai-sdk-download">Qualcomm Cloud AI SDK download</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference.html#qualcomm-cloud-ai-api-reference">Qualcomm Cloud AI API reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference.html#user-guide">User Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference.html#ocp-microscaling-formats-mx-specification">OCP Microscaling Formats (MX) Specification</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">efficient-transformers</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Command Line Interface Use (CLI)</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/source/cli_api.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="command-line-interface-use-cli">
+<h1>Command Line Interface Use (CLI)<a class="headerlink" href="#command-line-interface-use-cli" title="Permalink to this heading"></a></h1>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Use <code class="docutils literal notranslate"><span class="pre">bash</span> <span class="pre">terminal</span></code>, else if using <code class="docutils literal notranslate"><span class="pre">ZSH</span> <span class="pre">terminal</span></code> then <code class="docutils literal notranslate"><span class="pre">device_group</span></code>should be in single quotes e.g.  <code class="docutils literal notranslate"><span class="pre">'--device_group</span> <span class="pre">[0]'</span></code></p>
+</div>
+<section id="module-QEfficient.cloud.infer.main">
+<span id="qefficient-cloud-infer"></span><span id="infer-api"></span><h2><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.infer</span></code><a class="headerlink" href="#module-QEfficient.cloud.infer.main" title="Permalink to this heading"></a></h2>
+<ol class="arabic simple">
+<li><p>Check if compiled qpc for given config already exists, if it does jump to execute, else</p></li>
+<li><p>Check if exported ONNX file already exists, if true, jump to compilation -&gt; execution, else</p></li>
+<li><p>Check if HF model exists in cache, if true, start transform -&gt; export -&gt; compilation -&gt; execution, else,</p></li>
+</ol>
+<p>4. Download HF model -&gt; transform -&gt; export -&gt; compile -&gt; execute
+<code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</p>
+<blockquote>
+<div><dl class="field-list simple">
+<dt class="field-odd">model_name (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Hugging Face Model Card name, Example: <code class="docutils literal notranslate"><span class="pre">gpt2</span></code></p>
+</dd>
+<dt class="field-even">num_cores (int)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Number of cores to compile model on.</p>
+</dd>
+</dl>
+</div></blockquote>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">device_group (List[int])<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Device Ids to be used for compilation. If <code class="docutils literal notranslate"><span class="pre">len(device_group)</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>, multiple Card setup is enabled. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-even">prompt (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Sample prompt for the model text generation. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-odd">prompts_txt_file_path (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path to txt file for multiple input prompts. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-even">aic_enable_depth_first (bool)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Enables <code class="docutils literal notranslate"><span class="pre">DFS</span></code> with default memory size. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-odd">mos (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Effort level to reduce the on-chip memory. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">1.</span></code></p>
+</dd>
+<dt class="field-even">batch_size (int)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Batch size to compile the model for. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">1.</span></code></p>
+</dd>
+<dt class="field-odd">full_batch_size (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Set full batch size to enable continuous batching mode. <code class="docutils literal notranslate"><span class="pre">Default</span> <span class="pre">to</span> <span class="pre">None</span></code></p>
+</dd>
+<dt class="field-even">prompt_len (int)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Prompt length for the model to compile. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">32.</span></code></p>
+</dd>
+<dt class="field-odd">ctx_len (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Maximum context length to compile the model. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">128.</span></code></p>
+</dd>
+<dt class="field-even">generation_len (int)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Number of tokens to be generated. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-odd">mxfp6 (bool)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Enable compilation for MXFP6 precision. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-even">mxint8 (bool)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Compress Present/Past KV to <code class="docutils literal notranslate"><span class="pre">MXINT8</span></code> using <code class="docutils literal notranslate"><span class="pre">CustomIO</span></code> config. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-odd">local_model_dir (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path to custom model weights and config files. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-even">cache_dir (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Cache dir where downloaded HuggingFace files are stored. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-odd">hf_token (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>HuggingFace login token to access private repos. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-even">allow_mxint8_mdp_io (bool)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Allows MXINT8 compression of MDP IO traffic. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-odd">enable_qnn (bool)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Enables QNN Compilation. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-even">qnn_config (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path of QNN Config parameters file. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-odd">trust_remote_code (bool)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Trust remote code execution. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-even">kwargs<span class="colon">:</span></dt>
+<dd class="field-even"><p>Pass any compiler option as input. Any flag that is supported by <cite>qaic-exec</cite> can be passed. Params are converted to flags as below:
+-allocator_dealloc_delay=1 -&gt; -allocator-dealloc-delay=1
+-qpc_crc=True -&gt; -qpc-crc</p>
+</dd>
+</dl>
+</dd>
+</dl>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>OPTIONS
+</pre></div>
+</div>
+</section>
+<section id="module-QEfficient.cloud.execute.main">
+<span id="qefficient-cloud-execute"></span><h2><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.execute</span></code><a class="headerlink" href="#module-QEfficient.cloud.execute.main" title="Permalink to this heading"></a></h2>
+<p>Helper function used by execute CLI app to run the Model on <code class="docutils literal notranslate"><span class="pre">Cloud</span> <span class="pre">AI</span> <span class="pre">100</span></code> Platform.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">model_name (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Hugging Face Model Card name, Example: <code class="docutils literal notranslate"><span class="pre">gpt2</span></code>.</p>
+</dd>
+<dt class="field-even">qpc_path (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path to the generated binary after compilation.</p>
+</dd>
+</dl>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">device_group (List[int])<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Device Ids to be used for compilation. if len(device_group) &gt; 1. Multiple Card setup is enabled.``Defaults to None.``</p>
+</dd>
+<dt class="field-even">local_model_dir (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path to custom model weights and config files. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-odd">prompt (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Sample prompt for the model text generation. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-even">prompts_txt_file_path (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path to txt file for multiple input prompts. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-odd">generation_len (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Number of tokens to be generated. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-even">cache_dir (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Cache dir where downloaded HuggingFace files are stored. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">Constants.CACHE_DIR.</span></code></p>
+</dd>
+<dt class="field-odd">hf_token (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>HuggingFace login token to access private repos. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-even">full_batch_size (int)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Set full batch size to enable continuous batching mode. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+</dl>
+</dd>
+</dl>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.execute<span class="w"> </span>OPTIONS
+</pre></div>
+</div>
+</section>
+<section id="qefficient-cloud-compile">
+<h2><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.compile</span></code><a class="headerlink" href="#qefficient-cloud-compile" title="Permalink to this heading"></a></h2>
+<blockquote>
+<div><span class="target" id="module-QEfficient.compile.compile_helper.compile"></span><p>Compiles the given <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model using Cloud AI 100 platform SDK compiler and saves the compiled <code class="docutils literal notranslate"><span class="pre">qpc</span></code> package at <code class="docutils literal notranslate"><span class="pre">qpc_path</span></code>.
+Generates tensor-slicing configuration if multiple devices are passed in <code class="docutils literal notranslate"><span class="pre">device_group</span></code>.</p>
+<p>This function will be deprecated soon and will be replaced by <code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM.compile</span></code>.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">onnx_path (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Generated <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> Model Path.</p>
+</dd>
+<dt class="field-even">qpc_path (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path for saving compiled qpc binaries.</p>
+</dd>
+<dt class="field-odd">num_cores (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Number of cores to compile the model on.</p>
+</dd>
+</dl>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">device_group (List[int])<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Used for finding the number of devices to compile for. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-even">aic_enable_depth_first (bool)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Enables <code class="docutils literal notranslate"><span class="pre">DFS</span></code> with default memory size. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-odd">mos (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Effort level to reduce the on-chip memory. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">-1.</span></code></p>
+</dd>
+<dt class="field-even">batch_size (int)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Batch size to compile the model for. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">1.</span></code></p>
+</dd>
+<dt class="field-odd">full_batch_size (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Set full batch size to enable continuous batching mode. <code class="docutils literal notranslate"><span class="pre">Default</span> <span class="pre">to</span> <span class="pre">None</span></code></p>
+</dd>
+<dt class="field-even">prompt_len (int)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Prompt length for the model to compile. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">32</span></code></p>
+</dd>
+<dt class="field-odd">ctx_len (int)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Maximum context length to compile the model. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">128</span></code></p>
+</dd>
+<dt class="field-even">mxfp6 (bool)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Enable compilation for <code class="docutils literal notranslate"><span class="pre">MXFP6</span></code> precision.  <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">True.</span></code></p>
+</dd>
+<dt class="field-odd">mxint8 (bool)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Compress Present/Past KV to <code class="docutils literal notranslate"><span class="pre">MXINT8</span></code> using <code class="docutils literal notranslate"><span class="pre">CustomIO</span></code> config. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-even">custom_io_file_path (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path to <code class="docutils literal notranslate"><span class="pre">customIO</span></code> file (formatted as a string). <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-odd">allow_mxint8_mdp_io (bool)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Allows MXINT8 compression of MDP IO traffic <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-even">enable_qnn (bool)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Enables QNN Compilation. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">False.</span></code></p>
+</dd>
+<dt class="field-odd">qnn_config (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path of QNN Config parameters file. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+</dl>
+</dd>
+<dt>Returns:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">str<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path to compiled <code class="docutils literal notranslate"><span class="pre">qpc</span></code> package.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.compile<span class="w"> </span>OPTIONS
+</pre></div>
+</div>
+</div></blockquote>
+</section>
+<section id="qefficient-cloud-export">
+<h2><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.export</span></code><a class="headerlink" href="#qefficient-cloud-export" title="Permalink to this heading"></a></h2>
+<blockquote>
+<div><span class="target" id="module-QEfficient.cloud.export.main"></span><p>Helper function used by export CLI app for exporting to ONNX Model.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">Mandatory</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">model_name (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Hugging Face Model Card name, Example: <code class="docutils literal notranslate"><span class="pre">gpt2</span></code>.</p>
+</dd>
+</dl>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">Optional</span></code> Args:</dt><dd><dl class="field-list simple">
+<dt class="field-odd">cache_dir (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Cache dir where downloaded HuggingFace files are stored. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-even">hf_token (str)<span class="colon">:</span></dt>
+<dd class="field-even"><p>HuggingFace login token to access private repos. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-odd">local_model_dir (str)<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Path to custom model weights and config files. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+<dt class="field-even">full_batch_size (int)<span class="colon">:</span></dt>
+<dd class="field-even"><p>Set full batch size to enable continuous batching mode. <code class="docutils literal notranslate"><span class="pre">Defaults</span> <span class="pre">to</span> <span class="pre">None.</span></code></p>
+</dd>
+</dl>
+</dd>
+</dl>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.export<span class="w"> </span>OPTIONS
+</pre></div>
+</div>
+</div></blockquote>
+</section>
+<section id="qefficient-cloud-finetune">
+<h2><code class="docutils literal notranslate"><span class="pre">QEfficient.cloud.finetune</span></code><a class="headerlink" href="#qefficient-cloud-finetune" title="Permalink to this heading"></a></h2>
+<blockquote>
+<div><span class="target" id="module-QEfficient.cloud.finetune.main"></span><p>Fine-tune a model on QAIC hardware with configurable training and LoRA parameters.</p>
+<dl>
+<dt>Args:</dt><dd><p>peft_config_file (str, optional): Path to YAML/JSON file containing PEFT (LoRA) config. Defaults to None.
+kwargs: Additional arguments to override TrainConfig.</p>
+</dd>
+<dt>Example:</dt><dd><div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Using a YAML config file for PEFT</span>
+python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.finetune<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model_name<span class="w"> </span><span class="s2">&quot;meta-llama/Llama-3.2-1B&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--lr<span class="w"> </span>5e-4<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--peft_config_file<span class="w"> </span><span class="s2">&quot;lora_config.yaml&quot;</span>
+
+<span class="c1"># Using default LoRA config</span>
+python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.finetune<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--model_name<span class="w"> </span><span class="s2">&quot;meta-llama/Llama-3.2-1B&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--lr<span class="w"> </span>5e-4
+</pre></div>
+</div>
+</dd>
+</dl>
+</div></blockquote>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="quick_start.html" class="btn btn-neutral float-left" title="Quick Start" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="python_api.html" class="btn btn-neutral float-right" title="Python API" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, Qualcomm.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+    <span class="rst-current-version" data-toggle="rst-current-version">
+      Version: release/v1.20(beta)
+      <span class="fa fa-caret-down"></span>
+    </span>
+    <div class="rst-other-versions">
+      Versions
+      <dl>
+        <dd><a href="../../../../index.html">main</a></dd>
+        <dd><a href="../../v1.18/index.html">release/v1.18</a></dd>
+        <dd><a href="../../v1.19/index.html">release/v1.19</a></dd>
+        <dd><a href="../index.html">release/v1.20(beta)</a></dd>
+      </dl>
+    </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

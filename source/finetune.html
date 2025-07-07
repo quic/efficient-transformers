@@ -45,7 +45,11 @@
   </form>
 </div>
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
-              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+              <p class="caption" role="heading"><span class="caption-text">Release Docs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="release_docs.html">Release Notes</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="validate.html">Validated Models</a></li>
@@ -79,6 +83,8 @@
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="#visualization">Visualization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#some-features-functionalities-of-fine-tuning-stack">Some features/functionalities of fine-tuning stack:</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#fine-tuning-on-custom-dataset">Fine-Tuning on custom dataset</a></li>
 </ul>
 </li>
 </ul>
@@ -125,8 +131,8 @@
              
   <section id="finetune-infra">
 <h1>Finetune Infra<a class="headerlink" href="#finetune-infra" title="Permalink to this heading"></a></h1>
-<p>This repository provides the infrastructure for finetuning models using different hardware accelerators such as QAIC.
-Same CLI can be used to run Finetuning on gpu by setting the device flag.(for finetuning on gpu, install torch specific to cuda)</p>
+<p>This repository provides the infrastructure for finetuning models using different hardware accelerators such as QAic.
+Same CLI can be used to run finetuning on GPU by changing the value of device flag (for finetuning on GPU, install torch specific to CUDA).</p>
 <section id="installation">
 <h2>Installation<a class="headerlink" href="#installation" title="Permalink to this heading"></a></h2>
 <p>Same as QEfficient along with QAIC PyTorch Eager mode.</p>
@@ -135,6 +141,7 @@ Same CLI can be used to run Finetuning on gpu by setting the device flag.(for fi
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>/opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl
 </pre></div>
 </div>
+<p>If qeff-env inside docker is used then torch_qaic and accelerate packages are already installed.</p>
 </section>
 <section id="finetuning">
 <h2>Finetuning<a class="headerlink" href="#finetuning" title="Permalink to this heading"></a></h2>
@@ -163,14 +170,18 @@ Same CLI can be used to run Finetuning on gpu by setting the device flag.(for fi
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">cloud</span><span class="o">.</span><span class="n">finetune</span> <span class="o">--</span><span class="n">device</span> <span class="n">qaic</span><span class="p">:</span><span class="mi">0</span> <span class="o">--</span><span class="n">model_name</span> <span class="s2">&quot;meta-llama/Llama-3.2-1B&quot;</span>
 </pre></div>
 </div>
-<p>Also, you can configure various training parameters, for more details, checkout: QEfficient/finetune/configs/training.py, Below is example command line</p>
+<p>You can also configure various training parameters. Below is an example command line</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">cloud</span><span class="o">.</span><span class="n">finetune</span> <span class="o">--</span><span class="n">device</span> <span class="n">qaic</span><span class="p">:</span><span class="mi">0</span> <span class="o">--</span><span class="n">use</span><span class="o">-</span><span class="n">peft</span> <span class="o">--</span><span class="n">output_dir</span> <span class="o">./</span><span class="n">meta</span><span class="o">-</span><span class="n">sam</span> <span class="o">--</span><span class="n">num_epochs</span> <span class="mi">2</span> <span class="o">--</span><span class="n">context_length</span> <span class="mi">256</span> 
+</pre></div>
+</div>
+<p>For more details on the usage of the training parameters, use the below command:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">cloud</span><span class="o">.</span><span class="n">finetune</span> <span class="o">-</span><span class="n">h</span>
 </pre></div>
 </div>
 </section>
 <section id="distributed-training-ddp-on-qaic">
 <h3>Distributed training(DDP) on QAIC<a class="headerlink" href="#distributed-training-ddp-on-qaic" title="Permalink to this heading"></a></h3>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">QAIC_VISIBLE_DEVICES</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span> <span class="n">torchrun</span> <span class="o">--</span><span class="n">nproc</span><span class="o">-</span><span class="n">per</span><span class="o">-</span><span class="n">node</span> <span class="mi">4</span> <span class="o">-</span><span class="n">m</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">cloud</span><span class="o">.</span><span class="n">finetune</span> <span class="o">--</span><span class="n">device</span> <span class="n">qaic</span> <span class="o">--</span><span class="n">enable_ddp</span> <span class="o">--</span><span class="n">dist_backend</span> <span class="n">qccl</span> <span class="o">--</span><span class="n">num_epochs</span> <span class="mi">2</span>  <span class="o">--</span><span class="n">model_name</span> <span class="s2">&quot;meta-llama/Llama-3.2-1B&quot;</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">QAIC_VISIBLE_DEVICES</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span> <span class="n">torchrun</span> <span class="o">--</span><span class="n">nproc</span><span class="o">-</span><span class="n">per</span><span class="o">-</span><span class="n">node</span> <span class="mi">4</span> <span class="o">-</span><span class="n">m</span> <span class="n">QEfficient</span><span class="o">.</span><span class="n">cloud</span><span class="o">.</span><span class="n">finetune</span> <span class="o">--</span><span class="n">device</span> <span class="n">qaic</span> <span class="o">--</span><span class="n">enable_ddp</span>  <span class="o">--</span><span class="n">num_epochs</span> <span class="mi">2</span>  <span class="o">--</span><span class="n">model_name</span> <span class="s2">&quot;meta-llama/Llama-3.2-1B&quot;</span>
 </pre></div>
 </div>
 <p>**nproc-per-node is number of workers(QAIC devices) running locally.</p>
@@ -181,6 +192,48 @@ Same CLI can be used to run Finetuning on gpu by setting the device flag.(for fi
 <p>Tensorboard logs are generated inside runs/ directory with date and time stamp.
 to visualise the data,</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tensorboard</span> <span class="o">--</span><span class="n">logdir</span> <span class="n">runs</span><span class="o">/&lt;</span><span class="n">file</span><span class="o">&gt;</span> <span class="o">--</span><span class="n">bind_all</span>
+</pre></div>
+</div>
+</section>
+<section id="some-features-functionalities-of-fine-tuning-stack">
+<h2>Some features/functionalities of fine-tuning stack:<a class="headerlink" href="#some-features-functionalities-of-fine-tuning-stack" title="Permalink to this heading"></a></h2>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>1) Gradient accumulation: By default, gradient accumulation happens for 4 steps. To update this value, command line argument gradient_accumulation_steps has to be passed. (Example: &#39;--gradient_accumulation_steps 8&#39;)
+2) Gradient Checkpointing: By default, gradient checkpointing is disabled. To enable it, command line argument gradient_accumulation_steps has to be passed.
+</pre></div>
+</div>
+</section>
+<section id="fine-tuning-on-custom-dataset">
+<h2>Fine-Tuning on custom dataset<a class="headerlink" href="#fine-tuning-on-custom-dataset" title="Permalink to this heading"></a></h2>
+<p>To run fine tuning for any user specific dataset, prepare the dataset using the following steps:</p>
+<ol class="arabic simple">
+<li><p>Create a directory named ‘dataset’ inside efficient-transformers.</p></li>
+<li><p>Inside this directory, create a file named ‘custom_dataset.py’.</p></li>
+<li><p>Inside the newly created efficient-transformers/dataset/custom_dataset.py, define a function named ‘get_custom_dataset’.</p></li>
+<li><p>get_custom_dataset() should have following 4 parameters:  dataset_config, tokenizer, split, context_length.</p></li>
+<li><p>Inside get_custom_dataset(), user needs to apply prompt and tokenize the dataset accordingly. Please refer the below template on how to define get_custom_dataset().</p></li>
+<li><p>For examples, please refer python files present in <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/QEfficient/finetune/dataset">dataset</a>. In case of Samsum dataset, get_preprocessed_samsum() of efficient-transformers/QEfficient/finetune/dataset/samsum_dataset.py is called.</p></li>
+<li><p>In <a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/QEfficient/finetune/configs/dataset_config.py">dataset_config.py</a>, for custom_dataset class, pass the appropriate value for train_split and test_split. As an alternative, these values can be passed as command line arguments as well with the finetune command. For example “–train_split train”.</p></li>
+<li><p>While running fine tuning, pass argument “-–dataset custom_dataset” to finetune on custom dataset.</p></li>
+</ol>
+<p>Template for get_custom_dataset() to be defined inside efficient-transformers/dataset/custom_dataset.py is as follows:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">get_custom_dataset</span><span class="p">(</span><span class="n">dataset_config</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">split</span><span class="p">,</span> <span class="n">context_length</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+
+    <span class="c1"># load dataset</span>
+    <span class="c1"># based on split, retrieve only the specific portion of the dataset (train or eval) either here or at the last</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">apply_prompt_template</span><span class="p">():</span>
+        <span class="c1"># transform the passed datapoint by applying the prompt on it </span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">tokenize</span><span class="p">():</span>
+        <span class="c1"># tokenize the passed datapoint</span>
+    
+    <span class="c1"># define the prompt</span>
+    <span class="c1"># call apply_prompt_template() for each data point:</span>
+    <span class="c1"># dataset = dataset.map(apply_prompt_template ,&lt;other args&gt;)</span>
+    <span class="c1"># call tokenize() for each data point:</span>
+    <span class="c1"># dataset = dataset.map(tokenize, &lt;other args&gt;)</span>
+    
+    <span class="k">return</span> <span class="n">dataset</span>
 </pre></div>
 </div>
 </section>
@@ -221,6 +274,7 @@ to visualise the data,</p>
         <dd><a href="../index.html">main</a></dd>
         <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
         <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
+        <dd><a href="release/v1.20/index.html">release/v1.20(beta)</a></dd>
       </dl>
     </div>
 </div><script>

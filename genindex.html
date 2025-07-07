@@ -42,7 +42,11 @@
   </form>
 </div>
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
-              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+              <p class="caption" role="heading"><span class="caption-text">Release Docs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="source/release_docs.html">Release Notes</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="source/validate.html">Validated Models</a></li>
@@ -133,9 +137,13 @@
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/python_api.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.active_adapter">active_adapter (QEfficient.peft.auto.QEffAutoPeftModelForCausalLM property)</a>
 </li>
+      <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunner">ApiRunner (class in QEfficient.utils.run_utils)</a>
+</li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunner">ApiRunner (class in QEfficient.utils.run_utils)</a>
+      <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunnerInternVL">ApiRunnerInternVL (class in QEfficient.utils.run_utils)</a>
+</li>
+      <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunnerVlm">ApiRunnerVlm (class in QEfficient.utils.run_utils)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -235,6 +243,8 @@
 </li>
       <li><a href="source/python_api.html#QEfficient.generation.text_generation_inference.get_compilation_dims">get_compilation_dims() (in module QEfficient.generation.text_generation_inference)</a>
 </li>
+      <li><a href="source/python_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.get_sampling_inputs_and_outputs">get_sampling_inputs_and_outputs() (QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM method)</a>
+</li>
   </ul></td>
 </tr></table>
 
@@ -242,6 +252,12 @@
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandler">InputHandler (class in QEfficient.utils.generate_inputs)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandlerInternVL">InputHandlerInternVL (class in QEfficient.utils.generate_inputs)</a>
+</li>
+      <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandlerVLM">InputHandlerVLM (class in QEfficient.utils.generate_inputs)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -298,10 +314,22 @@
 </li>
       <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_ort_inputs">prepare_ort_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
 </li>
+      <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs">prepare_pytorch_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
+
+      <ul>
+        <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandlerInternVL.prepare_pytorch_inputs">(QEfficient.utils.generate_inputs.InputHandlerInternVL method)</a>
+</li>
+        <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandlerVLM.prepare_pytorch_inputs">(QEfficient.utils.generate_inputs.InputHandlerVLM method)</a>
+</li>
+      </ul></li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandler.prepare_pytorch_inputs">prepare_pytorch_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
+      <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandlerInternVL.prepare_vlm_ort_inputs">prepare_vlm_ort_inputs() (QEfficient.utils.generate_inputs.InputHandlerInternVL method)</a>
+
+      <ul>
+        <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandlerVLM.prepare_vlm_ort_inputs">(QEfficient.utils.generate_inputs.InputHandlerVLM method)</a>
 </li>
+      </ul></li>
       <li><a href="source/python_api.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModel.pytorch_feature_generate">pytorch_feature_generate() (QEfficient.transformers.models.modeling_auto.QEFFAutoModel method)</a>
 </li>
   </ul></td>
@@ -415,13 +443,27 @@
 </li>
       <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_cloud_ai_100">run_kv_model_on_cloud_ai_100() (QEfficient.utils.run_utils.ApiRunner method)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_ort">run_kv_model_on_ort() (QEfficient.utils.run_utils.ApiRunner method)</a>
 </li>
       <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_kv_model_on_pytorch">run_kv_model_on_pytorch() (QEfficient.utils.run_utils.ApiRunner method)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunner.run_ort_session">run_ort_session() (QEfficient.utils.run_utils.ApiRunner method)</a>
+
+      <ul>
+        <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunnerVlm.run_ort_session">(QEfficient.utils.run_utils.ApiRunnerVlm method)</a>
+</li>
+      </ul></li>
+      <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunnerInternVL.run_vlm_hf_model_on_pytorch">run_vlm_hf_model_on_pytorch() (QEfficient.utils.run_utils.ApiRunnerInternVL method)</a>
+
+      <ul>
+        <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunnerVlm.run_vlm_hf_model_on_pytorch">(QEfficient.utils.run_utils.ApiRunnerVlm method)</a>
+</li>
+      </ul></li>
+      <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunnerVlm.run_vlm_kv_model_on_ort">run_vlm_kv_model_on_ort() (QEfficient.utils.run_utils.ApiRunnerVlm method)</a>
+</li>
+      <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunnerVlm.run_vlm_kv_model_on_pytorch">run_vlm_kv_model_on_pytorch() (QEfficient.utils.run_utils.ApiRunnerVlm method)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -430,6 +472,10 @@
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/python_api.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.set_adapter">set_adapter() (QEfficient.peft.auto.QEffAutoPeftModelForCausalLM method)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="source/python_api.html#QEfficient.utils.run_utils.ApiRunnerVlm.setup_ort_session">setup_ort_session() (QEfficient.utils.run_utils.ApiRunnerVlm method)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -441,11 +487,15 @@
 </li>
       <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandler.update_ort_inputs">update_ort_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandler.update_ort_outputs">update_ort_outputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandler.update_pytorch_inputs">update_pytorch_inputs() (QEfficient.utils.generate_inputs.InputHandler method)</a>
+</li>
+      <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandlerVLM.update_vlm_ort_inputs">update_vlm_ort_inputs() (QEfficient.utils.generate_inputs.InputHandlerVLM method)</a>
+</li>
+      <li><a href="source/python_api.html#QEfficient.utils.generate_inputs.InputHandlerVLM.update_vlm_ort_outputs">update_vlm_ort_outputs() (QEfficient.utils.generate_inputs.InputHandlerVLM method)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -483,6 +533,7 @@
         <dd><a href="index.html">main</a></dd>
         <dd><a href="source/release/v1.18/index.html">release/v1.18</a></dd>
         <dd><a href="source/release/v1.19/index.html">release/v1.19</a></dd>
+        <dd><a href="source/release/v1.20/index.html">release/v1.20(beta)</a></dd>
       </dl>
     </div>
 </div><script>
