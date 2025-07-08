@@ -281,12 +281,17 @@ class QEFFBaseModel(ABC):
         if mdp_ts_json_path := compiler_options.pop("mdp_load_partition_config", None):
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
-        # Default node precision file added for AI-100
-        config = getattr(self.model, "config", None)
-        if config is None and hasattr(self.model, "model"):
-            config = getattr(self.model.model, "config", None)
-            if config and hasattr(config, "architectures") and "Gemma3ForConditionalGeneration" in config.architectures:
-                compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_NODE_PRECISION_INFO
+        # Default node precision file added for Gemma3:AI-100
+        if hasattr(self, "model"):
+            config = getattr(self.model, "config", None)
+            if config is None and hasattr(self.model, "model"):
+                config = getattr(self.model.model, "config", None)
+                if (
+                    config
+                    and hasattr(config, "architectures")
+                    and "Gemma3ForConditionalGeneration" in config.architectures
+                ):
+                    compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_NODE_PRECISION_INFO
 
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
