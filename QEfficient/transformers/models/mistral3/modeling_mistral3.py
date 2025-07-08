@@ -16,7 +16,7 @@ from transformers.models.pixtral.modeling_pixtral import PixtralVisionModel, pos
 
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
-from QEfficient.utils.logging_utils import logger
+
 
 def custom_cumsum(tensor):
     dim = 0
@@ -238,24 +238,25 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         kv_offload: bool = False,
         **compiler_options,
     ):
-        
-        if img_size is None and hasattr(self.config.vision_config, "image_size"):
-            img_size = getattr(self.config.vision_config, "image_size")
-        elif img_size is None:
-            img_size = 1540  # FIXME based on Mistral3 Image size
-            logger.warning("Setting img_size to be 1540, as it was neither passed nor found in vision_config")
+        height = compiler_options.pop("height", None)
+        width = compiler_options.pop("width", None)
+        if height is None:
+            height = self.config.vision_config.image_size
+        if width is None:
+            width = self.config.vision_config.image_size
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         patch_size = self.config.vision_config.patch_size
         kernel_size = self.config.spatial_merge_size
-        vision_size = ((img_size // patch_size) * (img_size // patch_size)) * (batch_size) // (kernel_size * kernel_size)
+        vision_size = ((height // patch_size) * (width // patch_size)) * (batch_size) // (kernel_size * kernel_size)
 
         vision = [
             {
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "image_size": img_size,
+                "height": height,
+                "width": width,
                 "vision_size": vision_size,
             }
         ]
@@ -264,14 +265,16 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
                 "batch_size": batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "image_size": img_size,
+                "height": height,
+                "width": width,
                 "vision_size": vision_size,
             },
             {
                 "batch_size": batch_size,
                 "seq_len": "1",
                 "ctx_len": ctx_len,
-                "image_size": img_size,
+                "height": height,
+                "width": width,
                 "vision_size": vision_size,
             },
         ]
@@ -293,7 +296,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         num_layers = self.config.text_config.num_hidden_layers
 
         vision_dynamic_axes = {
-            "pixel_values": {0: "batch_size", 2: "image_size", 3: "image_size"},
+            "pixel_values": {0: "batch_size", 2: "height", 3: "width"},
         }
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
@@ -338,5 +341,5 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="pixel_values", datatype=torch.float32, shape=("batch_size", 3, "image_size", "image_size")),
+            IOInfo(name="pixel_values", datatype=torch.float32, shape=("batch_size", 3, "height", "width")),
         ]
