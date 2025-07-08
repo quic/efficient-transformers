@@ -178,7 +178,7 @@ def train(
                 break
             batch = {k: v.to(device) for k, v in batch.items()}  # move the batch elements to qaic device
 
-            is_backward_step = (step + 1) % train_config.gradient_accumulation_steps == 0 or step == len(
+            is_optimizer_step = (step + 1) % train_config.gradient_accumulation_steps == 0 or step == len(
                 train_dataloader
             ) - 1
             if train_config.enable_ddp:
@@ -187,7 +187,7 @@ def train(
                 # the official way to do this is with model.no_sync() context manager, but
                 # using too many context managers may bloat the code and forces us to repeat code
                 # looking at the source of that context manager, it just toggles this variable
-                model.require_backward_grad_sync = is_backward_step
+                model.require_backward_grad_sync = is_optimizer_step
 
             with autocast_ctx:
                 # an additional condition can be put here to avoid opByOpVerifier getting triggered for each step
@@ -258,7 +258,7 @@ def train(
             else:
                 loss.backward()  # backward pass
 
-            if is_backward_step:
+            if is_optimizer_step:
                 if train_config.grad_scaler:
                     scaler.step(optimizer)
                     scaler.update()
