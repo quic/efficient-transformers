@@ -205,6 +205,7 @@ def train(
                 logger.info("Mismatches detected:", verifier.get_perop_mismatch_count())
 
             total_loss += loss.detach().float()
+
             if is_rank_zero():
                 if loss <= train_config.convergence_loss:
                     loss_0_counter += 1
@@ -212,6 +213,7 @@ def train(
                     loss_0_counter = torch.tensor([0]).to(device)
             if train_config.enable_ddp:
                 dist.broadcast(loss_0_counter, src=0)
+
             if is_rank_zero():
                 tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
 
