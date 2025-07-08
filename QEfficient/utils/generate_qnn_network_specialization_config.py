@@ -166,8 +166,8 @@ def generate_data_format_config(
     for output in onnx_model.graph.output:
         if "past_key" in output.name or "past_value" in output.name:
             kv_nodes.append(output.name)
-            kv_overrides = {}
 
+    kv_overrides = {}
     kv_overrides["graphs"] = [
         {
             "graph_name": model_dlc_name + "_configuration_1",
