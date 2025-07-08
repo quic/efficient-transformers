@@ -182,6 +182,8 @@ qeff_supported_architectures = ModelArchitectures(
     ]
 )
 
+DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "llama4", "gemma3_text", "llama4_text"}
+
 # Define a transformers layers to QEff layers dictionary
 # While onboarding new models make sure to add the new layer maps to this dictionary.
 TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {

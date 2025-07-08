@@ -32,10 +32,10 @@ from transformers.models.llama4.modeling_llama4 import (
     repeat_kv,
 )
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.cache_utils import QEffHybridChunkedCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
-from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
+from QEfficient.utils._utils import IOInfo
 
 
 def eager_attention_forward_vision(
@@ -312,10 +312,11 @@ class QEffLlama4TextRotaryEmbedding(nn.Module):
         self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
         # self.max_seq_len_cached = config.max_position_embeddings
-        # TODO: vbaddi Shouldn't for rope, the max posision_embeddings be original embeddings for rope,
-        # chunk size 8192 always? and Revisit when >8K Chunked attention is enabled.
-        self.max_seq_len_cached = config.rope_scaling["original_max_position_embeddings"]
-        # self.max_seq_len_cached = config.max_position_embeddings
+        # TODO: max sequence length cached should be taken before export and model should be exported with that paramter.
+        logger.warning(
+            f"max_seq_len_cached is set to {constants.LLAMA4_MAX_POSITION_EMBEDDINGS}, this is the maximum sequence length supported for the model"
+        )
+        self.max_seq_len_cached = constants.LLAMA4_MAX_POSITION_EMBEDDINGS
 
         # Get inverse frequency and scaling function (handles yarn/etc)
         inv_freq, self.attention_scaling = self.rope_init_fn(config, device)
@@ -494,8 +495,15 @@ class QEffLlama4TextAttention(Llama4TextAttention):
         key_states = key_states.transpose(1, 2)
 
         if past_key_value is not None:
+            chunk_position_ids = position_ids
+
+            if self.use_rope:
+                chunk_position_ids = torch.where(
+                    chunk_position_ids != -1, chunk_position_ids % self.config.attention_chunk_size, chunk_position_ids
+                )
+
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {"batch_index": batch_index, "position_ids": chunk_position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
@@ -540,7 +548,7 @@ class QEffLlama4TextDecoderLayer(Llama4TextDecoderLayer):
         residual = hidden_states
 
         # use local attention mask for ROPE layers
-        if self.use_chunked_attention and chunk_causal_mask is not None:
+        if self.use_chunked_attention:
             attention_mask = chunk_causal_mask
 
         hidden_states = self.input_layernorm(hidden_states)
@@ -630,7 +638,7 @@ class QEffLlama4TextModel(Llama4TextModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
+            past_key_values = QEffHybridChunkedCache.from_legacy_cache(self.config, past_key_values)
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -640,11 +648,14 @@ class QEffLlama4TextModel(Llama4TextModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
-
-        _, chunk_causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
+        causal_mask = _create_causal_mask(
+            position_ids=position_ids, target_length=past_key_values.key_cache[3].shape[-2]
         )
+        chunk_position_ids = torch.where(
+            position_ids != -1, position_ids % self.config.attention_chunk_size, position_ids
+        )
+        target_length = min(past_key_values.key_cache[0].shape[-2], torch.tensor(self.config.attention_chunk_size))
+        chunk_causal_mask = _create_causal_mask(position_ids=chunk_position_ids, target_length=target_length)
 
         # embed positions
         hidden_states = inputs_embeds
@@ -758,6 +769,30 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
             attentions=outputs.attentions,
         )
 
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+        n_heads = config.num_key_value_heads
+        d_head = config.head_dim
+        is_chunked_attention = torch.tensor(
+            [bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool
+        )
+        attention_chunk_size = getattr(config, "attention_chunk_size", seq_len)
+        global_cache_shape = [batch_size, n_heads, seq_len, d_head]
+        chunked_cache_shape = [
+            batch_size,
+            n_heads,
+            seq_len if seq_len < attention_chunk_size else attention_chunk_size,
+            d_head,
+        ]
+
+        past_key_values = []
+        for i in range(config.num_hidden_layers):
+            cache_shape = global_cache_shape if not is_chunked_attention[i] else chunked_cache_shape
+            new_layer_key_cache = torch.zeros(cache_shape, dtype=torch.float32)
+            new_layer_value_cache = torch.zeros(cache_shape, dtype=torch.float32)
+            pkv = (new_layer_key_cache, new_layer_value_cache)
+            past_key_values.append(pkv)
+        return past_key_values
+
 
 class QEffLlama4EncoderWrapper(nn.Module):
     def __init__(self, model):
@@ -850,7 +885,6 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         kv_offload: bool = False,
         **compiler_options,
     ):
-        # TODO: check if this should be named num_patches or something else
         max_num_tiles = compiler_options.pop("max_num_tiles", None)
         if max_num_tiles is None:
             logger.warning(
@@ -860,11 +894,35 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
+        chunk_ctx_len = min(
+            ctx_len,
+            (
+                self.config.text_config.attention_chunk_size
+                if hasattr(self, "config")
+                else constants.LLAMA4_ATTENTION_CHUNK_SIZE
+            ),
+        )
+        if (
+            prefill_seq_len > constants.LLAMA4_MAX_POSITION_EMBEDDINGS
+            or ctx_len > constants.LLAMA4_MAX_POSITION_EMBEDDINGS
+        ):
+            raise ValueError(
+                f"max_seq_len_cached is set to {constants.LLAMA4_MAX_POSITION_EMBEDDINGS}, Your prefill_seq_len is {prefill_seq_len} and ctx_len is {ctx_len}."
+            )
+
         if img_size is None and hasattr(self.config.vision_config, "image_size"):
             img_size = getattr(self.config.vision_config, "image_size")
         elif img_size is None:
             img_size = 336  # FIXME based on llama4 Image size
             logger.warning("Setting img_size to be 336, as it was neither passed nor found in vision_config")
+
+        downsample_ratio = int(round(1.0 / (self.config.vision_config.pixel_shuffle_ratio**2)))
+        num_features_per_tile = int(
+            (img_size // self.config.vision_config.patch_size)
+            * (img_size // self.config.vision_config.patch_size)
+            // downsample_ratio
+        )
+        vision_size = num_features_per_tile * max_num_tiles
 
         downsample_ratio = int(round(1.0 / (self.config.vision_config.pixel_shuffle_ratio**2)))
         num_features_per_tile = int(
@@ -889,6 +947,8 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 "max_num_tiles": max_num_tiles,
                 "img_size": img_size,
                 "vision_size": vision_size,
+                "chunk_length": prefill_seq_len,
+                "chunk_ctx_len": chunk_ctx_len,
             },
             {
                 "batch_size": batch_size,
@@ -897,6 +957,8 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 "max_num_tiles": max_num_tiles,
                 "img_size": img_size,
                 "vision_size": vision_size,
+                "chunk_length": prefill_seq_len,
+                "chunk_ctx_len": chunk_ctx_len,
             },
         ]
 
@@ -918,8 +980,14 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         lang_dynamic_axes["vision_embeds"] = {0: "vision_size"}
         vision_dynamic_axes["pixel_values"] = {0: "max_num_tiles", 2: "img_size", 3: "img_size"}
 
-        pkv_dynamic_axes = {0: "batch_size", 2: "ctx_len"}
+        pkv_dynamic_axes = {0: "batch_size"}
         for i in range(self.language_model.config.num_hidden_layers):
+            # switch between chunk_ctx_len and ctx_len for RoPE and NoPE layers.
+            if int((i + 1) % 4 != 0):
+                pkv_dynamic_axes[2] = "chunk_ctx_len"
+            else:
+                pkv_dynamic_axes[2] = "ctx_len"
+
             for kv in ["key", "value"]:
                 lang_dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
 
@@ -950,6 +1018,30 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             lang_output_names.insert(2, "image_idx_output")
             return lang_output_names
         return output_names
+
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+        n_heads = config.num_key_value_heads
+        d_head = config.head_dim
+        is_chunked_attention = torch.tensor(
+            [bool((i + 1) % 4) for i in range(config.num_hidden_layers)], dtype=torch.bool
+        )
+        attention_chunk_size = getattr(config, "attention_chunk_size", seq_len)
+        global_cache_shape = [batch_size, n_heads, seq_len, d_head]
+        chunked_cache_shape = [
+            batch_size,
+            n_heads,
+            seq_len if seq_len < attention_chunk_size else attention_chunk_size,
+            d_head,
+        ]
+
+        past_key_values = []
+        for i in range(config.num_hidden_layers):
+            cache_shape = global_cache_shape if not is_chunked_attention[i] else chunked_cache_shape
+            new_layer_key_cache = torch.zeros(cache_shape, dtype=torch.float32)
+            new_layer_value_cache = torch.zeros(cache_shape, dtype=torch.float32)
+            pkv = (new_layer_key_cache, new_layer_value_cache)
+            past_key_values.append(pkv)
+        return past_key_values
 
     def get_dummy_inputs(self, kv_offload: bool = False):
         if vis_cfg := getattr(self.config, "vision_config", None):
@@ -997,7 +1089,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
         # Add data for KV
-        kv_cache_shape = get_padding_shape_from_config(
+        past_key_values = self.get_dummy_pkv_cache(
             config=self.language_model.config,
             batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
@@ -1006,7 +1098,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         lang_inputs["past_key_values"] = [[] for _ in range(self.language_model.config.num_hidden_layers)]
         for i in range(self.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
-                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(torch.zeros(past_key_values[0][0].shape, dtype=torch.float32))
 
         inputs = {}
         if kv_offload:

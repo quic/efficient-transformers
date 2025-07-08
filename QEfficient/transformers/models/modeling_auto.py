@@ -35,6 +35,7 @@ from QEfficient.generation.text_generation_inference import (
     calculate_latency,
     get_compilation_dims,
 )
+from QEfficient.transformers.modeling_utils import DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
@@ -51,7 +52,10 @@ from QEfficient.transformers.quantizers.quant_transforms import (
     FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
 )
-from QEfficient.utils import constants, get_padding_shape_from_config
+from QEfficient.utils import (
+    constants,
+    get_padding_shape_from_config,
+)
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
 
@@ -482,7 +486,6 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable(self.model.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEffVisionEncoderForTextImageToTextModel": True}))
-
         if hasattr(self.model, "model"):
             mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
         else:
@@ -551,7 +554,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         mhash.update(to_hashable(self.model.config.to_diff_dict()))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable({"QEffCausalLMForTextImageToTextModel": True}))
-        mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
+        if hasattr(self.model, "model"):
+            mhash.update(to_hashable(self.model.model.pretrained_model_name_or_path))
+        else:
+            mhash.update(to_hashable(self.model.pretrained_model_name_or_path))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -860,9 +866,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         chunk_inputs = lang_inputs.copy()
         prefill_start = perf_counter()
 
+        # Prepare inputs for prefill
+        chunk_inputs = lang_inputs.copy()
+        prefill_start = perf_counter()
+
         # Run prefill
         chunk_inputs = lang_inputs.copy()
-        chunk_inputs["index"] = np.array([[0]])
         for i in range(num_chunks):
             chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][
@@ -1406,10 +1415,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
-
+        self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         self.is_tlm = transformed
-        self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
 
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
@@ -1577,11 +1585,26 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             output_names.append("logits")
 
-        for i in range(self.num_layers):
-            for kv in ["key", "value"]:
-                example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
-                output_names.append(f"past_{kv}.{i}_RetainedState")
+        # TODO Update the get_padding_shape_from_config method to handle the case when the model config has attention_chunk_size or sliding_window and it should return a list of shapes for each layer
+        if (
+            hasattr(self.model.config, "model_type")
+            and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
+        ):
+            pkv_cache = self.model.get_dummy_pkv_cache(
+                self.model.config, fbs if self.continuous_batching else bs, seq_len
+            )
+            for i in range(self.num_layers):
+                for kv in ["key", "value"]:
+                    example_inputs["past_key_values"][i].append(torch.zeros(pkv_cache[0][0].shape, dtype=torch.float32))
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                    output_names.append(f"past_{kv}.{i}_RetainedState")
+
+        else:
+            for i in range(self.num_layers):
+                for kv in ["key", "value"]:
+                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                    output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -2133,7 +2156,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             raise TypeError("Please run compile API first!")
 
         inputs = self.auto_correct_inputs(inputs)
-
         if self.qpc_session is None:
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]

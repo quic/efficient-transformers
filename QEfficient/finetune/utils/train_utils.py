@@ -89,11 +89,13 @@ def train(
     else:
         tensorboard_updates = SummaryWriter()
 
+    device_type = torch.device(device).type
+
     if train_config.grad_scaler:
         if device.startswith("qaic"):
             scaler = QAicGradScaler()
         else:
-            scaler = GradScaler(torch.device(device).type)
+            scaler = GradScaler(device_type)
 
     loss_0_counter = torch.tensor([0]).to(device)
 
@@ -149,7 +151,7 @@ def train(
 
         # enable profile for qaic
         qaic_profile.start_profiling(device, 1) if train_config.use_profiler else None
-
+        num_dummy_samples = 0
         for step, batch in enumerate(train_dataloader):
             # resume training from a particular checkpoint, assuming the dataset is not shuffled
             if train_config.use_peft and train_config.from_peft_checkpoint:
@@ -173,7 +175,7 @@ def train(
             batch = {k: v.to(device) for k, v in batch.items()}  # move the batch elements to qaic device
 
             with (
-                torch.autocast(device_type=torch.device(device).type, dtype=torch.float16)
+                torch.autocast(device_type=device_type, dtype=torch.float16)
                 if train_config.use_autocast
                 else nullcontext()
             ):
@@ -190,6 +192,17 @@ def train(
                     ) as verifier:
                         model_outputs = model(**batch)
                         loss = model_outputs.loss  # Forward call
+                        if (batch["labels"] != -100).sum() == 0:
+                            loss = loss.nan_to_num(nan=0.0)
+                            num_dummy_samples += train_config.train_batch_size
+                        else:
+                            num_dummy_samples_per_batch = (
+                                (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
+                            )
+                            if num_dummy_samples_per_batch > 0:
+                                num_dummy_samples += num_dummy_samples_per_batch
+                                loss = loss * train_config.train_batch_size / num_dummy_samples_per_batch
+
                         if train_config.task_type == "seq_classification":
                             logits = model_outputs.logits
                             labels = batch["labels"][:, 0]
@@ -199,6 +212,17 @@ def train(
                 else:
                     model_outputs = model(**batch)
                     loss = model_outputs.loss  # Forward call
+                    if (batch["labels"] != -100).sum() == 0:
+                        loss = loss.nan_to_num(nan=0.0)
+                        num_dummy_samples += train_config.train_batch_size
+                    else:
+                        num_dummy_samples_per_batch = (
+                            (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
+                        )
+                        if num_dummy_samples_per_batch > 0:
+                            num_dummy_samples += num_dummy_samples_per_batch
+                            loss = loss * train_config.train_batch_size / num_dummy_samples_per_batch
+
                     if train_config.task_type == "seq_classification":
                         logits = model_outputs.logits
                         labels = batch["labels"][:, 0]
@@ -206,8 +230,7 @@ def train(
                         acc_helper.forward(preds, labels)
 
             total_loss += loss.detach().float()
-            # Accumalate graidents
-            loss = loss / train_config.gradient_accumulation_steps
+
             if train_config.enable_ddp:
                 if local_rank == 0:
                     if loss <= train_config.convergence_loss:
@@ -234,6 +257,17 @@ def train(
                 else:
                     step_metric_val = float(torch.exp(loss.detach().float()))
                 train_step_metric.append(step_metric_val)
+
+            # Accumalate gradients
+            complete_accum_steps = (
+                len(train_dataloader) - len(train_dataloader) % train_config.gradient_accumulation_steps
+            )
+            if step < complete_accum_steps:
+                num_samples_in_cur_update = train_config.gradient_accumulation_steps
+            else:
+                num_samples_in_cur_update = len(train_dataloader) % train_config.gradient_accumulation_steps
+
+            loss = loss / num_samples_in_cur_update
 
             if train_config.grad_scaler:
                 scaler.scale(loss).backward()  # backward pass
@@ -294,15 +328,30 @@ def train(
 
         if loss_0_counter.item() == train_config.convergence_counter:
             if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
-                train_epoch_loss = total_loss / (step - intermediate_step)
+                train_epoch_loss = (
+                    0.0
+                    if total_loss == 0.0
+                    else total_loss / (step - intermediate_step - num_dummy_samples / train_config.train_batch_size)
+                )
             else:
-                train_epoch_loss = total_loss / step
+                train_epoch_loss = (
+                    0.0
+                    if total_loss == 0.0
+                    else total_loss / (step + 1 - num_dummy_samples / train_config.train_batch_size)
+                )
         else:
             if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
-                train_epoch_loss = total_loss / (len(train_dataloader) - intermediate_step)
+                train_epoch_loss = (
+                    0.0
+                    if total_loss == 0.0
+                    else total_loss / (step - intermediate_step - (num_dummy_samples / train_config.train_batch_size))
+                )
             else:
-                train_epoch_loss = total_loss / len(train_dataloader)
-
+                train_epoch_loss = (
+                    0.0
+                    if total_loss == 0.0
+                    else total_loss / (step + 1 - (num_dummy_samples / train_config.train_batch_size))
+                )
         if train_config.task_type == "seq_classification":
             metric_val = acc_helper.compute()
             acc_helper.reset()
@@ -387,7 +436,6 @@ def train(
     results["avg_checkpoint_time"] = avg_checkpoint_time
     if train_config.save_metrics:
         results["metrics_filename"] = metrics_filename
-
     return results
 
 
@@ -417,7 +465,9 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     val_step_metric = []
 
     eval_loss = 0.0  # Initialize evaluation loss
+    device_type = torch.device(device).type
 
+    num_dummy_samples = 0
     for step, batch in enumerate(tqdm(eval_dataloader, colour="green", desc="evaluating Epoch", dynamic_ncols=True)):
         #  stop when the maximum number of eval steps is reached
         if train_config.max_eval_step > 0 and step > train_config.max_eval_step:
@@ -429,12 +479,23 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
         with torch.no_grad():
             # Forward pass and compute loss
             with (
-                torch.autocast(device_type=torch.device(device).type, dtype=torch.float16)
+                torch.autocast(device_type=device_type, dtype=torch.float16)
                 if train_config.use_autocast
                 else nullcontext()
             ):
                 outputs = model(**batch)
             loss = outputs.loss
+
+            if (batch["labels"] != -100).sum() == 0:
+                loss = loss.nan_to_num(nan=0.0)
+                num_dummy_samples += 1
+            else:
+                num_dummy_samples_per_batch = (
+                    (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
+                )
+                if num_dummy_samples_per_batch > 0:
+                    num_dummy_samples += num_dummy_samples_per_batch
+                    loss = loss * train_config.val_batch_size / num_dummy_samples_per_batch
 
             if train_config.task_type == "seq_classification":
                 logits = outputs.logits
@@ -450,9 +511,10 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
                 val_step_metric.append(metric_val)
 
             eval_loss += loss.detach().float()
-
     # Compute average loss and metric
-    eval_epoch_loss = eval_loss / len(eval_dataloader)
+    eval_epoch_loss = (
+        0.0 if eval_loss == 0.0 else eval_loss / (step + 1 - num_dummy_samples / train_config.val_batch_size)
+    )
     if train_config.task_type == "seq_classification":
         eval_metric = acc_helper.compute()
     else:
