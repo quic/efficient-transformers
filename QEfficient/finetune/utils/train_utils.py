@@ -189,29 +189,27 @@ def train(
                 # looking at the source of that context manager, it just toggles this variable
                 model.require_backward_grad_sync = is_optimizer_step
 
-            with autocast_ctx:
-                # an additional condition can be put here to avoid opByOpVerifier getting triggered for each step
-                with op_verifier_ctx(step) as verifier:
-                    model_outputs = model(**batch)
-                    loss = model_outputs.loss  # Forward call
-                    if (batch["labels"] != -100).sum() == 0:
-                        loss = loss.nan_to_num(nan=0.0)
-                        num_dummy_samples += train_config.train_batch_size
-                    else:
-                        num_dummy_samples_per_batch = (
-                            (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
-                        )
-                        if num_dummy_samples_per_batch > 0:
-                            num_dummy_samples += num_dummy_samples_per_batch
-                            loss = loss * train_config.train_batch_size / num_dummy_samples_per_batch
+            with autocast_ctx, op_verifier_ctx(step) as verifier:
+                model_outputs = model(**batch)
+                loss = model_outputs.loss  # Forward call
+                if (batch["labels"] != -100).sum() == 0:
+                    loss = loss.nan_to_num(nan=0.0)
+                    num_dummy_samples += train_config.train_batch_size
+                else:
+                    num_dummy_samples_per_batch = (
+                        (torch.sum(batch["labels"] == -100, dim=1) == batch["labels"].shape[1]).sum().item()
+                    )
+                    if num_dummy_samples_per_batch > 0:
+                        num_dummy_samples += num_dummy_samples_per_batch
+                        loss = loss * train_config.train_batch_size / num_dummy_samples_per_batch
 
-                    if train_config.task_type == "seq_classification":
-                        logits = model_outputs.logits
-                        labels = batch["labels"][:, 0]
-                        preds = torch.nn.functional.softmax(logits, dim=-1)
-                        acc_helper.forward(preds, labels)
-                if train_config.opByOpVerifier:
-                    print("Mismatches detected:", verifier.get_perop_mismatch_count())
+                if train_config.task_type == "seq_classification":
+                    logits = model_outputs.logits
+                    labels = batch["labels"][:, 0]
+                    preds = torch.nn.functional.softmax(logits, dim=-1)
+                    acc_helper.forward(preds, labels)
+            if train_config.opByOpVerifier:
+                print("Mismatches detected:", verifier.get_perop_mismatch_count())
 
             total_loss += loss.detach().float()
 
