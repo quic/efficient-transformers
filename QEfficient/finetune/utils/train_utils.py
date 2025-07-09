@@ -334,10 +334,7 @@ def train(
             eval_loss, eval_metric, step_loss, step_metric = evaluation_helper(
                 model, train_config, eval_dataloader, device
             )
-            # Print evaluation metrics
-            logger.log_rank_zero(
-                f"Epoch {epoch + 1}: Eval Loss: {eval_loss.detach().cpu():.4f}, Eval metric: {eval_metric.detach().cpu():.4f}"
-            )
+
             if eval_loss < best_val_loss:
                 best_val_loss = eval_loss
                 logger.log_rank_zero(f"Best eval loss on epoch {epoch + 1} is {best_val_loss:.4f}")
@@ -349,6 +346,16 @@ def train(
                 val_step_metric.extend(step_metric)
                 val_loss.append(float(eval_loss))
                 val_metric.append(float(eval_metric))
+
+            if train_config.enable_ddp:
+                dist.all_reduce(eval_loss, op=dist.ReduceOp.SUM)
+                eval_loss /= get_num_ddp_devices()
+                dist.all_reduce(eval_metric, op=dist.ReduceOp.SUM)
+                eval_metric /= get_num_ddp_devices()
+
+            logger.log_rank_zero(
+                f"Epoch {epoch + 1}: Eval Loss: {eval_loss.detach().cpu():.4f}, Eval metric: {eval_metric.detach().cpu():.4f}"
+            )
 
         # saving the adapters after completion of each epoch
         if train_config.save_model:
@@ -468,12 +475,6 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
         eval_metric = acc_helper.compute()
     else:
         eval_metric = torch.exp(eval_loss)
-
-    if train_config.enable_ddp:
-        dist.all_reduce(eval_loss, op=dist.ReduceOp.SUM)
-        eval_loss /= get_num_ddp_devices()
-        dist.all_reduce(eval_metric, op=dist.ReduceOp.SUM)
-        eval_metric /= get_num_ddp_devices()
 
     return eval_loss, eval_metric, val_step_loss, val_step_metric
 
