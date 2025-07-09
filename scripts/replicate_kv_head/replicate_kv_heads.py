@@ -21,22 +21,15 @@ from QEfficient.utils._utils import login_and_download_hf_lm
 from QEfficient.utils.logging_utils import logger
 
 _MODEL_ARCH_NOT_PRESENT_IN_TRANSFORMERS = ["llama_swiftkv"]
-_CUSTOM_PROJ_MAP = {QEffLlamaSwiftKVAttention: {"k_proj": "k_proj_swiftkv", "v_proj": "v_proj_swiftkv"}}
+_CUSTOM_K_PROJ_MAP = {QEffLlamaSwiftKVAttention: "k_proj_swiftkv"}
+_CUSTOM_V_PROJ_MAP = {QEffLlamaSwiftKVAttention: "v_proj_swiftkv"}
 
 
-def generate_pytorch_tokens(model: torch.nn.Module, inputs: Dict, generate_config: Dict, skip_verification: bool):
-    tokens = torch.tensor([])
-    if (
-        not skip_verification
-        and hasattr(model.config, "model_type")
-        and model.config.model_type not in _MODEL_ARCH_NOT_PRESENT_IN_TRANSFORMERS
-    ):
-        # Generate outputs and tokens
-        with torch.inference_mode():
-            _ = model(**inputs)  # output
-            tokens = model.generate(**inputs, **generate_config)
-        return tokens
-
+def generate_pytorch_tokens(model: torch.nn.Module, inputs: Dict, generate_config: Dict):
+    # Generate outputs and tokens
+    with torch.inference_mode():
+        _ = model(**inputs)  # output
+        tokens = model.generate(**inputs, **generate_config)
     return tokens
 
 
@@ -96,8 +89,8 @@ def duplicate_attention_layer_kv_heads(
     attn_layer: torch.nn.Module, orig_kv_heads: int, repeat: int, head_dim: int, hidden_size: int
 ):
     # get the custom proj name from the map, defaults to "k_proj" & "v_proj"
-    k_proj = getattr(attn_layer, _CUSTOM_PROJ_MAP.get(attn_layer.__class__, {}).get("k_proj", "k_proj"))
-    v_proj = getattr(attn_layer, _CUSTOM_PROJ_MAP.get(attn_layer.__class__, {}).get("v_proj", "v_proj"))
+    k_proj = getattr(attn_layer, _CUSTOM_K_PROJ_MAP.get(attn_layer.__class__, "k_proj"))
+    v_proj = getattr(attn_layer, _CUSTOM_V_PROJ_MAP.get(attn_layer.__class__, "v_proj"))
     duplicate_weights_for_linear_layer(k_proj, orig_kv_heads, repeat, head_dim, hidden_size)
     duplicate_weights_for_linear_layer(v_proj, orig_kv_heads, repeat, head_dim, hidden_size)
 
@@ -143,13 +136,23 @@ def replicate_kv_heads(
     pretrained_model_name_or_path = login_and_download_hf_lm(model_name)
     model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path, **model_kwargs)
 
+    # Check if model has to skip verification
+    if not skip_verification and (
+        hasattr(model.config, "model_type") and model.config.model_type in _MODEL_ARCH_NOT_PRESENT_IN_TRANSFORMERS
+    ):
+        skip_verification = True
+        logger.warning(
+            f"The model {model_name} is of type {model.config.model_type} which is not supported in Transformers so the token comparision is skipped."
+        )
+
     # Undo the effect of replace_transformers_quantizers
     undo_transformers_quantizers()
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     inputs = tokenizer(prompt, return_tensors="pt")
     generation_config = dict(max_new_tokens=10, num_beams=1, do_sample=False)
     # Generate original outputs and tokens
-    orig_tokens = generate_pytorch_tokens(model, inputs, generation_config, skip_verification)
+    if not skip_verification:
+        orig_tokens = generate_pytorch_tokens(model, inputs, generation_config)
 
     # Modify the number of key-value heads
     orig_kv_heads = model.config.num_key_value_heads
@@ -173,14 +176,10 @@ def replicate_kv_heads(
         attn.num_key_value_groups = num_attention_heads // new_kv_heads
         duplicate_attention_layer_kv_heads(attn, orig_kv_heads, repeat, attn.head_dim, hidden_size)
 
-    mod_tokens = generate_pytorch_tokens(model, inputs, generation_config, skip_verification)
+    if not skip_verification:
+        mod_tokens = generate_pytorch_tokens(model, inputs, generation_config)
 
     if not skip_verification:
-        if hasattr(model.config, "model_type") and model.config.model_type in _MODEL_ARCH_NOT_PRESENT_IN_TRANSFORMERS:
-            logger.warning(
-                f"The model {model_name} is of type {model.config.model_type} which is not supported in Transformers so the token comparision is skipped."
-            )
-
         # Print the original and modified token outputs
         print("Original:", tokenizer.batch_decode(orig_tokens))
         print("Modified:", tokenizer.batch_decode(mod_tokens))
