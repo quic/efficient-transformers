@@ -175,7 +175,6 @@ pipeline {
            steps {
                sh '''
                    . ~/.bashrc
-                   sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
                    sudo docker exec ${BUILD_TAG} bash -c "
                    cd /efficient-transformers &&
                    apt update &&
@@ -198,7 +197,7 @@ pipeline {
                     sh '''
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
+                    . preflight_qeff_ft/bin/activate &&
                     mkdir -p $PWD/cli_qaic_finetuning &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/cli_qaic_finetuning &&
