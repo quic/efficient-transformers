@@ -123,7 +123,6 @@ class QEffLlavaNextDecoderWrapper(nn.Module):
     def forward(self, input_ids, vision_embeds, position_ids, image_idx, past_key_values):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         image_features = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
-        # breakpoint()
         mask = input_ids == self.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
