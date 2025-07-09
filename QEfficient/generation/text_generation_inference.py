@@ -444,7 +444,11 @@ class QEffTextGenerationBase:
         self._set_tokenizer_params()  # set tokenizer params
         # Skip inputs/outputs
         self._session.skip_buffers(
-            [x for x in self._session.input_names + self._session.output_names if x.startswith("past_")]
+            [
+                x
+                for x in self._session.input_names + self._session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
         )
 
     def _set_tokenizer_params(self):
