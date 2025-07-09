@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import argparse
-import warnings
 from typing import Dict, Optional
 
 import torch
@@ -19,15 +18,16 @@ from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
 from QEfficient.transformers.quantizers.quantizer_compressed_tensors import FP8DeQuantLinear
 from QEfficient.utils._utils import login_and_download_hf_lm
+from QEfficient.utils.logging_utils import logger
 
 _MODEL_ARCH_NOT_PRESENT_IN_TRANSFORMERS = ["llama_swiftkv"]
 _CUSTOM_PROJ_MAP = {QEffLlamaSwiftKVAttention: {"k_proj": "k_proj_swiftkv", "v_proj": "v_proj_swiftkv"}}
 
 
-def generate_pytorch_tokens(model: torch.nn.Module, inputs: Dict, generate_config: Dict, generate_tokens: bool):
+def generate_pytorch_tokens(model: torch.nn.Module, inputs: Dict, generate_config: Dict, skip_verification: bool):
     tokens = torch.tensor([])
     if (
-        generate_tokens
+        not skip_verification
         and hasattr(model.config, "model_type")
         and model.config.model_type not in _MODEL_ARCH_NOT_PRESENT_IN_TRANSFORMERS
     ):
@@ -106,7 +106,7 @@ def replicate_kv_heads(
     model_name: str = "meta-llama/Meta-Llama-3-8B-Instruct",
     prompt: str = "My name is",
     repeat: int = 2,
-    verify_replication: bool = True,
+    skip_verification: bool = False,
     full_batch_size: Optional[int] = None,
     num_hidden_layers: Optional[int] = None,
     num_attention_heads: Optional[int] = None,
@@ -149,7 +149,7 @@ def replicate_kv_heads(
     inputs = tokenizer(prompt, return_tensors="pt")
     generation_config = dict(max_new_tokens=10, num_beams=1, do_sample=False)
     # Generate original outputs and tokens
-    orig_tokens = generate_pytorch_tokens(model, inputs, generation_config, verify_replication)
+    orig_tokens = generate_pytorch_tokens(model, inputs, generation_config, skip_verification)
 
     # Modify the number of key-value heads
     orig_kv_heads = model.config.num_key_value_heads
@@ -173,13 +173,12 @@ def replicate_kv_heads(
         attn.num_key_value_groups = num_attention_heads // new_kv_heads
         duplicate_attention_layer_kv_heads(attn, orig_kv_heads, repeat, attn.head_dim, hidden_size)
 
-    mod_tokens = generate_pytorch_tokens(model, inputs, generation_config, verify_replication)
+    mod_tokens = generate_pytorch_tokens(model, inputs, generation_config, skip_verification)
 
-    if verify_replication:
+    if not skip_verification:
         if hasattr(model.config, "model_type") and model.config.model_type in _MODEL_ARCH_NOT_PRESENT_IN_TRANSFORMERS:
-            warnings.warn(
-                f"The model {model_name} is of type {model.config.model_type} which is not supported in Transformers so the token comparision is skipped.",
-                UserWarning,
+            logger.warning(
+                f"The model {model_name} is of type {model.config.model_type} which is not supported in Transformers so the token comparision is skipped."
             )
 
         # Print the original and modified token outputs
@@ -209,18 +208,20 @@ if __name__ == "__main__":
         "--model_name",
         "--model-name",
         type=str,
-        default="Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
+        default="meta-llama/Meta-Llama-3-8B-Instruct",
         help="Name of the model to use.",
     )
     parser.add_argument("--prompt", type=str, default="My name is", help="Prompt to use for the model.")
     parser.add_argument("--repeat", type=int, default=2, help="Factor to repeat key-value heads.")
-    parser.add_argument("--verify_replication", action="store_true", help="Verifies kv_head replication before export.")
+    parser.add_argument(
+        "--skip_verification", action="store_true", help="Skip verification of kv_head replication before export."
+    )
 
     parser.add_argument(
         "--full_batch_size",
         "--full-batch-size",
         type=int,
-        default=1,
+        default=None,
         help="Set full batch size to enable continuous batching mode, default is None",
     )
     parser.add_argument(
@@ -250,7 +251,7 @@ if __name__ == "__main__":
         model_name=args.model_name,
         prompt=args.prompt,
         repeat=args.repeat,
-        verify_replication=args.verify_replication,
+        skip_verification=args.skip_verification,
         full_batch_size=args.full_batch_size,
         num_hidden_layers=args.num_hidden_layers,
         num_attention_heads=args.num_attention_heads,
