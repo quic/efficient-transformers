@@ -6,17 +6,38 @@
 # -----------------------------------------------------------------------------
 
 import argparse
-from typing import Optional
+import warnings
+from typing import Dict, Optional
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM, export
+from QEfficient.transformers.models.llama_swiftkv.modeling_llama_swiftkv import QEffLlamaSwiftKVAttention
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers, undo_transformers_quantizers
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
 from QEfficient.transformers.quantizers.quantizer_compressed_tensors import FP8DeQuantLinear
 from QEfficient.utils._utils import login_and_download_hf_lm
+
+_MODEL_ARCH_NOT_PRESENT_IN_TRANSFORMERS = ["llama_swiftkv"]
+_CUSTOM_PROJ_MAP = {QEffLlamaSwiftKVAttention: {"k_proj": "k_proj_swiftkv", "v_proj": "v_proj_swiftkv"}}
+
+
+def generate_pytorch_tokens(model: torch.nn.Module, inputs: Dict, generate_config: Dict, generate_tokens: bool):
+    tokens = torch.tensor([])
+    if (
+        generate_tokens
+        and hasattr(model.config, "model_type")
+        and model.config.model_type not in _MODEL_ARCH_NOT_PRESENT_IN_TRANSFORMERS
+    ):
+        # Generate outputs and tokens
+        with torch.inference_mode():
+            _ = model(**inputs)  # output
+            tokens = model.generate(**inputs, **generate_config)
+        return tokens
+
+    return tokens
 
 
 def duplicate_weights_for_linear_layer(
@@ -71,10 +92,21 @@ def duplicate_weights_for_linear_layer(
             )
 
 
+def duplicate_attention_layer_kv_heads(
+    attn_layer: torch.nn.Module, orig_kv_heads: int, repeat: int, head_dim: int, hidden_size: int
+):
+    # get the custom proj name from the map, defaults to "k_proj" & "v_proj"
+    k_proj = getattr(attn_layer, _CUSTOM_PROJ_MAP.get(attn_layer.__class__, {}).get("k_proj", "k_proj"))
+    v_proj = getattr(attn_layer, _CUSTOM_PROJ_MAP.get(attn_layer.__class__, {}).get("v_proj", "v_proj"))
+    duplicate_weights_for_linear_layer(k_proj, orig_kv_heads, repeat, head_dim, hidden_size)
+    duplicate_weights_for_linear_layer(v_proj, orig_kv_heads, repeat, head_dim, hidden_size)
+
+
 def replicate_kv_heads(
     model_name: str = "meta-llama/Meta-Llama-3-8B-Instruct",
     prompt: str = "My name is",
     repeat: int = 2,
+    verify_replication: bool = True,
     full_batch_size: Optional[int] = None,
     num_hidden_layers: Optional[int] = None,
     num_attention_heads: Optional[int] = None,
@@ -115,11 +147,9 @@ def replicate_kv_heads(
     undo_transformers_quantizers()
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     inputs = tokenizer(prompt, return_tensors="pt")
-
+    generation_config = dict(max_new_tokens=10, num_beams=1, do_sample=False)
     # Generate original outputs and tokens
-    with torch.inference_mode():
-        _ = model(**inputs)  # original output
-        orig_tokens = model.generate(**inputs, max_new_tokens=10, num_beams=1, do_sample=False)
+    orig_tokens = generate_pytorch_tokens(model, inputs, generation_config, verify_replication)
 
     # Modify the number of key-value heads
     orig_kv_heads = model.config.num_key_value_heads
@@ -141,22 +171,25 @@ def replicate_kv_heads(
         attn = block.self_attn
         attn.num_key_value_heads = new_kv_heads
         attn.num_key_value_groups = num_attention_heads // new_kv_heads
-        duplicate_weights_for_linear_layer(attn.k_proj, orig_kv_heads, repeat, attn.head_dim, hidden_size)
-        duplicate_weights_for_linear_layer(attn.v_proj, orig_kv_heads, repeat, attn.head_dim, hidden_size)
+        duplicate_attention_layer_kv_heads(attn, orig_kv_heads, repeat, attn.head_dim, hidden_size)
 
-    # Generate modified outputs and tokens
-    with torch.inference_mode():
-        _ = model(**inputs)  # Modified output
-        mod_tokens = model.generate(**inputs, max_new_tokens=10, num_beams=1, do_sample=False)
+    mod_tokens = generate_pytorch_tokens(model, inputs, generation_config, verify_replication)
 
-    # Print the original and modified token outputs
-    print("Original:", tokenizer.batch_decode(orig_tokens))
-    print("Modified:", tokenizer.batch_decode(mod_tokens))
+    if verify_replication:
+        if hasattr(model.config, "model_type") and model.config.model_type in _MODEL_ARCH_NOT_PRESENT_IN_TRANSFORMERS:
+            warnings.warn(
+                f"The model {model_name} is of type {model.config.model_type} which is not supported in Transformers so the token comparision is skipped.",
+                UserWarning,
+            )
 
-    if not torch.all(orig_tokens == mod_tokens):
-        raise RuntimeError(
-            "Something went wrong while duplicating KV heads weights, output token don't match after modification"
-        )
+        # Print the original and modified token outputs
+        print("Original:", tokenizer.batch_decode(orig_tokens))
+        print("Modified:", tokenizer.batch_decode(mod_tokens))
+
+        if not torch.all(orig_tokens == mod_tokens):
+            raise RuntimeError(
+                "Something went wrong while duplicating KV heads weights, output token don't match after modification"
+            )
 
     # Export the modified model
     q_model = QEFFAutoModelForCausalLM(model, continuous_batching=(True if full_batch_size else False))
@@ -176,16 +209,18 @@ if __name__ == "__main__":
         "--model_name",
         "--model-name",
         type=str,
-        default="meta-llama/Meta-Llama-3-8B-Instruct",
+        default="Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
         help="Name of the model to use.",
     )
     parser.add_argument("--prompt", type=str, default="My name is", help="Prompt to use for the model.")
     parser.add_argument("--repeat", type=int, default=2, help="Factor to repeat key-value heads.")
+    parser.add_argument("--verify_replication", action="store_true", help="Verifies kv_head replication before export.")
+
     parser.add_argument(
         "--full_batch_size",
         "--full-batch-size",
         type=int,
-        default=None,
+        default=1,
         help="Set full batch size to enable continuous batching mode, default is None",
     )
     parser.add_argument(
@@ -211,11 +246,11 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-
     replicate_kv_heads(
         model_name=args.model_name,
         prompt=args.prompt,
         repeat=args.repeat,
+        verify_replication=args.verify_replication,
         full_batch_size=args.full_batch_size,
         num_hidden_layers=args.num_hidden_layers,
         num_attention_heads=args.num_attention_heads,
