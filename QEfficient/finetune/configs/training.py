@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 from dataclasses import dataclass
 
 
@@ -43,13 +44,16 @@ class TrainConfig:
         save_metrics (bool): Save training metrics (default: True).
         intermediate_step_save (int): Steps between intermediate saves (default: 1000).
         batching_strategy (str): Batching strategy (default: "packing").
-        enable_sorting_for_ddp (bool): Sort data for DDP (default: True).
         convergence_counter (int): Steps to check convergence (default: 5).
         convergence_loss (float): Loss threshold for convergence (default: 1e-4).
         use_profiler (bool): Enable profiling (default: False).
+        enable_pp (bool): Enable training with pipeline parallelism (default: False).
+        num_pp_stages (int): Number of stages in which model is split layerwise when training using pipeline (default: 1).
         enable_ddp (bool): Enable distributed data parallel (default: False).
-        dump_root_dir (str): Directory for mismatch dumps (default: "meta-llama-samsum-mismatches/step_").
+        enable_sorting_for_ddp (bool): Sort data for DDP (default: True).
         opByOpVerifier (bool): Enable operation-by-operation verification (default: False).
+        dump_logs (bool): Whether to dump logs (default: True).
+        log_level (str): logging level (default: logging.INFO)
     """
 
     model_name: str = "meta-llama/Llama-3.2-1B"
@@ -97,5 +101,7 @@ class TrainConfig:
     num_pp_stages: int = 1
     enable_ddp: bool = False
     enable_sorting_for_ddp: bool = True
-    dump_root_dir: str = "mismatches/step_"
     opByOpVerifier: bool = False
+
+    dump_logs: bool = True
+    log_level: str = logging.INFO

@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+import logging
 
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
 from QEfficient.finetune.utils.helper import BATCHING_STRATEGY, DEVICE, PEFT_METHOD, TASK_TYPE
@@ -269,17 +270,30 @@ def get_finetune_parser():
         help="Number of stages in which model is split layerwise when training using pipeline parallel.",
     )
     parser.add_argument(
-        "--dump_root_dir",
-        "--dump-root-dir",
-        required=False,
-        type=str,
-        default="mismatches/step_",
-        help="Directory for mismatch dumps by opByOpVerifier",
-    )
-    parser.add_argument(
         "--opByOpVerifier",
         action="store_true",
-        help="Enable operation-by-operation verification w.r.t reference device(cpu). It is a context manager interface that captures and verifies each operator against reference device. In case results of test & reference do not match under given tolerances, a standalone unittest is generated at dump_root_dir.",
+        help=argparse.SUPPRESS,
+        # This is for debugging purpose only.
+        # Enables operation-by-operation verification w.r.t reference device(cpu).
+        # It is a context manager interface that captures and verifies each operator against reference device.
+        # In case results of test & reference do not match under given tolerances, a standalone unittest is generated at dump_root_dir.
+    )
+    parser.add_argument(
+        "--dump_logs",
+        "--dump-logs",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=True,
+        help="Whether to dump logs",
+    )
+    parser.add_argument(
+        "--log_level",
+        "--log-level",
+        required=False,
+        type=str,
+        default=logging.INFO,
+        help="logging level",
     )
 
     return parser
