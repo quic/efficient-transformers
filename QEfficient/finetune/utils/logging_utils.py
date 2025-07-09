@@ -25,9 +25,8 @@ class FTLogger:
             raise errortype(message)
 
         def log_rank_zero(msg: str, level: int = logging.INFO):
-            if not is_rank_zero:
-                return
-            self.logger.log(level, msg, stacklevel=2)
+            if is_rank_zero():
+                self.logger.log(level, msg, stacklevel=2)
 
         def prepare_for_logs(output_path, dump_logs=False, level=logging.INFO):
             self.logger.setLevel(level)

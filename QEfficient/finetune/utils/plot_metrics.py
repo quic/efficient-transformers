@@ -75,8 +75,8 @@ def plot_metrics(file_path):
     with open(file_path, "r") as f:
         try:
             data = json.load(f)
-        except json.JSONDecodeError:
-            logger.raise_error("Invalid JSON file.", json.JSONDecodeError)
+        except json.JSONDecodeError as e:
+            logger.raise_error("Invalid JSON file.", e)
             return
 
     directory = os.path.dirname(file_path)
