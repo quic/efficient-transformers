@@ -21,6 +21,10 @@ DEVICE = ["qaic", "cpu", "cuda"]
 BATCHING_STRATEGY = ["padding", "packing"]
 
 
+def is_rank_zero():
+    return int(os.getenv("LOCAL_RANK", 0)) == 0
+
+
 def get_num_ddp_devices():
     return int(os.getenv("WORLD_SIZE", 1))
 
@@ -44,7 +48,7 @@ def get_op_verifier_ctx(
         return nullcontext()
 
     filter_config = qaic_debug.DispatchFilterConfig.default(train_device)
-    dump_dir = dump_dir + "_" + str(step)
+    dump_dir = dump_dir + "/mismatches/step_" + str(step)
     return qaic_debug.OpByOpVerifierMode(
         ref_device=ref_device,
         ref_dtype=ref_dtype,
