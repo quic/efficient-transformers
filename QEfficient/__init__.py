@@ -52,7 +52,11 @@ if check_qaic_sdk():
     from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
     from QEfficient.peft import QEffAutoPeftModelForCausalLM
     from QEfficient.transformers.transform import transform
-
+    
+    
+    # Imports for the diffusers
+    
+    from QEfficient.diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import QEFFStableDiffusionPipeline
     # Users can use QEfficient.export for exporting models to ONNX
     export = qualcomm_efficient_converter
 
@@ -67,6 +71,7 @@ if check_qaic_sdk():
         "QEFFAutoModelForImageTextToText",
         "QEFFAutoModelForSpeechSeq2Seq",
         "QEFFCommonLoader",
+        "QEFFStableDiffusionPipeline"
     ]
 
 else:
