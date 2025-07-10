@@ -8,7 +8,7 @@
 import argparse
 
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
-from QEfficient.finetune.utils.helper import BATCHING_STRATEGY, DEVICE, PEFT_METHOD, TASK_TYPE
+from QEfficient.finetune.utils.helper import BATCHING_STRATEGY, DEVICE, PEFT_METHOD, TASK_MODE
 
 
 def str2bool(v):
@@ -140,12 +140,12 @@ def get_finetune_parser():
         help="Dataset name to be used for finetuning (default: %(default)s)",
     )
     parser.add_argument(
-        "--task_type",
-        "--task-type",
+        "--task_mode",
+        "--task-mode",
         required=False,
         type=str,
         default="generation",
-        choices=TASK_TYPE,
+        choices=TASK_MODE,
         help="Task used for finetuning. Use 'generation' for decoder based models and 'seq_classification' for encoder based models.",
     )
     parser.add_argument(

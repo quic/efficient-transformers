@@ -113,7 +113,7 @@ def load_model_and_tokenizer(
     """
     logger.log_rank_zero(f"Loading HuggingFace model for {train_config.model_name}")
     pretrained_model_path = hf_download(train_config.model_name)
-    if train_config.task_type == "seq_classification":
+    if train_config.task_mode == "seq_classification":
         model = AutoModelForSequenceClassification.from_pretrained(
             pretrained_model_path,
             num_labels=dataset_config.num_labels,

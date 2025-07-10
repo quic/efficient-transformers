@@ -15,7 +15,7 @@ except ImportError as e:
     print(f"Warning: {e}. Moving ahead without these qaic modules.")
 
 
-TASK_TYPE = ["generation", "seq_classification"]
+TASK_MODE = ["generation", "seq_classification"]
 PEFT_METHOD = ["lora"]
 DEVICE = ["qaic", "cpu", "cuda"]
 BATCHING_STRATEGY = ["padding", "packing"]

@@ -35,7 +35,7 @@ class TrainConfig:
         gamma (float): Learning rate decay factor (default: 0.85).
         seed (int): Random seed for reproducibility (default: 42).
         dataset (str): Dataset name for training (default: "alpaca_dataset").
-        task_type (str): Type of task for which the finetuning is to be done. Options: "generation" and "seq_classification". (default: "generation")
+        task_mode (str): Mode of task for which the finetuning is to be done. Options: "generation" and "seq_classification". (default: "generation")
         use_peft (bool): Whether to use PEFT (default: True).
         peft_method (str): Parameter-efficient fine-tuning method (default: "lora").
         from_peft_checkpoint (str): Path to PEFT checkpoint (default: "").
@@ -73,7 +73,7 @@ class TrainConfig:
     gamma: float = 0.85  # multiplicatively decay the learning rate by gamma after each epoch
     seed: int = 42
     dataset: str = "alpaca_dataset"
-    task_type: str = "generation"  # "generation" / "seq_classification"
+    task_mode: str = "generation"  # "generation" / "seq_classification"
     use_peft: bool = True  # use parameter efficient finetuning
     peft_method: str = "lora"
     from_peft_checkpoint: str = ""  # if not empty and peft_method='lora', will load the peft checkpoint and resume the fine-tuning on that checkpoint
