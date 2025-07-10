@@ -579,6 +579,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     def __init__(
         self,
         model: nn.Module,
+        continuous_batching,
         **kwargs,
     ):
         if kwargs.pop("full_batch_size", None):
@@ -588,6 +589,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.model.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model)
+        self.continuous_batching = continuous_batching
         self.input_shapes, self.output_names = None, None
 
     @property
@@ -627,8 +629,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         export_dir: Optional[str] = None,
         **kwargs,
     ) -> str:
-        inputs = self.model.get_dummy_inputs(kv_offload=True)
-        dynamic_axes = self.model.get_onnx_dynamic_axes(kv_offload=True)
+        inputs = self.model.get_dummy_inputs(kv_offload=True, continuous_batching=self.continuous_batching)
+        dynamic_axes = self.model.get_onnx_dynamic_axes(kv_offload=True, continuous_batching=self.continuous_batching)
         output_names = self.model.get_output_names(kv_offload=True)
         self.vision_model.export(
             inputs["vision"],
@@ -637,6 +639,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             export_dir,
         )
 
+        import ipdb
+
+        ipdb.set_trace()
         self.lang_model.export(inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir)
         return self.onnx_path
 
@@ -661,14 +666,20 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_lang: Optional[bool] = False,
         **compiler_options,
     ) -> str:
-        if any(param is not None for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens]):
-            raise ValueError(
-                f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens' to be None but got: "
-                f"full_batch_size={full_batch_size}, kv_cache_batch_size={kv_cache_batch_size}, num_speculative_tokens={num_speculative_tokens}, "
-            )
-
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
+
+        if self.continuous_batching and full_batch_size is None:
+            raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
+
+        if kv_cache_batch_size and not full_batch_size:
+            raise ValueError(
+                "KV caching requires continuous batching. Please set `full_batch_size` and "
+                "enable `continuous_batching=True` in `from_pretrained`."
+            )
+
+        # Infer kv_cache_batch_size if not provided
+        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
         output_names = self.model.get_output_names(kv_offload=True)
 
@@ -678,6 +689,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             ctx_len=ctx_len,
             img_size=img_size,
             kv_offload=True,
+            continuous_batching=self.continuous_batching,
+            kv_cache_batch_size=kv_cache_batch_size,
+            full_batch_size=full_batch_size,
             **compiler_options,
         )
 
@@ -746,6 +760,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     def generate(
         self,
         inputs: torch.Tensor,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer] = None,
+        prompts: List[str] = None,
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
@@ -763,6 +779,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         """
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
+        if tokenizer and prompts:
+            return QEfficient.cloud_ai_100_exec_kv(
+                tokenizer,
+                self.lang_model.qpc_path,
+                prompt=prompts,
+                device_id=device_ids,
+                generation_len=generation_len,
+            )
 
         return self.kv_offload_generate(
             inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
@@ -1304,15 +1328,21 @@ class QEFFAutoModelForImageTextToText:
 
     _hf_auto_class = AutoModelForImageTextToText
 
-    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = True, **kwargs):
+    def __new__(self, model: nn.Module, kv_offload: Optional[bool] = True, continuous_batching: bool = False, **kwargs):
         if kv_offload:
-            return _QEffAutoModelForImageTextToTextDualQPC(model, **kwargs)
+            return _QEffAutoModelForImageTextToTextDualQPC(model, continuous_batching, **kwargs)
         else:
             return _QEFFAutoModelForImageTextToTextSingleQPC(model, **kwargs)
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str, kv_offload: Optional[bool] = None, **kwargs):
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str,
+        kv_offload: Optional[bool] = None,
+        continuous_batching: bool = False,
+        **kwargs,
+    ):
         """Used to load models supported by transformers.AutoModelForImageTextToText for Cloud AI 100.
 
         Args:
@@ -1329,12 +1359,18 @@ class QEFFAutoModelForImageTextToText:
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
 
-        if kwargs.pop("continuous_batching", None):
-            NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
+        if continuous_batching and not kv_offload:
+            NotImplementedError("Continuous batching is not supported for kv_offload = False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        return cls(model, kv_offload=kv_offload, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
+        return cls(
+            model,
+            kv_offload=kv_offload,
+            continuous_batching=continuous_batching,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            **kwargs,
+        )
 
 
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoModelForImageTextToText}
