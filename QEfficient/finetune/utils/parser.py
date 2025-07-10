@@ -6,9 +6,10 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+import logging
 
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
-from QEfficient.finetune.utils.helper import BATCHING_STRATEGY, DEVICE, PEFT_METHOD, TASK_TYPE
+from QEfficient.finetune.utils.helper import BATCHING_STRATEGY, DEVICE, PEFT_METHOD, TASK_MODE
 
 
 def str2bool(v):
@@ -140,12 +141,12 @@ def get_finetune_parser():
         help="Dataset name to be used for finetuning (default: %(default)s)",
     )
     parser.add_argument(
-        "--task_type",
-        "--task-type",
+        "--task_mode",
+        "--task-mode",
         required=False,
         type=str,
         default="generation",
-        choices=TASK_TYPE,
+        choices=TASK_MODE,
         help="Task used for finetuning. Use 'generation' for decoder based models and 'seq_classification' for encoder based models.",
     )
     parser.add_argument(
@@ -261,7 +262,22 @@ def get_finetune_parser():
         # This is for debugging purpose only.
         # Enables operation-by-operation verification w.r.t reference device(cpu).
         # It is a context manager interface that captures and verifies each operator against reference device.
-        # In case results of test & reference do not match under given tolerances, a standalone unittest is generated at dump_root_dir.
+        # In case results of test & reference do not match under given tolerances, a standalone unittest is generated at output_dir/mismatches.
+    )
+    parser.add_argument(
+        "--log_level",
+        "--log-level",
+        required=False,
+        type=str,
+        default=logging.INFO,
+        help="logging level",
+    )
+    parser.add_argument(
+        "--peft_config_file",
+        "--peft-config-file",
+        type=str,
+        default=None,
+        help="Path to YAML/JSON file containing PEFT (LoRA) config.",
     )
 
     return parser

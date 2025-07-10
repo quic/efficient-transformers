@@ -15,10 +15,10 @@ except ImportError as e:
     print(f"Warning: {e}. Moving ahead without these qaic modules.")
 
 
-TASK_TYPE = ["generation", "seq_classification"]
-PEFT_METHOD = ["lora"]
-DEVICE = ["qaic", "cpu", "cuda"]
 BATCHING_STRATEGY = ["padding", "packing"]
+DEVICE = ["qaic", "cpu", "cuda"]
+PEFT_METHOD = ["lora"]
+TASK_MODE = ["generation", "seq_classification"]
 
 
 def is_rank_zero():

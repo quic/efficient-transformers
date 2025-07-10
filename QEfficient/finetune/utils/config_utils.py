@@ -52,12 +52,11 @@ def update_config(config, **kwargs):
                 logger.debug(f"Unknown parameter '{k}' for config type '{config_type}'")
 
 
-def generate_peft_config(train_config: TrainConfig, peft_config_file: str = None, **kwargs) -> Any:
+def generate_peft_config(train_config: TrainConfig, **kwargs) -> Any:
     """Generate a PEFT-compatible configuration from a custom config based on peft_method.
 
     Args:
         train_config (TrainConfig): Training configuration with peft_method.
-        custom_config: Custom configuration object (e.g., LoraConfig).
 
     Returns:
         Any: A PEFT-specific configuration object (e.g., PeftLoraConfig).
@@ -65,8 +64,8 @@ def generate_peft_config(train_config: TrainConfig, peft_config_file: str = None
     Raises:
         RuntimeError: If the peft_method is not supported.
     """
-    if peft_config_file:
-        peft_config_data = load_config_file(peft_config_file)
+    if train_config.peft_config_file:
+        peft_config_data = load_config_file(train_config.peft_config_file)
         validate_config(peft_config_data, config_type="lora")
         peft_config = PeftLoraConfig(**peft_config_data)
     else:
