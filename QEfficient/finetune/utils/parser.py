@@ -276,7 +276,7 @@ def get_finetune_parser():
         # This is for debugging purpose only.
         # Enables operation-by-operation verification w.r.t reference device(cpu).
         # It is a context manager interface that captures and verifies each operator against reference device.
-        # In case results of test & reference do not match under given tolerances, a standalone unittest is generated at dump_root_dir.
+        # In case results of test & reference do not match under given tolerances, a standalone unittest is generated at output_dir/mismatches.
     )
     parser.add_argument(
         "--dump_logs",

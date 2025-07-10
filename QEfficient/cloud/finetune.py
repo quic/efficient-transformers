@@ -28,14 +28,10 @@ from QEfficient.finetune.utils.config_utils import (
 )
 from QEfficient.finetune.utils.dataset_utils import get_dataloader
 from QEfficient.finetune.utils.device_map import get_device_map
+from QEfficient.finetune.utils.helper import get_longest_seq_length, print_model_size, print_trainable_parameters
 from QEfficient.finetune.utils.logging_utils import logger
 from QEfficient.finetune.utils.parser import get_finetune_parser
-from QEfficient.finetune.utils.train_utils import (
-    get_longest_seq_length,
-    print_model_size,
-    print_trainable_parameters,
-    train,
-)
+from QEfficient.finetune.utils.train_utils import train
 from QEfficient.utils._utils import hf_download
 
 # Try importing QAIC-specific module, proceed without it if unavailable
@@ -338,7 +334,6 @@ def main(peft_config_file: str = None, **kwargs) -> None:
         optimizer,
         scheduler,
         train_config,
-        dist.get_rank() if train_config.enable_ddp else None,
     )
     if train_config.enable_ddp:
         dist.destroy_process_group()
