@@ -63,8 +63,8 @@ def train(
 
     train_metric = []
     train_loss = []
-    val_metric = []
-    val_loss = []
+    eval_metric = []
+    eval_loss = []
 
     if train_config.save_metrics:
         if not os.path.exists(train_config.output_dir):
@@ -74,13 +74,13 @@ def train(
         )
         train_step_metric = []
         train_step_loss = []
-        val_step_loss = []
-        val_step_metric = []
+        eval_step_loss = []
+        eval_step_metric = []
 
     epoch_times = []
     checkpoint_times = []
     results = {}
-    best_val_loss = float("inf")
+    best_eval_loss = float("inf")
     total_train_steps = 0
     max_steps_reached = False  # Flag to indicate max training steps reached
 
@@ -130,7 +130,6 @@ def train(
                 continue
 
         logger.log_rank_zero(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
-        logger.log_rank_zero(f"train_config.max_train_step: {train_config.max_train_step}")
         # stop when the maximum number of training steps is reached
         if max_steps_reached:
             break
@@ -207,6 +206,7 @@ def train(
             total_loss += loss.detach().float()
 
             if is_rank_zero():
+                tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
                 if loss <= train_config.convergence_loss:
                     loss_0_counter += 1
                 else:
@@ -214,16 +214,13 @@ def train(
             if train_config.enable_ddp:
                 dist.broadcast(loss_0_counter, src=0)
 
-            if is_rank_zero():
-                tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
-
             if train_config.save_metrics:
                 train_step_loss.append(loss.detach().float().item())
                 if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
-                    step_metric_val = float(acc_helper.compute())
+                    step_metric_value = float(acc_helper.compute())
                 else:
-                    step_metric_val = float(torch.exp(loss.detach().float()))
-                train_step_metric.append(step_metric_val)
+                    step_metric_value = float(torch.exp(loss.detach().float()))
+                train_step_metric.append(step_metric_value)
 
             # Accumalate gradients
             complete_accum_steps = (
@@ -271,10 +268,10 @@ def train(
                     train_loss,
                     train_step_metric,
                     train_metric,
-                    val_step_loss,
-                    val_loss,
-                    val_step_metric,
-                    val_metric,
+                    eval_step_loss,
+                    eval_loss,
+                    eval_step_metric,
+                    eval_metric,
                 )
             if loss_0_counter.item() == train_config.convergence_counter:
                 logger.log_rank_zero(
@@ -286,32 +283,19 @@ def train(
         epoch_end_time = time.perf_counter() - epoch_start_time
         epoch_times.append(epoch_end_time)
 
-        if loss_0_counter.item() == train_config.convergence_counter:
-            if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
-                train_epoch_loss = (
-                    0.0
-                    if total_loss == 0.0
-                    else total_loss / (step - intermediate_step - num_dummy_samples / train_config.train_batch_size)
-                )
-            else:
-                train_epoch_loss = (
-                    0.0
-                    if total_loss == 0.0
-                    else total_loss / (step + 1 - num_dummy_samples / train_config.train_batch_size)
-                )
+        if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
+            train_epoch_loss = (
+                0.0
+                if total_loss == 0.0
+                else total_loss / (step - intermediate_step - (num_dummy_samples / train_config.train_batch_size))
+            )
         else:
-            if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
-                train_epoch_loss = (
-                    0.0
-                    if total_loss == 0.0
-                    else total_loss / (step - intermediate_step - (num_dummy_samples / train_config.train_batch_size))
-                )
-            else:
-                train_epoch_loss = (
-                    0.0
-                    if total_loss == 0.0
-                    else total_loss / (step + 1 - (num_dummy_samples / train_config.train_batch_size))
-                )
+            train_epoch_loss = (
+                0.0
+                if total_loss == 0.0
+                else total_loss / (step + 1 - (num_dummy_samples / train_config.train_batch_size))
+            )
+
         if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
             train_epoch_metric = acc_helper.compute()
             acc_helper.reset()
@@ -331,30 +315,30 @@ def train(
         lr_scheduler.step()
 
         if train_config.run_validation:
-            eval_loss, eval_metric, step_loss, step_metric = evaluation_helper(
+            eval_epoch_loss, eval_epoch_metric, step_loss, step_metric = evaluation_helper(
                 model, train_config, eval_dataloader, device
             )
 
-            if eval_loss < best_val_loss:
-                best_val_loss = eval_loss
-                logger.log_rank_zero(f"Best eval loss on epoch {epoch + 1} is {best_val_loss:.4f}")
+            if eval_epoch_loss < best_eval_loss:
+                best_eval_loss = eval_epoch_loss
+                logger.log_rank_zero(f"Best eval loss on epoch {epoch + 1} is {best_eval_loss:.4f}")
 
             if is_rank_zero():
-                tensorboard_updates.add_scalars("loss", {"eval": eval_loss}, total_train_steps)
+                tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
             if train_config.save_metrics:
-                val_step_loss.extend(step_loss)
-                val_step_metric.extend(step_metric)
-                val_loss.append(float(eval_loss))
-                val_metric.append(float(eval_metric))
+                eval_step_loss.extend(step_loss)
+                eval_step_metric.extend(step_metric)
+                eval_loss.append(float(eval_epoch_loss))
+                eval_metric.append(float(eval_epoch_metric))
 
             if train_config.enable_ddp:
-                dist.all_reduce(eval_loss, op=dist.ReduceOp.SUM)
-                eval_loss /= get_num_ddp_devices()
-                dist.all_reduce(eval_metric, op=dist.ReduceOp.SUM)
-                eval_metric /= get_num_ddp_devices()
+                dist.all_reduce(eval_epoch_loss, op=dist.ReduceOp.SUM)
+                eval_epoch_loss /= get_num_ddp_devices()
+                dist.all_reduce(eval_epoch_metric, op=dist.ReduceOp.SUM)
+                eval_epoch_metric /= get_num_ddp_devices()
 
             logger.log_rank_zero(
-                f"Epoch {epoch + 1}: Eval Loss: {eval_loss.detach().cpu():.4f}, Eval metric: {eval_metric.detach().cpu():.4f}"
+                f"Epoch {epoch + 1}: Eval Loss: {eval_epoch_loss.detach().cpu():.4f}, Eval metric: {eval_epoch_metric.detach().cpu():.4f}"
             )
 
         # saving the adapters after completion of each epoch
@@ -377,19 +361,19 @@ def train(
                 train_loss,
                 train_step_metric,
                 train_metric,
-                val_step_loss,
-                val_loss,
-                val_step_metric,
-                val_metric,
+                eval_step_loss,
+                eval_loss,
+                eval_step_metric,
+                eval_metric,
             )
     avg_epoch_time = sum(epoch_times) / len(epoch_times)
     avg_checkpoint_time = sum(checkpoint_times) / len(checkpoint_times) if len(checkpoint_times) > 0 else 0
 
-    results["last_epoch_train_loss"] = train_epoch_loss
-    results["last_epoch_train_metric"] = train_epoch_metric
+    results["last_epoch_train_loss"] = train_epoch_loss.cpu()
+    results["last_epoch_train_metric"] = train_epoch_metric.cpu()
     if train_config.run_validation:
-        results["last_epoch_eval_loss"] = eval_loss
-        results["last_epoch_eval_metric"] = eval_metric
+        results["last_epoch_eval_loss"] = eval_epoch_loss.cpu()
+        results["last_epoch_eval_metric"] = eval_epoch_metric.cpu()
     results["avg_epoch_time"] = avg_epoch_time
     results["avg_checkpoint_time"] = avg_checkpoint_time
     if train_config.save_metrics:
@@ -405,7 +389,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
         model: The model to evaluate
         eval_dataloader: The dataloader containing the evaluation data
 
-    Returns: eval_epoch_loss, eval_metric, eval_step_loss, eval_step_metric
+    Returns: eval_epoch_loss, eval_epoch_metric, eval_step_loss, eval_step_metric
     """
     if train_config.enable_ddp:
         dist.barrier()
@@ -422,8 +406,8 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     # special handling for qaic device and dtype
     # model.to(device)
 
-    val_step_loss = []
-    val_step_metric = []
+    eval_step_loss = []
+    eval_step_metric = []
 
     eval_loss = torch.tensor(0.0, dtype=torch.float32, device=device)  # Initialize evaluation loss
     device_type = torch.device(device).type
@@ -459,24 +443,27 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
                 logits = outputs.logits
                 labels = batch["labels"][:, 0]
                 preds = torch.nn.functional.softmax(logits, dim=-1)
-                val_acc = acc_helper.forward(preds, labels)
-                metric_val = val_acc.detach().float().item()
+                eval_acc = acc_helper.forward(preds, labels)
+                metric_value = eval_acc.detach().float().item()
             else:
-                metric_val = float(torch.exp(loss.detach().float()))
+                metric_value = float(torch.exp(loss.detach().float()))
 
             if train_config.save_metrics:
-                val_step_loss.append(loss.detach().float().item())
-                val_step_metric.append(metric_val)
+                eval_step_loss.append(loss.detach().float().item())
+                eval_step_metric.append(metric_value)
 
             eval_loss += loss.detach().float()
-    # Compute average loss and metric
-    eval_loss = 0.0 if eval_loss == 0.0 else eval_loss / (step + 1 - num_dummy_samples / train_config.val_batch_size)
-    if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
-        eval_metric = acc_helper.compute()
-    else:
-        eval_metric = torch.exp(eval_loss)
 
-    return eval_loss, eval_metric, val_step_loss, val_step_metric
+    # Compute average loss and metric
+    eval_epoch_loss = (
+        0.0 if eval_loss == 0.0 else eval_loss / (step + 1 - num_dummy_samples / train_config.val_batch_size)
+    )
+    if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
+        eval_epoch_metric = acc_helper.compute()
+    else:
+        eval_epoch_metric = torch.exp(eval_epoch_loss)
+
+    return eval_epoch_loss, eval_epoch_metric, eval_step_loss, eval_step_metric
 
 
 def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
@@ -517,20 +504,20 @@ def save_to_json(
     train_epoch_loss,
     train_step_metric,
     train_epoch_metric,
-    val_step_loss,
-    val_epoch_loss,
-    val_step_metric,
-    val_epoch_metric,
+    eval_step_loss,
+    eval_epoch_loss,
+    eval_step_metric,
+    eval_epoch_metric,
 ):
     metrics_data = {
         "train_step_loss": train_step_loss,
         "train_epoch_loss": train_epoch_loss,
         "train_step_metric": train_step_metric,
         "train_epoch_metric": train_epoch_metric,
-        "val_step_loss": val_step_loss,
-        "val_epoch_loss": val_epoch_loss,
-        "val_step_metric": val_step_metric,
-        "val_epoch_metric": val_epoch_metric,
+        "eval_step_loss": eval_step_loss,
+        "eval_epoch_loss": eval_epoch_loss,
+        "eval_step_metric": eval_step_metric,
+        "eval_epoch_metric": eval_epoch_metric,
     }
     with open(output_filename, "w") as f:
         json.dump(metrics_data, f)

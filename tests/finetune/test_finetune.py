@@ -50,10 +50,10 @@ configs = [
         True,  # run_validation
         True,  # use_peft
         "qaic",  # device
-        1.5427961,  # expected_train_loss
-        4.6776514,  # expected_train_metric
-        1.2898713,  # expected_eval_loss
-        3.6323189,  # expected_eval_metric
+        1.5428,  # expected_train_loss
+        4.6777,  # expected_train_metric
+        1.2899,  # expected_eval_loss
+        3.6323,  # expected_eval_metric
         id="llama_config_gsm8k",  # config name
     ),
     pytest.param(
@@ -68,10 +68,10 @@ configs = [
         True,  # run_validation
         True,  # use_peft
         "qaic",  # device
-        1.4348667,  # expected_train_loss
-        4.1990857,  # expected_train_metric
-        1.5941212,  # expected_eval_loss
-        4.9239997,  # expected_eval_metric
+        1.4349,  # expected_train_loss
+        4.1991,  # expected_train_metric
+        1.4147,  # expected_eval_loss
+        4.1152,  # expected_eval_metric
         id="llama_config_alpaca",  # config name
     ),
     pytest.param(
@@ -86,10 +86,10 @@ configs = [
         True,  # run_validation
         False,  # use_peft
         "qaic",  # device
-        0.63060283,  # expected_train_loss
-        0.55554199,  # expected_train_metric
-        0.61503016,  # expected_eval_loss
-        0.70825195,  # expected_eval_metric
+        0.6306,  # expected_train_loss
+        0.5555,  # expected_train_metric
+        0.6150,  # expected_eval_loss
+        0.7083,  # expected_eval_metric
         id="bert_config_imdb",  # config name
     ),
 ]
@@ -151,10 +151,14 @@ def test_finetune_llama(
 
     results = finetune(**kwargs)
 
-    assert np.allclose(results["avg_train_loss"], expected_train_loss, atol=1e-3), "Train loss is not matching."
-    assert np.allclose(results["avg_train_metric"], expected_train_metric, atol=1e-3), "Train metric is not matching."
-    assert np.allclose(results["avg_eval_loss"], expected_eval_loss, atol=1e-3), "Eval loss is not matching."
-    assert np.allclose(results["avg_eval_metric"], expected_eval_metric, atol=1e-3), "Eval metric is not matching."
+    assert np.allclose(results["last_epoch_train_loss"], expected_train_loss, atol=1e-3), "Train loss is not matching."
+    assert np.allclose(results["last_epoch_train_metric"], expected_train_metric, atol=1e-3), (
+        "Train metric is not matching."
+    )
+    assert np.allclose(results["last_epoch_eval_loss"], expected_eval_loss, atol=1e-3), "Eval loss is not matching."
+    assert np.allclose(results["last_epoch_eval_metric"], expected_eval_metric, atol=1e-3), (
+        "Eval metric is not matching."
+    )
     assert results["avg_epoch_time"] < 60, "Training should complete within 60 seconds."
 
     train_config_spy.assert_called_once()
@@ -202,9 +206,7 @@ def test_finetune_llama(
     assert os.path.isfile(saved_file)
 
     clean_up(train_config.output_dir)
-    clean_up("runs")
     clean_up("qaic-dumps")
-    clean_up(train_config.dump_root_dir)
 
     if dataset_name == "alpaca_dataset":
         clean_up(alpaca_json_path)
