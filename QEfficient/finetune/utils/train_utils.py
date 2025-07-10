@@ -5,12 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 import time
 from datetime import datetime
 from functools import partial
-from typing import Dict, List, Tuple
 
 import torch
 import torch.distributed as dist
@@ -19,7 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from QEfficient.finetune.configs.training import TrainConfig
-from QEfficient.finetune.utils.helper import get_autocast_ctx, get_op_verifier_ctx, is_rank_zero
+from QEfficient.finetune.utils.helper import get_autocast_ctx, get_op_verifier_ctx, is_rank_zero, save_to_json
 from QEfficient.finetune.utils.logging_utils import logger
 
 try:
@@ -42,24 +40,24 @@ def train(
     optimizer,
     lr_scheduler,
     train_config: TrainConfig,
-    local_rank=None,
 ):
     """
     Trains the model on the given dataloader
 
     Args:
         model: The model to be trained
-        tokenizer: tokenizer used in the eval for decoding the predicitons
+        tokenizer: tokenizer used in the eval for decoding the predictions
         train_dataloader: The dataloader containing the training data
         eval_dataloader: The dataloader containing the eval data
         optimizer: The optimizer used for training
         lr_scheduler: The learning rate scheduler
         train_config: The training configuration
-        local_rank: The rank of the current node in a distributed setting
 
     Returns: results dictionary containing average training and validation perplexity and loss
     """
     device = train_config.device
+    device_type = torch.device(device).type
+    local_rank = int(os.getenv("LOCAL_RANK", 0))
 
     train_metric = []
     train_loss = []
@@ -88,8 +86,6 @@ def train(
     if is_rank_zero():
         tensorboard_log_dir = train_config.output_dir + "/runs/" + f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         tensorboard_updates = SummaryWriter(log_dir=tensorboard_log_dir)
-
-    device_type = torch.device(device).type
 
     if train_config.grad_scaler:
         if device.startswith("qaic"):
@@ -130,10 +126,11 @@ def train(
                 continue
 
         logger.log_rank_zero(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
-        logger.log_rank_zero(f"train_config.max_train_step: {train_config.max_train_step}")
-        # stop when the maximum number of training steps is reached
+        if train_config.max_train_step > 0:
+            logger.log_rank_zero(f"Max train steps : {train_config.max_train_step}")
         if max_steps_reached:
             break
+
         epoch_start_time = time.perf_counter()
         model.train()
 
@@ -165,7 +162,6 @@ def train(
                     continue
             total_train_steps += 1
 
-            #  stop when the maximum number of training steps is reached
             if train_config.max_train_step > 0 and total_train_steps > train_config.max_train_step:
                 max_steps_reached = True
                 break
@@ -223,7 +219,7 @@ def train(
                     step_metric_val = float(torch.exp(loss.detach().float()))
                 train_step_metric.append(step_metric_val)
 
-            # Accumalate gradients
+            # Accumulate gradients
             complete_accum_steps = (
                 len(train_dataloader) - len(train_dataloader) % train_config.gradient_accumulation_steps
             )
@@ -297,19 +293,6 @@ def train(
                     if total_loss == 0.0
                     else total_loss / (step + 1 - num_dummy_samples / train_config.train_batch_size)
                 )
-        else:
-            if train_config.use_peft and train_config.from_peft_checkpoint and epoch == intermediate_epoch:
-                train_epoch_loss = (
-                    0.0
-                    if total_loss == 0.0
-                    else total_loss / (step - intermediate_step - (num_dummy_samples / train_config.train_batch_size))
-                )
-            else:
-                train_epoch_loss = (
-                    0.0
-                    if total_loss == 0.0
-                    else total_loss / (step + 1 - (num_dummy_samples / train_config.train_batch_size))
-                )
         if train_config.task_type == "seq_classification":
             metric_val = acc_helper.compute()
             acc_helper.reset()
@@ -322,17 +305,6 @@ def train(
         # Update the learning rate as needed
         lr_scheduler.step()
 
-        if train_config.run_validation:
-            eval_epoch_loss, eval_metric, temp_val_loss, temp_step_metric = evaluation_helper(
-                model, train_config, eval_dataloader, device
-            )
-            if is_rank_zero():
-                tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
-
-            if train_config.save_metrics:
-                val_step_loss.extend(temp_val_loss)
-                val_step_metric.extend(temp_step_metric)
-
         # saving the adapters after completion of each epoch
         if train_config.save_model:
             if train_config.enable_ddp:
@@ -342,19 +314,24 @@ def train(
                 model.save_pretrained(train_config.output_dir + f"/complete_epoch_{epoch + 1}")
 
         if train_config.run_validation:
+            eval_epoch_loss, eval_metric, temp_val_loss, temp_step_metric = evaluation(
+                model, train_config, eval_dataloader, device
+            )
             if eval_epoch_loss < best_val_loss:
                 best_val_loss = eval_epoch_loss
                 logger.log_rank_zero(f"best eval loss on epoch {epoch + 1} is {best_val_loss}")
+
+            if is_rank_zero():
+                tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
+
+            if train_config.save_metrics:
+                val_step_loss.extend(temp_val_loss)
+                val_step_metric.extend(temp_step_metric)
             val_loss.append(float(eval_epoch_loss))
             val_metric.append(float(eval_metric))
-        if train_config.task_type == "seq_classification":
-            logger.log_rank_zero(
-                f"Epoch {epoch + 1}: train_acc={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
-            )
-        else:
-            logger.log_rank_zero(
-                f"Epoch {epoch + 1}: train_metric={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
-            )
+        logger.log_rank_zero(
+            f"Epoch {epoch + 1}: train_metric={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
+        )
 
         # Saving the results every epoch to plot later
         if train_config.save_metrics:
@@ -389,7 +366,7 @@ def train(
     return results
 
 
-def evaluation_helper(model, train_config, eval_dataloader, device):
+def evaluation(model, train_config, eval_dataloader, device):
     """
     Evaluates the model on the given dataloader
 
@@ -474,60 +451,3 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     logger.log_rank_zero(f"{eval_metric.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
 
     return eval_epoch_loss, eval_metric, val_step_loss, val_step_metric
-
-
-def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
-    # find out the minimum max_seq_length required during fine-tuning (saves memory!)
-    lengths = [len(d["input_ids"]) for d in data]
-    longest_seq_length = max(lengths)
-    longest_seq_ix = lengths.index(longest_seq_length)
-    return longest_seq_length, longest_seq_ix
-
-
-def print_model_size(model) -> None:
-    """
-    Print model name, the number of trainable parameters and initialization time.
-
-    Args:
-        model: PyTorch model.
-    """
-    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.log_rank_zero(f"Model has {total_params / 1e6} Million params.")
-
-
-def print_trainable_parameters(model) -> None:
-    """
-    Print the number of trainable parameters, all params and percentage of trainablke params.
-
-    Args:
-        model: The PyTorch model.
-    """
-    trainable_params, all_param = model.get_nb_trainable_parameters()
-    logger.log_rank_zero(
-        f"Trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}"
-    )
-
-
-def save_to_json(
-    output_filename,
-    train_step_loss,
-    train_epoch_loss,
-    train_step_metric,
-    train_epoch_metric,
-    val_step_loss,
-    val_epoch_loss,
-    val_step_metric,
-    val_epoch_metric,
-):
-    metrics_data = {
-        "train_step_loss": train_step_loss,
-        "train_epoch_loss": train_epoch_loss,
-        "train_step_metric": train_step_metric,
-        "train_epoch_metric": train_epoch_metric,
-        "val_step_loss": val_step_loss,
-        "val_epoch_loss": val_epoch_loss,
-        "val_step_metric": val_step_metric,
-        "val_epoch_metric": val_epoch_metric,
-    }
-    with open(output_filename, "w") as f:
-        json.dump(metrics_data, f)

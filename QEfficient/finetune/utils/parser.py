@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+import logging
 
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
 from QEfficient.finetune.utils.helper import BATCHING_STRATEGY, DEVICE, PEFT_METHOD, TASK_TYPE
@@ -255,13 +256,44 @@ def get_finetune_parser():
         help="Enable distributed data parallel training. This will load the replicas of model on given number of devices and train the model. This should be used using torchrun interface. Please check docs for exact usage.",
     )
     parser.add_argument(
+        "--enable_pp",
+        "--enable-pp",
+        action="store_true",
+        help="Enable pipeline parallel training. This will split the of model layerwise in given number of stages and train the model.",
+    )
+    parser.add_argument(
+        "--num_pp_stages",
+        "--num-pp-stages",
+        required=False,
+        type=int,
+        default=1,
+        help="Number of stages in which model is split layerwise when training using pipeline parallel.",
+    )
+    parser.add_argument(
         "--opByOpVerifier",
         action="store_true",
         help=argparse.SUPPRESS,
         # This is for debugging purpose only.
         # Enables operation-by-operation verification w.r.t reference device(cpu).
         # It is a context manager interface that captures and verifies each operator against reference device.
-        # In case results of test & reference do not match under given tolerances, a standalone unittest is generated at dump_root_dir.
+        # In case results of test & reference do not match under given tolerances, a standalone unittest is generated at output_dir/mismatches.
+    )
+    parser.add_argument(
+        "--dump_logs",
+        "--dump-logs",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=True,
+        help="Whether to dump logs",
+    )
+    parser.add_argument(
+        "--log_level",
+        "--log-level",
+        required=False,
+        type=str,
+        default=logging.INFO,
+        help="logging level",
     )
 
     return parser
