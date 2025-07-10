@@ -38,7 +38,8 @@ class TrainConfig:
         task_mode (str): Mode of task for which the finetuning is to be done. Options: "generation" and "seq_classification". (default: "generation")
         use_peft (bool): Whether to use PEFT (default: True).
         peft_method (str): Parameter-efficient fine-tuning method (default: "lora").
-        from_peft_checkpoint (str): Path to PEFT checkpoint (default: "").
+        peft_config_file (str): Path to YAML/JSON file containing PEFT (LoRA) config. (default: None)
+        from_peft_checkpoint (str): Path to PEFT checkpoint (default: None).
         output_dir (str): Directory to save outputs (default: "training_results").
         save_model (bool): Save the trained model (default: True).
         save_metrics (bool): Save training metrics (default: True).
@@ -49,8 +50,9 @@ class TrainConfig:
         convergence_loss (float): Loss threshold for convergence (default: 1e-4).
         use_profiler (bool): Enable profiling (default: False).
         enable_ddp (bool): Enable distributed data parallel (default: False).
-        dump_root_dir (str): Directory for mismatch dumps (default: "mismatches/step_").
         opByOpVerifier (bool): Enable operation-by-operation verification (default: False).
+        dump_logs (bool): Whether to dump logs (default: True).
+        log_level (str): logging level (default: logging.INFO)
     """
 
     model_name: str = "meta-llama/Llama-3.2-1B"
@@ -76,7 +78,8 @@ class TrainConfig:
     task_mode: str = "generation"  # "generation" / "seq_classification"
     use_peft: bool = True  # use parameter efficient finetuning
     peft_method: str = "lora"
-    from_peft_checkpoint: str = ""  # if not empty and peft_method='lora', will load the peft checkpoint and resume the fine-tuning on that checkpoint
+    peft_config_file: str = None
+    from_peft_checkpoint: str = None  # if not empty and peft_method='lora', will load the peft checkpoint and resume the fine-tuning on that checkpoint
     output_dir: str = "training_results"
     save_model: bool = True
     save_metrics: bool = True  # saves training metrics to a json file for later plotting
