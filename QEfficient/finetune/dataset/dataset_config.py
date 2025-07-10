@@ -21,14 +21,10 @@ from QEfficient.finetune.dataset.gsm8k_dataset import get_gsm8k_dataset
 from QEfficient.finetune.dataset.imdb_dataset import (
     get_preprocessed_imdb as get_imdb_dataset,
 )
-from QEfficient.finetune.dataset.samsum_dataset import (
-    get_preprocessed_samsum as get_samsum_dataset,
-)
 
 DATASET_PREPROC = {
     "alpaca_dataset": partial(get_alpaca_dataset),
     "grammar_dataset": get_grammar_dataset,
-    "samsum_dataset": get_samsum_dataset,
     "gsm8k_dataset": get_gsm8k_dataset,
     "custom_dataset": get_custom_dataset,
     "imdb_dataset": get_imdb_dataset,
