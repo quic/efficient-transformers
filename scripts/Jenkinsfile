@@ -9,7 +9,7 @@ pipeline {
     }
 
    stages {
-       stage('Install QEfficient-Infer') {
+       stage('Install QEfficient') {
            steps {
                sh '''
                    . ~/.bashrc
@@ -25,6 +25,7 @@ pipeline {
                    pip install junitparser pytest-xdist &&
                    pip install librosa==0.10.2 soundfile==0.13.1 && #packages needed to load example for whisper testing
                    pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.19.1+cpu einops==0.8.1 && #packages to load VLMs
+                   pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl && # For finetuning tests
                    rm -rf QEfficient"
                '''
            }
@@ -170,34 +171,13 @@ pipeline {
                 }
             }
         }
-        
-        stage('Install QEfficient-FT') {
-           steps {
-               sh '''
-                   . ~/.bashrc
-                   sudo docker exec ${BUILD_TAG} bash -c "
-                   cd /efficient-transformers &&
-                   apt update &&
-                   apt install -y python3.10-venv &&
-                   python3.10 -m venv preflight_qeff_ft &&
-                   . preflight_qeff_ft/bin/activate &&
-                   pip install --upgrade pip setuptools &&
-                   pip install .[test] &&
-                   pip install junitparser pytest-xdist &&
-                   pip install librosa==0.10.2 soundfile==0.13.1 && #packages needed to load example for whisper testing
-                   pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.19.1+cpu einops==0.8.1 && #packages to load VLMs
-                   pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl && # For finetuning tests
-                   rm -rf QEfficient"
-               '''
-           }
-        }
         stage('Finetune CLI Tests') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
                     sh '''
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
-                    . preflight_qeff_ft/bin/activate &&
+                    . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/cli_qaic_finetuning &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/cli_qaic_finetuning &&
