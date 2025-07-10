@@ -63,11 +63,7 @@ with torch.inference_mode():
     )
 
 # Load the pre-trained model from latest checkpoint
-trained_weights_path = os.path.join(train_config.output_dir, "trained_weights")
-epoch_max_index = max([int(name.split("_")[-1]) for name in os.listdir(trained_weights_path)])
-epochs_path = os.path.join(trained_weights_path, "epoch_" + str(epoch_max_index))
-step_max_index = max([int(name.split("_")[-1]) for name in os.listdir(epochs_path)])
-save_dir = os.path.join(epochs_path, "step_" + str(step_max_index))
+save_dir = os.path.join(train_config.output_dir, "complete_epoch_" + str(train_config.num_epochs))
 
 # Load PEFT model on CPU
 model = AutoPeftModelForCausalLM.from_pretrained(save_dir)

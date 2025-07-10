@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 import os
 from contextlib import nullcontext
+from enum import Enum
 
 import torch
 
@@ -15,10 +16,28 @@ except ImportError as e:
     print(f"Warning: {e}. Moving ahead without these qaic modules.")
 
 
-TASK_MODE = ["generation", "seq_classification"]
-PEFT_METHOD = ["lora"]
-DEVICE = ["qaic", "cpu", "cuda"]
-BATCHING_STRATEGY = ["padding", "packing"]
+class Batching_Strategy(str, Enum):
+    PADDING = "padding"
+    PACKING = "packing"
+
+
+class Device(str, Enum):
+    QAIC = "qaic"
+    CPU = "cpu"
+    CUDA = "cuda"
+
+
+class Peft_Method(str, Enum):
+    LORA = "lora"
+
+
+class Task_Mode(str, Enum):
+    GENERATION = "generation"
+    SEQ_CLASSIFICATION = "seq_classification"
+
+
+def enum_names(enum_cls):
+    return [member.value for member in enum_cls]
 
 
 def is_rank_zero():

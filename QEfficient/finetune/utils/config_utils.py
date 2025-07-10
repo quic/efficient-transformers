@@ -18,6 +18,7 @@ import QEfficient.finetune.configs.dataset_config as datasets
 from QEfficient.finetune.configs.peft_config import LoraConfig
 from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
+from QEfficient.finetune.utils.helper import Peft_Method
 from QEfficient.finetune.utils.logging_utils import logger
 
 
@@ -52,12 +53,11 @@ def update_config(config, **kwargs):
                 logger.debug(f"Unknown parameter '{k}' for config type '{config_type}'")
 
 
-def generate_peft_config(train_config: TrainConfig, peft_config_file: str = None, **kwargs) -> Any:
+def generate_peft_config(train_config: TrainConfig, **kwargs) -> Any:
     """Generate a PEFT-compatible configuration from a custom config based on peft_method.
 
     Args:
         train_config (TrainConfig): Training configuration with peft_method.
-        custom_config: Custom configuration object (e.g., LoraConfig).
 
     Returns:
         Any: A PEFT-specific configuration object (e.g., PeftLoraConfig).
@@ -65,12 +65,12 @@ def generate_peft_config(train_config: TrainConfig, peft_config_file: str = None
     Raises:
         RuntimeError: If the peft_method is not supported.
     """
-    if peft_config_file:
-        peft_config_data = load_config_file(peft_config_file)
-        validate_config(peft_config_data, config_type="lora")
+    if train_config.peft_config_file:
+        peft_config_data = load_config_file(train_config.peft_config_file)
+        validate_config(peft_config_data, config_type=Peft_Method.LORA)
         peft_config = PeftLoraConfig(**peft_config_data)
     else:
-        config_map = {"lora": (LoraConfig, PeftLoraConfig)}
+        config_map = {Peft_Method.LORA: (LoraConfig, PeftLoraConfig)}
         if train_config.peft_method not in config_map:
             logger.raise_error(f"Peft config not found: {train_config.peft_method}", RuntimeError)
 
@@ -105,7 +105,7 @@ def generate_dataset_config(dataset_name: str) -> Any:
     return dataset_config
 
 
-def validate_config(config_data: Dict[str, Any], config_type: str = "lora") -> None:
+def validate_config(config_data: Dict[str, Any], config_type: str = Peft_Method.LORA) -> None:
     """Validate the provided YAML/JSON configuration for required fields and types.
 
     Args:
@@ -120,7 +120,7 @@ def validate_config(config_data: Dict[str, Any], config_type: str = "lora") -> N
         - Validates required fields for LoraConfig: r, lora_alpha, target_modules.
         - Ensures types match expected values (int, float, list, etc.).
     """
-    if config_type.lower() != "lora":
+    if config_type.lower() != Peft_Method.LORA:
         logger.raise_error(f"Unsupported config_type: {config_type}. Only 'lora' is supported.", ValueError)
 
     required_fields = {

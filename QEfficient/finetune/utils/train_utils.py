@@ -19,7 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from QEfficient.finetune.configs.training import TrainConfig
-from QEfficient.finetune.utils.helper import get_autocast_ctx, get_op_verifier_ctx, is_rank_zero
+from QEfficient.finetune.utils.helper import Task_Mode, get_autocast_ctx, get_op_verifier_ctx, is_rank_zero
 from QEfficient.finetune.utils.logging_utils import logger
 
 try:
@@ -103,7 +103,7 @@ def train(
         dist.broadcast(loss_0_counter, src=0)
 
     acc_helper = None
-    if train_config.task_mode == "seq_classification":
+    if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
         if train_config.enable_ddp:
             num_classes = model.module.classifier.out_features
         else:
@@ -196,7 +196,7 @@ def train(
                         num_dummy_samples += num_dummy_samples_per_batch
                         loss = loss * train_config.train_batch_size / num_dummy_samples_per_batch
 
-                if train_config.task_mode == "seq_classification":
+                if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
                     logits = model_outputs.logits
                     labels = batch["labels"][:, 0]
                     preds = torch.nn.functional.softmax(logits, dim=-1)
@@ -217,7 +217,7 @@ def train(
 
             if train_config.save_metrics:
                 train_step_loss.append(loss.detach().float().item())
-                if train_config.task_mode == "seq_classification":
+                if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
                     step_metric_val = float(acc_helper.compute())
                 else:
                     step_metric_val = float(torch.exp(loss.detach().float()))
@@ -310,7 +310,7 @@ def train(
                     if total_loss == 0.0
                     else total_loss / (step + 1 - (num_dummy_samples / train_config.train_batch_size))
                 )
-        if train_config.task_mode == "seq_classification":
+        if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
             metric_val = acc_helper.compute()
             acc_helper.reset()
         else:
@@ -347,7 +347,7 @@ def train(
                 logger.log_rank_zero(f"best eval loss on epoch {epoch + 1} is {best_val_loss}")
             val_loss.append(float(eval_epoch_loss))
             val_metric.append(float(eval_metric))
-        if train_config.task_mode == "seq_classification":
+        if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
             logger.log_rank_zero(
                 f"Epoch {epoch + 1}: train_acc={metric_val:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s"
             )
@@ -404,7 +404,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
 
     model.eval()
 
-    if train_config.task_mode == "seq_classification":
+    if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
         if train_config.enable_ddp:
             num_classes = model.module.classifier.out_features
         else:
@@ -447,7 +447,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
                     num_dummy_samples += num_dummy_samples_per_batch
                     loss = loss * train_config.val_batch_size / num_dummy_samples_per_batch
 
-            if train_config.task_mode == "seq_classification":
+            if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
                 logits = outputs.logits
                 labels = batch["labels"][:, 0]
                 preds = torch.nn.functional.softmax(logits, dim=-1)
@@ -465,7 +465,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     eval_epoch_loss = (
         0.0 if eval_loss == 0.0 else eval_loss / (step + 1 - num_dummy_samples / train_config.val_batch_size)
     )
-    if train_config.task_mode == "seq_classification":
+    if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
         eval_metric = acc_helper.compute()
     else:
         eval_metric = torch.exp(eval_epoch_loss)
