@@ -28,10 +28,10 @@ from QEfficient.finetune.utils.config_utils import (
 )
 from QEfficient.finetune.utils.dataset_utils import get_dataloader
 from QEfficient.finetune.utils.device_map import get_device_map
-from QEfficient.finetune.utils.helper import get_longest_seq_length, print_model_size, print_trainable_parameters
+from QEfficient.finetune.utils.helper import get_longest_seq_length
 from QEfficient.finetune.utils.logging_utils import logger
 from QEfficient.finetune.utils.parser import get_finetune_parser
-from QEfficient.finetune.utils.train_utils import train
+from QEfficient.finetune.utils.train_utils import print_model_size, print_trainable_parameters, train
 from QEfficient.utils._utils import hf_download
 
 # Try importing QAIC-specific module, proceed without it if unavailable
@@ -85,7 +85,7 @@ def setup_seeds(seed: int) -> None:
     Notes:
         - Sets seeds for PyTorch, Python's random module, and NumPy.
     """
-    # torch.use_deterministic_algorithms(True)
+    torch.use_deterministic_algorithms(True)
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -114,7 +114,10 @@ def load_model_and_tokenizer(
         - Sets pad_token_id to eos_token_id if not defined in the tokenizer.
     """
     logger.log_rank_zero(f"Loading HuggingFace model for {train_config.model_name}")
-    pretrained_model_path = hf_download(train_config.model_name)
+    pretrained_model_path = hf_download(
+        train_config.model_name,
+        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5", "*.pth"],
+    )
     if train_config.task_type == "seq_classification":
         model = AutoModelForSequenceClassification.from_pretrained(
             pretrained_model_path,

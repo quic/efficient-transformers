@@ -34,12 +34,12 @@ class TrainConfig:
         weight_decay (float): Weight decay for optimizer (default: 0.0).
         gamma (float): Learning rate decay factor (default: 0.85).
         seed (int): Random seed for reproducibility (default: 42).
-        dataset (str): Dataset name for training (default: "samsum_dataset").
+        dataset (str): Dataset name for training (default: "alpaca_dataset").
         task_type (str): Type of task for which the finetuning is to be done. Options: "generation" and "seq_classification". (default: "generation")
         use_peft (bool): Whether to use PEFT (default: True).
         peft_method (str): Parameter-efficient fine-tuning method (default: "lora").
         from_peft_checkpoint (str): Path to PEFT checkpoint (default: "").
-        output_dir (str): Directory to save outputs (default: "meta-llama-samsum").
+        output_dir (str): Directory to save outputs (default: "training_results").
         save_model (bool): Save the trained model (default: True).
         save_metrics (bool): Save training metrics (default: True).
         intermediate_step_save (int): Steps between intermediate saves (default: 1000).

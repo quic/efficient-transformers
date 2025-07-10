@@ -12,8 +12,6 @@ from typing import Dict, List, Tuple
 
 import torch
 
-from QEfficient.finetune.utils.logging_utils import logger
-
 try:
     import torch_qaic.debug as qaic_debug  # noqa: F401
 except ImportError as e:
@@ -71,30 +69,6 @@ def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
     longest_seq_length = max(lengths)
     longest_seq_ix = lengths.index(longest_seq_length)
     return longest_seq_length, longest_seq_ix
-
-
-def print_model_size(model) -> None:
-    """
-    Print the number of trainable parameters.
-
-    Args:
-        model: PyTorch model.
-    """
-    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.log_rank_zero(f"Model has {total_params / 1e6} Million params.")
-
-
-def print_trainable_parameters(model) -> None:
-    """
-    Print the number of trainable parameters, all params and percentage of trainable params.
-
-    Args:
-        model: The PyTorch model.
-    """
-    trainable_params, all_param = model.get_nb_trainable_parameters()
-    logger.log_rank_zero(
-        f"Trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}"
-    )
 
 
 def save_to_json(

@@ -202,14 +202,13 @@ def train(
 
             total_loss += loss.detach().float()
             if is_rank_zero():
+                tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
                 if loss <= train_config.convergence_loss:
                     loss_0_counter += 1
                 else:
                     loss_0_counter = torch.tensor([0]).to(device)
             if train_config.enable_ddp:
                 dist.broadcast(loss_0_counter, src=0)
-            if is_rank_zero():
-                tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
 
             if train_config.save_metrics:
                 train_step_loss.append(loss.detach().float().item())
@@ -451,3 +450,25 @@ def evaluation(model, train_config, eval_dataloader, device):
     logger.log_rank_zero(f"{eval_metric.detach().cpu()=} {eval_epoch_loss.detach().cpu()=}")
 
     return eval_epoch_loss, eval_metric, val_step_loss, val_step_metric
+
+
+def print_model_size(model) -> None:
+    """
+    Print model name, the number of trainable parameters and initialization time.
+    Args:
+        model: PyTorch model.
+    """
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.log_rank_zero(f"Model has {total_params / 1e6} Million params.")
+
+
+def print_trainable_parameters(model) -> None:
+    """
+    Print the number of trainable parameters, all params and percentage of trainablke params.
+    Args:
+        model: The PyTorch model.
+    """
+    trainable_params, all_param = model.get_nb_trainable_parameters()
+    logger.log_rank_zero(
+        f"Trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}"
+    )
