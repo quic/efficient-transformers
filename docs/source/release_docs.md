@@ -12,6 +12,7 @@ Welcome to the official release of **Efficient Transformer Library v1.20.0**! Th
   - Text & Image+Text support
   - Chunk attention, Single/Dual QPC support
   - Multi-image prompts enabled via VLLM interface
+  - [Llama4 Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/llama4_example.py)
 
 - **Grok-1**
   - Executable via `QEffAutoModelForCausalLM`
@@ -19,15 +20,17 @@ Welcome to the official release of **Efficient Transformer Library v1.20.0**! Th
 - **Gemma3**
   - Text & Image+Text support
   - Sliding window support
+  - [Gemma3 Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/gemma3_example/gemma3_mm.py)
 
 - **Granite Vision & MOE Models**
-  - Sample scripts available
+  - Sample scripts available [here](https://github.com/quic/efficient-transformers/blob/main/examples/granite_example/granite_vision_inference.py)
 
 - **SwiftKV (Llama-3.1-SwiftKV-8B-Instruct)**
   - Supports both continuous and non-continuous batching
 
 - **GGUF Models**
   - Execution support (non-quantized)
+  - [Eaxmple Script](https://github.com/quic/efficient-transformers/blob/main/examples/basic_gguf_models.py)
 
 - **FP8 Compressed Quantization**
   - Support for `Llama-3.3-70B-Instruct-FP8-Dynamic`

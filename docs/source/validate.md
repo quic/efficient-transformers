@@ -65,6 +65,27 @@
 |**Llama4ForConditionalGeneration** | Llama-4-Scout | [Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct) |      ✕	      | ✔️          | ✔️          |
 |**Gemma3ForConditionalGeneration** | Gemma3 | [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)|       ✕	     | ✔️          | ✔️          |
 
+
+#### Dual QPC
+
+In the **Dual QPC** setup, the model is split across two  configurations:
+
+- The **Vision Encoder** runs in one QPC.
+- The **Language Model** (responsible for output generation) runs in a separate QPC.
+- The outputs from the Vision Encoder are transferred to the Language Model via the host system.
+
+
+
+#### Single QPC
+
+In the **Single QPC** setup, the entire model—including both image encoding and text generation—runs within a **single quantized configuration**. There is no model splitting, and all components operate within the same execution environment.
+
+
+### Note
+
+The choice between Single and Dual QPC is determined during model instantiation using the `kv_offload` setting.
+
+---
 ### Audio Models
 (Automatic Speech Recognition) - Transcription Task
 **QEff Auto Class:** `QEFFAutoModelForSpeechSeq2Seq`
