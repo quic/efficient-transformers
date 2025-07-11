@@ -31,6 +31,7 @@ from transformers.models.falcon.modeling_falcon import (
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 class QEffFalconRotaryEmbedding(FalconRotaryEmbedding):
@@ -148,7 +149,9 @@ class QEffFalconAttention(FalconAttention):
 
         attention_scores = query_layer @ key_layer.transpose(-1, -2)
         attention_scores /= math.sqrt(self.head_dim)
-        attention_scores = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attention_scores)
+        attention_scores = torch.where(
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attention_scores
+        )
         attention_scores = F.softmax(attention_scores + attention_mask, dim=-1, dtype=hidden_states.dtype)
         # It is unclear why neither dropout nor head_mask is applied here (while it is with alibi).
         attn_output = attention_scores @ value_layer
