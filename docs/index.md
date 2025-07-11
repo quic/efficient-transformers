@@ -5,12 +5,17 @@
 
 Welcome to Efficient-Transformers Documentation!
 ========================================
-
-  
 <!-- ```{include} ../README.md
    :relative-images: 
 ```   -->
+
+```{toctree}
+:caption: 'Release Documents'
+:maxdepth: 2
  
+source/release_docs
+```
+
 
 ```{toctree}
 :caption: 'Getting Started'
