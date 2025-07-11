@@ -8,7 +8,7 @@
 
 | Architecture            | Model Family       | Representative Models                                                                 | CB Support |
 |-------------------------|--------------------|--------------------------------------------------------------------------------------|------------|
-| **FalconForCausalLM**   | Falcon             | [tiiuae/falcon-40b]((https://huggingface.co/tiiuae/falcon-40b))                                                                    | ✔️          |
+| **FalconForCausalLM**   | Falcon             | [tiiuae/falcon-40b](https://huggingface.co/tiiuae/falcon-40b)                                                                | ✔️          |
 | **GemmaForCausalLM**    | CodeGemma          | [google/codegemma-2b](https://huggingface.co/google/codegemma-2b)<br>[google/codegemma-7b](https://huggingface.co/google/codegemma-7b)                                           | ✔️          |
 |                         | Gemma              | [google/gemma-2b](https://huggingface.co/google/gemma-2b)<br>[google/gemma-7b](https://huggingface.co/google/gemma-7b)<br>[google/gemma-2-2b](https://huggingface.co/google/gemma-2-2b)<br>[google/gemma-2-9b](https://huggingface.co/google/gemma-2-9b)<br>[google/gemma-2-27b](https://huggingface.co/google/gemma-2-27b)        | ✔️          |
 | **GPTBigCodeForCausalLM** | Starcoder1.5      | [bigcode/starcoder](https://huggingface.co/bigcode/starcoder)                                                                   | ✔️          |
