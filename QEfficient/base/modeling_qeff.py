@@ -7,6 +7,8 @@
 
 import hashlib
 import inspect
+import logging
+import json
 import shutil
 import subprocess
 import warnings
