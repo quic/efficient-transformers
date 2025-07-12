@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -21,6 +22,19 @@ from QEfficient.customop import (
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
 )
+
+
+class CacheManager:
+    """
+    A class to manage the cache for the QEfficient model. It provides methods to create, update, and read from the cache.
+    """
+
+    def cache_manager(config, past_key_values):
+        is_dynamic = os.getenv("DYNAMIC_CACHE", "False")
+        if is_dynamic.lower() == "true":
+            return QEffDynamicCache.from_legacy_cache(past_key_values)
+        else:
+            return QEffHybridChunkedCache.from_legacy_cache(config, past_key_values)
 
 
 class QEffDynamicCache(DynamicCache):
