@@ -67,23 +67,23 @@
 
 
 **Dual QPC:**
-In the **Dual QPC** setup, the model is split across two  configurations:
+In the Dual QPC(Qualcomm Program Container) setup, the model is split across two  configurations:
 
 - The **Vision Encoder** runs in one QPC.
 - The **Language Model** (responsible for output generation) runs in a separate QPC.
-- The outputs from the Vision Encoder are transferred to the Language Model via the host system.
-- The single QPC approach introduces the flexibility to run the vision and language components independently.
+- The outputs from the Vision Encoder are transferred to the Language Model.
+- The dual QPC approach introduces the flexibility to run the vision and language components independently.
 
 
 
 **Single QPC:**
-In the single QPC (Qualcomm Program Container) setup, the entire model—including both image encoding and text generation—runs within a single QPC. There is no model splitting, and all components operate within the same execution environment. 
+In the single QPC(Qualcomm Program Container) setup, the entire model—including both image encoding and text generation—runs within a single QPC. There is no model splitting, and all components operate within the same execution environment.
 
 
 
 **Note:**
 The choice between Single and Dual QPC is determined during model instantiation using the `kv_offload` setting.
-If the `kv_offload` is set to True it runs in dual QPC and if its set to False model runs in single QPC mode.
+If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `False` model runs in single QPC mode.
 
 ---
 ### Audio Models
