@@ -1120,3 +1120,6 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
                 shape=("max_num_tiles", 3, "img_size", "img_size"),
             ),
         ]
+
+    def get_expected_patch_count(self) -> int:
+        return constants.LLAMA4_NUM_PATCHES  # 17
