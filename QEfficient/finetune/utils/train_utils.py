@@ -165,8 +165,13 @@ def train(
             total_train_steps += 1
 
             #  stop when the maximum number of training steps is reached
-            if train_config.max_train_step > 0 and total_train_steps > train_config.max_train_step:
+            if train_config.max_train_step > 0 and total_train_steps >= train_config.max_train_step:
                 max_steps_reached = True
+                logger.log_rank_zero(
+                    "Maximum training steps reached "
+                    f"(max_train_step={train_config.max_train_step}). Stopping "
+                    "the training process."
+                )
                 break
             batch = {k: v.to(device) for k, v in batch.items()}  # move the batch elements to qaic device
 
