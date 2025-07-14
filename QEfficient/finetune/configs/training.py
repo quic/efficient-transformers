@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 from dataclasses import dataclass
 
 
@@ -33,12 +34,12 @@ class TrainConfig:
         weight_decay (float): Weight decay for optimizer (default: 0.0).
         gamma (float): Learning rate decay factor (default: 0.85).
         seed (int): Random seed for reproducibility (default: 42).
-        dataset (str): Dataset name for training (default: "samsum_dataset").
+        dataset (str): Dataset name for training (default: "alpaca_dataset").
         task_type (str): Type of task for which the finetuning is to be done. Options: "generation" and "seq_classification". (default: "generation")
         use_peft (bool): Whether to use PEFT (default: True).
         peft_method (str): Parameter-efficient fine-tuning method (default: "lora").
         from_peft_checkpoint (str): Path to PEFT checkpoint (default: "").
-        output_dir (str): Directory to save outputs (default: "meta-llama-samsum").
+        output_dir (str): Directory to save outputs (default: "training_results").
         save_model (bool): Save the trained model (default: True).
         save_metrics (bool): Save training metrics (default: True).
         intermediate_step_save (int): Steps between intermediate saves (default: 1000).
@@ -48,7 +49,7 @@ class TrainConfig:
         convergence_loss (float): Loss threshold for convergence (default: 1e-4).
         use_profiler (bool): Enable profiling (default: False).
         enable_ddp (bool): Enable distributed data parallel (default: False).
-        dump_root_dir (str): Directory for mismatch dumps (default: "meta-llama-samsum-mismatches/step_").
+        dump_root_dir (str): Directory for mismatch dumps (default: "mismatches/step_").
         opByOpVerifier (bool): Enable operation-by-operation verification (default: False).
     """
 
@@ -94,5 +95,7 @@ class TrainConfig:
     use_profiler: bool = False  # Enable pytorch profiler, can not be used with flop counter at the same time.
     # profiler_dir: str = "PATH/to/save/profiler/results" # will be used if using profiler
 
-    dump_root_dir: str = "mismatches/step_"
     opByOpVerifier: bool = False
+
+    dump_logs: bool = True
+    log_level: str = logging.INFO
