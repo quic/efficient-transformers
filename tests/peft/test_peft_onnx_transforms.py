@@ -46,6 +46,7 @@ def test_adapter_weights_to_inputs_transform():
 
     out_onnx, transformed = AdapterWeightsToInputsTransform.apply(test_onnx, adapter_name=adapter_name)
     assert transformed
+
     assert (
         onnx.printer.to_text(out_onnx)
         == textwrap.dedent("""
@@ -53,11 +54,11 @@ def test_adapter_weights_to_inputs_transform():
        ir_version: 8,
        opset_import: ["" : 17]
     >
-    test_adapter_weights (float[n,32] input, float[32,32] layer1.weight, float[32,32] layer2.weight) => (float[n,32] output, float[32,32] layer1.weight_RetainedState, float[32,32] layer2.weight_RetainedState) {
-       layer1output = MatMul (input, layer1.weight)
-       output = MatMul (layer1output, layer2.weight)
-       layer1.weight_RetainedState = Identity (layer1.weight)
-       layer2.weight_RetainedState = Identity (layer2.weight)
+    test_adapter_weights (float[n,32] input, float[32,32] "layer1.weight", float[32,32] "layer2.weight") => (float[n,32] output, float[32,32] "layer1.weight_RetainedState", float[32,32] "layer2.weight_RetainedState") {
+       layer1output = MatMul (input, "layer1.weight")
+       output = MatMul (layer1output, "layer2.weight")
+       ["layer1.weight_identity"] "layer1.weight_RetainedState" = Identity ("layer1.weight")
+       ["layer2.weight_identity"] "layer2.weight_RetainedState" = Identity ("layer2.weight")
     }
     """).strip()
     )
