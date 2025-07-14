@@ -8,7 +8,7 @@
 import logging
 import random
 import warnings
-from typing import Any, Dict, Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 import torch
@@ -28,7 +28,7 @@ from QEfficient.finetune.utils.config_utils import (
 )
 from QEfficient.finetune.utils.dataset_utils import get_dataloader
 from QEfficient.finetune.utils.device_map import get_device_map
-from QEfficient.finetune.utils.helper import get_longest_seq_length
+from QEfficient.finetune.utils.helper import Task_Mode, get_longest_seq_length
 from QEfficient.finetune.utils.logging_utils import logger
 from QEfficient.finetune.utils.parser import get_finetune_parser
 from QEfficient.finetune.utils.train_utils import print_model_size, print_trainable_parameters, train
@@ -92,14 +92,13 @@ def setup_seeds(seed: int) -> None:
 
 
 def load_model_and_tokenizer(
-    train_config: TrainConfig, dataset_config: Any, peft_config_file: str, **kwargs
+    train_config: TrainConfig, dataset_config: Any, **kwargs
 ) -> tuple[AutoModelForCausalLM, AutoTokenizer]:
     """Load the pre-trained model and tokenizer from Hugging Face.
 
     Args:
         config (TrainConfig): Training configuration object containing model and tokenizer names.
         dataset_config (Any): A dataclass object representing dataset configuration.
-        peft_config_file (str): Path to PEFT config file used for PEFT finetuning.
         kwargs: Additional arguments to override PEFT config.
 
     Returns:
@@ -118,7 +117,7 @@ def load_model_and_tokenizer(
         train_config.model_name,
         ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5", "*.pth"],
     )
-    if train_config.task_type == "seq_classification":
+    if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
         model = AutoModelForSequenceClassification.from_pretrained(
             pretrained_model_path,
             num_labels=dataset_config.num_labels,
@@ -184,21 +183,17 @@ def load_model_and_tokenizer(
                 "Given model doesn't support gradient checkpointing. Please disable it and run it.", RuntimeError
             )
 
-    model = apply_peft(model, train_config, peft_config_file, **kwargs)
+    model = apply_peft(model, train_config, **kwargs)
 
     return model, tokenizer
 
 
-def apply_peft(
-    model: AutoModel, train_config: TrainConfig, peft_config_file: Dict, **kwargs
-) -> Union[AutoModel, PeftModel]:
+def apply_peft(model: AutoModel, train_config: TrainConfig, **kwargs) -> Union[AutoModel, PeftModel]:
     """Apply Parameter-Efficient Fine-Tuning (PEFT) to the model if enabled.
 
     Args:
         model (AutoModel): Huggingface model.
         train_config (TrainConfig): Training configuration object.
-        peft_config_file (str, optional): Path to YAML/JSON file containing
-            PEFT (LoRA) config. Defaults to None.
         kwargs: Additional arguments to override PEFT config params.
 
     Returns:
@@ -215,7 +210,7 @@ def apply_peft(
         peft_config = model.peft_config
     # Generate the peft config and start fine-tuning from original model
     else:
-        peft_config = generate_peft_config(train_config, peft_config_file, **kwargs)
+        peft_config = generate_peft_config(train_config, **kwargs)
         model = get_peft_model(model, peft_config)
     print_trainable_parameters(model)
 
@@ -272,12 +267,11 @@ def setup_dataloaders(
     return train_dataloader, eval_dataloader, longest_seq_length
 
 
-def main(peft_config_file: str = None, **kwargs) -> None:
+def main(**kwargs) -> None:
     """
     Fine-tune a model on QAIC hardware with configurable training and LoRA parameters.
 
     Args:
-        peft_config_file (str, optional): Path to YAML/JSON file containing PEFT (LoRA) config. Defaults to None.
         kwargs: Additional arguments to override TrainConfig.
 
     Example:
@@ -304,7 +298,7 @@ def main(peft_config_file: str = None, **kwargs) -> None:
 
     setup_distributed_training(train_config)
     setup_seeds(train_config.seed)
-    model, tokenizer = load_model_and_tokenizer(train_config, dataset_config, peft_config_file, **kwargs)
+    model, tokenizer = load_model_and_tokenizer(train_config, dataset_config, **kwargs)
 
     # Create DataLoaders for the training and validation dataset
     train_dataloader, eval_dataloader, longest_seq_length = setup_dataloaders(train_config, dataset_config, tokenizer)
