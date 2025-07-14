@@ -78,7 +78,7 @@ In the **Dual QPC** setup, the model is split across two  configurations:
 
 #### Single QPC
 
-In the **Single QPC** setup, the entire model—including both image encoding and text generation—runs within a **single quantized configuration**. There is no model splitting, and all components operate within the same execution environment.
+In the **Single QPC** setup, the entire model—including both image encoding and text generation—runs within a **single Qualcomm Program Container**. There is no model splitting, and all components operate within the same execution environment. The single QPC approach introduces the flexibility to run the vision and language components independently.
 
 
 ### Note

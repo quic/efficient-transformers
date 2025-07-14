@@ -42,7 +42,7 @@ Welcome to the official release of **Efficient Transformer Library v1.20.0**! Th
 - **SpD & Multi-Projection Heads**: Token speculation via post-attention projections
 - **I/O Encryption**: `--io-encrypt` flag support in compile/infer APIs
 - **Separate Prefill/Decode Compilation**: For disaggregated serving
-- **On-Device Sampling**: Reduces host-device latency for CausalLM models
+- **On-Device Sampling**: Supported using VLLM, which reduces host-device latency for CausalLM models
 
 ---
 
@@ -60,4 +60,3 @@ Welcome to the official release of **Efficient Transformer Library v1.20.0**! Th
 - Gradient checkpointing, device-aware `GradScaler`, and CLI `--help` added
 
 ---
-Thank you for using Efficient Transformers! For more details, refer to the full documentation.
