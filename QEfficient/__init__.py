@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import atexit
 import os
 import warnings
 
@@ -16,7 +17,12 @@ from QEfficient.utils import custom_format_warning
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 # Placeholder for all non-transformer models registered in QEfficient
 import QEfficient.utils.model_registery  # noqa: F401
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
+
+# Register the cleanup function
+atexit.register(QEFFLogger.close_logger)
 
 # custom warning for the better logging experience
 warnings.formatwarning = custom_format_warning

@@ -18,7 +18,9 @@ from QEfficient.utils.generate_qnn_network_specialization_config import (
     generate_data_format_config,
     generate_qnn_specialization,
 )
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
 
 
 class QNN:

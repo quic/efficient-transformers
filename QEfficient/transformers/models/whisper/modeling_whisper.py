@@ -24,12 +24,14 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperForConditionalGeneration,
     WhisperModel,
     WhisperPositionalEmbedding,
-    logger,
 )
 
 from QEfficient.transformers.cache_utils import QEffEncoderDecoderCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils._utils import IOInfo
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
 
 
 class QEffWhisperPositionalEmbedding(WhisperPositionalEmbedding):

@@ -10,7 +10,9 @@ import re
 import subprocess
 
 from QEfficient.utils.constants import Constants
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
 
 
 def is_networks_loaded(stdout):
