@@ -602,14 +602,11 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "get_qeff_language_decoder": QEffInternVLModel.get_qeff_language_decoder,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
-        # Mapping for Plamo model
-        "PlamoForCausalLM" : {"forward": QEffPlamoForCausalLM.forward},
+        "PlamoForCausalLM": {"forward": QEffPlamoForCausalLM.forward},
         "PlamoModel": {"forward": QEffPlamoModel.forward},
         "PlamoDecoder": {"forward": QEffPlamoDecoder.forward},
         "PlamoDecoderLayer": {"forward": QEffPlamoDecoderLayer.forward},
         "Attention": {"forward": QEffPlamoAttention.forward},
-        "RMSNorm":{"forward": QEffPlamoRMSNorm.forward},
-        "RotaryEmbedding":{"forward": QEffPlamoRotaryEmbedding.forward},
         # Mapping for grok1 model
         "Grok1ModelForCausalLM": {"forward": QEffGrok1ModelForCausalLM.forward},
         "Grok1Model": {
