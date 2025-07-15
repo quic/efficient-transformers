@@ -8,6 +8,8 @@
 import logging
 from dataclasses import dataclass
 
+from QEfficient.finetune.utils.helper import Batching_Strategy, Device, Peft_Method, Task_Mode
+
 
 # Configuration Classes
 @dataclass
@@ -35,10 +37,11 @@ class TrainConfig:
         gamma (float): Learning rate decay factor (default: 0.85).
         seed (int): Random seed for reproducibility (default: 42).
         dataset (str): Dataset name for training (default: "alpaca_dataset").
-        task_type (str): Type of task for which the finetuning is to be done. Options: "generation" and "seq_classification". (default: "generation")
+        task_mode (str): Mode of task for which the finetuning is to be done. Options: "generation" and "seq_classification". (default: "generation")
         use_peft (bool): Whether to use PEFT (default: True).
         peft_method (str): Parameter-efficient fine-tuning method (default: "lora").
-        from_peft_checkpoint (str): Path to PEFT checkpoint (default: "").
+        peft_config_file (str): Path to YAML/JSON file containing PEFT (LoRA) config. (default: None)
+        from_peft_checkpoint (str): Path to PEFT checkpoint (default: None).
         output_dir (str): Directory to save outputs (default: "training_results").
         save_model (bool): Save the trained model (default: True).
         save_metrics (bool): Save training metrics (default: True).
@@ -49,8 +52,9 @@ class TrainConfig:
         convergence_loss (float): Loss threshold for convergence (default: 1e-4).
         use_profiler (bool): Enable profiling (default: False).
         enable_ddp (bool): Enable distributed data parallel (default: False).
-        dump_root_dir (str): Directory for mismatch dumps (default: "mismatches/step_").
         opByOpVerifier (bool): Enable operation-by-operation verification (default: False).
+        dump_logs (bool): Whether to dump logs (default: True).
+        log_level (str): logging level (default: logging.INFO)
     """
 
     model_name: str = "meta-llama/Llama-3.2-1B"
@@ -66,22 +70,23 @@ class TrainConfig:
     num_epochs: int = 1
     max_train_step: int = 0
     max_eval_step: int = 0
-    device: str = "qaic"
+    device: str = Device.QAIC.value
     num_workers_dataloader: int = 1
     lr: float = 3e-4
     weight_decay: float = 0.0
     gamma: float = 0.85  # multiplicatively decay the learning rate by gamma after each epoch
     seed: int = 42
     dataset: str = "alpaca_dataset"
-    task_type: str = "generation"  # "generation" / "seq_classification"
+    task_mode: str = Task_Mode.GENERATION.value  # "generation" / "seq_classification"
     use_peft: bool = True  # use parameter efficient finetuning
-    peft_method: str = "lora"
-    from_peft_checkpoint: str = ""  # if not empty and peft_method='lora', will load the peft checkpoint and resume the fine-tuning on that checkpoint
+    peft_method: str = Peft_Method.LORA.value
+    peft_config_file: str = None
+    from_peft_checkpoint: str = None  # if not empty and peft_method='lora', will load the peft checkpoint and resume the fine-tuning on that checkpoint
     output_dir: str = "training_results"
     save_model: bool = True
     save_metrics: bool = True  # saves training metrics to a json file for later plotting
     intermediate_step_save: int = 1000
-    batching_strategy: str = "packing"
+    batching_strategy: str = Batching_Strategy.PADDING.value
     enable_ddp: bool = False
     enable_sorting_for_ddp: bool = True
     convergence_counter: int = 5  # its value should be >= 1, stop fine tuning when loss <= convergence_loss (defined below) for #convergence_counter steps
