@@ -11,6 +11,7 @@ import os
 import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
@@ -25,6 +26,7 @@ from transformers import (
     PreTrainedTokenizerFast,
 )
 
+from QEfficient.utils.cache import QEFF_HOME, hash_dict_params
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants, QnnConstants
 from QEfficient.utils.logging_utils import logger
 
@@ -656,6 +658,43 @@ def dump_qconfig(func):
     return wrapper
 
 
+def dump_model_params(func):
+    def wrapper(self, *args, **kwargs):
+        # Bind args to their parameter names
+        sig = inspect.signature(func)
+        bound_args = sig.bind(self, *args, **kwargs)
+        bound_args.apply_defaults()
+
+        # Convert bound arguments to a dictionary and exclude 'self'
+        all_kwargs = {k: v for k, v in bound_args.arguments.items() if k != "self"}
+
+        export_dir = Path(kwargs["export_dir"] or (QEFF_HOME / self.model_architecture / self.model_name))
+        try:
+            filter_and_hash_export_params(
+                self.model_params,
+                **{k: v for k, v in all_kwargs.items() if k not in ["example_inputs"]},
+            )
+
+            export_hash = hash_dict_params(self.model_params)
+            export_hash = export_hash.hexdigest()[:16]
+            export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
+
+            os.makedirs(export_dir, exist_ok=True)
+
+            hashed_params_file_path = os.path.join(export_dir, "hashed_model_params.json")
+            create_json(hashed_params_file_path, self.model_params)
+
+            logger.info("Parameters used for export hash dumped in a JSON file successfully")
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while dumping the hashed model params: {e}")
+
+        result = func(self, *args, **kwargs)
+
+        return result
+
+    return wrapper
+
+
 def get_qaic_sdk_version(qaic_sdk_xml_path: str) -> Optional[str]:
     """
     Extracts the QAIC SDK version from the given SDK XML file.
@@ -748,6 +787,50 @@ def create_and_dump_qconfigs(
             qconfigs["qpc_config"]["qnn_config"].update(qnn_sdk_details)
 
     create_json(qconfig_file_path, qconfigs)
+
+
+def filter_and_hash_export_params(**kwargs):
+    """
+    This Method prepares all the model params required to create the hash for export directory.
+    """
+    filtered_params = kwargs["model_params"]
+    export_params = {}
+    export_params["output_names"] = kwargs.get("output_names")
+    export_params["dynamic_axes"] = kwargs.get("dynamic_axes")
+
+    filtered_params["export_params"] = export_params
+
+    export_kwargs = kwargs.get("export_kwargs")
+    if export_kwargs:
+        filtered_params.update(export_kwargs)
+
+    onnx_transform_kwargs = kwargs.get("onnx_transform_kwargs")
+    if onnx_transform_kwargs:
+        filtered_params.update(onnx_transform_kwargs)
+
+    return hash_dict_params(filtered_params), filtered_params
+
+
+def filter_and_hash_compile_params(**kwargs):
+    """
+    This Method creates the hash for qpc directory.
+    """
+    filtered_params = {}
+    filtered_params["command"] = kwargs["command"]
+
+    if kwargs.get("specializations", None):
+        filtered_params["specializations"] = kwargs["specializations"]
+
+    if kwargs.get("custom_io", None):
+        filtered_params["custom_io"] = kwargs["custom_io"]
+
+    if kwargs.get("num_speculative_tokens", None):
+        filtered_params["num_speculative_tokens"] = kwargs["num_speculative_tokens"]
+
+    if kwargs.get("mdp_ts_num_devices", None):
+        filtered_params["mdp_ts_num_devices"] = kwargs["mdp_ts_num_devices"]
+
+    return hash_dict_params(filtered_params), filtered_params
 
 
 def filter_kwargs(func, kwargs):

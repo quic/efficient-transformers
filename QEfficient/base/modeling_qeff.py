@@ -45,15 +45,18 @@ class QEFFBaseModel(ABC):
     def _transform_names(cls) -> List[str]:
         return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
+    def create_model_params(self, **kwargs) -> Dict:
+        model_params = copy.deepcopy(kwargs)
+
+        model_params["config"] = self.model.config.to_diff_dict()
+        model_params["_transform_names"] = self._transform_names()
+        # TODO: Add keywords list to filter out params that are not needed for hashing
+        return model_params
+
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
         self.model = model
-
-        # Store Model parameters to Calculate Hash for caching
-        self.model_params = {}
-        self.model_params = copy.deepcopy(kwargs)
-        self.model_params["config"] = self.model.config.to_diff_dict()
-        self.model_params["_transform_names"] = self._transform_names()
+        self.model_params = self.create_model_params(**kwargs)
 
         if hasattr(self.model.config, "architectures"):
             self.model_architecture = self.model.config.architectures[0]
@@ -120,6 +123,7 @@ class QEFFBaseModel(ABC):
             :str: Path of the compiled ``qpc`` package.
         """
 
+    # @dump_model_params
     def _export(
         self,
         example_inputs: Dict[str, torch.Tensor],
@@ -140,19 +144,17 @@ class QEFFBaseModel(ABC):
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
         """
-        export_params = {}
-        export_params["output_names"] = output_names
-        export_params["dynamic_axes"] = dynamic_axes
-
-        self.model_params["export_params"] = export_params
-
-        self.model_params.update(export_kwargs) if export_kwargs is not None else None
-        self.model_params.update(onnx_transform_kwargs) if export_kwargs is not None else None
 
         export_dir = Path(export_dir or (QEFF_HOME / self.model_architecture / self.model_name))
+        export_hash, hashed_params = filter_and_hash_export_params(
+            model_params=copy.deepcopy(self.model_params),
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_kwargs=export_kwargs,
+            onnx_transform_kwargs=onnx_transform_kwargs,
+            export_dir=export_dir,
+        )
 
-        export_hash = hash_dict_params(self.model_params)
-        export_hash = export_hash.hexdigest()[:16]
         export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         onnx_path = export_dir / f"{self.model_name}.onnx"
         if onnx_path.is_file():
@@ -220,20 +222,6 @@ class QEFFBaseModel(ABC):
             onnx.save(model, onnx_path)
             logger.info("Transformed onnx saved")
 
-            # Dumping model paramters in a JSON file after successful ONNX export
-            model_params_json = export_dir / "model_params.json"
-            with open(model_params_json, "w") as fp:
-                json.dump(
-                    {
-                        "model_params": {
-                            k: make_serializable(self.model_params[k]) for k in sorted(self.model_params.keys())
-                        }
-                    },
-                    fp,
-                    indent=4,
-                )
-            logger.info("Parameters used for export hash dumped in a JSON file successfully")
-
         except Exception as e:
             logger.error(f"ONNX export (or) ONNXTransforms failed: {e}")
 
@@ -241,6 +229,11 @@ class QEFFBaseModel(ABC):
 
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
+
+        # Dump JSON file with hashed parameters
+        hashed_params_export_path = export_dir / "hashed_model_params.json"
+        create_json(hashed_params_export_path, hashed_params)
+        logger.info("Hashed parameters exported successfully.")
 
         self.onnx_path = onnx_path
         return onnx_path
@@ -279,8 +272,6 @@ class QEFFBaseModel(ABC):
         """
         if onnx_path is None and self.onnx_path is None:
             self.export()
-
-        self.compile_params = {}
 
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
@@ -384,18 +375,6 @@ class QEFFBaseModel(ABC):
         try:
             subprocess.run(command, capture_output=True, check=True)
 
-            # Dumping compile paramters in a JSON file after successful ONNX export
-            compile_params_json = compile_dir / "compile_params.json"
-            with open(compile_params_json, "w") as fp:
-                json.dump(
-                    {
-                        "compile_params": {
-                            k: make_serializable(self.compile_params[k]) for k in sorted(self.compile_params.keys())
-                        }
-                    },
-                    fp,
-                    indent=4,
-                )
         except subprocess.CalledProcessError as e:
             raise RuntimeError(
                 "\n".join(
@@ -409,6 +388,10 @@ class QEFFBaseModel(ABC):
                 )
             )
 
+        # Dump JSON file with hashed parameters
+        hashed_compile_params_path = compile_dir / "hashed_compile_params.json"
+        create_json(hashed_compile_params_path, hashed_params)
+        logger.info("Hashed parameters exported successfully.")
         self.qpc_path = qpc_path
 
         return qpc_path
