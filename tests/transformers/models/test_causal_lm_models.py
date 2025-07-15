@@ -47,6 +47,7 @@ test_models_qaic = [
     "ibm-granite/granite-3.1-2b-instruct",
     "ibm-granite/granite-guardian-3.1-2b",
     "hpcai-tech/grok-1",
+    "allenai/OLMo-2-0425-1B",
 ]
 
 test_models_qnn = [
