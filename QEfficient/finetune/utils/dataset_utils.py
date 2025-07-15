@@ -4,6 +4,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
+from typing import Dict, List, Tuple
+
 import datasets
 import torch
 import torch.distributed as dist
@@ -116,3 +119,11 @@ def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"
         **dl_kwargs,
     )
     return dataloader
+
+
+def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
+    # find out the minimum max_seq_length required during fine-tuning (saves memory!)
+    lengths = [len(d["input_ids"]) for d in data]
+    longest_seq_length = max(lengths)
+    longest_seq_ix = lengths.index(longest_seq_length)
+    return longest_seq_length, longest_seq_ix

@@ -50,7 +50,6 @@ class TrainConfig:
         convergence_counter (int): Steps to check convergence (default: 5).
         convergence_loss (float): Loss threshold for convergence (default: 1e-4).
         use_profiler (bool): Enable profiling (default: False).
-        enable_pp (bool): Enable training with pipeline parallelism (default: False).
         num_pp_stages (int): Number of stages in which model is split layerwise when training using pipeline (default: 1).
         enable_ddp (bool): Enable distributed data parallel (default: False).
         enable_sorting_for_ddp (bool): Sort data for DDP (default: True).
@@ -101,7 +100,6 @@ class TrainConfig:
     # profiler_dir: str = "PATH/to/save/profiler/results" # will be used if using profiler
 
     # dist-related
-    enable_pp: bool = False
     num_pp_stages: int = 1
     enable_ddp: bool = False
     enable_sorting_for_ddp: bool = True

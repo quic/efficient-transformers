@@ -263,12 +263,6 @@ def get_finetune_parser():
         help="Enable distributed data parallel training. This will load the replicas of model on given number of devices and train the model. This should be used using torchrun interface. Please check docs for exact usage.",
     )
     parser.add_argument(
-        "--enable_pp",
-        "--enable-pp",
-        action="store_true",
-        help="Enable pipeline parallel training. This will split the of model layerwise in given number of stages and train the model.",
-    )
-    parser.add_argument(
         "--num_pp_stages",
         "--num-pp-stages",
         required=False,
