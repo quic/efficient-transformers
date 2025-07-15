@@ -297,6 +297,13 @@ from QEfficient.transformers.models.phi3.modeling_phi3 import (
     QEffPhi3ForCausalLM,
     QEffPhi3Model,
 )
+from QEfficient.transformers.models.plamo.modeling_plamo import (
+    QEffPlamoAttention,
+    QEffPlamoDecoder,
+    QEffPlamoDecoderLayer,
+    QEffPlamoForCausalLM,
+    QEffPlamoModel,
+)
 from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2Attention,
     QEffQwen2DecoderLayer,
@@ -595,6 +602,11 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "get_qeff_language_decoder": QEffInternVLModel.get_qeff_language_decoder,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
+        "PlamoForCausalLM": {"forward": QEffPlamoForCausalLM.forward},
+        "PlamoModel": {"forward": QEffPlamoModel.forward},
+        "PlamoDecoder": {"forward": QEffPlamoDecoder.forward},
+        "PlamoDecoderLayer": {"forward": QEffPlamoDecoderLayer.forward},
+        "Attention": {"forward": QEffPlamoAttention.forward},
         # Mapping for grok1 model
         "Grok1ModelForCausalLM": {"forward": QEffGrok1ModelForCausalLM.forward},
         "Grok1Model": {
