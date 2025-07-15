@@ -13,6 +13,7 @@ from QEfficient.utils._utils import (  # noqa: F401
     check_and_assign_cache_dir,
     create_json,
     custom_format_warning,
+    dump_model_params,
     dump_qconfig,
     generate_mdp_partition_config,
     get_num_layers_from_config,
