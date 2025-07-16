@@ -1367,11 +1367,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         self.is_tlm = transformed
-<<<<<<< HEAD
-
-=======
         self.hash_params["qeff_class"] = self.__class__.__name__
->>>>>>> dd35ad1 (Modifications to the flow of hash creation and filtration of params for export)
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
