@@ -14,11 +14,8 @@ from QEfficient.utils._utils import (  # noqa: F401
     create_json,
     custom_format_warning,
     dump_qconfig,
-<<<<<<< HEAD
-    generate_mdp_partition_config,
-=======
     filter_and_create_export_hash,
->>>>>>> dd35ad1 (Modifications to the flow of hash creation and filtration of params for export)
+    generate_mdp_partition_config,
     get_num_layers_from_config,
     get_num_layers_vlm,
     get_onnx_dir_name,
