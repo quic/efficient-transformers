@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 import QEfficient
 import QEfficient.cloud.finetune
 from QEfficient.cloud.finetune import main as finetune
+from QEfficient.finetune.utils.helper import Task_Mode
 
 alpaca_json_path = Path.cwd() / "alpaca_data.json"
 
@@ -40,7 +41,7 @@ def download_alpaca():
 configs = [
     pytest.param(
         "meta-llama/Llama-3.2-1B",  # model_name
-        "generation",  # task_type
+        Task_Mode.GENERATION,  # task_mode
         10,  # max_eval_step
         20,  # max_train_step
         "gsm8k_dataset",  # dataset_name
@@ -58,7 +59,7 @@ configs = [
     ),
     pytest.param(
         "meta-llama/Llama-3.2-1B",  # model_name
-        "generation",  # task_type
+        Task_Mode.GENERATION,  # task_mode
         10,  # max_eval_step
         20,  # max_train_step
         "alpaca_dataset",  # dataset_name
@@ -76,7 +77,7 @@ configs = [
     ),
     pytest.param(
         "google-bert/bert-base-uncased",  # model_name
-        "seq_classification",  # task_type
+        Task_Mode.SEQ_CLASSIFICATION,  # task_mode
         10,  # max_eval_step
         20,  # max_train_step
         "imdb_dataset",  # dataset_name
@@ -100,12 +101,12 @@ configs = [
 @pytest.mark.on_qaic
 @pytest.mark.finetune
 @pytest.mark.parametrize(
-    "model_name,task_type,max_eval_step,max_train_step,dataset_name,data_path,intermediate_step_save,context_length,run_validation,use_peft,device,expected_train_loss,expected_train_metric,expected_eval_loss,expected_eval_metric",
+    "model_name,task_mode,max_eval_step,max_train_step,dataset_name,data_path,intermediate_step_save,context_length,run_validation,use_peft,device,expected_train_loss,expected_train_metric,expected_eval_loss,expected_eval_metric",
     configs,
 )
-def test_finetune_llama(
+def test_finetune(
     model_name,
-    task_type,
+    task_mode,
     max_eval_step,
     max_train_step,
     dataset_name,
@@ -134,7 +135,7 @@ def test_finetune_llama(
 
     kwargs = {
         "model_name": model_name,
-        "task_type": task_type,
+        "task_mode": task_mode,
         "max_eval_step": max_eval_step,
         "max_train_step": max_train_step,
         "dataset": dataset_name,
@@ -163,7 +164,7 @@ def test_finetune_llama(
 
     train_config_spy.assert_called_once()
     generate_dataset_config_spy.assert_called_once()
-    if task_type == "generation":
+    if task_mode == "generation":
         generate_peft_config_spy.assert_called_once()
     get_longest_seq_length_spy.assert_called_once()
     print_model_size_spy.assert_called_once()
