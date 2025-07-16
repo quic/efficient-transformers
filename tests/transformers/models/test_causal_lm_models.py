@@ -231,7 +231,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     # testing for CB models
     model_hf = model_hf_cb
-    model_hf.eval()
     full_batch_size = 4
     fbs_prompts = Constants.INPUT_STR * 4
     api_runner = ApiRunner(
@@ -279,7 +278,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
 
 # Load the custom models configuration data from the JSON file
-with open("tests/transformers/models/dummy_model_configs.json", "r") as f:
+with open("tests/transformers/models/custom_tiny_model_configs.json", "r") as f:
     custom_model_configs_data = json.load(f)
 custom_model_config_dict = get_custom_model_config_dict(
     custom_model_configs_data
@@ -345,7 +344,7 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(test_model_config, test_
             test_model_config,
             attn_implementation="eager",
         )
-        # model_hf.eval()
+        model_hf.eval()
         check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(test_model_name, model_hf=model_hf)
 
 
@@ -386,7 +385,7 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(test_model_config_qn
         test_model_config_qnn,
         attn_implementation="eager",
     )
-    # model_hf.eval()
+    model_hf.eval()
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
@@ -440,7 +439,7 @@ def test_custom_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(test_model_config_spd, 
         test_model_config_spd,
         attn_implementation="eager",
     )
-    # model_hf.eval()
+    model_hf.eval()
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=test_model_name_spd, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS, model_hf=model_hf
