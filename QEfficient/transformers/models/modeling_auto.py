@@ -73,7 +73,7 @@ class QEFFTransformersBase(QEFFBaseModel):
         ):
             raise AssertionError("Please use `from_pretrained` method to load quantized models")
 
-        super().__init__(model)
+        super().__init__(model, **kwargs)
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
@@ -174,7 +174,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             self.model, _ = PoolingTransform.apply(self.model, pooling)
 
         self.model.base_model.config.use_cache = True
-        self.model_params["qeff_class"] = self.__class__.__name__
+        self.hash_params["qeff_class"] = self.__class__.__name__
 
     @classmethod
     @with_replaced_quantizers
@@ -435,7 +435,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
     def __init__(self, model: nn.modules, **kwargs):
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
-        self.model_params["qeff_class"] = self.__class__.__name__
+        self.hash_params["qeff_class"] = self.__class__.__name__
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -490,7 +490,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     def __init__(self, model, **kwargs):
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
-        self.model_params["qeff_class"] = self.__class__.__name__
+        self.hash_params["qeff_class"] = self.__class__.__name__
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -543,8 +543,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
         self.model = model
         self.config = model.config
-        self.vision_model = QEffVisionEncoderForTextImageToTextModel(model)
-        self.lang_model = QEffCausalLMForTextImageToTextModel(model)
+        self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
+        self.lang_model = QEffCausalLMForTextImageToTextModel(model, **kwargs)
         self.input_shapes, self.output_names = None, None
 
     @property
@@ -916,7 +916,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             self.model.config.vision_config.use_flash_attn = "false"
         else:
             self.model.config.text_config.use_cache = True
-        self.model_params["qeff_class"] = self.__class__.__name__
+        self.hash_params["qeff_class"] = self.__class__.__name__
 
     @classmethod
     def from_pretrained(
@@ -940,10 +940,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
-        # # Bypass __call__ and manually initialize
-        # instance = object.__new__(cls)
-        # instance.__init__(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
-        # return instance
 
     def export(
         self,
@@ -1287,11 +1283,6 @@ class QEFFAutoModelForImageTextToText:
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
         return cls(model, kv_offload=kv_offload, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
-
-        # # Bypass __call__ and manually initialize
-        # instance = object.__new__(cls)
-        # instance.__init__(model, kv_offload=kv_offload, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
-        # return instance
 
 
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoModelForImageTextToText}
@@ -1917,7 +1908,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         super().__init__(model, **kwargs)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
-        self.model_params["qeff_class"] = self.__class__.__name__
+        self.hash_params["qeff_class"] = self.__class__.__name__
 
     @property
     def get_model_config(self) -> dict:
