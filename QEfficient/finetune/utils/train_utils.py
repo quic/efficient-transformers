@@ -330,10 +330,6 @@ def train(
                 model, train_config, eval_dataloader, device
             )
 
-            if eval_epoch_loss < best_eval_loss:
-                best_eval_loss = eval_epoch_loss
-                logger.log_rank_zero(f"Best eval loss on epoch {epoch + 1} is {best_eval_loss:.4f}")
-
             if is_rank_zero():
                 tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
             if train_config.save_metrics:
@@ -347,6 +343,10 @@ def train(
                 eval_epoch_loss /= get_num_ddp_devices()
                 dist.all_reduce(eval_epoch_metric, op=dist.ReduceOp.SUM)
                 eval_epoch_metric /= get_num_ddp_devices()
+
+            if eval_epoch_loss < best_eval_loss:
+                best_eval_loss = eval_epoch_loss
+                logger.log_rank_zero(f"Best eval loss on epoch {epoch + 1} is {best_eval_loss:.4f}")
 
             logger.log_rank_zero(
                 f"Epoch {epoch + 1}: Eval Loss: {eval_epoch_loss.detach().cpu():.4f}, Eval metric: {eval_epoch_metric.detach().cpu():.4f}"
@@ -427,7 +427,7 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     autocast_ctx = get_autocast_ctx(train_config.use_autocast, device_type, dtype=torch.float16)
     for step, batch in enumerate(tqdm(eval_dataloader, colour="green", desc="evaluating Epoch", dynamic_ncols=True)):
         #  stop when the maximum number of eval steps is reached
-        if train_config.max_eval_step > 0 and step > train_config.max_eval_step:
+        if train_config.max_eval_step > 0 and step >= train_config.max_eval_step:
             break
         for key in batch.keys():
             batch[key] = batch[key].to(device)

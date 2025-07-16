@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 import QEfficient
 import QEfficient.cloud.finetune
 from QEfficient.cloud.finetune import main as finetune
-from QEfficient.finetune.utils.helper import Task_Mode
+from QEfficient.finetune.utils.helper import Device, Task_Mode
 
 alpaca_json_path = Path.cwd() / "alpaca_data.json"
 
@@ -50,11 +50,11 @@ configs = [
         None,  # context_length
         True,  # run_validation
         True,  # use_peft
-        "qaic",  # device
-        1.5428,  # expected_train_loss
-        4.6777,  # expected_train_metric
-        1.2899,  # expected_eval_loss
-        3.6323,  # expected_eval_metric
+        Device.QAIC,  # device
+        1.5416,  # expected_train_loss
+        4.6722,  # expected_train_metric
+        1.4040,  # expected_eval_loss
+        4.0715,  # expected_eval_metric
         id="llama_config_gsm8k",  # config name
     ),
     pytest.param(
@@ -68,11 +68,11 @@ configs = [
         None,  # context_length
         True,  # run_validation
         True,  # use_peft
-        "qaic",  # device
-        1.4349,  # expected_train_loss
-        4.1991,  # expected_train_metric
-        1.4147,  # expected_eval_loss
-        4.1152,  # expected_eval_metric
+        Device.QAIC,  # device
+        1.3477,  # expected_train_loss
+        3.8486,  # expected_train_metric
+        1.5305,  # expected_eval_loss
+        4.6207,  # expected_eval_metric
         id="llama_config_alpaca",  # config name
     ),
     pytest.param(
@@ -86,11 +86,11 @@ configs = [
         None,  # context_length
         True,  # run_validation
         False,  # use_peft
-        "qaic",  # device
-        0.6306,  # expected_train_loss
-        0.5555,  # expected_train_metric
-        0.6150,  # expected_eval_loss
-        0.7083,  # expected_eval_metric
+        Device.QAIC,  # device
+        0.6566,  # expected_train_loss
+        0.5055,  # expected_train_metric
+        0.6188,  # expected_eval_loss
+        0.6904,  # expected_eval_metric
         id="bert_config_imdb",  # config name
     ),
 ]
@@ -211,6 +211,3 @@ def test_finetune(
 
     if dataset_name == "alpaca_dataset":
         clean_up(alpaca_json_path)
-
-
-# TODO (Meet): Add seperate tests for BERT FT and LLama FT
