@@ -8,8 +8,11 @@
 import os
 
 import numpy as np
+import torch
+import torch.distributed as dist
 from transformers import AutoConfig
 
+from QEfficient.finetune.utils.logging_utils import logger
 from QEfficient.utils._utils import get_num_layers_from_config
 
 
@@ -22,12 +25,22 @@ def get_device_map(train_config):
     Returns:
         Dict: A dictionary of layers and corresponding device id.
     """
-
-    if train_config.num_pp_stages > 1:
+    torch_device = torch.device(train_config.device)
+    num_available_devices = getattr(torch, torch_device.type).device_count()
+    if train_config.enable_pp:
         if train_config.enable_ddp:
+            assert dist.get_world_size() * train_config.num_pp_stages <= num_available_devices, (
+                "Number of devices required should be less than or equal to total available devices."
+            )
             device_map = custom_device_map(train_config)
-        else:
+        elif train_config.num_pp_stages < num_available_devices:
+            device_map = custom_device_map(train_config)
+        elif train_config.num_pp_stages == num_available_devices:
             device_map = "auto"
+        else:
+            logger.raise_error(
+                "For Pipeline Parallelism only, Number of pipeline stages should be less than or equal to total available devices."
+            )
     else:
         device_map = None
 

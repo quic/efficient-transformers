@@ -59,24 +59,15 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
     Raises:
         AssertionError: If device is CPU or includes an index with DDP enabled.
     """
-    torch_device = torch.device(train_config.device)
     if not train_config.enable_ddp:
-        if train_config.num_pp_stages > 1:
-            assert train_config.num_pp_stages == getattr(torch, torch_device.type).device_count(), (
-                "For Pipeline Parallelism only, Number of pipeline stages should be equal to total available devices."
-                # PP without DDP, uses device map = 'auto' which splits the model on all available devices.
-            )
         return
 
+    torch_device = torch.device(train_config.device)
     assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
     assert torch_device.index is None, f"DDP requires only device type, got: {torch_device}"
     dist_backend_map = {"cpu": "gloo", "qaic": "qccl", "cuda": "gloo"}
     dist.init_process_group(backend=dist_backend_map[torch_device.type])
-    if train_config.num_pp_stages > 1:
-        assert dist.get_world_size() * train_config.num_pp_stages <= getattr(torch, torch_device.type).device_count(), (
-            "Number of devices required should be less than or equal to total available devices."
-        )
-    else:
+    if (not train_config.enable_pp) or (train_config.enable_pp and train_config.num_pp_stages == 1):
         # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
         getattr(torch, torch_device.type).set_device(dist.get_rank())
 
@@ -303,7 +294,7 @@ def main(**kwargs) -> None:
         f"passed context length is {train_config.context_length} and overall model's context length is "
         f"{model.config.max_position_embeddings}"
     )
-    if train_config.num_pp_stages == 1:
+    if (not train_config.enable_pp) or (train_config.enable_pp and train_config.num_pp_stages == 1):
         model.to(train_config.device)
     optimizer = optim.AdamW(
         model.parameters(),
