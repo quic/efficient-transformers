@@ -10,7 +10,7 @@ from diffusers.pipelines.pipeline_loading_utils import _identify_model_variants
 import torch
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
-from QEfficient.diffusers.pipelines.pipeline_utils import QEffTextEncoder, QEffUNet, QEffVAE
+from QEfficient.diffusers.pipelines.pipeline_utils import QEffTextEncoder, QEffUNet, QEffVAE,QEffSafetyChecker
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheExternalModuleMapperTransform, KVCacheTransform
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import constants
@@ -19,6 +19,8 @@ import torch.nn as nn
 
 from diffusers.models.attention_processor import AttnProcessor
 
+
+from transformers.models.clip.modeling_clip import CLIPAttention
 
 class QEFFStableDiffusionPipeline():
     _hf_auto_class = StableDiffusionPipeline
@@ -29,11 +31,15 @@ class QEFFStableDiffusionPipeline():
         
         # VAE Encoder
         self.vae_encoder=QEffVAE(model, "encoder")
-        self.vae_encoder.model.forward= lambda sample, return_dict: self.vae_encoder.model.encode(sample, return_dict)[0].sample()
+        self.vae_encoder.model.forward = lambda sample, return_dict: self.vae_encoder.model.encode(sample, return_dict)[0].sample()
         
         # VAE Decoder
         self.vae_decoder=QEffVAE(model, "decoder")
-        self.vae_decoder.model.forward= model.vae.decode
+        self.vae_decoder.model.forward = lambda latent_sample, return_dict: self.vae_decoder.model.decode(latent_sample, return_dict)
+        
+        # Saftey Checker
+        self.safety_checker= QEffSafetyChecker(model)
+        self.safety_checker.model.forward = model.safety_checker.forward_onnx
         
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         
@@ -68,6 +74,13 @@ class QEFFStableDiffusionPipeline():
 
         output_names = ["last_hidden_state", "pooler_output"]
 
+        # self.text_encoder.model.set_attn_processor(AttnProcessor())
+        
+        config = self.text_encoder.model.text_model.config
+        for layer in self.text_encoder.model.text_model.encoder.layers:
+            layer.self_attn = CLIPAttention(config)
+
+        
         self.text_encoder_onnx_path = self.text_encoder.export(
             example_inputs,
             output_names,
@@ -79,28 +92,28 @@ class QEFFStableDiffusionPipeline():
         
         print("######################  Text Encoder Exported #####################")
         
-        # unet_example_input={
-        #     "sample": torch.randn(bs, self.unet.model.in_channels, self.unet.model.config.sample_size, self.unet.model.config.sample_size),
-        #     "timestep": torch.tensor([1]),
-        #     "encoder_hidden_states": torch.randn(bs, seq_len, self.unet.model.config.cross_attention_dim),
-        #     "return_dict": False,  
-        # }
+        unet_example_input={
+            "sample": torch.randn(bs, self.unet.model.in_channels, self.unet.model.config.sample_size, self.unet.model.config.sample_size),
+            "timestep": torch.tensor([1]),
+            "encoder_hidden_states": torch.randn(bs, seq_len, self.unet.model.config.cross_attention_dim),
+            "return_dict": False,  
+        }
                 
-        # output_names=["out_sample"]
+        output_names=["out_sample"]
         
-        # dynamic_axes={
-        #     "sample": {0: "batch", 1: "channels", 2: "height", 3: "width"},
-        #     "timestep": {0: "batch"},
-        #     "encoder_hidden_states": {0: "batch", 1: "sequence"}
-        # }
-        # self.unet.model.set_attn_processor(AttnProcessor())
+        dynamic_axes={
+            "sample": {0: "batch", 1: "channels", 2: "height", 3: "width"},
+            "timestep": {0: "batch"},
+            "encoder_hidden_states": {0: "batch", 1: "sequence"}
+        }
+        self.unet.model.set_attn_processor(AttnProcessor())
 
-        # self.unet_onnx_path = self.unet.export(
-        #     unet_example_input,
-        #     output_names,
-        #     dynamic_axes,
-        #     export_dir=export_dir,
-        # )
+        self.unet_onnx_path = self.unet.export(
+            unet_example_input,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+        )
         
         print("######################  UNet Exported #####################")
         
@@ -138,6 +151,8 @@ class QEFFStableDiffusionPipeline():
             "latent_sample": {0: "batch", 1: "channels", 2: "height", 3: "width"},
         }
         
+        self.vae_decoder.model.set_attn_processor(AttnProcessor())
+        
         self.vae_decoder_onnx_path = self.vae_decoder.export(
             vae_decoder_input,
             output_names,
@@ -147,20 +162,37 @@ class QEFFStableDiffusionPipeline():
         
         print("######################  VAE Decoder Exported #####################")
         
-        return self.text_encoder_onnx_path, self.unet_onnx_path, self.vae_encoder_onnx_path, self.vae_decoder_onnx_path
+        saftey_checker_input={
+            "clip_input": torch.randn(bs, 3, 224, 224),
+            "images": torch.randn(bs, 512, 512, 3)
+            }
+        output_names=["out_images", "has_nsfw_concepts"]
+        
+        dynamic_axes={
+            "clip_input": {0: "batch", 1: "channels", 2: "clip_height", 3: "clip_width"},
+            "images": {0: "batch", 1: "height", 2: "width", 3: "channels"},
+        }
+        
+        # self.safety_checker.model.set_attn_processor(AttnProcessor())
+        
+        for layer in self.safety_checker.model.vision_model.vision_model.encoder.layers:            
+            config = self.safety_checker.model.config.vision_config
+            layer.self_attn = CLIPAttention(config)
+            # Replace with eager version
+
+        
+        self.safety_checker_onnx_path = self.safety_checker.export(
+            saftey_checker_input,
+            output_names,
+            dynamic_axes,
+            export_dir=None,
+        )
+        
+        print("######################  Safety Checker Exported #####################")
         
         
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+        # return self.text_encoder_onnx_path, self.unet_onnx_path, self.vae_encoder_onnx_path, self.vae_decoder_onnx_path, self.safety_checker_onnx_path
+     
         
     def compile():
         pass
