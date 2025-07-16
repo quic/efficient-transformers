@@ -259,15 +259,17 @@ def train(
                 pbar.update(1)
 
             # Save the trained checkpoints for every given steps
-            if step % train_config.intermediate_step_save == 0:
+            if (step + 1) % train_config.intermediate_step_save == 0:
                 qaic_profile.stop_profiling(device) if train_config.use_profiler else None
                 if train_config.enable_ddp:
                     if dist.get_rank() == 0:
                         model.module.save_pretrained(
-                            train_config.output_dir + f"/trained_weights/epoch_{epoch + 1}/step_{step}"
+                            train_config.output_dir + f"/trained_weights/epoch_{epoch + 1}/step_{step + 1}"
                         )
                 else:
-                    model.save_pretrained(train_config.output_dir + f"/trained_weights/epoch_{epoch + 1}/step_{step}")
+                    model.save_pretrained(
+                        train_config.output_dir + f"/trained_weights/epoch_{epoch + 1}/step_{step + 1}"
+                    )
 
             pbar.set_description(
                 f"Training Epoch: {epoch + 1}/{train_config.num_epochs}, step {step + 1}/{len(train_dataloader)} completed (loss: {loss.detach().float()})"

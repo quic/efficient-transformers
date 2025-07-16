@@ -7,7 +7,6 @@
 
 import os
 import shutil
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -20,7 +19,7 @@ import QEfficient.cloud.finetune
 from QEfficient.cloud.finetune import main as finetune
 from QEfficient.finetune.utils.helper import Device, Task_Mode
 
-alpaca_json_path = Path.cwd() / "alpaca_data.json"
+alpaca_json_path = os.path.join(os.getcwd(), "alpaca_data.json")
 
 
 def clean_up(path):
@@ -46,7 +45,7 @@ configs = [
         20,  # max_train_step
         "gsm8k_dataset",  # dataset_name
         None,  # data_path
-        1,  # intermediate_step_save
+        10,  # intermediate_step_save
         None,  # context_length
         True,  # run_validation
         True,  # use_peft
@@ -64,7 +63,7 @@ configs = [
         20,  # max_train_step
         "alpaca_dataset",  # dataset_name
         alpaca_json_path,  # data_path
-        1,  # intermediate_step_save
+        10,  # intermediate_step_save
         None,  # context_length
         True,  # run_validation
         True,  # use_peft
@@ -82,7 +81,7 @@ configs = [
         20,  # max_train_step
         "imdb_dataset",  # dataset_name
         None,  # data_path
-        1,  # intermediate_step_save
+        10,  # intermediate_step_save
         None,  # context_length
         True,  # run_validation
         False,  # use_peft
@@ -164,7 +163,7 @@ def test_finetune(
 
     train_config_spy.assert_called_once()
     generate_dataset_config_spy.assert_called_once()
-    if task_mode == "generation":
+    if task_mode == Task_Mode.GENERATION:
         generate_peft_config_spy.assert_called_once()
     get_longest_seq_length_spy.assert_called_once()
     print_model_size_spy.assert_called_once()
