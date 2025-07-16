@@ -130,11 +130,6 @@ class MultimodalUtilityMixin:
         return {k: v for k, v in inputs.items() if k in [iinfo.name for iinfo in inputs_info]}
 
 
-class NoInitMeta(type):
-    def __call__(cls, *args, **kwargs):
-        raise RuntimeError("Use `from_pretrained` to create an instance.")
-
-
 class QEFFAutoModel(QEFFTransformersBase):
     """
     The QEFFAutoModel class is designed for manipulating any transformer model from the HuggingFace hub.
@@ -1181,7 +1176,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         return self.model.config.__dict__
 
 
-# class QEFFAutoModelForImageTextToText(metaclass=NoInitMeta):
 class QEFFAutoModelForImageTextToText:
     """
     The QEFFAutoModelForImageTextToText class is used to work with multimodal language models from the HuggingFace hub.
@@ -1288,7 +1282,6 @@ class QEFFAutoModelForImageTextToText:
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoModelForImageTextToText}
 
 
-# class QEFFAutoModelForCausalLM(QEFFBaseModel, metaclass=NoInitMeta):
 class QEFFAutoModelForCausalLM(QEFFBaseModel):
     """
     The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
