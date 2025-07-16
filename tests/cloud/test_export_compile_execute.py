@@ -10,64 +10,18 @@ import os
 
 import pytest
 import yaml
-from conftest import ModelSetup
 
 import QEfficient
 from QEfficient.cloud.execute import main as execute
 from QEfficient.cloud.export import main as export
 
-configs = [
-    {
-        "model_name": "gpt2",
-        "num_cores": 16,
-        "prompt": "My name is",
-        "prompts_txt_file_path": "examples/prompts.txt",
-        "aic_enable_depth_first": 1,
-        "mos": 1,
-        "cache_dir": None,
-        "hf_token": None,
-        "batch_size": 1,
-        "prompt_len": 32,
-        "ctx_len": 128,
-        "mxfp6": 1,
-        "mxint8": 1,
-        "device_group": None,
-        "full_batch_size": 3,
-        "enable_qnn": True,
-        "qnn_config": "QEfficient/compile/qnn_config.json",
-        "image_url": "https://i.etsystatic.com/8155076/r/il/0825c2/1594869823/il_fullxfull.1594869823_5x0w.jpg",
-    }
-]
 
-
-def check_export_compile_execute(
-    mocker,
-    **kwargs,
-):
-    # Setup model
-    model_setup = ModelSetup(
-        kwargs["model_name"],
-        kwargs["num_cores"],
-        kwargs["prompt"],
-        kwargs["prompts_txt_file_path"],
-        bool(kwargs["aic_enable_depth_first"]),
-        kwargs["mos"],
-        kwargs["cache_dir"],
-        kwargs["hf_token"],
-        kwargs["batch_size"],
-        kwargs["prompt_len"],
-        kwargs["ctx_len"],
-        bool(kwargs["mxfp6"]),
-        bool(kwargs["mxint8"]),
-        kwargs["full_batch_size"],
-        kwargs["device_group"],
-        kwargs["enable_qnn"],
-        kwargs["qnn_config"],
-    )
-
+def check_export_compile_execute(mocker, model_setup):
     # Spy on internal functions
-    mocker.spy(QEfficient.utils, "check_and_assign_cache_dir")
-    mock_get_onnx = mocker.spy(QEfficient.cloud.export, "get_onnx_model_path")
+    check_and_assign_cache_dir_spy = mocker.spy(QEfficient.cloud.export, "check_and_assign_cache_dir")
+    get_onnx_model_path_spy = mocker.spy(QEfficient.cloud.export, "get_onnx_model_path")
+    load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.execute, "load_hf_tokenizer")
+    cloud_ai_100_exec_kv_spy = mocker.spy(QEfficient.cloud.execute, "cloud_ai_100_exec_kv")
 
     # Export model
     export(
@@ -77,8 +31,11 @@ def check_export_compile_execute(
         full_batch_size=model_setup.full_batch_size,
     )
 
-    onnx_model_path = mock_get_onnx.spy_return
-    print(f"Captured ONNX path: {onnx_model_path}")
+    check_and_assign_cache_dir_spy.assert_called_once()
+    get_onnx_model_path_spy.assert_called_once()
+
+    onnx_model_path = get_onnx_model_path_spy.spy_return
+    assert os.path.isfile(onnx_model_path)
 
     base_key = "past_key."
     base_value = "past_value."
@@ -113,6 +70,9 @@ def check_export_compile_execute(
         full_batch_size=model_setup.full_batch_size,
         enable_qnn=model_setup.enable_qnn,
     )
+
+    assert os.path.isdir(qpc_path)
+
     # Execute model
     execute(
         model_name=model_setup.model_name,
@@ -124,44 +84,42 @@ def check_export_compile_execute(
         full_batch_size=model_setup.full_batch_size,
     )
 
+    load_hf_tokenizer_spy.assert_called_once()
+    cloud_ai_100_exec_kv_spy.assert_called_once()
+
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
-@pytest.mark.parametrize("config", configs)
-def test_export_compile_execute(mocker, config):
+def test_export_compile_execute(mocker, setup):
     # testing export -> compile -> infer without full_batch_size
-
-    local_config = config.copy()
-    local_config.update(full_batch_size=None, enable_qnn=False, qnn_config=None)
-    check_export_compile_execute(mocker=mocker, **local_config)
+    setup.full_batch_size = None
+    setup.enable_qnn = False
+    setup.qnn_config = None
+    check_export_compile_execute(mocker, setup)
 
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
-@pytest.mark.parametrize("config", configs)
-def test_export_compile_execute_fb(mocker, config):
+def test_export_compile_execute_fbs(mocker, setup):
     # testing export -> compile -> infer with full_batch_size
-    local_config = config.copy()
-    local_config.update(enable_qnn=False, qnn_config=None)
-    check_export_compile_execute(mocker=mocker, **local_config)
+    setup.enable_qnn = False
+    setup.qnn_config = None
+    check_export_compile_execute(mocker, setup)
 
 
 @pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.cli
-@pytest.mark.parametrize("config", configs)
-def test_export_compile_execute_qnn(mocker, config):
-    # testing export -> compile -> infer without full_batch_size in QNN enviroment
-    local_config = config.copy()
-    local_config.update(full_batch_size=None, qnn_config=None)
-    check_export_compile_execute(mocker=mocker, **local_config)
+def test_export_compile_execute_qnn(mocker, setup):
+    # testing export -> compile -> infer without full_batch_size in QNN environment
+    setup.full_batch_size = None
+    setup.qnn_config = None
+    check_export_compile_execute(mocker, setup)
 
 
 @pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.cli
-@pytest.mark.parametrize("config", configs)
-def test_export_compile_execute_qnn_fb(mocker, config):
-    # testing export -> compile -> infer with full_batch_size in QNN enviroment
-    local_config = config.copy()
-    check_export_compile_execute(mocker=mocker, **local_config)
+def test_export_compile_execute_qnn_fbs(mocker, setup):
+    # testing export -> compile -> infer with full_batch_size in QNN environment
+    check_export_compile_execute(mocker, setup)

@@ -6,80 +6,42 @@
 # -----------------------------------------------------------------------------
 
 import pytest
-from conftest import ModelSetup
 
+import QEfficient
 from QEfficient.cloud.infer import main as infer
 
-configs = [
-    {
-        "model_name": "lu-vae/llama-68m-fft",
-        "num_cores": 16,
-        "prompt": "My name is",
-        "prompts_txt_file_path": "examples/prompts.txt",
-        "aic_enable_depth_first": 1,
-        "mos": 1,
-        "cache_dir": None,
-        "hf_token": None,
-        "batch_size": 1,
-        "prompt_len": 32,
-        "ctx_len": 128,
-        "mxfp6": 1,
-        "mxint8": 1,
-        "device_group": None,
-        "full_batch_size": 3,
-        "enable_qnn": True,
-        "qnn_config": "QEfficient/compile/qnn_config.json",
-        "image_url": "https://i.etsystatic.com/8155076/r/il/0825c2/1594869823/il_fullxfull.1594869823_5x0w.jpg",
-    }
-]
 
-
-def check_infer(mocker, generation_len=32, **kwargs):
-    ms = ModelSetup(
-        kwargs["model_name"],
-        kwargs["num_cores"],
-        kwargs["prompt"],
-        kwargs["prompts_txt_file_path"],
-        bool(kwargs["aic_enable_depth_first"]),
-        kwargs["mos"],
-        kwargs["cache_dir"],
-        kwargs["hf_token"],
-        kwargs["batch_size"],
-        kwargs["prompt_len"],
-        kwargs["ctx_len"],
-        bool(kwargs["mxfp6"]),
-        bool(kwargs["mxint8"]),
-        kwargs["full_batch_size"],
-        kwargs["device_group"],
-        kwargs["enable_qnn"],
-        kwargs["qnn_config"],
-    )
+def check_infer(mocker, model_setup, generation_len=20):
+    check_and_assign_cache_dir_spy = mocker.spy(QEfficient.cloud.infer, "check_and_assign_cache_dir")
+    qeff_model_load_spy = mocker.spy(QEfficient.cloud.infer.QEFFCommonLoader, "from_pretrained")
 
     infer(
-        model_name=ms.model_name,
-        num_cores=ms.num_cores,
-        prompt=ms.prompt,
-        local_model_dir=ms.local_model_dir,
-        prompts_txt_file_path=ms.prompts_txt_file_path,
-        aic_enable_depth_first=ms.aic_enable_depth_first,
-        mos=ms.mos,
-        hf_token=ms.hf_token,
-        batch_size=ms.batch_size,
-        prompt_len=ms.prompt_len,
-        ctx_len=ms.ctx_len,
+        model_name=model_setup.model_name,
+        num_cores=model_setup.num_cores,
+        prompt=model_setup.prompt,
+        local_model_dir=model_setup.local_model_dir,
+        prompts_txt_file_path=model_setup.prompts_txt_file_path,
+        aic_enable_depth_first=model_setup.aic_enable_depth_first,
+        mos=model_setup.mos,
+        hf_token=model_setup.hf_token,
+        batch_size=model_setup.batch_size,
+        prompt_len=model_setup.prompt_len,
+        ctx_len=model_setup.ctx_len,
         generation_len=generation_len,
-        mxfp6=ms.mxfp6,
-        mxint8=ms.mxint8,
-        full_batch_size=ms.full_batch_size,
-        enable_qnn=ms.enable_qnn,
-        image_url=kwargs["image_url"],
+        mxfp6=model_setup.mxfp6,
+        mxint8=model_setup.mxint8,
+        full_batch_size=model_setup.full_batch_size,
+        enable_qnn=model_setup.enable_qnn,
+        image_url=model_setup.image_url,
     )
+
+    check_and_assign_cache_dir_spy.assert_called_once()
+    qeff_model_load_spy.assert_called_once()
 
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
-@pytest.mark.parametrize("config", configs)
-def test_infer(mocker, config):
+def test_infer(mocker, setup):
     """
     test_infer is a HL infer api testing function,
     checks infer api code flow, object creations, internal api calls, internal returns.
@@ -92,59 +54,67 @@ def test_infer(mocker, config):
     Ref: https://pytest-mock.readthedocs.io/en/latest/usage.html
     """
     # testing infer without full_batch_size
-    local_config = config.copy()
-    local_config.update(full_batch_size=None, enable_qnn=False, qnn_config=None)
-    check_infer(mocker=mocker, **local_config)
+    setup.model_name = "lu-vae/llama-68m-fft"
+    setup.full_batch_size = None
+    setup.enable_qnn = False
+    setup.qnn_config = None
+    check_infer(mocker, setup)
 
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
-@pytest.mark.parametrize("config", configs)
-def test_infer_fb(mocker, config):
+def test_infer_fbs(mocker, setup):
     # testing infer with full_batch_size
-    local_config = config.copy()
-    local_config.update(enable_qnn=False, qnn_config=None)
-    check_infer(mocker=mocker, **local_config)
+    setup.model_name = "lu-vae/llama-68m-fft"
+    setup.enable_qnn = False
+    setup.qnn_config = None
+    check_infer(mocker, setup)
 
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
 @pytest.mark.qnn
-@pytest.mark.parametrize("config", configs)
-def test_infer_qnn(mocker, config):
-    # testing infer without full_batch_size in QNN enviroment
-    local_config = config.copy()
-    local_config.update(
-        full_batch_size=None,
-        qnn_config=None,
-    )
-    check_infer(mocker=mocker, **local_config)
+def test_infer_qnn(mocker, setup):
+    # testing infer without full_batch_size in QNN environment
+    setup.model_name = "lu-vae/llama-68m-fft"
+    setup.full_batch_size = None
+    setup.qnn_config = None
+    check_infer(mocker, setup)
 
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
 @pytest.mark.qnn
-@pytest.mark.parametrize("config", configs)
-def test_infer_qnn_fb(mocker, config):
-    # testing infer with full_batch_size in QNN enviroment
-    local_config = config.copy()
-    check_infer(mocker=mocker, **local_config)
+def test_infer_qnn_fbs(mocker, setup):
+    # testing infer with full_batch_size in QNN environment
+    setup.model_name = "lu-vae/llama-68m-fft"
+    setup.qnn_config = None
+    check_infer(mocker, setup)
 
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
 @pytest.mark.multimodal
-@pytest.mark.parametrize("config", configs)
-def test_infer_vlm(mocker, config):
+def test_infer_vlm(mocker, setup):
     # testing infer for MM models
-    local_config = config.copy()
-    local_config.update(
-        {
-            "model_name": "llava-hf/llava-1.5-7b-hf",
-            "prompt": "Describe the image.",
-            "full_batch_size": None,
-            "enable_qnn": False,
-            "qnn_config": None,
-        }
-    )
-    check_infer(mocker=mocker, generation_len=20, **local_config)
+    setup.model_name = "llava-hf/llava-1.5-7b-hf"
+    setup.prompt = "Describe the image."
+    setup.full_batch_size = None
+    setup.enable_qnn = False
+    setup.qnn_config = None
+
+    check_infer(mocker, setup, generation_len=20)
+
+
+@pytest.mark.on_qaic
+@pytest.mark.cli
+@pytest.mark.qnn
+@pytest.mark.multimodal
+def test_infer_vlm_qnn(mocker, setup):
+    # testing infer for MM models in QNN environment
+    setup.model_name = "llava-hf/llava-1.5-7b-hf"
+    setup.prompt = "Describe the image."
+    setup.full_batch_size = None
+    setup.qnn_config = None
+
+    check_infer(mocker, setup, generation_len=20)
