@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 import random
 import warnings
 
@@ -13,25 +14,19 @@ import numpy as np
 import torch
 from peft import AutoPeftModelForCausalLM
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from utils.config_utils import (
-    generate_dataset_config,
-    get_dataloader_kwargs,
-    update_config,
-)
-from utils.dataset_utils import (
-    get_custom_data_collator,
-    get_preprocessed_dataset,
-)
+from utils.config_utils import generate_dataset_config, update_config
+from utils.dataset_utils import get_dataloader
 from utils.train_utils import evaluation, print_model_size
 
 from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.finetune.utils.logging_utils import logger
 
 try:
     import torch_qaic  # noqa: F401
 
     device = "qaic:0"
 except ImportError as e:
-    print(f"Warning: {e}. Moving ahead without these qaic modules.")
+    logger.log_rank_zero(f"{e}. Moving ahead without these qaic modules.")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Suppress all warnings
@@ -42,18 +37,24 @@ def main(**kwargs):
     # update the configuration for the training process
     train_config = TrainConfig()
     update_config(train_config, **kwargs)
+    dataset_config = generate_dataset_config(train_config.dataset)
+    update_config(dataset_config, **kwargs)
 
     # Set the seeds for reproducibility
     torch.manual_seed(train_config.seed)
     random.seed(train_config.seed)
     np.random.seed(train_config.seed)
 
-    # Load the pre-trained model and setup its configuration
-    # config = AutoConfig.from_pretrained(train_config.model_name)
-    save_dir = "meta-llama-samsum/trained_weights/step_14000"
+    # Load the pre-trained model from latest checkpoint
+    trained_weights_path = os.path.join(train_config.output_dir, "trained_weights")
+    epoch_max_index = max([int(name.split("_")[-1]) for name in os.listdir(trained_weights_path)])
+    epochs_path = os.path.join(trained_weights_path, "epoch_" + str(epoch_max_index))
+    step_max_index = max([int(name.split("_")[-1]) for name in os.listdir(epochs_path)])
+    save_dir = os.path.join(epochs_path, "step_" + str(step_max_index))
 
     # Load PEFT model on CPU
     model_peft = AutoPeftModelForCausalLM.from_pretrained(save_dir)
+
     # Merge LoRA and base model and save
     merged_model = model_peft.merge_and_unload()
     merged_model.save_pretrained(train_config.output_dir, safe_serialization=True)
@@ -77,44 +78,20 @@ def main(**kwargs):
     # If there is a mismatch between tokenizer vocab size and embedding matrix,
     # throw a warning and then expand the embedding matrix
     if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
-        print("WARNING: Resizing the embedding matrix to match the tokenizer vocab size.")
+        logger.log_rank_zero("Resizing the embedding matrix to match the tokenizer vocab size.")
         model.resize_token_embeddings(len(tokenizer))
 
-    print_model_size(model, train_config)
+    print_model_size(model)
 
-    # Get the dataset utils
-    dataset_config = generate_dataset_config(train_config, kwargs)
-    dataset_processer = tokenizer
-
-    # Load and preprocess the dataset for training and validation
-    dataset_val = get_preprocessed_dataset(
-        dataset_processer, dataset_config, split="test", context_length=train_config.context_length
-    )
-
-    eval_dataloader = None
-    custom_data_collator = get_custom_data_collator(dataset_processer, dataset_config)
     if train_config.run_validation:
-        # TODO: vbaddi enable packing later in entire infra.
-        # if train_config.batching_strategy == "packing":
-        #    dataset_val = ConcatDataset(dataset_val, chunk_size=train_config.context_length)
-
-        val_dl_kwargs = get_dataloader_kwargs(train_config, dataset_val, dataset_processer, "val")
-        if custom_data_collator:
-            val_dl_kwargs["collate_fn"] = custom_data_collator
-
-        eval_dataloader = torch.utils.data.DataLoader(
-            dataset_val,
-            num_workers=train_config.num_workers_dataloader,
-            pin_memory=True,
-            **val_dl_kwargs,
-        )
-        print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
+        eval_dataloader = get_dataloader(tokenizer, dataset_config, train_config, split="test")
         if len(eval_dataloader) == 0:
-            raise ValueError(
-                f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})"
+            logger.raise_error(
+                f"The eval set size is too small for dataloader to load even one batch. Please increase the size of eval set. ({len(eval_dataloader)=})",
+                ValueError,
             )
         else:
-            print(f"--> Num of Validation Set Batches loaded = {len(eval_dataloader)}")
+            logger.log_rank_zero(f"Number of Validation Set Batches loaded = {len(eval_dataloader)}")
 
     model.to(device)
     _ = evaluation(model, train_config, eval_dataloader, None, tokenizer, device)

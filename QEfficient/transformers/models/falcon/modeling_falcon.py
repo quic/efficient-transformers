@@ -183,7 +183,11 @@ class QEffFalconDecoderLayer(FalconDecoderLayer):
     ):
         residual = hidden_states
 
-        attention_layernorm_out = self.input_layernorm(hidden_states)
+        if self.config.new_decoder_architecture:
+            attention_layernorm_out = self.ln_attn(hidden_states)
+            mlp_layernorm_out = self.ln_mlp(hidden_states)
+        else:
+            attention_layernorm_out = self.input_layernorm(hidden_states)
 
         # Self attention.
         attn_outputs = self.self_attention(

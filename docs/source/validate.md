@@ -17,6 +17,8 @@
 | **GPT2LMHeadModel**     | GPT-2              | [openai-community/gpt2](https://huggingface.co/openai-community/gpt2)                                                               | ✔️          |
 | **GraniteForCausalLM**  | Granite 3.1        | [ibm-granite/granite-3.1-8b-instruct](https://huggingface.co/ibm-granite/granite-3.1-8b-instruct)<br>[ibm-granite/granite-guardian-3.1-8b](https://huggingface.co/ibm-granite/granite-guardian-3.1-8b)          | ✔️          |
 |                         | Granite 20B        | [ibm-granite/granite-20b-code-base-8k](https://huggingface.co/ibm-granite/granite-20b-code-base-8k)<br>[ibm-granite/granite-20b-code-instruct-8k](https://huggingface.co/ibm-granite/granite-20b-code-instruct-8k)    | ✔️          |
+| **GraniteMoeForCausalLM** | Granite 3.0      | [ibm-granite/granite-3.0-1b-a400m-base](https://huggingface.co/ibm-granite/granite-3.0-1b-a400m-base) | ✔️          |
+|                         | Granite 3.1       |  [ibm-granite/granite-3.1-1b-a400m-base](https://huggingface.co/ibm-granite/granite-3.0-1b-a400m-base) | ✔️          |
 | **InternVLChatModel**   | Intern-VL          | [OpenGVLab/InternVL2_5-1B](https://huggingface.co/OpenGVLab/InternVL2_5-1B)                                                            |            |
 | **LlamaForCausalLM**    | CodeLlama          | [codellama/CodeLlama-7b-hf](https://huggingface.co/codellama/CodeLlama-7b-hf)<br>[codellama/CodeLlama-13b-hf](https://huggingface.co/codellama/CodeLlama-13b-hf)<br>[codellama/CodeLlama-34b-hf](https://huggingface.co/codellama/CodeLlama-34b-hf) | ✔️          |
 |                         | DeepSeek-R1-Distill-Llama | [deepseek-ai/DeepSeek-R1-Distill-Llama-70B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-70B)                                      | ✔️          |
@@ -34,7 +36,7 @@
 | **QwenForCausalLM**     | DeepSeek-R1-Distill-Qwen | [DeepSeek-R1-Distill-Qwen-32B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B)                                                   | ✔️          |
 |                         | Qwen2, Qwen2.5     | [Qwen/Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)                                                            | ✔️          |
 | **LlamaSwiftKVForCausalLM**  | swiftkv            | [Snowflake/Llama-3.1-SwiftKV-8B-Instruct](https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct)                                                  | ✔️          |
-
+| **Grok1ModelForCausalLM**  |  grok-1          | [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)                                                  | ✔️          |
 ## Embedding Models
 
 ### Text Embedding Task
@@ -57,11 +59,14 @@
 ### Vision-Language Models (Text + Image Generation)
 **QEff Auto Class:** `QEFFAutoModelForImageTextToText`
 
-| Architecture                | Model Family | Representative Models                  |
-|-----------------------------|--------------|----------------------------------------|
-| **LlavaForConditionalGeneration** | LLaVA-1.5   | [llava-hf/llava-1.5-7b-hf](https://huggingface.co/llava-hf/llava-1.5-7b-hf)               |
-| **MllamaForConditionalGeneration** | Llama 3.2   | [meta-llama/Llama-3.2-11B-Vision Instruct](https://huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct)<br>[meta-llama/Llama-3.2-90B-Vision](https://huggingface.co/meta-llama/Llama-3.2-90B-Vision) |
-|**LlavaNextForConditionalGeneration** | Granite Vision | [ibm-granite/granite-vision-3.2-2b](https://huggingface.co/ibm-granite/granite-vision-3.2-2b)
+| Architecture                | Model Family | Representative Models                                                                 | CB Support | Single Qpc Support | Dual Qpc Support |
+|-----------------------------|--------------|----------------------------------------------------------------------------------------|------------|--------------------|------------------|
+| **LlavaForConditionalGeneration** | LLaVA-1.5   |  [llava-hf/llava-1.5-7b-hf](https://huggingface.co/llava-hf/llava-1.5-7b-hf)           |     ✕ |  ✔️                  | ✔️               |
+| **MllamaForConditionalGeneration** | Llama 3.2   | [meta-llama/Llama-3.2-11B-Vision Instruct](https://huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct)<br>[meta-llama/Llama-3.2-90B-Vision](https://huggingface.co/meta-llama/Llama-3.2-90B-Vision) |     ✕      | ✔️          | ✔️          |
+|**LlavaNextForConditionalGeneration** | Granite Vision | [ibm-granite/granite-vision-3.2-2b](https://huggingface.co/ibm-granite/granite-vision-3.2-2b) | ✕ |      ✕     | ✔️          |
+|**Llama4ForConditionalGeneration** | Llama-4-Scout | [Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct) |      ✕	      | ✔️          | ✔️          |
+|**Gemma3ForConditionalGeneration** | Gemma3 | [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)|       ✕	     | ✔️          | ✔️          |
+
 ### Audio Models
 (Automatic Speech Recognition) - Transcription Task
 **QEff Auto Class:** `QEFFAutoModelForSpeechSeq2Seq`
@@ -75,6 +80,8 @@
 
 | Architecture            | Model Family | Representative Models                      |
 |-------------------------|--------------|--------------------------------------------|
+| **Qwen3MoeForCausalLM** |Qwen3| [Qwen/Qwen3-MoE-15B-A2B]() |
+| **Mistral3ForConditionalGeneration**|Mistral 3.1| [mistralai/Mistral-Small-3.1-24B-Base-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Base-2503) |
 | **BaichuanForCausalLM** | Baichuan2    | [baichuan-inc/Baichuan2-7B-Base](https://huggingface.co/baichuan-inc/Baichuan2-7B-Base)             |
 | **CohereForCausalLM**   | Command-R    | [CohereForAI/c4ai-command-r-v01](https://huggingface.co/CohereForAI/c4ai-command-r-v01)             |
 | **DbrxForCausalLM**     | DBRX         | [databricks/dbrx-base](https://huggingface.co/databricks/dbrx-base)                       |

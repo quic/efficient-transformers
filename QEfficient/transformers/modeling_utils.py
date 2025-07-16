@@ -182,6 +182,8 @@ qeff_supported_architectures = ModelArchitectures(
     ]
 )
 
+DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "llama4", "gemma3_text", "llama4_text"}
+
 # Define a transformers layers to QEff layers dictionary
 # While onboarding new models make sure to add the new layer maps to this dictionary.
 TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
@@ -282,6 +284,8 @@ def build_model_class_mapping(auto_model_class, qeff_class_name):
         config_class.__name__: qeff_class_name for config_class, model_class in auto_model_class._model_mapping.items()
     }
 
+
+EXTERNAL_MODEL_CLASS_MAPPING = {"Grok1Config": "QEFFAutoModelForCausalLM"}
 
 MODEL_CLASS_MAPPING = {
     **build_model_class_mapping(mapping.AutoModelForCausalLM, "QEFFAutoModelForCausalLM"),
