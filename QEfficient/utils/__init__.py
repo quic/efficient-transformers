@@ -13,9 +13,12 @@ from QEfficient.utils._utils import (  # noqa: F401
     check_and_assign_cache_dir,
     create_json,
     custom_format_warning,
-    dump_model_params,
     dump_qconfig,
+<<<<<<< HEAD
     generate_mdp_partition_config,
+=======
+    filter_and_create_export_hash,
+>>>>>>> dd35ad1 (Modifications to the flow of hash creation and filtration of params for export)
     get_num_layers_from_config,
     get_num_layers_vlm,
     get_onnx_dir_name,
@@ -24,6 +27,7 @@ from QEfficient.utils._utils import (  # noqa: F401
     get_qpc_dir_path,
     get_sliding_window_layers,
     get_sliding_window_shapes,
+    hash_compile_params,
     hf_download,
     load_hf_processor,
     load_hf_tokenizer,
