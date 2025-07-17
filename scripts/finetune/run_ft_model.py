@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 import os
 import warnings
 
@@ -13,6 +14,7 @@ from peft import AutoPeftModelForCausalLM
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.finetune.utils.logging_utils import logger
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
@@ -22,7 +24,10 @@ try:
 
     device = "qaic:0"
 except ImportError as e:
-    print(f"Warning: {e}. Moving ahead without these qaic modules.")
+    logger.log_rank_zero(
+        f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+        logging.WARNING,
+    )
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 train_config = TrainConfig()
@@ -55,7 +60,7 @@ model_input.to(device)
 model.eval()
 
 with torch.inference_mode():
-    print(
+    logger.log_rank_zero(
         tokenizer.decode(
             model.generate(**model_input, max_new_tokens=50, do_sample=False)[0],
             skip_special_tokens=True,
@@ -78,7 +83,7 @@ model_peft = AutoModelForCausalLM.from_pretrained(model_id, use_cache=False, att
 model_peft.to(device)
 model_peft.eval()
 with torch.inference_mode():
-    print(
+    logger.log_rank_zero(
         tokenizer.decode(
             model_peft.generate(**model_input, max_new_tokens=50, do_sample=False)[0],
             skip_special_tokens=True,
