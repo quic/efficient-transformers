@@ -180,6 +180,7 @@ class QEFFBaseModel(ABC):
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
                 opset_version=constants.ONNX_EXPORT_OPSET,
+                # verbose=True,
                 **export_kwargs,
             )
             logger.info("Pytorch export successful")
@@ -213,7 +214,7 @@ class QEFFBaseModel(ABC):
         self.onnx_path = onnx_path
         return onnx_path
 
-    @dump_qconfig
+    # @dump_qconfig
     def _compile(
         self,
         onnx_path: Optional[str] = None,
@@ -352,6 +353,7 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
+        print(command)
         try:
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
