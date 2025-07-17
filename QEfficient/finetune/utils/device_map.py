@@ -5,14 +5,12 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
 
 import numpy as np
 import torch
-import torch.distributed as dist
 from transformers import AutoConfig
 
-from QEfficient.finetune.utils.logging_utils import logger
+from QEfficient.finetune.utils.helper import get_rank
 from QEfficient.utils._utils import get_num_layers_from_config
 
 
@@ -29,18 +27,11 @@ def get_device_map(train_config):
     num_available_devices = getattr(torch, torch_device.type).device_count()
     if train_config.enable_pp:
         if train_config.enable_ddp:
-            assert dist.get_world_size() * train_config.num_pp_stages <= num_available_devices, (
-                "Number of devices required should be less than or equal to total available devices."
-            )
             device_map = custom_device_map(train_config)
         elif train_config.num_pp_stages < num_available_devices:
             device_map = custom_device_map(train_config)
         elif train_config.num_pp_stages == num_available_devices:
             device_map = "auto"
-        else:
-            logger.raise_error(
-                "For Pipeline Parallelism only, Number of pipeline stages should be less than or equal to total available devices."
-            )
     else:
         device_map = None
 
@@ -90,7 +81,7 @@ def custom_device_map(train_config):
     model_config = AutoConfig.from_pretrained(train_config.model_name)
     num_layers = get_num_layers_from_config(model_config)
     num_pp_stages = train_config.num_pp_stages
-    rank = int(os.getenv("LOCAL_RANK", 0))
+    rank = get_rank()
     first_device = rank * num_pp_stages
     last_device = rank * num_pp_stages + (num_pp_stages - 1)
 

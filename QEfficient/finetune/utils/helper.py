@@ -39,14 +39,18 @@ class Task_Mode(str, Enum):
 
 
 def enum_names(enum_cls):
-    return [member.value for member in enum_cls]
+    return [x.value for x in enum_cls]
+
+
+def get_rank():
+    return int(os.getenv("LOCAL_RANK", 0))
 
 
 def is_rank_zero():
-    return int(os.getenv("LOCAL_RANK", 0)) == 0
+    return get_rank() == 0
 
 
-def get_num_ddp_devices():
+def get_world_size():
     return int(os.getenv("WORLD_SIZE", 1))
 
 

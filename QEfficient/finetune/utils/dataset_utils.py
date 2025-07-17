@@ -15,7 +15,7 @@ from transformers.data import DataCollatorForSeq2Seq
 
 from QEfficient.finetune.data.sampler import DistributedLengthBasedBatchSampler
 from QEfficient.finetune.dataset.dataset_config import DATALOADER_COLLATE_FUNC, DATASET_PREPROC
-from QEfficient.finetune.utils.helper import get_num_ddp_devices
+from QEfficient.finetune.utils.helper import get_world_size
 from QEfficient.finetune.utils.logging_utils import logger
 
 
@@ -70,7 +70,7 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
 
 
 def padding_dataset(train_config, dataset, batch_size):
-    num_replicas = get_num_ddp_devices()
+    num_replicas = get_world_size()
     remainder = len(dataset) % (num_replicas * batch_size)
     if remainder == 0:
         return dataset

@@ -20,8 +20,9 @@ from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.utils.helper import (
     Task_Mode,
     get_autocast_ctx,
-    get_num_ddp_devices,
     get_op_verifier_ctx,
+    get_rank,
+    get_world_size,
     is_rank_zero,
     save_to_json,
 )
@@ -64,7 +65,7 @@ def train(
     """
     device = train_config.device
     device_type = torch.device(device).type
-    local_rank = int(os.getenv("LOCAL_RANK", 0))
+    local_rank = get_rank()
 
     train_metric = []
     train_loss = []
@@ -315,9 +316,9 @@ def train(
 
         if train_config.enable_ddp:
             dist.all_reduce(train_epoch_loss, op=dist.ReduceOp.SUM)
-            train_epoch_loss /= get_num_ddp_devices()
+            train_epoch_loss /= get_world_size()
             dist.all_reduce(train_epoch_metric, op=dist.ReduceOp.SUM)
-            train_epoch_metric /= get_num_ddp_devices()
+            train_epoch_metric /= get_world_size()
 
         # Update the learning rate as needed
         lr_scheduler.step()
@@ -337,9 +338,9 @@ def train(
 
             if train_config.enable_ddp:
                 dist.all_reduce(eval_epoch_loss, op=dist.ReduceOp.SUM)
-                eval_epoch_loss /= get_num_ddp_devices()
+                eval_epoch_loss /= get_world_size()
                 dist.all_reduce(eval_epoch_metric, op=dist.ReduceOp.SUM)
-                eval_epoch_metric /= get_num_ddp_devices()
+                eval_epoch_metric /= get_world_size()
 
             if eval_epoch_loss < best_eval_loss:
                 best_eval_loss = eval_epoch_loss

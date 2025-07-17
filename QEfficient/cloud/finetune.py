@@ -28,7 +28,7 @@ from QEfficient.finetune.utils.config_utils import (
 )
 from QEfficient.finetune.utils.dataset_utils import get_dataloader, get_longest_seq_length
 from QEfficient.finetune.utils.device_map import get_device_map
-from QEfficient.finetune.utils.helper import Task_Mode
+from QEfficient.finetune.utils.helper import Task_Mode, get_world_size
 from QEfficient.finetune.utils.logging_utils import logger
 from QEfficient.finetune.utils.parser import get_finetune_parser
 from QEfficient.finetune.utils.train_utils import print_model_size, print_trainable_parameters, train
@@ -59,15 +59,25 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
     Raises:
         AssertionError: If device is CPU or includes an index with DDP enabled.
     """
+
+    torch_device = torch.device(train_config.device)
+    num_available_devices = getattr(torch, torch_device.type).device_count()
+    assert get_world_size() * train_config.num_pp_stages <= num_available_devices, (
+        "Number of devices required should be less than or equal to total available devices."
+    )
+    if train_config.enable_pp:
+        assert train_config.num_pp_stages > 1, (
+            f"For pipeline parallelism, num_pp_stages should be greater than 1. Got {train_config.num_pp_stages}"
+        )
+
     if not train_config.enable_ddp:
         return
 
-    torch_device = torch.device(train_config.device)
     assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
     assert torch_device.index is None, f"DDP requires only device type, got: {torch_device}"
     dist_backend_map = {"cpu": "gloo", "qaic": "qccl", "cuda": "gloo"}
     dist.init_process_group(backend=dist_backend_map[torch_device.type])
-    if (not train_config.enable_pp) or (train_config.enable_pp and train_config.num_pp_stages == 1):
+    if not train_config.enable_pp:
         # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
         getattr(torch, torch_device.type).set_device(dist.get_rank())
 
@@ -294,7 +304,7 @@ def main(**kwargs) -> None:
         f"passed context length is {train_config.context_length} and overall model's context length is "
         f"{model.config.max_position_embeddings}"
     )
-    if (not train_config.enable_pp) or (train_config.enable_pp and train_config.num_pp_stages == 1):
+    if not train_config.enable_pp:
         model.to(train_config.device)
     optimizer = optim.AdamW(
         model.parameters(),
