@@ -9,7 +9,7 @@ from pathlib import Path
 from QEfficient.utils.cache import to_hashable
 import torch.nn as nn
 import copy
-
+from QEfficient.diffusers.models.pytorch_transforms import AutoencoderKLTransform
 
 class QEffTextEncoder(QEFFBaseModel):
     _pytorch_transforms = [
@@ -204,6 +204,7 @@ class QEffSafetyChecker(QEFFBaseModel):
         CustomOpsTransform,
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
+        AutoencoderKLTransform
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
