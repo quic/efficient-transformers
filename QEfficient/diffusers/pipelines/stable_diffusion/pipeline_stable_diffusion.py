@@ -1,9 +1,9 @@
 import hashlib
 import os
 from pathlib import Path
-from typing import Optional, Union
+from typing import List, Optional, Union
 from venv import logger
-from diffusers import DiffusionPipeline, StableDiffusionPipeline
+from diffusers import DiffusionPipeline, StableDiffusionPipeline, OnnxStableDiffusionPipeline
 from diffusers.utils.hub_utils import _check_legacy_sharding_variant_format
 from huggingface_hub import read_dduf_file
 from diffusers.pipelines.pipeline_loading_utils import _identify_model_variants
@@ -16,6 +16,9 @@ from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbits
 from QEfficient.utils import constants
 from QEfficient.utils.cache import to_hashable
 import torch.nn as nn
+from diffusers.pipelines.onnx_utils import OnnxRuntimeModel
+from diffusers import AutoencoderKL
+
 
 from diffusers.models.attention_processor import AttnProcessor
 
@@ -26,12 +29,19 @@ class QEFFStableDiffusionPipeline():
     _hf_auto_class = StableDiffusionPipeline
     
     def __init__(self, model, *args, **kwargs):
+        
+        
+        self.tokenizer = model.tokenizer
+        self.scheduler = model.scheduler
+        self.feature_extractor = model.feature_extractor
+        
+        
         self.text_encoder = QEffTextEncoder(model)
         self.unet=QEffUNet(model)
         
         # VAE Encoder
         self.vae_encoder=QEffVAE(model, "encoder")
-        self.vae_encoder.model.forward = lambda sample, return_dict: self.vae_encoder.model.encode(sample, return_dict)[0].sample()
+        self.vae_encoder.model.forward = lambda sample, return_dict: self.vae_encoder.model.encode(sample, return_dict)
         
         # VAE Decoder
         self.vae_decoder=QEffVAE(model, "decoder")
@@ -102,9 +112,9 @@ class QEFFStableDiffusionPipeline():
         output_names=["out_sample"]
         
         dynamic_axes={
-            "sample": {0: "batch", 1: "channels", 2: "height", 3: "width"},
-            "timestep": {0: "batch"},
-            "encoder_hidden_states": {0: "batch", 1: "sequence"}
+            "sample": {0: "batch_size", 1: "channels", 2: "height", 3: "width"},
+            "timestep": {0: "batch_size"},
+            "encoder_hidden_states": {0: "batch_size", 1: "seq_len"}
         }
         self.unet.model.set_attn_processor(AttnProcessor())
 
@@ -126,7 +136,7 @@ class QEFFStableDiffusionPipeline():
         output_names=["latent_sample"]
         
         dynamic_axes={
-            "sample": {0: "batch", 1: "channels", 2: "height", 3: "width"},
+            "sample": {0: "batch_size", 1: "channels", 2: "height", 3: "width"},
         }
         
         self.vae_encoder.model.set_attn_processor(AttnProcessor())
@@ -148,7 +158,7 @@ class QEFFStableDiffusionPipeline():
         output_names=["sample"]
         
         dynamic_axes={
-            "latent_sample": {0: "batch", 1: "channels", 2: "height", 3: "width"},
+            "latent_sample": {0: "batch_size", 1: "channels", 2: "height", 3: "width"},
         }
         
         self.vae_decoder.model.set_attn_processor(AttnProcessor())
@@ -191,11 +201,129 @@ class QEFFStableDiffusionPipeline():
         print("######################  Safety Checker Exported #####################")
         
         
-        # return self.text_encoder_onnx_path, self.unet_onnx_path, self.vae_encoder_onnx_path, self.vae_decoder_onnx_path, self.safety_checker_onnx_path
-     
+
+    def compile(
+        self,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
+        *,
+        seq_len: Union[int, List[int]] = 32,
+        batch_size: int = 1,
+        num_devices: int = 1,
+        num_cores: int = 16,  # FIXME: Make this mandatory arg
+        mxfp6_matmul: bool = False,
+        **compiler_options,
+    ) -> str:
         
-    def compile():
-        pass
+        # Compile text_encoder
+        
+        # Make specilization
+        
+        specializations = [
+            {"batch_size": batch_size, "seq_len": seq_len},
+        ]
+        
+        self.text_encoder_compile_path=self.text_encoder._compile(
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            specializations=specializations,
+            convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            mdp_ts_num_devices=num_devices,
+            aic_num_cores=num_cores,
+            **compiler_options,
+        )    
+        
+        print("######################  Text Encoder Compiled #####################")
+        
+         # Compile unet
+        
+        specializations=[
+            {
+            "batch_size": batch_size,
+            "channels": 4,
+            "height": self.unet.model.config.sample_size,
+            "width": self.unet.model.config.sample_size,
+            "seq_len": seq_len,
+                }
+            ]
+        
+        self.compiled_unet_path=self.unet._compile(
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            specializations=specializations,
+            convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            mdp_ts_num_devices=num_devices,
+            aic_num_cores=num_cores,
+            **compiler_options,
+        )
+        
+        print("######################  Unet Compiled #####################")
+        
+        # Compile vae_encoder
+        
+        encoder_specializations=[{
+            "batch_size": batch_size,
+            "channels": self.vae_encoder.model.config.in_channels,
+            "height":self.vae_encoder.model.config.sample_size,
+            "width": self.vae_encoder.model.config.sample_size,
+        }]
+        
+        self.vae_encoder_compile_path=self.vae_encoder._compile(
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            specializations=encoder_specializations,
+            convert_to_fp16=True,
+        )
+        
+        print("######################  VAE Encoder Compiled #####################")
+        
+        # compile vae decoder
+        
+        decoder_sepcializations=[{
+            "batch_size": batch_size,
+            "channels": 4,
+            "height":self.vae_decoder.model.config.sample_size,
+            "width": self.vae_decoder.model.config.sample_size,
+        }]
+        
+        self.vae_decoder_compile_path=self.vae_decoder._compile(
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            specializations=decoder_sepcializations,
+            convert_to_fp16=True,
+        )
+        
+        print("######################  VAE Decoder Compiled #####################")
+        
+        # compile safety check
+        
+        safety_check_specializations=[{
+            "batch_size": batch_size,
+            "channels": self.safety_checker.model.config.in_channels,
+            "height":self.safety_checker.model.config.sample_size,
+            "width": self.safety_checker.model.config.sample_size,
+        }]
+        
+        self.compiled_safety_checker_path=self.safety_checker._compile(
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            specializations=safety_check_specializations,
+            convert_to_fp16=True,
+        )
+        
+        print("######################  Safety Checker Compiled #####################")
+    def generate()
+    
+        
+        
+        
     @property
     def model_name(self) -> str:
         pass

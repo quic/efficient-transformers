@@ -746,6 +746,8 @@ class VlmNoKVOffloadTransform(ModuleMappingTransform):
         MllamaTextCrossAttention: QEffMllamaTextCrossAttentionSingleQPC,
     }
 
+from diffusers import AutoencoderKL
+from QEfficient.diffusers.models.autoencoders.autoencoder_kl import QEffAutoencoderKL
 
 class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_string_replace_method = {
@@ -804,8 +806,12 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEFFGrok1CustomRMSNormAIC.forward,
         },
     }
-
-    _match_class_replace_method = {}
+    
+    _match_class_replace_method = {
+        "AutoencoderKL":{
+            AutoencoderKL.encode: QEffAutoencoderKL.encode,
+        }
+    }
 
 
 class PoolingTransform:
