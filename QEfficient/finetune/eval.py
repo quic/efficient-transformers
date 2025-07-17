@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 import os
 import random
 import warnings
@@ -26,8 +27,12 @@ try:
 
     device = "qaic:0"
 except ImportError as e:
-    logger.log_rank_zero(f"{e}. Moving ahead without these qaic modules.")
+    logger.log_rank_zero(
+        f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+        logging.WARNING,
+    )
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")

@@ -38,7 +38,10 @@ from QEfficient.utils._utils import hf_download
 try:
     import torch_qaic  # noqa: F401
 except ImportError as e:
-    logger.log_rank_zero(f"{e}. Moving ahead without these qaic modules.", logging.WARNING)
+    logger.log_rank_zero(
+        f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+        logging.WARNING,
+    )
 
 
 # Suppress all warnings

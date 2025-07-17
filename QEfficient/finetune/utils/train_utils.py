@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 import os
 import time
 from datetime import datetime
@@ -20,24 +21,24 @@ from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.utils.helper import (
     Task_Mode,
     get_autocast_ctx,
+    get_grad_scaler,
     get_op_verifier_ctx,
     get_rank,
     get_world_size,
+    init_qaic_profiling,
     is_rank_zero,
     save_to_json,
+    stop_qaic_profiling,
 )
 from QEfficient.finetune.utils.logging_utils import logger
 
 try:
     import torch_qaic  # noqa: F401
-    import torch_qaic.debug as qaic_debug  # noqa: F401
-    import torch_qaic.profile as qaic_profile  # noqa: F401
-    import torch_qaic.utils as qaic_utils  # noqa: F401
-    from torch.qaic.amp import GradScaler as QAicGradScaler
 except ImportError as e:
-    logger.log_rank_zero(f"{e}. Moving ahead without these qaic modules.")
-
-from torch.amp import GradScaler
+    logger.log_rank_zero(
+        f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+        logging.WARNING,
+    )
 
 
 def train(
@@ -95,11 +96,7 @@ def train(
         tensorboard_log_dir = train_config.output_dir + "/runs/" + f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         tensorboard_updates = SummaryWriter(log_dir=tensorboard_log_dir)
 
-    if train_config.grad_scaler:
-        if device.startswith("qaic"):
-            scaler = QAicGradScaler()
-        else:
-            scaler = GradScaler(device_type)
+    scaler = get_grad_scaler(train_config.grad_scaler, device_type)
 
     loss_0_counter = torch.tensor([0]).to(device)
 
@@ -115,7 +112,7 @@ def train(
         acc_helper = torchmetrics.classification.MulticlassAccuracy(num_classes=num_classes).to(device)
 
     autocast_ctx = get_autocast_ctx(train_config.use_autocast, device_type, dtype=torch.float16)
-    op_verifier_ctx = partial(get_op_verifier_ctx, train_config.opByOpVerifier, device, train_config.output_dir)
+    op_verifier_ctx = partial(get_op_verifier_ctx, train_config.opByOpVerifier, device_type, train_config.output_dir)
 
     # Start the training loop
     for epoch in range(train_config.num_epochs):
@@ -148,8 +145,8 @@ def train(
             dynamic_ncols=True,
         )
 
-        # enable profile for qaic
-        qaic_profile.start_profiling(device, 1) if train_config.use_profiler else None
+        init_qaic_profiling(train_config.use_profiler, device_type)
+
         num_dummy_samples = 0
         for step, batch in enumerate(train_dataloader):
             # resume training from a particular checkpoint, assuming the dataset is not shuffled
@@ -256,7 +253,7 @@ def train(
 
             # Save the trained checkpoints for every given steps
             if (step + 1) % train_config.intermediate_step_save == 0:
-                qaic_profile.stop_profiling(device) if train_config.use_profiler else None
+                stop_qaic_profiling(train_config.use_profiler, device_type)
                 if train_config.enable_ddp:
                     if dist.get_rank() == 0:
                         model.module.save_pretrained(
