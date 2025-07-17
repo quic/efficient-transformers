@@ -149,6 +149,28 @@ def load_causal_lm_model(model_config):
     return model_hf, params
 
 
+def load_custom_causal_lm_model(model_config_object):
+    """
+    Function to load model from huggingface using model autoconfig object
+    --------
+
+    :model_config: AutoConfig
+
+    :return model_hf, params
+    """
+    torch.manual_seed(42)
+    model_hf = AutoModelForCausalLM.from_config(
+        model_config_object,
+        attn_implementation="eager",
+    )
+    # Convert to FP32 if model is in BF16
+    if getattr(model_hf.config, "torch_dtype", None) == torch.bfloat16:
+        model_hf = model_hf.to(torch.float32)
+    params = sum(p.numel() for p in model_hf.parameters())
+    model_hf.eval()
+    return model_hf, params
+
+
 def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     prompt_len: int = Constants.PROMPT_LEN,
@@ -339,12 +361,7 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(test_model_config, test_
             model_name=test_model_name, n_layer=test_model_config.num_hidden_layers
         )
     else:
-        torch.manual_seed(42)
-        model_hf = AutoModelForCausalLM.from_config(
-            test_model_config,
-            attn_implementation="eager",
-        )
-        model_hf.eval()
+        model_hf, _ = load_custom_causal_lm_model(test_model_config)
         check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(test_model_name, model_hf=model_hf)
 
 
@@ -379,13 +396,8 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(test_model_config_qn
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
+    model_hf, _ = load_custom_causal_lm_model(test_model_config_qnn)
 
-    torch.manual_seed(42)
-    model_hf = AutoModelForCausalLM.from_config(
-        test_model_config_qnn,
-        attn_implementation="eager",
-    )
-    model_hf.eval()
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
 
@@ -418,7 +430,6 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
     )
 
 
-@pytest.mark.skip()  # remove when the SDK 1.20.0 issue solved for compiling this model
 @pytest.mark.regular
 @pytest.mark.on_qaic
 @pytest.mark.qnn
@@ -433,13 +444,7 @@ def test_custom_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(test_model_config_spd, 
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
-
-    torch.manual_seed(42)
-    model_hf = AutoModelForCausalLM.from_config(
-        test_model_config_spd,
-        attn_implementation="eager",
-    )
-    model_hf.eval()
+    model_hf, _ = load_custom_causal_lm_model(test_model_config_spd)
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=test_model_name_spd, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS, model_hf=model_hf
@@ -471,7 +476,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_pl1():
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model for a prompt length of 1, both with and without continuous batching.
     """
-    model_name = "gpt2"  # hf-internal-testing/tiny-random-gpt2
+    model_name = "gpt2"
     prompt_len = 1
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, prompt_len=prompt_len)
