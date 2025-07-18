@@ -47,11 +47,13 @@ class TrainConfig:
         save_metrics (bool): Save training metrics (default: True).
         intermediate_step_save (int): Steps between intermediate saves (default: 1000).
         batching_strategy (str): Batching strategy (default: "packing").
-        enable_sorting_for_ddp (bool): Sort data for DDP (default: True).
         convergence_counter (int): Steps to check convergence (default: 5).
         convergence_loss (float): Loss threshold for convergence (default: 1e-4).
         use_profiler (bool): Enable profiling (default: False).
+        enable_pp (bool): Enable training with pipeline parallelism (default: False).
+        num_pp_stages (int): Number of stages in which model is split layerwise when training using pipeline (default: 1).
         enable_ddp (bool): Enable distributed data parallel (default: False).
+        enable_sorting_for_ddp (bool): Sort data for DDP (default: True).
         opByOpVerifier (bool): Enable operation-by-operation verification (default: False).
         dump_logs (bool): Whether to dump logs (default: True).
         log_level (str): logging level (default: logging.INFO)
@@ -87,8 +89,6 @@ class TrainConfig:
     save_metrics: bool = True  # saves training metrics to a json file for later plotting
     intermediate_step_save: int = 1000
     batching_strategy: str = Batching_Strategy.PADDING.value
-    enable_ddp: bool = False
-    enable_sorting_for_ddp: bool = True
     convergence_counter: int = 5  # its value should be >= 1, stop fine tuning when loss <= convergence_loss (defined below) for #convergence_counter steps
     convergence_loss: float = (
         1e-4  # if loss value is <= convergence_loss for #convergence_counter consecutive steps, fine tuning stops
@@ -100,6 +100,11 @@ class TrainConfig:
     use_profiler: bool = False  # Enable pytorch profiler, can not be used with flop counter at the same time.
     # profiler_dir: str = "PATH/to/save/profiler/results" # will be used if using profiler
 
+    # dist-related
+    enable_pp: bool = False
+    num_pp_stages: int = 1
+    enable_ddp: bool = False
+    enable_sorting_for_ddp: bool = True
     opByOpVerifier: bool = False
 
     dump_logs: bool = True

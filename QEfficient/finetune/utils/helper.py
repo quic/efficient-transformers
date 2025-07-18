@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
+import json
 import os
 from contextlib import nullcontext
 from enum import Enum
@@ -37,14 +39,18 @@ class Task_Mode(str, Enum):
 
 
 def enum_names(enum_cls):
-    return [member.value for member in enum_cls]
+    return [x.value for x in enum_cls]
+
+
+def get_rank():
+    return int(os.getenv("LOCAL_RANK", 0))
 
 
 def is_rank_zero():
-    return int(os.getenv("LOCAL_RANK", 0)) == 0
+    return get_rank() == 0
 
 
-def get_num_ddp_devices():
+def get_world_size():
     return int(os.getenv("WORLD_SIZE", 1))
 
 
@@ -77,3 +83,28 @@ def get_op_verifier_ctx(
         filter_config=filter_config,
         dump_root_dir=dump_dir,
     )
+
+
+def save_to_json(
+    output_filename,
+    train_step_loss,
+    train_epoch_loss,
+    train_step_metric,
+    train_epoch_metric,
+    val_step_loss,
+    val_epoch_loss,
+    val_step_metric,
+    val_epoch_metric,
+):
+    metrics_data = {
+        "train_step_loss": train_step_loss,
+        "train_epoch_loss": train_epoch_loss,
+        "train_step_metric": train_step_metric,
+        "train_epoch_metric": train_epoch_metric,
+        "val_step_loss": val_step_loss,
+        "val_epoch_loss": val_epoch_loss,
+        "val_step_metric": val_step_metric,
+        "val_epoch_metric": val_epoch_metric,
+    }
+    with open(output_filename, "w") as f:
+        json.dump(metrics_data, f)
