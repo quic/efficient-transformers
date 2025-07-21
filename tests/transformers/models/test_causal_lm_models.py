@@ -314,9 +314,7 @@ test_model_configs_spd, test_model_names_spd = get_model_config_object_and_names
 # FIXME: there should be a CB test here
 @pytest.mark.parametrize("model_name", ["gpt2"], ids=lambda x: x)
 def test_causal_lm_export_with_deprecated_api(model_name):
-    model_config = {"model_name": model_name}
-    model_config["n_layer"] = 1
-    model, _ = load_causal_lm_model(model_config)
+    model, _ = load_causal_lm_model(model_name, n_layer=1)
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     qeff_model = QEFFAutoModelForCausalLM(model, model_name=model_name, pretrained_model_name_or_path=model_name)
     new_api_onnx_model_path = qeff_model.export()
