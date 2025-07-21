@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import importlib
+import logging
 from pathlib import Path
 
 from QEfficient.finetune.utils.logging_utils import logger
@@ -27,16 +28,17 @@ def load_module_from_py_file(py_file: str) -> object:
 
 def get_custom_dataset(dataset_config, tokenizer, split: str, context_length=None):
     if not hasattr(dataset_config, "preproc_file"):
-        raise RuntimeError("Can not find preproc_file key in dataset_config file.")
+        logger.raise_error("Can not find preproc_file key in dataset_config file.", RuntimeError)
 
     if ":" in dataset_config.preproc_file:
         module_path, func_name = dataset_config.preproc_file.split(":")
     else:
         module_path, func_name = dataset_config.preproc_file, "get_custom_dataset"
-        print(
+        logger.log_rank_zero(
             f"Using '{func_name}' function from "
             f"{dataset_config.preproc_file} as preprocessing function in "
-            "dataset preprocessing."
+            "dataset preprocessing.",
+            logging.WARNING,
         )
 
     if not module_path.endswith(".py"):
@@ -61,8 +63,9 @@ def get_custom_dataset(dataset_config, tokenizer, split: str, context_length=Non
 
 def get_data_collator(dataset_processer, dataset_config):
     if not hasattr(dataset_config, "collate_file"):
-        print(
-            f"Can not find collate_file key in dataset_config file. Using the default data collator function instead."
+        logger.log_rank_zero(
+            "Can not find collate_file key in dataset_config file. Using the default data collator function instead.",
+            logging.WARNING,
         )
         return None
 
@@ -70,8 +73,9 @@ def get_data_collator(dataset_processer, dataset_config):
         module_path, func_name = dataset_config.collate_file.split(":")
     else:
         module_path, func_name = dataset_config.collate_file, "get_data_collator"
-        print(
-            f"Using '{func_name}' function from {dataset_config.collate_file} as collate_fn in dataset preprocessing."
+        logger.log_rank_zero(
+            f"Using '{func_name}' function from {dataset_config.collate_file} as collate_fn in dataset preprocessing.",
+            logging.WARNING,
         )
 
     if not module_path.endswith(".py"):

@@ -21,7 +21,6 @@ from torch.optim.lr_scheduler import StepLR
 from transformers import AutoModel, AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
 
 from QEfficient.finetune.configs.training import TrainConfig
-from QEfficient.finetune.utils.helper import parse_unk_args
 from QEfficient.finetune.utils.config_utils import (
     generate_dataset_config,
     generate_peft_config,
@@ -341,7 +340,6 @@ def main(**kwargs) -> None:
 
 if __name__ == "__main__":
     parser = get_finetune_parser()
-    args, unk_args = parser.parse_known_args()
-    unk_args_dict = parse_unk_args(unk_args)
+    args = parser.parse_args()
     args_dict = vars(args)
-    main(**args_dict, **unk_args_dict)
+    main(**args_dict)

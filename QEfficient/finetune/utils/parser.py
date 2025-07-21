@@ -44,13 +44,6 @@ def get_finetune_parser():
         help="Name of the tokenizer,if not passed as an argument, it uses the value of model_name",
     )
     parser.add_argument(
-        "--peft_config_file",
-        "--peft-config-file",
-        type=str,
-        default=None,
-        help="Path of PEFT config json file to override the PEFT config params such as lora_r, lora_alpha etc.",
-    )
-    parser.add_argument(
         "--custom_dataset_config",
         "--custom-dataset-config",
         type=str,

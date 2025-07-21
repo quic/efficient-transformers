@@ -8,9 +8,9 @@
 import inspect
 import json
 import os
+from collections import namedtuple
 from dataclasses import asdict
 from typing import Any, Dict, Optional
-from collections import namedtuple
 
 import yaml
 from peft import LoraConfig as PeftLoraConfig
