@@ -47,8 +47,8 @@ def enum_names(enum_cls: Enum) -> List[str]:
 
 
 def get_rank() -> int:
-    """Get the current rank of the process. In case of ddp use case it returns
-    the process rank and in case of non-ddp use case it returns default value 0.
+    """Get the current rank of the process. In case of DDP use case it returns
+    the process rank and in case of non-DDP use case it returns default value 0.
 
     Returns:
         int: Rank of the process in which it is being called from.
@@ -57,8 +57,8 @@ def get_rank() -> int:
 
 
 def is_rank_zero() -> bool:
-    """Checks whether the current process is in rank-0 in case of ddp or main
-    process in case of non-ddp use case.
+    """Checks whether the current process is in rank-0 in case of DDP. For 
+    non-DDP use case it will always return True.
 
     Returns:
         bool: Flag to inidicate whether the current process is in rank-0.
@@ -67,7 +67,7 @@ def is_rank_zero() -> bool:
 
 
 def get_world_size() -> int:
-    """Get total number of DDP devices being used. Note, in case of non-ddp use
+    """Get total number of DDP devices being used. Note, in case of non-DDP use
     case, this will return 1.
 
     Returns:
