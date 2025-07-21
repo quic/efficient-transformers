@@ -57,7 +57,7 @@ def get_rank() -> int:
 
 
 def is_rank_zero() -> bool:
-    """Checks whether the current process is in rank-0 in case of DDP. For 
+    """Checks whether the current process is in rank-0 in case of DDP. For
     non-DDP use case it will always return True.
 
     Returns:
