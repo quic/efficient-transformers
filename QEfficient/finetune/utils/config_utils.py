@@ -107,6 +107,11 @@ def generate_dataset_config(dataset_name: str, custom_dataset_config: Optional[s
     # FIXME (Meet): Replace below logic by creating using auto registry of datasets.
     dataset_config = {k: v for k, v in inspect.getmembers(qeff_datasets)}[dataset_name]()
     if dataset_name == "custom_dataset":
+        if custom_dataset_config is None:
+            logger.raise_error(
+                "For 'custom_dataset', please provide dataset config file via 'custom_dataset_config' flag.",
+                RuntimeError,
+            )
         custom_dataset_dict = asdict(dataset_config)
         custom_dataset_dict_override = load_config_file(custom_dataset_config)
         # Override existing and add new params to dataset_config.

@@ -290,8 +290,8 @@ def main(**kwargs) -> None:
     """
     train_config = TrainConfig()
     update_config(train_config, **kwargs)
-    dataset_config_file = kwargs.pop("dataset_config", None)
-    dataset_config = generate_dataset_config(train_config.dataset, dataset_config_file)
+    custom_dataset_config_file = kwargs.pop("custom_dataset_config", None)
+    dataset_config = generate_dataset_config(train_config.dataset, custom_dataset_config_file)
 
     logger.prepare_for_logs(train_config.output_dir, train_config.dump_logs, train_config.log_level)
 
