@@ -102,7 +102,7 @@ def test_export_compile_execute_fbs(mocker):
 @pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.cli
-def test_export_compile_execute_qnn(mocker, setup):
+def test_export_compile_execute_qnn(mocker):
     # testing export -> compile -> infer without full_batch_size in QNN environment
     check_export_compile_execute(mocker, model_name="gpt2", enable_qnn=True)
 
@@ -110,6 +110,6 @@ def test_export_compile_execute_qnn(mocker, setup):
 @pytest.mark.on_qaic
 @pytest.mark.qnn
 @pytest.mark.cli
-def test_export_compile_execute_qnn_fbs(mocker, setup):
+def test_export_compile_execute_qnn_fbs(mocker):
     # testing export -> compile -> infer with full_batch_size in QNN environment
     check_export_compile_execute(mocker, model_name="gpt2", full_batch_size=3, enable_qnn=True)
