@@ -26,16 +26,12 @@ from QEfficient.finetune.utils.config_utils import (
     generate_peft_config,
     update_config,
 )
-from QEfficient.finetune.utils.dataset_utils import get_dataloader
-from QEfficient.finetune.utils.helper import Task_Mode
+from QEfficient.finetune.utils.dataset_utils import get_dataloader, get_longest_seq_length
+from QEfficient.finetune.utils.device_map import get_device_map
+from QEfficient.finetune.utils.helper import Task_Mode, get_world_size
 from QEfficient.finetune.utils.logging_utils import logger
 from QEfficient.finetune.utils.parser import get_finetune_parser
-from QEfficient.finetune.utils.train_utils import (
-    get_longest_seq_length,
-    print_model_size,
-    print_trainable_parameters,
-    train,
-)
+from QEfficient.finetune.utils.train_utils import print_model_size, print_trainable_parameters, train
 from QEfficient.utils._utils import hf_download
 
 # Try importing QAIC-specific module, proceed without it if unavailable
@@ -63,17 +59,27 @@ def setup_distributed_training(train_config: TrainConfig) -> None:
     Raises:
         AssertionError: If device is CPU or includes an index with DDP enabled.
     """
+
+    torch_device = torch.device(train_config.device)
+    num_available_devices = getattr(torch, torch_device.type).device_count()
+    assert get_world_size() * train_config.num_pp_stages <= num_available_devices, (
+        "Number of devices required should be less than or equal to total available devices."
+    )
+    if train_config.enable_pp:
+        assert train_config.num_pp_stages > 1, (
+            f"For pipeline parallelism, num_pp_stages should be greater than 1. Got {train_config.num_pp_stages}"
+        )
+
     if not train_config.enable_ddp:
         return
 
-    torch_device = torch.device(train_config.device)
     assert torch_device.type != "cpu", "Host doesn't support single-node DDP"
     assert torch_device.index is None, f"DDP requires only device type, got: {torch_device}"
-
     dist_backend_map = {"cpu": "gloo", "qaic": "qccl", "cuda": "gloo"}
     dist.init_process_group(backend=dist_backend_map[torch_device.type])
-    # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
-    getattr(torch, torch_device.type).set_device(dist.get_rank())
+    if not train_config.enable_pp:
+        # from here onward "qaic/cuda" will automatically map to "qaic:i/cuda:i", where i = process rank
+        getattr(torch, torch_device.type).set_device(dist.get_rank())
 
 
 def setup_seeds(seed: int) -> None:
@@ -85,6 +91,10 @@ def setup_seeds(seed: int) -> None:
     Notes:
         - Sets seeds for PyTorch, Python's random module, and NumPy.
     """
+    torch.use_deterministic_algorithms(True)
+    # With this flag, PP+DDP works only for meta-llama/Llama-3.2-1B and mistralai/Mistral-7B-Instruct-v0.3
+    # and throws error during loading model for meta-llama/Llama-3.1-8B and bigger size models.
+
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -96,7 +106,7 @@ def load_model_and_tokenizer(
     """Load the pre-trained model and tokenizer from Hugging Face.
 
     Args:
-        config (TrainConfig): Training configuration object containing model and tokenizer names.
+        train_config (TrainConfig): Training configuration object containing model and tokenizer names.
         dataset_config (Any): A dataclass object representing dataset configuration.
         kwargs: Additional arguments to override PEFT config.
 
@@ -112,7 +122,10 @@ def load_model_and_tokenizer(
         - Sets pad_token_id to eos_token_id if not defined in the tokenizer.
     """
     logger.log_rank_zero(f"Loading HuggingFace model for {train_config.model_name}")
-    pretrained_model_path = hf_download(train_config.model_name)
+    pretrained_model_path = hf_download(
+        train_config.model_name,
+        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5", "*.pth"],
+    )
     if train_config.task_mode == Task_Mode.SEQ_CLASSIFICATION:
         model = AutoModelForSequenceClassification.from_pretrained(
             pretrained_model_path,
@@ -131,13 +144,14 @@ def load_model_and_tokenizer(
             if param.requires_grad:
                 param.data = param.data.to(torch.float32)
     else:
+        device_map = get_device_map(train_config)
         model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_path,
             use_cache=False,
             attn_implementation="sdpa",
             torch_dtype=torch.float16,
+            device_map=device_map,
         )
-
     tokenizer = AutoTokenizer.from_pretrained(
         train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name
     )
@@ -290,11 +304,24 @@ def main(**kwargs) -> None:
         f"passed context length is {train_config.context_length} and overall model's context length is "
         f"{model.config.max_position_embeddings}"
     )
-    model.to(train_config.device)
-    optimizer = optim.AdamW(model.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
+    if not train_config.enable_pp:
+        model.to(train_config.device)
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=train_config.lr,
+        weight_decay=train_config.weight_decay,
+    )
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
     if train_config.enable_ddp:
-        model = nn.parallel.DistributedDataParallel(model, device_ids=[dist.get_rank()])
+        ignore_names = set()
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                ignore_names.add(name)
+        # Adding params in ignore list will enforce DDP to ignore them during synchronization,
+        # which will further reduce the tensor exchange across devices.
+        torch.nn.parallel.DistributedDataParallel._set_params_and_buffers_to_ignore_for_model(model, ignore_names)
+        model = nn.parallel.DistributedDataParallel(model)
+
     results = train(
         model,
         tokenizer,
@@ -303,7 +330,6 @@ def main(**kwargs) -> None:
         optimizer,
         scheduler,
         train_config,
-        dist.get_rank() if train_config.enable_ddp else None,
     )
     if train_config.enable_ddp:
         dist.destroy_process_group()

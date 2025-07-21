@@ -5,12 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 import time
 from datetime import datetime
 from functools import partial
-from typing import Dict, List, Tuple
 
 import torch
 import torch.distributed as dist
@@ -22,9 +20,11 @@ from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.utils.helper import (
     Task_Mode,
     get_autocast_ctx,
-    get_num_ddp_devices,
     get_op_verifier_ctx,
+    get_rank,
+    get_world_size,
     is_rank_zero,
+    save_to_json,
 )
 from QEfficient.finetune.utils.logging_utils import logger
 
@@ -48,24 +48,24 @@ def train(
     optimizer,
     lr_scheduler,
     train_config: TrainConfig,
-    local_rank=None,
 ):
     """
     Trains the model on the given dataloader
 
     Args:
         model: The model to be trained
-        tokenizer: tokenizer used in the eval for decoding the predicitons
+        tokenizer: tokenizer used in the eval for decoding the predictions
         train_dataloader: The dataloader containing the training data
         eval_dataloader: The dataloader containing the eval data
         optimizer: The optimizer used for training
         lr_scheduler: The learning rate scheduler
         train_config: The training configuration
-        local_rank: The rank of the current node in a distributed setting
 
     Returns: results dictionary containing average training and validation perplexity and loss
     """
     device = train_config.device
+    device_type = torch.device(device).type
+    local_rank = get_rank()
 
     train_metric = []
     train_loss = []
@@ -94,8 +94,6 @@ def train(
     if is_rank_zero():
         tensorboard_log_dir = train_config.output_dir + "/runs/" + f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         tensorboard_updates = SummaryWriter(log_dir=tensorboard_log_dir)
-
-    device_type = torch.device(device).type
 
     if train_config.grad_scaler:
         if device.startswith("qaic"):
@@ -136,7 +134,6 @@ def train(
                 continue
 
         logger.log_rank_zero(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
-        # stop when the maximum number of training steps is reached
         if max_steps_reached:
             break
         epoch_start_time = time.perf_counter()
@@ -170,7 +167,6 @@ def train(
                     continue
             total_train_steps += 1
 
-            #  stop when the maximum number of training steps is reached
             if train_config.max_train_step > 0 and total_train_steps >= train_config.max_train_step:
                 max_steps_reached = True
                 logger.log_rank_zero(
@@ -233,7 +229,7 @@ def train(
                     step_metric_value = float(torch.exp(loss.detach().float()))
                 train_step_metric.append(step_metric_value)
 
-            # Accumalate gradients
+            # Accumulate gradients
             complete_accum_steps = (
                 len(train_dataloader) - len(train_dataloader) % train_config.gradient_accumulation_steps
             )
@@ -320,15 +316,15 @@ def train(
 
         if train_config.enable_ddp:
             dist.all_reduce(train_epoch_loss, op=dist.ReduceOp.SUM)
-            train_epoch_loss /= get_num_ddp_devices()
+            train_epoch_loss /= get_world_size()
             dist.all_reduce(train_epoch_metric, op=dist.ReduceOp.SUM)
-            train_epoch_metric /= get_num_ddp_devices()
+            train_epoch_metric /= get_world_size()
 
         # Update the learning rate as needed
         lr_scheduler.step()
 
         if train_config.run_validation:
-            eval_epoch_loss, eval_epoch_metric, step_loss, step_metric = evaluation_helper(
+            eval_epoch_loss, eval_epoch_metric, step_loss, step_metric = evaluation(
                 model, train_config, eval_dataloader, device
             )
 
@@ -342,9 +338,9 @@ def train(
 
             if train_config.enable_ddp:
                 dist.all_reduce(eval_epoch_loss, op=dist.ReduceOp.SUM)
-                eval_epoch_loss /= get_num_ddp_devices()
+                eval_epoch_loss /= get_world_size()
                 dist.all_reduce(eval_epoch_metric, op=dist.ReduceOp.SUM)
-                eval_epoch_metric /= get_num_ddp_devices()
+                eval_epoch_metric /= get_world_size()
 
             if eval_epoch_loss < best_eval_loss:
                 best_eval_loss = eval_epoch_loss
@@ -394,7 +390,7 @@ def train(
     return results
 
 
-def evaluation_helper(model, train_config, eval_dataloader, device):
+def evaluation(model, train_config, eval_dataloader, device):
     """
     Evaluates the model on the given dataloader
 
@@ -479,18 +475,9 @@ def evaluation_helper(model, train_config, eval_dataloader, device):
     return eval_epoch_loss, eval_epoch_metric, eval_step_loss, eval_step_metric
 
 
-def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
-    # find out the minimum max_seq_length required during fine-tuning (saves memory!)
-    lengths = [len(d["input_ids"]) for d in data]
-    longest_seq_length = max(lengths)
-    longest_seq_ix = lengths.index(longest_seq_length)
-    return longest_seq_length, longest_seq_ix
-
-
 def print_model_size(model) -> None:
     """
     Print model name, the number of trainable parameters and initialization time.
-
     Args:
         model: PyTorch model.
     """
@@ -501,7 +488,6 @@ def print_model_size(model) -> None:
 def print_trainable_parameters(model) -> None:
     """
     Print the number of trainable parameters, all params and percentage of trainablke params.
-
     Args:
         model: The PyTorch model.
     """
@@ -509,28 +495,3 @@ def print_trainable_parameters(model) -> None:
     logger.log_rank_zero(
         f"Trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}"
     )
-
-
-def save_to_json(
-    output_filename,
-    train_step_loss,
-    train_epoch_loss,
-    train_step_metric,
-    train_epoch_metric,
-    eval_step_loss,
-    eval_epoch_loss,
-    eval_step_metric,
-    eval_epoch_metric,
-):
-    metrics_data = {
-        "train_step_loss": train_step_loss,
-        "train_epoch_loss": train_epoch_loss,
-        "train_step_metric": train_step_metric,
-        "train_epoch_metric": train_epoch_metric,
-        "eval_step_loss": eval_step_loss,
-        "eval_epoch_loss": eval_epoch_loss,
-        "eval_step_metric": eval_step_metric,
-        "eval_epoch_metric": eval_epoch_metric,
-    }
-    with open(output_filename, "w") as f:
-        json.dump(metrics_data, f)

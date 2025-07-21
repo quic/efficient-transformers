@@ -4,7 +4,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
 import logging
+from typing import Dict, List, Tuple
 
 import datasets
 import torch
@@ -13,7 +15,7 @@ from transformers.data import DataCollatorForSeq2Seq
 
 from QEfficient.finetune.data.sampler import DistributedLengthBasedBatchSampler
 from QEfficient.finetune.dataset.dataset_config import DATALOADER_COLLATE_FUNC, DATASET_PREPROC
-from QEfficient.finetune.utils.helper import get_num_ddp_devices
+from QEfficient.finetune.utils.helper import get_world_size
 from QEfficient.finetune.utils.logging_utils import logger
 
 
@@ -68,7 +70,7 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
 
 
 def padding_dataset(train_config, dataset, batch_size):
-    num_replicas = get_num_ddp_devices()
+    num_replicas = get_world_size()
     remainder = len(dataset) % (num_replicas * batch_size)
     if remainder == 0:
         return dataset
@@ -125,3 +127,11 @@ def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"
         **dl_kwargs,
     )
     return dataloader
+
+
+def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
+    # find out the minimum max_seq_length required during fine-tuning (saves memory!)
+    lengths = [len(d["input_ids"]) for d in data]
+    longest_seq_length = max(lengths)
+    longest_seq_ix = lengths.index(longest_seq_length)
+    return longest_seq_length, longest_seq_ix
