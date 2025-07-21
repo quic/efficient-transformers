@@ -63,8 +63,8 @@ def check_export_compile_execute(mocker, model_name, full_batch_size=None, enabl
         batch_size=1,
         prompt_len=32,
         ctx_len=128,
-        mxfp6=1,
-        mxint8=1,
+        mxfp6=True,
+        mxint8=True,
         full_batch_size=full_batch_size,
         enable_qnn=enable_qnn,
     )
