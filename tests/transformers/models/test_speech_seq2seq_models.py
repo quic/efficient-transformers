@@ -324,7 +324,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 
     qeff_model.export()
 
-    ort_tokens = run_seq2seq_ort(qeff_model.onnx_path, qeff_model.model.config, processor, data, sample_rate, ctx_len)
+    ort_tokens = run_seq2seq_ort(qeff_model.onnx_path, qeff_model.config, processor, data, sample_rate, ctx_len)
 
     assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for pytorch output and ort output"
 

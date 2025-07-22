@@ -217,6 +217,11 @@ class QEFFBaseModel(ABC):
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
         self.onnx_path = onnx_path
+
+        # Clear the model to free up memory
+        self.model = None
+        gc.collect()
+
         return onnx_path
 
     @dump_qconfig
@@ -255,6 +260,12 @@ class QEFFBaseModel(ABC):
         """
         if onnx_path is None and self.onnx_path is None:
             self.export()
+
+        # Method 1
+        # with init_empty_weights():
+        #     self.model = self.public_class.from_pretrained(
+        #         pretrained_model_name_or_path=self.config._name_or_path,
+        #     ).model
 
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
