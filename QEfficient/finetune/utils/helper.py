@@ -111,7 +111,7 @@ def get_op_verifier_ctx(
         use_op_by_op_verifier (bool): Boolean flag to enable op-by-op verifier.
         device_type (str): Device on which the model is being executed.
         dump_dir (str): Directory to dump the op-by-op verification results.
-        step (int): Number of steps to run the op-by-op verification.
+        step (int): Step number for which the op-by-op verification is to be performed.
         ref_device (str, optional): Device to use as reference for verification.
             Defaults to "cpu".
         ref_dtype (torch.dtype, optional): Data type to use as reference
@@ -163,8 +163,8 @@ def get_grad_scaler(use_grad_scaler: bool, device_type: str) -> Any:
         from torch.qaic.amp import GradScaler as QAicGradScaler
 
         return QAicGradScaler()
-    elif device_type == Device.CUDA:
-        # Lazily imported cuda's GradScaler when it is actually needed.
+    elif (device_type == Device.CUDA) or (device_type == Device.CPU):
+        # Lazily imported torch's GradScaler when it is actually needed.
         from torch.amp import GradScaler
 
         return GradScaler(device_type)
