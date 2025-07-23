@@ -130,7 +130,7 @@ def load_model_and_tokenizer(
         model = AutoModelForSequenceClassification.from_pretrained(
             pretrained_model_path,
             num_labels=dataset_config.num_labels,
-            attn_implementation="eager",
+            attn_implementation="sdpa",
             torch_dtype=torch.float16,
         )
 
@@ -148,7 +148,7 @@ def load_model_and_tokenizer(
         model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_path,
             use_cache=False,
-            attn_implementation="eager",
+            attn_implementation="sdpa",
             torch_dtype=torch.float16,
             device_map=device_map,
         )
