@@ -11,6 +11,7 @@ import torch
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.diffusers.pipelines.pipeline_utils import QEffTextEncoder, QEffUNet, QEffVAE,QEffSafetyChecker
+from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheExternalModuleMapperTransform, KVCacheTransform
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import constants
@@ -18,19 +19,20 @@ from QEfficient.utils.cache import to_hashable
 import torch.nn as nn
 from diffusers.pipelines.onnx_utils import OnnxRuntimeModel
 from diffusers import AutoencoderKL
-
+import numpy as np
+from diffusers.image_processor import VaeImageProcessor
 
 from diffusers.models.attention_processor import AttnProcessor
 
 
 from transformers.models.clip.modeling_clip import CLIPAttention
 
-class QEFFStableDiffusionPipeline():
+class QEFFStableDiffusionPipeline(StableDiffusionPipeline):
     _hf_auto_class = StableDiffusionPipeline
     
     def __init__(self, model, *args, **kwargs):
         
-        
+        # super().__init__(*args, **kwargs)
         self.tokenizer = model.tokenizer
         self.scheduler = model.scheduler
         self.feature_extractor = model.feature_extractor
@@ -53,10 +55,17 @@ class QEFFStableDiffusionPipeline():
         
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         
+        
+        
+        self.vae_scale_factor = 2 ** (len(self.vae.model.config.block_out_channels) - 1) if getattr(self, "vae", None) else 8
+        self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
+        
+        
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
         kwargs.update({"attn_implementation": "eager"})
         model= cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, torch_dtype=torch.float32, **kwargs)
+        model.to("cpu")
         return cls(model, pretrained_model_name_or_path)
     
     def export(self, export_dir: Optional[str] = None) -> str:
@@ -73,11 +82,11 @@ class QEFFStableDiffusionPipeline():
         # Text encoder export 
         
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        seq_len = self.tokenizer.model_max_length
 
         example_inputs = {
-            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "attention_mask": torch.ones((bs, seq_len), dtype=torch.int64),
+            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int32),
+            # "attention_mask": torch.ones((bs, seq_len), dtype=bool),
         }
 
         dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}, "attention_mask": {0: "batch_size", 1: "seq_len"}}
@@ -86,9 +95,9 @@ class QEFFStableDiffusionPipeline():
 
         # self.text_encoder.model.set_attn_processor(AttnProcessor())
         
-        config = self.text_encoder.model.text_model.config
-        for layer in self.text_encoder.model.text_model.encoder.layers:
-            layer.self_attn = CLIPAttention(config)
+        # config = self.text_encoder.model.text_model.config
+        # for layer in self.text_encoder.model.text_model.encoder.layers:
+        #     layer.self_attn = CLIPAttention(config)
 
         
         self.text_encoder_onnx_path = self.text_encoder.export(
@@ -116,7 +125,7 @@ class QEFFStableDiffusionPipeline():
             "timestep": {0: "batch_size"},
             "encoder_hidden_states": {0: "batch_size", 1: "seq_len"}
         }
-        self.unet.model.set_attn_processor(AttnProcessor())
+        # self.unet.model.set_attn_processor(AttnProcessor())
 
         self.unet_onnx_path = self.unet.export(
             unet_example_input,
@@ -139,7 +148,7 @@ class QEFFStableDiffusionPipeline():
             "sample": {0: "batch_size", 1: "channels", 2: "height", 3: "width"},
         }
         
-        self.vae_encoder.model.set_attn_processor(AttnProcessor())
+        # self.vae_encoder.model.set_attn_processor(AttnProcessor())
 
         self.vae_encoder_onnx_path = self.vae_encoder.export(
             vae_encoder_input,
@@ -161,7 +170,7 @@ class QEFFStableDiffusionPipeline():
             "latent_sample": {0: "batch_size", 1: "channels", 2: "height", 3: "width"},
         }
         
-        self.vae_decoder.model.set_attn_processor(AttnProcessor())
+        # self.vae_decoder.model.set_attn_processor(AttnProcessor())
         
         self.vae_decoder_onnx_path = self.vae_decoder.export(
             vae_decoder_input,
@@ -174,20 +183,20 @@ class QEFFStableDiffusionPipeline():
         
         saftey_checker_input={
             "clip_input": torch.randn(bs, 3, 224, 224),
-            "images": torch.randn(bs, 512, 512, 3)
+            "images": torch.randn(bs, 3, 512, 512)
             }
         output_names=["out_images", "has_nsfw_concepts"]
         
         dynamic_axes={
-            "clip_input": {0: "batch", 1: "channels", 2: "clip_height", 3: "clip_width"},
-            "images": {0: "batch", 1: "height", 2: "width", 3: "channels"},
+            "clip_input": {0: "batch_size", 1: "channels", 2: "clip_height", 3: "clip_width"},
+            "images": {0: "batch_size", 1: "channels", 2: "height", 3: "width"},
         }
         
         # self.safety_checker.model.set_attn_processor(AttnProcessor())
         
-        for layer in self.safety_checker.model.vision_model.vision_model.encoder.layers:            
-            config = self.safety_checker.model.config.vision_config
-            layer.self_attn = CLIPAttention(config)
+        # for layer in self.safety_checker.model.vision_model.vision_model.encoder.layers:            
+        #     config = self.safety_checker.model.config.vision_config
+        #     layer.self_attn = CLIPAttention(config)
             # Replace with eager version
 
         
@@ -199,8 +208,6 @@ class QEFFStableDiffusionPipeline():
         )
         
         print("######################  Safety Checker Exported #####################")
-        
-        
 
     def compile(
         self,
@@ -218,6 +225,8 @@ class QEFFStableDiffusionPipeline():
         # Compile text_encoder
         
         # Make specilization
+        
+        seq_len= self.tokenizer.model_max_length
         
         specializations = [
             {"batch_size": batch_size, "seq_len": seq_len},
@@ -272,13 +281,13 @@ class QEFFStableDiffusionPipeline():
             "width": self.vae_encoder.model.config.sample_size,
         }]
         
-        self.vae_encoder_compile_path=self.vae_encoder._compile(
-            onnx_path,
-            compile_dir,
-            compile_only=True,
-            specializations=encoder_specializations,
-            convert_to_fp16=True,
-        )
+        # self.vae_encoder_compile_path=self.vae_encoder._compile(
+        #     onnx_path,
+        #     compile_dir,
+        #     compile_only=True,
+        #     specializations=encoder_specializations,
+        #     convert_to_fp16=True,
+        # )
         
         print("######################  VAE Encoder Compiled #####################")
         
@@ -291,13 +300,15 @@ class QEFFStableDiffusionPipeline():
             "width": self.vae_decoder.model.config.sample_size,
         }]
         
-        self.vae_decoder_compile_path=self.vae_decoder._compile(
-            onnx_path,
-            compile_dir,
-            compile_only=True,
-            specializations=decoder_sepcializations,
-            convert_to_fp16=True,
-        )
+        # self.vae_decoder_compile_path=self.vae_decoder._compile(
+        #     onnx_path,
+        #     compile_dir,
+        #     compile_only=True,
+        #     specializations=decoder_sepcializations,
+        #     convert_to_fp16=True,
+        # )
+        
+    # TODO: Add support of comilation for now it will run on host
         
         print("######################  VAE Decoder Compiled #####################")
         
@@ -305,9 +316,11 @@ class QEFFStableDiffusionPipeline():
         
         safety_check_specializations=[{
             "batch_size": batch_size,
-            "channels": self.safety_checker.model.config.in_channels,
-            "height":self.safety_checker.model.config.sample_size,
-            "width": self.safety_checker.model.config.sample_size,
+            "channels": 3,
+            "height":512,
+            "width": 512,
+            "clip_height": 224,
+            "clip_width": 224,
         }]
         
         self.compiled_safety_checker_path=self.safety_checker._compile(
@@ -319,10 +332,7 @@ class QEFFStableDiffusionPipeline():
         )
         
         print("######################  Safety Checker Compiled #####################")
-    def generate()
-    
-        
-        
+    # def generate()
         
     @property
     def model_name(self) -> str:
@@ -330,6 +340,190 @@ class QEFFStableDiffusionPipeline():
     @property
     def model_hash(self) -> str:
         pass
-        
-        
+
+    def __call__(
+        self,
+        prompt: Union[str, List[str]] = None,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
+        device_ids: List[int] = [0],
+        num_inference_steps: int = 50,
+        timesteps: List[int] = None,
+        sigmas: List[float] = None,
+        guidance_scale: float = 7.5,
+        negative_prompt: Optional[Union[str, List[str]]] = None,
+        num_images_per_prompt: Optional[int] = 1,
+        eta: float = 0.0,
+        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
+        latents: Optional[torch.Tensor] = None,
+        prompt_embeds: Optional[torch.Tensor] = None,
+        negative_prompt_embeds: Optional[torch.Tensor] = None,
+        output_type: Optional[str] = "pil",
+        **kwargs,
+    ):
     
+        # # Get output for text_encoder    
+        if self.text_encoder.qpc_session is None:
+            self.text_encoder.qpc_session = QAICInferenceSession(str(self.text_encoder_compile_path), device_ids)
+        
+        # Dynamic switching to closest seq_Len based on input_ids_len
+        
+        # find the inputs/attention mask shape for which qpc compiled
+        bs, compield_inputs_shape = self.text_encoder.qpc_session.bindings[0].dims
+        
+        text_inputs = self.tokenizer(
+                prompt,
+                padding="max_length",
+                max_length=77,
+                truncation=True,
+                return_tensors="np",
+            )
+        text_encoder_output={
+            "last_hidden_state": np.random.rand(bs, 77, 768).astype(np.float32),
+            "pooler_output": np.random.rand(bs, 768).astype(np.float32) 
+        }
+        self.text_encoder.qpc_session.set_buffers(text_encoder_output)
+        ##  Testing with the ORT output ##
+        
+        import onnxruntime as ort
+        ort_session = ort.InferenceSession(str(self.text_encoder.onnx_path))
+        
+        
+        onnx_inputs = {k: v for k, v in text_inputs.items() if k in [i.name for i in ort_session.get_inputs()]}
+
+        onnx_inputs['input_ids'] = onnx_inputs['input_ids'].astype(np.int32)
+
+        ort_outputs = ort_session.run(None, onnx_inputs)
+        text_inputs_pt = {k: torch.from_numpy(v) for k, v in onnx_inputs.items()}
+
+        pt_output=self.text_encoder.model(**text_inputs_pt)
+        mad=torch.mean(torch.abs(pt_output[0] - torch.tensor(ort_outputs[0])))
+        print("CLIP: MAD onnx vs pytorch", mad)
+        
+        self.text_encoder.qpc_session.set_buffers(text_encoder_output)
+        ai100_output=self.text_encoder.qpc_session.run(onnx_inputs)
+        mad_ai100_onnnx = np.mean(np.abs(ai100_output['last_hidden_state'] - ort_outputs[0]))
+        
+        print("CLIP: MAD ai100 vs onnx", mad_ai100_onnnx)
+        
+        ai100_output = ai100_output['last_hidden_state']
+        
+        
+        ## CLIP done here
+        # 4. Prepare timesteps
+        
+        from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
+        
+        
+        # 4. Prepare timesteps
+        timesteps, num_inference_steps = retrieve_timesteps(
+            self.scheduler, num_inference_steps, timesteps, sigmas
+        )
+        timesteps= timesteps.numpy()
+        # 5. Prepare latent variables
+        # 0. Default height and width to unet
+        # timesteps = timesteps.astype(np.float32)
+
+        width = height = self.unet.model.config.sample_size
+        height, width = height * self.vae_scale_factor, width * self.vae_scale_factor
+        
+        num_channels_latents = self.unet.model.config.in_channels
+        latents = self.prepare_latents(
+            bs,
+            num_channels_latents,
+            height,
+            width,
+            torch.float32,
+            generator,
+            latents,
+        )   
+        
+        # Load qpc
+        self.unet_qpc_session= QAICInferenceSession(str(self.compiled_unet_path), [1])
+        
+        unet_output={
+            "out_sample": np.random.rand(bs, 4, 64, 64).astype(np.float32)
+        }
+        self.unet_qpc_session.set_buffers(unet_output)
+        
+        
+        # 3. Denoising loop
+        for t in timesteps:
+            latent_input = latents
+            latent_input = self.scheduler.scale_model_input(latent_input, t)
+            noise_pred = self.unet_qpc_session.run({"encoder_hidden_states":ai100_output, "timestep":t, "sample":latent_input.numpy()})
+            latents = self.scheduler.step(noise_pred['out_sample'], t, latents).prev_sample   
+        
+        
+        # VAE decode step
+        # TODO: Add QPC for VAE decode
+        image = self.vae_decoder.model(latents / self.vae_decoder.model.config.scaling_factor, return_dict=False)[
+                0
+            ]
+        
+        # Saftey check
+        
+        if torch.is_tensor(image):
+            feature_extractor_input = self.image_processor.postprocess(image.detach(), output_type="pil")
+        else:
+            feature_extractor_input = self.image_processor.numpy_to_pil(image)
+            
+        safety_checker_input = self.feature_extractor(feature_extractor_input, return_tensors="pt")
+        
+        
+        self.safety_checker_session= QAICInferenceSession(str(self.compiled_safety_checker_path), [2])
+        
+        safety_checker_output={
+            "out_images": np.random.rand(1, 3, 512, 512).astype(np.float32),
+            "has_nsfw_concepts": np.bool_(1)
+        }
+        self.safety_checker_session.set_buffers(safety_checker_output)
+        
+        checker_output = self.safety_checker_session.run({"clip_input":safety_checker_input["pixel_values"].numpy(), "images": image.detach().numpy()})
+        
+        has_nsfw_concept = checker_output["has_nsfw_concepts"].astype("bool")
+        
+        if has_nsfw_concept is None:
+            do_denormalize = [True] * image.shape[0]
+        else:
+            do_denormalize = [not has_nsfw for has_nsfw in has_nsfw_concept]
+        image = self.image_processor.postprocess(image.detach(), output_type=output_type, do_denormalize=do_denormalize)
+        
+        # self.maybe_free_model_hooks()
+    
+        from diffusers.pipelines.stable_diffusion.pipeline_output import StableDiffusionPipelineOutput
+        return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+
+        
+            
+        
+        
+        
