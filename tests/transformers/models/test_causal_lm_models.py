@@ -119,9 +119,12 @@ def get_model_config_object_and_names(model_config_dict, selected_model_names):
             - A list of (AutoConfig, model_name) tuples.
             - A list of model names.
     """
-    filtered_configs = [(config, name) for name, config in model_config_dict.items() if name in selected_model_names]
-    config_objects = [item for item in filtered_configs]
-    model_names = [name for _, name in filtered_configs]
+    config_objects = []
+    model_names = []
+    for name, config in model_config_dict.items():
+        if name in selected_model_names:
+            config_objects.append((config, name))
+            model_names.append(name)
     return config_objects, model_names
 
 
