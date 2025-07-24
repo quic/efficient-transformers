@@ -12,7 +12,7 @@ import torch
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import ModelOutput
 
-from QEfficient.customop import CtxGatherFuncCB3D, CtxScatterFuncCB3D
+from QEfficient.customop import CtxScatterFuncCB3D
 from QEfficient.utils.constants import Constants
 
 
@@ -86,11 +86,7 @@ def decode_path(
         last_accepted_output_tokens,
         torch.ones(last_accepted_output_tokens.shape, dtype=torch.bool),
     )
-    gather_values = CtxGatherFuncCB3D.apply(
-        past_presence_penalty_buffer,
-        batch_index,
-        last_accepted_output_tokens,
-    )
+    gather_values = past_presence_penalty_buffer[batch_index, last_accepted_output_tokens]
     past_presence_penalty_buffer = CtxScatterFuncCB3D.apply(
         past_presence_penalty_buffer,
         batch_index,
