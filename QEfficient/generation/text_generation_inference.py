@@ -322,6 +322,7 @@ def cloud_ai_100_exec_kv(
     automation=False,
     prompt_to_lora_id_mapping: Optional[List[int]] = None,
     is_tlm: bool = False,
+    print_latency_stats: bool = True,
 ):
     """
     This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -342,6 +343,7 @@ def cloud_ai_100_exec_kv(
         :Write_io_dir (str): Path to write the input and output files. ``Defaults to None``.
         :automation (bool): If true, it prints input, output, and performance stats. ``Defaults to False``.
         :prompt_to_lora_id_mapping (List[int]): Mapping to associate prompts with their respective LoRA adapter.
+        :print_latency_stats (bool): If True, it prints latency statistics. ``Defaults to True``.
 
     Returns:
         :CloudAI100ExecInfo: Object holding execution output and performance details.
@@ -395,8 +397,8 @@ def cloud_ai_100_exec_kv(
         exec_info = generate_text.generate(
             prompt=prompt, generation_len=generation_len, prompt_to_lora_id_mapping=prompt_to_lora_id_mapping
         )
-
-    print_latency_stats_kv(prompt, exec_info=exec_info, automation=automation)
+    if print_latency_stats:
+        print_latency_stats_kv(prompt, exec_info=exec_info, automation=automation)
     return exec_info
 
 
