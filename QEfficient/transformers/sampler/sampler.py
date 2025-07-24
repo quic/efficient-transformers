@@ -193,6 +193,9 @@ def sampler_forward(
     batch_size, spec_length, vocab_size = logits.shape
     logits = logits.reshape(-1, vocab_size)  # Reshape tensor to 2D
 
+    if batch_index is None:  # Regular model execution
+        batch_index = torch.arange(batch_size).view(-1, 1)
+
     batch_index_reshaped = batch_index.view(-1)
     # Prefill
     past_repetition_penalty_buffer_prefill, past_presence_penalty_buffer_prefill = prefill_path(
