@@ -1898,6 +1898,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 device_id=device_id,
                 generation_len=generation_len,
                 is_tlm=self.is_tlm,
+                **kwargs,
             )
         else:
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
