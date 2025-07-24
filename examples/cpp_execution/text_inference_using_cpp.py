@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 import argparse
-import logging
 import os
 import sys
 from pathlib import Path
@@ -17,7 +16,9 @@ import QEfficient
 from QEfficient.cloud.export import get_onnx_model_path
 from QEfficient.generation.text_generation_inference import fix_prompts, get_compilation_dims, get_input_prompts
 from QEfficient.utils import check_and_assign_cache_dir, get_qpc_dir_path, load_hf_tokenizer, qpc_exists
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
 
 script_dir = Path(__file__).resolve().parent
 so_folder_path = script_dir / "build"
@@ -254,6 +255,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     if args.verbose:
-        logger.setLevel(logging.INFO)
+        QEFFLogger.set_loglevel("INFO")
     del args.verbose  # type: ignore
     main(**args.__dict__)

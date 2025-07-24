@@ -16,7 +16,9 @@ from transformers.models.llava_next.modeling_llava_next import (
 
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
 
 
 class QEffLlavaNextEncoderWrapper(nn.Module):
@@ -65,7 +67,7 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
                     np.prod(image_feature.shape) % (num_patch_height * num_patch_width * height * width) != 0
                     and vision_feature_select_strategy == "default"
                 ):
-                    logger.warning_once(
+                    logger.warning(
                         "Image feature shape does not line up with the provided patch size. "
                         "You may be using the `default` vision_feature_select_strategy with a"
                         " visual encoder that does not have CLS."

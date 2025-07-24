@@ -13,7 +13,9 @@ from transformers.models.llava.modeling_llava import (
 )
 
 from QEfficient.utils._utils import IOInfo
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
 
 BS = 1
 NUM_CHANNEL = 3

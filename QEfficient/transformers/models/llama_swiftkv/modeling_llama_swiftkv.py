@@ -20,7 +20,7 @@ from transformers.cache_utils import Cache, StaticCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
-from transformers.models.llama.modeling_llama import LlamaMLP, LlamaRMSNorm, logger, repeat_kv
+from transformers.models.llama.modeling_llama import LlamaMLP, LlamaRMSNorm, repeat_kv
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -29,6 +29,9 @@ from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaRotaryEmbedding,
     qeff_apply_rotary_pos_emb,
 )
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger()
 
 
 class QEffLlamaSwiftKVConfig(LlamaConfig):
@@ -302,7 +305,7 @@ class QEffLlamaSwiftKVModel(nn.Module):
                 past_key_values = QEffDynamicCache()
             else:
                 past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
-                logger.warning_once(
+                logger.warning(
                     "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
                     "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
                     "(https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)"
