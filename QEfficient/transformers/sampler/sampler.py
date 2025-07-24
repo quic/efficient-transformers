@@ -12,7 +12,7 @@ import torch
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import ModelOutput
 
-from QEfficient.customop import CtxScatterFuncCB3D
+from QEfficient.customop import CtxGatherFuncCB3D, CtxScatterFuncCB3D
 from QEfficient.utils.constants import Constants
 
 
@@ -80,20 +80,23 @@ def decode_path(
     )
 
     # Update retained states
-    scatter_values = torch.ones(last_accepted_output_tokens.shape, dtype=torch.bool)
     past_repetition_penalty_buffer = CtxScatterFuncCB3D.apply(
         past_repetition_penalty_buffer,
         batch_index,
         last_accepted_output_tokens,
-        scatter_values,
+        torch.ones(last_accepted_output_tokens.shape, dtype=torch.bool),
+    )
+    gather_values = CtxGatherFuncCB3D.apply(
+        past_presence_penalty_buffer,
+        batch_index,
+        last_accepted_output_tokens,
     )
     past_presence_penalty_buffer = CtxScatterFuncCB3D.apply(
         past_presence_penalty_buffer,
         batch_index,
         last_accepted_output_tokens,
-        scatter_values,
+        gather_values + 1,
     )
-    # TODO: For frequency retain state, first gather and then scatter
     return past_repetition_penalty_buffer, past_presence_penalty_buffer
 
 
@@ -116,6 +119,7 @@ def sampler_forward(
     past_repetition_penalty_buffer: Optional[torch.Tensor] = None,
     repetition_penalties: Optional[torch.Tensor] = None,
     past_presence_penalty_buffer: Optional[torch.Tensor] = None,
+    frequency_penalties: Optional[torch.Tensor] = None,
     presence_penalties: Optional[torch.Tensor] = None,
     temperatures: Optional[torch.Tensor] = None,
     top_ks: Optional[torch.Tensor] = None,
@@ -141,8 +145,13 @@ def sampler_forward(
             new tokens, while values < 1 encourage the model to repeat tokens.
 
         past_presence_penalty_buffer (`torch.Tensor`, *optional*):
-            RetainedState buffer used as a mask to apply presence penalty to the output
-            generated so far.
+            RetainedState buffer used as a mask to apply frequency and presence penalties to
+            the output generated so far.
+
+        frequency_penalties (`torch.Tensor`, *optional*):
+            Sampling parameter that penalizes new tokens based on their frequency in the
+            generated text so far. Values > 0 encourage the model to use new tokens, while
+            values < 0 encourage the model to repeat tokens.
 
         presence_penalties (`torch.Tensor`, *optional*):
             Sampling parameter that penalizes new tokens based on whether they appear in the
@@ -240,17 +249,24 @@ def sampler_forward(
         repetition_penalties_mask = torch.where(past_repetition_penalty_buffer_selected, repetition_penalties, 1.0)
         logits *= repetition_penalties_mask ** (-torch.sign(logits))
 
+    if (frequency_penalties != 0.0).any() or (presence_penalties != 0.0).any():
+        past_presence_penalty_buffer_selected = past_presence_penalty_buffer[batch_index_reshaped].repeat(
+            spec_length, 1
+        )  # (batch_size * spec_length, vocab_size)
+
+    # Frequency Penalty
+    if (frequency_penalties != 0.0).any():
+        frequency_penalties = frequency_penalties.repeat(
+            spec_length, 1
+        )  # (batch_size, 1) -> (batch_size * spec_length, 1)
+        logits -= frequency_penalties * past_presence_penalty_buffer_selected
+
     # Presence Penalty
     if (presence_penalties != 0.0).any():
         presence_penalties = presence_penalties.repeat(
             spec_length, 1
         )  # (batch_size, 1) -> (batch_size * spec_length, 1)
-        past_presence_penalty_buffer_selected = past_presence_penalty_buffer[batch_index_reshaped].repeat(
-            spec_length, 1
-        )  # (batch_size * spec_length, vocab_size)
-        logits -= presence_penalties * past_presence_penalty_buffer_selected
-
-    # TODO: Frequency Penalty
+        logits -= presence_penalties * (past_presence_penalty_buffer_selected > 0)
 
     # Temperature Scaling
     temperatures = temperatures.repeat(spec_length, 1)  # (batch_size, 1) -> (batch_size * spec_length, 1)
