@@ -352,7 +352,7 @@ def cloud_ai_100_exec_kv(
         Decoding Draft Language Model and `return_pdfs`=False for regular model.
         sampling_params (Dict[str, Any]): A dictionary of sampling parameters supported by the QAIC backend.
         The dictionary should contain the following keys:
-        `repetition_penalties`, `presence_penalties`, `temperatures`, `top_ks`, `top_ps`,
+        `repetition_penalties`, `frequency_penalties`, `presence_penalties`, `temperatures`, `top_ks`, `top_ps`,
         `min_ps`, and `random_numbers`. Each value should be a numpy array of shape (batch_size, 1).
 
     Returns:
@@ -444,6 +444,7 @@ class QEffTextGenerationBase:
         sampler_inputs = [
             "last_accepted_output_tokens",
             "repetition_penalties",
+            "frequency_penalties",
             "presence_penalties",
             "temperatures",
             "top_ks",
@@ -645,6 +646,7 @@ class QEffTextGenerationBase:
             decode_inputs["last_accepted_output_tokens"] = decode_inputs["input_ids"]
             for op in [
                 "repetition_penalties",
+                "frequency_penalties",
                 "presence_penalties",
                 "temperatures",
                 "top_ks",
@@ -819,6 +821,7 @@ class QEffTextGenerationBase:
             inputs["last_accepted_output_tokens"] = inputs["input_ids"]
             for op in [
                 "repetition_penalties",
+                "frequency_penalties",
                 "presence_penalties",
                 "temperatures",
                 "top_ks",

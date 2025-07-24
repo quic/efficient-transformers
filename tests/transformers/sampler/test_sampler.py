@@ -97,6 +97,7 @@ def test_sampler_transform(
     sampler_inputs = [
         "last_accepted_output_tokens",
         "repetition_penalties",
+        "frequency_penalties",
         "presence_penalties",
         "temperatures",
         "top_ks",
@@ -170,8 +171,8 @@ def test_greedy_sampling(
         return_pdfs=False,
         sampling_params={
             "repetition_penalties": np.array(1.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+            "frequency_penalties": np.array(0.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "presence_penalties": np.array(0.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-            # "frequency_penalties": np.array(0.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "temperatures": np.array(0.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "top_ks": np.array(512, dtype=np.int32).repeat(full_batch_size).reshape(-1, 1),
             "top_ps": np.array(1.0, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
@@ -255,8 +256,8 @@ def test_random_sampling(
         return_pdfs=False,
         sampling_params={
             "repetition_penalties": np.array(1.9, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+            "frequency_penalties": np.array(0.8, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "presence_penalties": np.array(0.8, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-            # "frequency_penalties": np.array(0.5, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "temperatures": np.array(0.67, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "top_ks": np.array(54720, dtype=np.int32).repeat(full_batch_size).reshape(-1, 1),
             "top_ps": np.array(0.89, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
