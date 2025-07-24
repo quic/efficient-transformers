@@ -95,7 +95,7 @@ python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path qeff_models/gpt2
 You can run the finetune with set of predefined existing datasets on QAIC using the eager pipeline
 
 ```bash
-python -m QEfficient.cloud.finetune --device qaic:0 --use-peft --output_dir ./meta-sam --num_epochs 2 --context_length 256 
+python -m QEfficient.cloud.finetune --device qaic:0 --use-peft --output_dir ./meta-sam --num_epochs 2 --context_length 256
 ```
 For more details on finetune, checkout the subsection.
 
@@ -138,6 +138,28 @@ Users can compile a model with QNN SDK by following the steps below:
 * Set QNN SDK Path: export $QNN_SDK_ROOT=/path/to/qnn_sdk_folder
 * Enabled QNN by passing enable_qnn flag, add --enable_qnn in the cli command.
 * An optional config file can be passed to override the default parameters.
+
+**Default Parameters**
+
+QNN Converter Stage:
+
+    "--float_bias_bitwidth 32 --float_bitwidth 16 --preserve_io_datatype --onnx_skip_simplification --target_backend AIC"
+
+QNN Context Binary Stage:
+
+    LOG_LEVEL = "error"
+    COMPILER_COMPILATION_TARGET = "hardware"
+    COMPILER_CONVERT_TO_FP16 = True
+    COMPILER_DO_DDR_TO_MULTICAST = True
+    COMPILER_HARDWARE_VERSION = "2.0"
+    COMPILER_PERF_WARNINGS = False
+    COMPILER_PRINT_DDR_STATS = False
+    COMPILER_PRINT_PERF_METRICS = False
+    COMPILER_RETAINED_STATE = True
+    COMPILER_STAT_LEVEL = 10
+    COMPILER_STATS_BATCH_SIZE = 1
+    COMPILER_TIME_PASSES = False
+
 
 **CLI Inference Command**
 

@@ -8,7 +8,7 @@
 
 | Architecture            | Model Family       | Representative Models                                                                 | CB Support |
 |-------------------------|--------------------|--------------------------------------------------------------------------------------|------------|
-| **FalconForCausalLM**   | Falcon             | [tiiuae/falcon-40b]((https://huggingface.co/tiiuae/falcon-40b))                                                                    | ✔️          |
+| **FalconForCausalLM**   | Falcon             | [tiiuae/falcon-40b](https://huggingface.co/tiiuae/falcon-40b)                                                                | ✔️          |
 | **GemmaForCausalLM**    | CodeGemma          | [google/codegemma-2b](https://huggingface.co/google/codegemma-2b)<br>[google/codegemma-7b](https://huggingface.co/google/codegemma-7b)                                           | ✔️          |
 |                         | Gemma              | [google/gemma-2b](https://huggingface.co/google/gemma-2b)<br>[google/gemma-7b](https://huggingface.co/google/gemma-7b)<br>[google/gemma-2-2b](https://huggingface.co/google/gemma-2-2b)<br>[google/gemma-2-9b](https://huggingface.co/google/gemma-2-9b)<br>[google/gemma-2-27b](https://huggingface.co/google/gemma-2-27b)        | ✔️          |
 | **GPTBigCodeForCausalLM** | Starcoder1.5      | [bigcode/starcoder](https://huggingface.co/bigcode/starcoder)                                                                   | ✔️          |
@@ -17,8 +17,6 @@
 | **GPT2LMHeadModel**     | GPT-2              | [openai-community/gpt2](https://huggingface.co/openai-community/gpt2)                                                               | ✔️          |
 | **GraniteForCausalLM**  | Granite 3.1        | [ibm-granite/granite-3.1-8b-instruct](https://huggingface.co/ibm-granite/granite-3.1-8b-instruct)<br>[ibm-granite/granite-guardian-3.1-8b](https://huggingface.co/ibm-granite/granite-guardian-3.1-8b)          | ✔️          |
 |                         | Granite 20B        | [ibm-granite/granite-20b-code-base-8k](https://huggingface.co/ibm-granite/granite-20b-code-base-8k)<br>[ibm-granite/granite-20b-code-instruct-8k](https://huggingface.co/ibm-granite/granite-20b-code-instruct-8k)    | ✔️          |
-| **GraniteMoeForCausalLM** | Granite 3.0      | [ibm-granite/granite-3.0-1b-a400m-base](https://huggingface.co/ibm-granite/granite-3.0-1b-a400m-base) | ✔️          |
-|                         | Granite 3.1       |  [ibm-granite/granite-3.1-1b-a400m-base](https://huggingface.co/ibm-granite/granite-3.0-1b-a400m-base) | ✔️          |
 | **InternVLChatModel**   | Intern-VL          | [OpenGVLab/InternVL2_5-1B](https://huggingface.co/OpenGVLab/InternVL2_5-1B)                                                            |            |
 | **LlamaForCausalLM**    | CodeLlama          | [codellama/CodeLlama-7b-hf](https://huggingface.co/codellama/CodeLlama-7b-hf)<br>[codellama/CodeLlama-13b-hf](https://huggingface.co/codellama/CodeLlama-13b-hf)<br>[codellama/CodeLlama-34b-hf](https://huggingface.co/codellama/CodeLlama-34b-hf) | ✔️          |
 |                         | DeepSeek-R1-Distill-Llama | [deepseek-ai/DeepSeek-R1-Distill-Llama-70B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-70B)                                      | ✔️          |
@@ -67,6 +65,27 @@
 |**Llama4ForConditionalGeneration** | Llama-4-Scout | [Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct) |      ✕	      | ✔️          | ✔️          |
 |**Gemma3ForConditionalGeneration** | Gemma3 | [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)|       ✕	     | ✔️          | ✔️          |
 
+
+**Dual QPC:**
+In the Dual QPC(Qualcomm Program Container) setup, the model is split across two  configurations:
+
+- The **Vision Encoder** runs in one QPC.
+- The **Language Model** (responsible for output generation) runs in a separate QPC.
+- The outputs from the Vision Encoder are transferred to the Language Model.
+- The dual QPC approach introduces the flexibility to run the vision and language components independently.
+
+
+
+**Single QPC:**
+In the single QPC(Qualcomm Program Container) setup, the entire model—including both image encoding and text generation—runs within a single QPC. There is no model splitting, and all components operate within the same execution environment.
+
+
+
+**Note:**
+The choice between Single and Dual QPC is determined during model instantiation using the `kv_offload` setting.
+If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `False` model runs in single QPC mode.
+
+---
 ### Audio Models
 (Automatic Speech Recognition) - Transcription Task
 **QEff Auto Class:** `QEFFAutoModelForSpeechSeq2Seq`

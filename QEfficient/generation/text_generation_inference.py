@@ -60,7 +60,7 @@ class CloudAI100ExecInfo:
         return f"Average Prefill time a.k.a TTFT is= {round(self.perf_metrics.prefill_time, 2)} sec\
         \nDecode is= {round(self.perf_metrics.decode_perf * self.batch_size, 2)} tokens/sec\
         \nTotal is= {round(self.perf_metrics.total_perf * self.batch_size, 2)} tokens/sec\
-        \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)} tokens/sec"
+        \nTotal (E2E) inference time is= {round(self.perf_metrics.total_time, 2)} sec"
 
 
 @dataclass

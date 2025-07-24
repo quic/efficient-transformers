@@ -6,9 +6,10 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+import logging
 
 from QEfficient.finetune.dataset.dataset_config import DATASET_PREPROC
-from QEfficient.finetune.utils.helper import BATCHING_STRATEGY, DEVICE, PEFT_METHOD, TASK_TYPE
+from QEfficient.finetune.utils.helper import Batching_Strategy, Device, Peft_Method, Task_Mode, enum_names
 
 
 def str2bool(v):
@@ -110,7 +111,14 @@ def get_finetune_parser():
         default=0,
         help="Maximum evaluation steps, unlimited if 0",
     )
-    parser.add_argument("--device", required=False, type=str, default="qaic", choices=DEVICE, help="Device to train on")
+    parser.add_argument(
+        "--device",
+        required=False,
+        type=str,
+        default=Device.QAIC.value,
+        choices=enum_names(Device),
+        help="Device to train on",
+    )
     parser.add_argument(
         "--num_workers_dataloader",
         "--num-workers-dataloader",
@@ -140,12 +148,12 @@ def get_finetune_parser():
         help="Dataset name to be used for finetuning (default: %(default)s)",
     )
     parser.add_argument(
-        "--task_type",
-        "--task-type",
+        "--task_mode",
+        "--task-mode",
         required=False,
         type=str,
-        default="generation",
-        choices=TASK_TYPE,
+        default=Task_Mode.GENERATION.value,
+        choices=enum_names(Task_Mode),
         help="Task used for finetuning. Use 'generation' for decoder based models and 'seq_classification' for encoder based models.",
     )
     parser.add_argument(
@@ -162,8 +170,8 @@ def get_finetune_parser():
         "--peft-method",
         required=False,
         type=str,
-        default="lora",
-        choices=PEFT_METHOD,
+        default=Peft_Method.LORA.value,
+        choices=enum_names(Peft_Method),
         help="Parameter efficient finetuning technique to be used. Currently only 'lora' is supported.",
     )
     parser.add_argument(
@@ -213,8 +221,8 @@ def get_finetune_parser():
         "--batching-strategy",
         required=False,
         type=str,
-        default="padding",
-        choices=BATCHING_STRATEGY,
+        default=Batching_Strategy.PADDING.value,
+        choices=enum_names(Batching_Strategy),
         help="Strategy for making batches of data points. Packing groups data points into batches by minimizing unnecessary empty spaces. Padding adds extra values (often zeros) to batch sequences so they align in size. Currently only padding is supported which is by default.",
     )
     parser.add_argument(
@@ -255,17 +263,51 @@ def get_finetune_parser():
         help="Enable distributed data parallel training. This will load the replicas of model on given number of devices and train the model. This should be used using torchrun interface. Please check docs for exact usage.",
     )
     parser.add_argument(
-        "--dump_root_dir",
-        "--dump-root-dir",
+        "--enable_pp",
+        "--enable-pp",
+        action="store_true",
+        help="Enable pipeline parallel training. This will split the of model layerwise in given number of stages and train the model.",
+    )
+    parser.add_argument(
+        "--num_pp_stages",
+        "--num-pp-stages",
         required=False,
-        type=str,
-        default="mismatches/step_",
-        help="Directory for mismatch dumps by opByOpVerifier",
+        type=int,
+        default=1,
+        help="Number of stages in which model is split layerwise when training using pipeline parallel.",
     )
     parser.add_argument(
         "--opByOpVerifier",
         action="store_true",
-        help="Enable operation-by-operation verification w.r.t reference device(cpu). It is a context manager interface that captures and verifies each operator against reference device. In case results of test & reference do not match under given tolerances, a standalone unittest is generated at dump_root_dir.",
+        help=argparse.SUPPRESS,
+        # This is for debugging purpose only.
+        # Enables operation-by-operation verification w.r.t reference device(cpu).
+        # It is a context manager interface that captures and verifies each operator against reference device.
+        # In case results of test & reference do not match under given tolerances, a standalone unittest is generated at output_dir/mismatches.
+    )
+    parser.add_argument(
+        "--dump_logs",
+        "--dump-logs",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=True,
+        help="Whether to dump logs",
+    )
+    parser.add_argument(
+        "--log_level",
+        "--log-level",
+        required=False,
+        type=str,
+        default=logging.INFO,
+        help="logging level",
+    )
+    parser.add_argument(
+        "--peft_config_file",
+        "--peft-config-file",
+        type=str,
+        default=None,
+        help="Path to YAML/JSON file containing PEFT (LoRA) config.",
     )
 
     return parser
