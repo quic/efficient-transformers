@@ -48,6 +48,7 @@ test_models_qaic = [
     "ibm-granite/granite-3.1-2b-instruct",
     "ibm-granite/granite-guardian-3.1-2b",
     "hpcai-tech/grok-1",
+    "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
 ]
 
 quantized_models = {
@@ -58,6 +59,8 @@ quantized_models = {
 }
 
 extrenal_models = {"hpcai-tech/grok-1"}
+
+swiftkv_models = {"Snowflake/Llama-3.1-SwiftKV-8B-Instruct"}
 
 test_models_qnn = [
     "mistralai/Mixtral-8x7B-Instruct-v0.1",
@@ -164,7 +167,6 @@ def load_causal_lm_model(model_name, n_layer=1, config=None):
         model_hf = model_hf.to(torch.float32)
 
     params = sum(p.numel() for p in model_hf.parameters())
-    model_hf.eval()
     return model_hf, params
 
 
@@ -205,14 +207,18 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         Constants.CTX_LEN,
     )
 
-    pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+    if model_name not in swiftkv_models:
+        pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+
     is_tlm = False if num_speculative_tokens is None else True
     qeff_model = QEFFAutoModelForCausalLM(model_hf, is_tlm=is_tlm, pretrained_model_name_or_path=model_name)
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
-    assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
-        "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
-    )
+    if model_name not in swiftkv_models:
+        assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
+            "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
+        )
+
     onnx_model_path = qeff_model.export()
     ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
     gen_len = ort_tokens.shape[-1]
@@ -262,8 +268,9 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         full_batch_size,
     )
 
-    pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
-    pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
+    if model_name not in swiftkv_models:
+        pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
+        pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
 
     qeff_model = QEFFAutoModelForCausalLM(
         model_hf, continuous_batching=True, is_tlm=is_tlm, pretrained_model_name_or_path=model_name
@@ -287,12 +294,21 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     )
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
-    assert all(
-        [
-            all(pt_token[:24] == cloud_token[:24])
-            for pt_token, cloud_token in zip(pytorch_hf_tokens, exec_info_fbs.generated_ids)
-        ]
-    ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
+    if model_name in swiftkv_models:
+        assert all(
+            [
+                all(ort_token[:24] == cloud_token[:24])
+                for ort_token, cloud_token in zip(ort_tokens, exec_info_fbs.generated_ids)
+            ]
+        ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
+    else:
+        assert all(
+            [
+                all(pt_token[:24] == cloud_token[:24])
+                for pt_token, cloud_token in zip(pytorch_hf_tokens, exec_info_fbs.generated_ids)
+            ]
+        ), "Tokens don't match for  HF PyTorch model output and Cloud AI 100 output."
+
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
 
@@ -370,6 +386,8 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
     if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8"}:
         n_layer = 2  # test only 2 layer models
+    elif model_name in swiftkv_models:
+        n_layer = 32
     else:
         n_layer = 1
 

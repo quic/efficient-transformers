@@ -8,14 +8,14 @@
 import os
 import shutil
 
+from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
 
 
 def qeff_models_clean_up():
-    qeff_cache_home = os.environ.get("QEFF_HOME")
-    if os.path.exists(qeff_cache_home):
-        shutil.rmtree(qeff_cache_home)
-        logger.info(f"\n.............Cleaned up {qeff_cache_home}")
+    if os.path.exists(QEFF_MODELS_DIR):
+        shutil.rmtree(QEFF_MODELS_DIR)
+        logger.info(f"\n.............Cleaned up {QEFF_MODELS_DIR}")
 
 
 def pytest_sessionstart(session):
