@@ -167,6 +167,7 @@ def load_causal_lm_model(model_name, n_layer=1, config=None):
         model_hf = model_hf.to(torch.float32)
 
     params = sum(p.numel() for p in model_hf.parameters())
+    model_hf.eval()
     return model_hf, params
 
 
