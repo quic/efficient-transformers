@@ -24,7 +24,7 @@ class TrainConfig:
         val_batch_size (int): Batch size for validation (default: 1).
         context_length (Optional[int]): Maximum sequence length for inputs (default: None).
         gradient_accumulation_steps (int): Steps for gradient accumulation (default: 4).
-        gradient checkpointing (bool): Enable gradient checkpointing to save the memory by compromising the speed. (default: False).
+        gradient_checkpointing (bool): Enable gradient checkpointing to save the memory by compromising the speed. (default: False).
         use_autocast (bool): Use autocast for mixed precision (default: True).
         grad_scaler (bool): Use gradient scaler (default: True).
         num_epochs (int): Number of training epochs (default: 1).
