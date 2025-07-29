@@ -1,0 +1,7 @@
+{
+    "train_split": "train",
+    "test_split": "test",
+    "test_split_ratio": 0.15,
+    "preproc_file": "./QEfficient/finetune/dataset/custom_dataset/disc_preproc.py:get_preprocessed_disc",
+    "disc_style": "sarcasm_more"
+}

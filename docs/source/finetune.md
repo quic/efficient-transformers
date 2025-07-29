@@ -75,38 +75,67 @@ tensorboard --logdir runs/<file> --bind_all
     1) Gradient accumulation: By default, gradient accumulation happens for 4 steps. To update this value, command line argument gradient_accumulation_steps has to be passed. (Example: '--gradient_accumulation_steps 8')
     2) Gradient Checkpointing: By default, gradient checkpointing is disabled. To enable it, command line argument gradient_accumulation_steps has to be passed.
 
-## Fine-Tuning on custom dataset
 
-To run fine tuning for any user specific dataset, prepare the dataset using the following steps:
+### 🔧 Steps to Fine-Tune with a Custom Dataset
 
-1. Create a directory named 'dataset' inside efficient-transformers.
-2. Inside this directory, create a file named 'custom_dataset.py'.
-3. Inside the newly created efficient-transformers/dataset/custom_dataset.py, define a function named 'get_custom_dataset'. 
-4. get_custom_dataset() should have following 4 parameters:  dataset_config, tokenizer, split, context_length.  
-5. Inside get_custom_dataset(), user needs to apply prompt and tokenize the dataset accordingly. Please refer the below template on how to define get_custom_dataset().
-6. For examples, please refer python files present in [dataset](https://github.com/quic/efficient-transformers/tree/main/QEfficient/finetune/dataset).
-7. In [dataset_config.py](https://github.com/quic/efficient-transformers/blob/main/QEfficient/finetune/configs/dataset_config.py), for custom_dataset class, pass the appropriate value for train_split and test_split. As an alternative, these values can be passed as command line arguments as well with the finetune command. For example "--train_split train".
-8. While running fine tuning, pass argument "-–dataset custom_dataset" to finetune on custom dataset.   
+1. **Launching Fine-Tuning with a Custom Dataset**  
+   Use the following command-line arguments to begin fine-tuning:
+   ```
+   --dataset custom_dataset --dataset_config data_config.json
+   ```
+   The `data_config.json` file contains essential parameters used during dataset preprocessing.
 
-Template for get_custom_dataset() to be defined inside efficient-transformers/dataset/custom_dataset.py is as follows:
+2. **Specifying the Preprocessing Function**  
+   - In `data_config.json`, include a `"preproc_file"` key to define the path to your preprocessing Python file.
+   - To specify a custom function within that file, use the format `"filename.py:function_name"`.  
+     _Example:_  
+     ```json
+     "preproc_file": "disc_preproc.py:get_preprocessed_disc"
+     ```
+   - Your preprocessing function must follow this structure:
+     ```python
+     def get_custom_dataset(dataset_config, tokenizer, split, context_length=None):
+         def apply_prompt_template():
+             # Apply prompt formatting to each datapoint
 
-```python
-def get_custom_dataset(dataset_config, tokenizer, split, context_length=None):
+         def tokenize():
+             # Tokenize the formatted datapoint
 
-    # load dataset
-    # based on split, retrieve only the specific portion of the dataset (train or eval) either here or at the last
-    
-    def apply_prompt_template():
-        # transform the passed datapoint by applying the prompt on it 
-    
-    def tokenize():
-        # tokenize the passed datapoint
-    
-    # define the prompt
-    # call apply_prompt_template() for each data point:
-    # dataset = dataset.map(apply_prompt_template ,<other args>)
-    # call tokenize() for each data point:
-    # dataset = dataset.map(tokenize, <other args>)
-    
-    return dataset
-```
+         # Apply functions to dataset using map
+         dataset = dataset.map(apply_prompt_template, ...)
+         dataset = dataset.map(tokenize, ...)
+         
+         return dataset
+     ```
+
+3. **Custom Collate Function for Batching**  
+   - When using a batch size greater than 1, you may override the default collate behavior by including a `"collate_file"` key in `data_config.json`.
+   - Use the same `"file.py:function"` format. If omitted, the default Hugging Face `DataCollatorForSeq2Seq` is used, which pads sequences to the longest length in the batch.
+   - A custom collate function must have the following signature:
+     ```python
+     def get_data_collator(tokenizer):
+         # Define and return a custom collate_fn here
+     ```
+
+4. **Passing Additional Configuration Parameters**  
+   You can add custom arguments in `data_config.json`, which will be accessible via the `dataset_config` argument inside your `get_custom_dataset()` function.
+
+5. **Example `data_config.json` File**
+   ```json
+   {
+     "train_split": "train",
+     "test_split": "test",
+     "test_split_ratio": 0.15,
+     "preproc_file": "disc_preprocd.py:get_preprocessed_disc",
+     "collate_file": "disc_preprocd.py:get_collate_fn_disc",
+     "disc_style": "sarcasm_more"
+   }
+   ```
+
+6. **Implementing Custom Preprocessing Logic**  
+   Within your dataset loader function, define `apply_prompt_template()` to manipulate raw data into desired prompt format, and `tokenize()` to convert it into token IDs using the tokenizer.
+
+7. **Reference for Dataset Utilities**  
+   You can refer to existing implementations in the [dataset directory of this repository](https://github.com/quic/efficient-transformers/tree/main/QEfficient/finetune/dataset).
+
+---

@@ -288,11 +288,10 @@ def main(**kwargs) -> None:
                 --model_name "meta-llama/Llama-3.2-1B" \\
                 --lr 5e-4
     """
-    # TODO:Remove TrainConfig() and update_config() as all params are passed in kwargs by parser
     train_config = TrainConfig()
     update_config(train_config, **kwargs)
-    dataset_config = generate_dataset_config(train_config.dataset)
-    update_config(dataset_config, **kwargs)
+    custom_dataset_config_file = kwargs.pop("custom_dataset_config", None)
+    dataset_config = generate_dataset_config(train_config.dataset, custom_dataset_config_file)
 
     logger.prepare_for_logs(train_config.output_dir, train_config.dump_logs, train_config.log_level)
 
