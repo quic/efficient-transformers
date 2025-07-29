@@ -67,8 +67,10 @@ def is_rank_zero() -> bool:
 
 
 def get_world_size() -> int:
-    """Get total number of DDP devices being used. Note, in case of non-DDP use
-    case, this will return 1.
+    """Get total multiprocesses invoked for DDP setting. For pure DDP use case,
+    this will correlate with number of devices being used. For PP+DDP use case,
+    this will give number of processes initiated (i.e. number of model replicas).
+    In case of non-DDP use case, this will return 1.
 
     Returns:
         int: Number of DDP devices.
@@ -129,7 +131,7 @@ def get_op_verifier_ctx(
         return nullcontext()
 
     # Lazily imported qaic_debug when it is actually needed.
-    import torch_qaic.debug as qaic_debug  # noqa: F401
+    import torch_qaic.debug as qaic_debug
 
     filter_config = qaic_debug.DispatchFilterConfig.default(device_type)
     dump_dir = dump_dir + "/mismatches/step_" + str(step)
@@ -182,7 +184,7 @@ def init_qaic_profiling(use_profiler: bool, device_type: str) -> None:
     """
     if (use_profiler) and (device_type == Device.QAIC):
         # Lazily imported qaic's qaic_profile when it is actually needed.
-        import torch_qaic.profile as qaic_profile  # noqa: F401
+        import torch_qaic.profile as qaic_profile
 
         qaic_profile.start_profiling(device_type, 1)
 
@@ -197,7 +199,7 @@ def stop_qaic_profiling(use_profiler: bool, device_type: str) -> None:
     """
     if (use_profiler) and (device_type == Device.QAIC):
         # Lazily imported qaic's qaic_profile when it is actually needed.
-        import torch_qaic.profile as qaic_profile  # noqa: F401
+        import torch_qaic.profile as qaic_profile
 
         qaic_profile.stop_profiling(device_type)
 
