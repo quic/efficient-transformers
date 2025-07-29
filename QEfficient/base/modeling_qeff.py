@@ -224,6 +224,7 @@ class QEFFBaseModel(ABC):
         custom_io: Optional[Dict[str, str]] = None,
         mdp_ts_num_devices: int = 1,
         num_speculative_tokens: Optional[int] = None,
+        mxfp6_matmul: bool = constants.DEFAULT_AIC_MXPF6_MATMUL,
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
         **compiler_options,
@@ -239,6 +240,7 @@ class QEFFBaseModel(ABC):
             :custom_io (dict): Custom IO to specify the input and outputs in different formats than default
             :mdp_ts_num_devices (int): Number of devices to partition to use Multi-Device Partitioning with tensor-slicing.
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
+            :mxfp6_matmul (bool): Use MXFP6 to compress weights for MatMul nodes to run faster on device. ``Defaults to False``.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
             :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
             :compiler_options: Pass any compiler option as input.
@@ -269,7 +271,7 @@ class QEFFBaseModel(ABC):
                 custom_io=custom_io,
                 device_group=list(range(mdp_ts_num_devices)),
                 num_cores=compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES),
-                mxfp6=compiler_options.get("mxfp6_matmul", constants.DEFAULT_AIC_MXPF6_MATMUL),
+                mxfp6=mxfp6_matmul,
                 mxint8=mxint8_kv_cache,
                 qnn_config=qnn_config,
             )
@@ -280,6 +282,9 @@ class QEFFBaseModel(ABC):
 
         if mdp_ts_json_path := compiler_options.pop("mdp_load_partition_config", None):
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+
+        if mxfp6_matmul:
+            command.append("-mxfp6-matmul")
 
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
