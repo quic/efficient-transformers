@@ -31,10 +31,12 @@ class OnnxTransform:
         """
         raise NotImplementedError("Use subclasses for ONNX transform")
 
+
 class FP16ClipTransform(OnnxTransform):
     """
     Clips the tensor values to be in FP16 range, but preserves -inf values.
     """
+
     @classmethod
     def apply(cls, model: ModelProto, *, onnx_base_dir: Optional[str] = None, **kwargs) -> Tuple[ModelProto, bool]:
         """
@@ -44,22 +46,23 @@ class FP16ClipTransform(OnnxTransform):
         fp16_max = finfo.max
         fp16_min = finfo.min
         transformed = False
-        
+
         for tensor in external_data_helper._get_all_tensors(model):
             nptensor = numpy_helper.to_array(tensor, onnx_base_dir)
             if nptensor.dtype == np.float32 and (np.any(nptensor > fp16_max) or np.any(nptensor < fp16_min)):
                 neg_inf_mask = np.isinf(nptensor) & (nptensor < 0)
                 clipped_tensor = np.clip(nptensor, fp16_min, fp16_max)
-                
+
                 # Restore -inf values
                 if neg_inf_mask.any():
-                    clipped_tensor = np.where(neg_inf_mask, np.float32('-inf'), clipped_tensor)
-                
+                    clipped_tensor = np.where(neg_inf_mask, np.float32("-inf"), clipped_tensor)
+
                 new_tensor = numpy_helper.from_array(clipped_tensor, tensor.name)
                 tensor.CopyFrom(new_tensor)
                 transformed = True
-                
+
         return model, transformed
+
 
 class SplitTensorsTransform(OnnxTransform):
     """
