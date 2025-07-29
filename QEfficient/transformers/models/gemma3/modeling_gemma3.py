@@ -695,7 +695,9 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         specializations = {}
 
         # Default node precision file added for Gemma3:AI-100
-        compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_NODE_PRECISION_INFO
+        # if user provides a custom node precision file, it will override default one
+        if "node_precision_info" not in compiler_options:
+            compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_NODE_PRECISION_INFO
 
         if kv_offload:
             specializations["vision"] = vision
