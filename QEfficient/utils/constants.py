@@ -100,8 +100,7 @@ LLAMA4_ATTENTION_CHUNK_SIZE = 8192
 LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
 
 # Gemma3 Constant
-GEMMA3_MAX_POSITION_EMBEDDINGS = 32768
-DEFAULT_GEMMA3_NODE_PRECISION_INFO = "examples/gemma3_example/fp32_mm.yaml"
+DEFAULT_GEMMA3_NODE_PRECISION_INFO = os.path.join(ROOT_DIR, "examples/gemma3_example/fp32_mm.yaml")
 
 
 class Constants:
