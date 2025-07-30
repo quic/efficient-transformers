@@ -91,6 +91,7 @@ if check_qaic_sdk():
     # Imports for the diffusers
     
     from QEfficient.diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import QEFFStableDiffusionPipeline
+    from QEfficient.diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion3 import QEFFStableDiffusion3Pipeline
     # Users can use QEfficient.export for exporting models to ONNX
     export = qualcomm_efficient_converter
 
@@ -106,7 +107,8 @@ if check_qaic_sdk():
         "QEFFAutoModelForImageTextToText",
         "QEFFAutoModelForSpeechSeq2Seq",
         "QEFFCommonLoader",
-        "QEFFStableDiffusionPipeline"
+        "QEFFStableDiffusionPipeline",
+        "QEFFStableDiffusion3Pipeline",
     ]
 
 else:
