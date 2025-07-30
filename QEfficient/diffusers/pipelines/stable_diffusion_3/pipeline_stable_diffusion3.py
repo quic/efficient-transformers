@@ -76,7 +76,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
         kwargs.update({"attn_implementation": "eager"})
-        model= cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path,token="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", torch_dtype=torch.float32, **kwargs)
+        model= cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path,token=, torch_dtype=torch.float32, **kwargs)
         model.to("cpu")
         return cls(model, pretrained_model_name_or_path)
     
