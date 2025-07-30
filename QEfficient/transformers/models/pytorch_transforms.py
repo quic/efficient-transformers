@@ -121,6 +121,13 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaVisionModel,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
+from transformers.models.olmo2.modeling_olmo2 import (
+    Olmo2Attention,
+    Olmo2DecoderLayer,
+    Olmo2ForCausalLM,
+    Olmo2Model,
+    Olmo2RMSNorm,
+)
 from transformers.models.phi.modeling_phi import PhiAttention, PhiDecoderLayer, PhiForCausalLM, PhiModel
 from transformers.models.phi3.modeling_phi3 import (
     Phi3Attention,
@@ -285,6 +292,12 @@ from QEfficient.transformers.models.mpt.modeling_mpt import (
     QEffMptForCausalLM,
     QEFfMptModel,
 )
+from QEfficient.transformers.models.olmo2.modeling_olmo2 import (
+    QEffOlmo2Attention,
+    QEffOlmo2DecoderLayer,
+    QEffOlmo2ForCausalLM,
+    QEffOlmo2Model,
+)
 from QEfficient.transformers.models.phi.modeling_phi import (
     QEffPhiAttention,
     QEffPhiDecoderLayer,
@@ -339,6 +352,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         GraniteRMSNorm: CustomRMSNormAIC,
         GraniteMoeRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
+        Olmo2RMSNorm: CustomRMSNormAIC,
     }
 
 
@@ -462,6 +476,11 @@ class KVCacheTransform(ModuleMappingTransform):
         GPTBigCodeBlock: QEffGPTBigCodeBlock,
         GPTBigCodeModel: QEffGPTBigCodeModel,
         GPTBigCodeForCausalLM: QEffGPTBigCodeForCausalLM,
+        # Olmo2
+        Olmo2Attention: QEffOlmo2Attention,
+        Olmo2DecoderLayer: QEffOlmo2DecoderLayer,
+        Olmo2Model: QEffOlmo2Model,
+        Olmo2ForCausalLM: QEffOlmo2ForCausalLM,
         # Whisper encoder and decoder layers
         WhisperPositionalEmbedding: QEffWhisperPositionalEmbedding,
         WhisperAttention: QEffWhisperAttention,
