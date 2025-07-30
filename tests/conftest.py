@@ -14,8 +14,7 @@ from transformers import AutoConfig
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR
 from QEfficient.utils.logging_utils import logger
-
-external_models = {"hpcai-tech/grok-1"}
+from QEfficient.utils.test_utils import ModelConfig
 
 
 def get_custom_model_config_dict(configs):
@@ -31,14 +30,16 @@ def get_custom_model_config_dict(configs):
     """
     config_dict = {}
     for config in configs:
-        config_dict[config["model_name"]] = AutoConfig.from_pretrained(
-            config["model_name"],
-            trust_remote_code=config["model_name"] in external_models,
+        model_name = config["model_name"]
+        config_dict[model_name] = AutoConfig.from_pretrained(
+            model_name,
+            trust_remote_code=config["model_name"] in ModelConfig.EXTERNAL_MODELS,
             **config.get("additional_params", {}),
         )
     return config_dict
 
 
+# Pytest fixture to load custom model configs from a JSON file
 @pytest.fixture(scope="session")
 def custom_causal_model_config_dict():
     with open("tests/transformers/models/custom_tiny_model_configs.json", "r") as f:

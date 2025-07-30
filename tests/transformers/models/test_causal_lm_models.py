@@ -22,6 +22,7 @@ from QEfficient.utils._utils import create_json, load_hf_tokenizer
 from QEfficient.utils.constants import Constants, QnnConstants
 from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
+from QEfficient.utils.test_utils import ModelConfig
 
 test_models_qaic = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -50,17 +51,6 @@ test_models_qaic = [
     "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
 ]
 
-quantized_models = {
-    "neuralmagic/Qwen2-0.5B-Instruct-FP8",
-    "neuralmagic/Llama-3.2-3B-Instruct-FP8",
-    "TheBloke/Llama-2-7B-GPTQ",
-    "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
-}
-
-external_models = {"hpcai-tech/grok-1"}
-
-swiftkv_models = {"Snowflake/Llama-3.1-SwiftKV-8B-Instruct"}
-
 test_models_qnn = [
     "mistralai/Mixtral-8x7B-Instruct-v0.1",
     "meta-llama/Llama-3.2-1B",
@@ -85,11 +75,11 @@ def load_causal_lm_model(model_name, n_layer=1, config=None):
 
     :return model_hf, params
     """
+    torch.manual_seed(42)
     model_path = hf_download(
         repo_id=model_name,
         ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
-    torch.manual_seed(42)
     if config is None:
         model_hf = AutoModelForCausalLM.from_pretrained(
             model_path,
@@ -97,16 +87,17 @@ def load_causal_lm_model(model_name, n_layer=1, config=None):
             num_hidden_layers=n_layer,
             attn_implementation="eager",
             low_cpu_mem_usage=False,
-            trust_remote_code=model_name in external_models,
+            trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
         )
     else:
         model_hf = AutoModelForCausalLM.from_config(
             config,
             attn_implementation="eager",
-            trust_remote_code=model_name in external_models,
+            trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
         )
-    # Convert to FP32 if model is in BF16
-    if getattr(model_hf.config, "torch_dtype", None) == torch.bfloat16:
+    # Convert to FP32 if model is in BF16 or in FP16
+    torch_dtype = getattr(model_hf.config, "torch_dtype", None)
+    if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
         model_hf = model_hf.to(torch.float32)
 
     params = sum(p.numel() for p in model_hf.parameters())
@@ -151,7 +142,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         Constants.CTX_LEN,
     )
 
-    if model_name not in swiftkv_models:
+    if model_name not in ModelConfig.SWIFTKV_MODELS:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
     is_tlm = False if num_speculative_tokens is None else True
@@ -160,7 +151,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     )
     pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
-    if model_name not in swiftkv_models:
+    if model_name not in ModelConfig.SWIFTKV_MODELS:
         assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
             "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
         )
@@ -213,7 +204,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         full_batch_size,
     )
 
-    if model_name not in swiftkv_models:
+    if model_name not in ModelConfig.SWIFTKV_MODELS:
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
         pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
 
@@ -239,7 +230,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     )
     exec_info_fbs = qeff_model.generate(tokenizer, prompts=fbs_prompts)
 
-    if model_name in swiftkv_models:
+    if model_name in ModelConfig.SWIFTKV_MODELS:
         assert all(
             [
                 all(ort_token[:24] == cloud_token[:24])
@@ -295,8 +286,8 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_causa
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
     config = custom_causal_model_config_dict.get(model_name)
-    if model_name in quantized_models:
-        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=1)
+    if model_name in ModelConfig.QUANTIZED_MODELS:
+        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=config.num_hidden_layers)
     else:
         check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, config=config)
 
@@ -314,7 +305,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
         2
         if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8"}
         else 32
-        if model_name in swiftkv_models
+        if model_name in ModelConfig.SWIFTKV_MODELS
         else 1
     )
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
