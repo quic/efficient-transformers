@@ -5,8 +5,11 @@
 #
 # -----------------------------------------------------------------------------
 
+import importlib.resources as pkg_resources
 import os
 from dataclasses import dataclass
+
+from QEfficient.transformers.models import gemma3 as gemma3
 
 UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
 QEFF_DIR = os.path.dirname(UTILS_DIR)
@@ -100,7 +103,8 @@ LLAMA4_ATTENTION_CHUNK_SIZE = 8192
 LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
 
 # Gemma3 Constant
-DEFAULT_GEMMA3_NODE_PRECISION_INFO = os.path.join(os.path.abspath(ROOT_DIR), "examples/gemma3_example/fp32_mm.yaml")
+DEFAULT_GEMMA3_4B_NODE_PRECISION_INFO = str(pkg_resources.path(gemma3, "fp32_nodes_gemma3_4b_mm.yaml"))
+DEFAULT_GEMMA3_27B_NODE_PRECISION_INFO = str(pkg_resources.path(gemma3, "fp32_nodes_gemma3_27b_mm.yaml"))
 
 
 class Constants:

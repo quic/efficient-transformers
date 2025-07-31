@@ -697,7 +697,14 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         # Default node precision file added for Gemma3:AI-100
         # if user provides a custom node precision file, it will override default one
         if "node_precision_info" not in compiler_options:
-            compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_NODE_PRECISION_INFO
+            if self.pretrained_model_name_or_path == "google/gemma-3-4b-it":
+                compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_4B_NODE_PRECISION_INFO
+            elif self.pretrained_model_name_or_path == "google/gemma-3-27b-it":
+                compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_27B_NODE_PRECISION_INFO
+            else:
+                raise ValueError(
+                    f"For Model {self.pretrained_model_name_or_path} default NPI file is not supported/added. Please use one of the following: google/gemma-3-4b-it, google/gemma-3-27b-it"
+                )
 
         if kv_offload:
             specializations["vision"] = vision
