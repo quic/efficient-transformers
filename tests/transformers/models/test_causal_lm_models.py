@@ -24,7 +24,7 @@ from QEfficient.utils.device_utils import get_available_device_id
 from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig
 
-test_models_qaic = [
+test_models_causal = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
     "gpt2",
     "Salesforce/codegen-350M-mono",
@@ -62,6 +62,22 @@ test_models_spd = [
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
     "Qwen/Qwen2-0.5B",
 ]
+
+
+def get_custom_n_layers(model_name):
+    """
+    Function to set number layers of the variuos types of models such as swiftkv models and others
+    --------
+
+    :model_name: str
+
+    :return n_layer
+    """
+    if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8"}:
+        return 2
+    elif model_name in ModelConfig.SWIFTKV_MODELS:
+        return 32
+    return 1
 
 
 def load_causal_lm_model(model_name, n_layer=1, config=None):
@@ -278,7 +294,7 @@ def test_causal_lm_export_with_deprecated_api(model_name):
 
 @pytest.mark.on_qaic
 @pytest.mark.regular
-@pytest.mark.parametrize("model_name", test_models_qaic)
+@pytest.mark.parametrize("model_name", test_models_causal)
 def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_causal_model_config_dict):
     """
     Test function to validate the dummy PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
@@ -286,28 +302,25 @@ def test_custom_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_causa
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
     config = custom_causal_model_config_dict.get(model_name)
+
     if model_name in ModelConfig.QUANTIZED_MODELS:
-        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=config.num_hidden_layers)
+        n_layer = get_custom_n_layers(model_name)
+        check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer)
     else:
         check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, config=config)
 
 
 @pytest.mark.nightly
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_name", test_models_qaic)
+@pytest.mark.parametrize("model_name", test_models_causal)
 def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
-    n_layer = (
-        2
-        if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8"}
-        else 32
-        if model_name in ModelConfig.SWIFTKV_MODELS
-        else 1
-    )
+    n_layer = get_custom_n_layers(model_name)
+
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
 
 
@@ -344,9 +357,10 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name):
     """
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
     create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
+    n_layer = get_custom_n_layers(model_name)
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, n_layer=1, enable_qnn=True, qnn_config=qnn_config_json_path
+        model_name=model_name, n_layer=n_layer, enable_qnn=True, qnn_config=qnn_config_json_path
     )
 
 
@@ -361,6 +375,7 @@ def test_custom_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, custom_caus
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
     config = custom_causal_model_config_dict.get(model_name)
+
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
         num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS,
@@ -377,9 +392,10 @@ def test_causal_tlm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
+    n_layer = get_custom_n_layers(model_name)
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, n_layer=1, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS
+        model_name=model_name, n_layer=n_layer, num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS
     )
 
 
