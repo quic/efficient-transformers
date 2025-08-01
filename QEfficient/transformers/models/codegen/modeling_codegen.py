@@ -23,6 +23,7 @@ from transformers.models.codegen.modeling_codegen import (
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 class QEffCodeGenAttention(CodeGenAttention):
@@ -48,10 +49,10 @@ class QEffCodeGenAttention(CodeGenAttention):
 
         attn_weights = attn_weights / self.scale_attn
         # Minimum value for causal mask
-        mask_value = -10000.0
+
         # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
         # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
-        mask_value = torch.tensor(mask_value, dtype=attn_weights.dtype).to(attn_weights.device)
+        mask_value = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype).to(attn_weights.device)
 
         if attention_mask is not None:
             # Apply the attention mask
