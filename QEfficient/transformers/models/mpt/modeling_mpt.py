@@ -21,6 +21,7 @@ from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForC
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 class QEffMptAttention(MptAttention):
@@ -78,7 +79,7 @@ class QEffMptAttention(MptAttention):
 
         if attention_mask is not None:
             attention_scores = torch.where(
-                attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attention_scores
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attention_scores
             )
 
         # (batch_size, n_heads, seq_length, key_length)
