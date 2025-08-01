@@ -5,9 +5,13 @@
 #
 # ----------------------------------------------------------------------------
 
+import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Dict
+
+from QEfficient.utils.constants import HASH_HEXDIGEST_STR_LEN
 
 QEFF_HOME: Path = None
 if "QEFF_HOME" in os.environ:
@@ -39,3 +43,11 @@ def to_hashable(obj) -> bytes:
         default=json_serializable,
         sort_keys=True,
     ).encode()
+
+
+def hash_dict_params(dict_items: Dict, hash_string_size: int = HASH_HEXDIGEST_STR_LEN):
+    """
+    Takes a dictionary of items and returns a SHA256 hash object
+    """
+    mhash = hashlib.sha256(to_hashable(dict_items))
+    return mhash.hexdigest()[:hash_string_size]
