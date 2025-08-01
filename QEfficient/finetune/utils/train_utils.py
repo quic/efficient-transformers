@@ -164,7 +164,7 @@ def train(
                     continue
             total_train_steps += 1
 
-            if train_config.max_train_step > 0 and total_train_steps >= train_config.max_train_step:
+            if train_config.max_train_step > 0 and total_train_steps > train_config.max_train_step:
                 max_steps_reached = True
                 logger.log_rank_zero(
                     "Maximum training steps reached "
@@ -265,7 +265,7 @@ def train(
                     )
 
             pbar.set_description(
-                f"Training Epoch: {epoch + 1}/{train_config.num_epochs}, step {step + 1}/{len(train_dataloader)} completed (loss: {loss.detach().float()})"
+                f"Training Epoch: {epoch + 1}/{train_config.num_epochs}, step {step + 1}/{len(train_dataloader)} completed (loss: {(loss * num_samples_in_cur_update).detach().float()})"
             )
             if train_config.save_metrics:
                 save_to_json(
