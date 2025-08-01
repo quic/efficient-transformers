@@ -150,3 +150,24 @@ class InternProcessor:
             image_tokens = IMG_START_TOKEN + IMG_CONTEXT_TOKEN * self.num_image_token * num_patches + IMG_END_TOKEN
             query = query.replace("<image>", image_tokens, 1)
         return query
+
+
+class ModelConfig:
+    """
+    Contains all the model types which are not default model like quantized models, external models, swiftkv models etc,.
+    """
+
+    QUANTIZED_MODELS = {
+        "neuralmagic/Qwen2-0.5B-Instruct-FP8",
+        "neuralmagic/Llama-3.2-3B-Instruct-FP8",
+        "TheBloke/Llama-2-7B-GPTQ",
+        "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
+    }
+
+    EXTERNAL_MODELS = {
+        "hpcai-tech/grok-1",
+    }
+
+    SWIFTKV_MODELS = {
+        "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
+    }
