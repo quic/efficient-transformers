@@ -111,7 +111,9 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         attn_weights = self.max_attn_val * F.tanh(attn_weights / self.max_attn_val)
 
         if attention_mask is not None:
-            attn_weights = torch.where(attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights)
+            attn_weights = torch.where(
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            )
 
         attn_weights = F.softmax(attn_weights, dim=-1).to(query_states.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
