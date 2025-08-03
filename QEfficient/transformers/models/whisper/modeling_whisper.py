@@ -30,6 +30,7 @@ from transformers.models.whisper.modeling_whisper import (
 from QEfficient.transformers.cache_utils import QEffEncoderDecoderCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils._utils import IOInfo
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 class QEffWhisperPositionalEmbedding(WhisperPositionalEmbedding):
@@ -116,7 +117,9 @@ class QEffWhisperAttention(WhisperAttention):
                     f"Attention mask should be of size {(bsz, 1, tgt_len, src_len)}, but is {attention_mask.size()}"
                 )
             # updated to use torch.where, to prevent overflow in fp16 computation
-            attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+            attn_weights = torch.where(
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            )
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
