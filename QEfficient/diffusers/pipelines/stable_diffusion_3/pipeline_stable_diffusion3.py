@@ -1,12 +1,11 @@
 import hashlib
 import os
 from pathlib import Path
+import time
 from typing import Any, Callable, Dict, List, Optional, Union
 from venv import logger
 from diffusers import DiffusionPipeline, StableDiffusion3Pipeline, OnnxStableDiffusionPipeline
-from diffusers.utils.hub_utils import _check_legacy_sharding_variant_format
 from huggingface_hub import read_dduf_file
-from diffusers.pipelines.pipeline_loading_utils import _identify_model_variants
 import torch
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
@@ -17,13 +16,11 @@ from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbits
 from QEfficient.utils import constants
 from QEfficient.utils.cache import to_hashable
 import torch.nn as nn
-from diffusers.pipelines.onnx_utils import OnnxRuntimeModel
 from diffusers import AutoencoderKL
 import numpy as np
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps 
+from diffusers.pipelines.stable_diffusion_3.pipeline_output import StableDiffusion3PipelineOutput
 from diffusers.image_processor import VaeImageProcessor
-from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
-
-from diffusers.models.attention_processor import AttnProcessor
 
 
 from transformers.models.clip.modeling_clip import CLIPAttention
@@ -41,7 +38,6 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
         
         self.scheduler = model.scheduler
-        self.feature_extractor = model.feature_extractor
         
         self.text_encoder = QEffTextEncoder(model.text_encoder)
         
@@ -75,8 +71,8 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
-        kwargs.update({"attn_implementation": "eager"})
-        model= cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path,token=, torch_dtype=torch.float32, **kwargs)
+        # kwargs.update({"attn_implementation": "eager"})
+        model= cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path,token="", torch_dtype=torch.float32, **kwargs)
         model.to("cpu")
         return cls(model, pretrained_model_name_or_path)
     
@@ -141,38 +137,36 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         print("######################  TEXT ENCODER 2 EXPORTED ######################")
         
         
-        # T5 TEXT ENCODER
-        example_inputs = {
-            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64)
-        }
+        # # T5 TEXT ENCODER
+        # example_inputs = {
+        #     "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64)
+        # }
         
-        dynamic_axes={"input_ids": {0: "batch_size", 1: "seq_len"}}
+        # dynamic_axes={"input_ids": {0: "batch_size", 1: "seq_len"}}
         
-        output_names=["last_hidden_state"]
+        # output_names=["last_hidden_state"]
         
-        self.text_encoder_3_onnx_path = self.text_encoder_3.export(
-            inputs=example_inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            export_dir=export_dir,
-        )
+        # self.text_encoder_3_onnx_path = self.text_encoder_3.export(
+        #     inputs=example_inputs,
+        #     output_names=output_names,
+        #     dynamic_axes=dynamic_axes,
+        #     export_dir=export_dir,
+        # )
         
         print("######################  TEXT ENCODER 3 EXPORTED ######################")
         
         example_inputs={
-            "hidden_states": torch.randn((2,
+            "hidden_states": torch.randn(2,
                                         self.transformer.model.config.in_channels,
                                         self.transformer.model.config.sample_size,
                                         self.transformer.model.config.sample_size,
-                                        ),dtype=torch.float32
-                                        ),
-            "encoder_hidden_states": torch.randn((2,
-                                                 seq_len,
+                                                                                    ),
+            "encoder_hidden_states": torch.randn(2,
+                                                 333,
                                                  self.transformer.model.config.joint_attention_dim
                                                  ),
-                                                dtype=torch.float32),
-            "pooled_projections": torch.randn((2, self.transformer.model.config.pooled_projection_dim), dtype=torch.float32),
-            "timestep":  torch.randint(0, 20, (2,), dtype=torch.float32), 
+            "pooled_projections": torch.randn(2, self.transformer.model.config.pooled_projection_dim),
+            "timestep":  torch.randint(0, 20, (2,), dtype=torch.int64), 
         }
             
         output_names=["output"]
@@ -181,6 +175,8 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             "hidden_states": {0: "batch_size", 1: "latent_channels", 2: "latent_height", 3: "latent_width"},
             "encoder_hidden_states": {0: "batch_size", 1: "seq_len"},
             "pooled_projections": {0: "batch_size"},
+            "timestep": {0:"steps"},
+            "output": {0: "batch_size", 1: "latent_channels", 2: "latent_height", 3: "latent_width"},
         }
         
         self.transformer_onnx_path = self.transformer.export(
@@ -268,23 +264,23 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         print("######################  Text Encoder 2 Compiled #####################")
         
         # Compile text_encoder 3
-        seq_len= 256
+        # seq_len= 256
         
-        specializations = [
-            {"batch_size": batch_size, "seq_len": seq_len},
-        ]   
+        # specializations = [
+        #     {"batch_size": batch_size, "seq_len": seq_len},
+        # ]   
         
-        self.text_encoder_3_compile_path=self.text_encoder_3._compile(
-            onnx_path,
-            compile_dir,
-            compile_only=True,
-            specializations=specializations,
-            convert_to_fp16=True,
-            mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=num_devices,
-            aic_num_cores=num_cores,
-            **compiler_options,
-        )    
+        # self.text_encoder_3_compile_path=self.text_encoder_3._compile(
+        #     onnx_path,
+        #     compile_dir,
+        #     compile_only=True,
+        #     specializations=specializations,
+        #     convert_to_fp16=True,
+        #     mxfp6_matmul=mxfp6_matmul,
+        #     mdp_ts_num_devices=num_devices,
+        #     aic_num_cores=num_cores,
+        #     **compiler_options,
+        # )    
         print("######################  Text Encoder 3 Compiled #####################")
         
         # Compile transformer
@@ -296,8 +292,11 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             "latent_height": self.transformer.model.config.sample_size,
             "latent_width": self.transformer.model.config.sample_size,
             "seq_len": 333,
+            "steps":1
             }
             ]
+        
+        compiler_options={"mos":1, "ols":2}
         self.trasformers_compile_path=self.transformer._compile(
             onnx_path,
             compile_dir,
@@ -305,7 +304,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             specializations=specializations,
             convert_to_fp16=True,
             mxfp6_matmul=mxfp6_matmul,
-            mdp_ts_num_devices=2,
+            mdp_ts_num_devices=4,
             aic_num_cores=num_cores,
             **compiler_options,
         )
@@ -697,70 +696,92 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         
         ###### AIC related changes of transformers ######
         if self.transformer.qpc_session is None:
-            self.transformer.qpc_session=QAICInferenceSession(str("/home/amitraj/.cache/qeff_models/SD3Transformer2DModel-e3b0c44298fc1c14/qpc-ef39c368c29e943d/qpc"), [4,5])
+            self.transformer.qpc_session=QAICInferenceSession(str(self.transformer.qpc_path))
             
             output_buffer={
                 "output": np.random.rand(2*batch_size, num_channels_latents, self.default_sample_size, self.default_sample_size).astype(np.int32),
             }
         
             self.transformer.qpc_session.set_buffers(output_buffer)
-         
-        # 7. Denoising loop
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
-            for i, t in enumerate(timesteps):
-                if self.interrupt:
-                    continue
+            
+            
+        for i, t in enumerate(timesteps):
+            if self.interrupt:
+                continue
 
-                # expand the latents if we are doing classifier free guidance
-                latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
-                # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-                timestep = t.expand(latent_model_input.shape[0])
-
-                # noise_pred = self.transformer.model(
-                #     hidden_states=latent_model_input,
-                #     timestep=timestep,
-                #     encoder_hidden_states=prompt_embeds,
-                #     pooled_projections=pooled_prompt_embeds,
-                #     joint_attention_kwargs=self.joint_attention_kwargs,
-                #     return_dict=False,
-                # )[0]
-                
-                
-                noise_pred=self.transformer.qpc_session.run(
+            # expand the latents if we are doing classifier free guidance
+            latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
+            start_time_device = time.perf_counter()
+            # inputname_list = ['hidden_states', 'encoder_hidden_states', 'pooled_projections', 'timestep']
+            # tensor_input_list = [latent_model_input, prompt_embeds, pooled_prompt_embeds, torch.Tensor([t])]
+            # input_dict = {inputname: tensor_input.numpy().astype(self.transformer_sess.model_input_shape_dict[inputname][1]) if inputname != "timestep" else tensor_input.numpy().astype(self.transformer_sess.model_input_shape_dict[inputname][1])
+            #     for inputname, tensor_input in zip(inputname_list, tensor_input_list)
+            # }
+            # result = self.transformer_sess.run(input_dict)
+           
+            timestep=np.array([t], dtype=np.int64)
+            
+            noise_pred=self.transformer.qpc_session.run(
                     {"encoder_hidden_states": prompt_embeds.detach().numpy(),
                      "pooled_projections": pooled_prompt_embeds.numpy(),
-                     "timestep": timestep.numpy(),
+                     "timestep": timestep,
                      "hidden_states": latent_model_input.numpy()
                      }
                 )
+           
+            noise_pred = torch.tensor(noise_pred['output'])
+            # o_shape, o_type = self.transformer_sess.model_output_shape_dict['output']
+            # noise_pred = torch.from_numpy(np.frombuffer(result['output'], dtype=o_type).reshape(o_shape))
+            # end_time_device = time.perf_counter()
+            # device_time += (end_time_device - start_time_device)
+            # print(f'Step {i} : {end_time_device-start_time_device:.6f} s')
 
-                # perform guidance
-                if self.do_classifier_free_guidance:
-                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
-                    should_skip_layers = (
-                        True
-                        if i > num_inference_steps * skip_layer_guidance_start
-                        and i < num_inference_steps * skip_layer_guidance_stop
-                        else False
-                    ) 
+            # perform guidance
+            if self.do_classifier_free_guidance:
+                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
 
-                # compute the previous noisy sample x_t -> x_t-1
-                latents_dtype = latents.dtype
-                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+            # compute the previous noisy sample x_t -> x_t-1
+            latents_dtype = latents.dtype
+            latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
-                # call the callback, if provided
-                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
-                    progress_bar.update()
+            if latents.dtype != latents_dtype:
+                if torch.backends.mps.is_available():
+                    # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
+                    latents = latents.to(latents_dtype)
+
+            if callback_on_step_end is not None:
+                callback_kwargs = {}
+                for k in callback_on_step_end_tensor_inputs:
+                    callback_kwargs[k] = locals()[k]
+                callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+
+                latents = callback_outputs.pop("latents", latents)
+                prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+                negative_pooled_prompt_embeds = callback_outputs.pop(
+                    "negative_pooled_prompt_embeds", negative_pooled_prompt_embeds
+                )
 
         if output_type == "latent":
             image = latents
 
         else:
-            latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
+            latents = (latents / self.vae_decode.model.config.scaling_factor) + self.vae_decode.model.config.shift_factor
 
-            image = self.vae.decode(latents, return_dict=False)[0]
-            image = self.image_processor.postprocess(image, output_type=output_type)
+            start_time = time.perf_counter()
+            input_dict = {'latent_sample': latents.numpy()}
+
+            # # Run the model on Qualcomm Cloud AI 100
+            # output = self.vae_decoder_sess.run(input_dict)
+            # # convert to Tensor.
+            # image = torch.from_numpy(np.frombuffer(output['sample'], dtype=o_type).reshape(o_shape))
+
+            # print(f'Vae Decoder total time : {1000.*(time.perf_counter()-start_time):.6f} ms')
+            # image = self.image_processor.postprocess(image, output_type=output_type)
+            
+            image = self.vae_decode.model(latents, return_dict=False)[0]
+            image = self.image_processor.postprocess(image.detach(), output_type=output_type)
 
         # Offload all models
         self.maybe_free_model_hooks()
@@ -768,7 +789,67 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         if not return_dict:
             return (image,)
 
-        return StableDiffusion3PipelineOutput(images=image)
+        return StableDiffusion3PipelineOutput(images=image)    
+          
+         
+        # # 7. Denoising loop
+        # with self.progress_bar(total=num_inference_steps) as progress_bar:
+        #     for i, t in enumerate(timesteps):
+        #         if self.interrupt:
+        #             continue
+
+        #         # expand the latents if we are doing classifier free guidance
+        #         latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
+        #         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
+        #         timestep = t.expand(latent_model_input.shape[0])
+
+        #         noise_pred = self.transformer.model(
+        #             hidden_states=latent_model_input,
+        #             timestep=timestep,
+        #             encoder_hidden_states=prompt_embeds,
+        #             pooled_projections=pooled_prompt_embeds,
+        #             joint_attention_kwargs=self.joint_attention_kwargs,
+        #             return_dict=False,
+        #         )[0]
+                
+                # noise_pred_aic=self.transformer.qpc_session.run(
+                #     {"encoder_hidden_states": prompt_embeds.detach().numpy(),
+                #      "pooled_projections": pooled_prompt_embeds.numpy(),
+                #      "timestep": timestep.numpy(),
+                #      "hidden_states": latent_model_input.numpy()
+                #      }
+                # )
+        #         noise_pred = torch.tensor(noise_pred['output'])
+
+        #         # perform guidance
+        #         if self.do_classifier_free_guidance:
+        #             noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+        #             noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+        
+
+        #         # compute the previous noisy sample x_t -> x_t-1
+        #         latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+
+        #         # call the callback, if provided
+        #         if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+        #             progress_bar.update()
+
+        # if output_type == "latent":
+        #     image = latents
+
+        # else:
+        #     latents = (latents / self.vae_decode.model.config.scaling_factor) + self.vae_decode.model.config.shift_factor
+
+        #     image = self.vae_decode.model(latents, return_dict=False)[0]
+        #     image = self.image_processor.postprocess(image.detach(), output_type=output_type)
+
+        # # Offload all models
+        # self.maybe_free_model_hooks()
+
+        # if not return_dict:
+        #     return (image,)
+
+        # return StableDiffusion3PipelineOutput(images=image)
   
         
         
