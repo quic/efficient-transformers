@@ -160,7 +160,6 @@ def train(
                         f"Skipping first {intermediate_step} steps for epoch {epoch + 1}, since fine tuning has already completed for it."
                     )
                 if epoch == intermediate_epoch and step < intermediate_step:
-                    total_train_steps += 1
                     continue
             total_train_steps += 1
 
@@ -210,7 +209,7 @@ def train(
             total_loss += loss.detach().float()
 
             if is_rank_zero():
-                tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
+                tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps - 1)
                 if loss <= train_config.convergence_loss:
                     loss_0_counter += 1
                 else:
@@ -235,12 +234,12 @@ def train(
             else:
                 num_samples_in_cur_update = len(train_dataloader) % train_config.gradient_accumulation_steps
 
-            loss = loss / num_samples_in_cur_update
+            normalized_loss = loss / num_samples_in_cur_update
 
             if train_config.grad_scaler:
-                scaler.scale(loss).backward()  # backward pass
+                scaler.scale(normalized_loss).backward()  # backward pass
             else:
-                loss.backward()  # backward pass
+                normalized_loss.backward()  # backward pass
 
             if is_optimizer_step:
                 if train_config.grad_scaler:
@@ -265,7 +264,7 @@ def train(
                     )
 
             pbar.set_description(
-                f"Training Epoch: {epoch + 1}/{train_config.num_epochs}, step {step + 1}/{len(train_dataloader)} completed (loss: {(loss * num_samples_in_cur_update).detach().float()})"
+                f"Training Epoch: {epoch + 1}/{train_config.num_epochs}, step {step + 1}/{len(train_dataloader)} completed (loss: {(loss).detach().float()})"
             )
             if train_config.save_metrics:
                 save_to_json(
@@ -326,7 +325,7 @@ def train(
             )
 
             if is_rank_zero():
-                tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
+                tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps - 1)
             if train_config.save_metrics:
                 eval_step_loss.extend(step_loss)
                 eval_step_metric.extend(step_metric)
