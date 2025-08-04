@@ -53,24 +53,17 @@ class QEFFBaseModel(ABC):
     def _transform_names(cls) -> List[str]:
         return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
-    def create_model_params(self, **kwargs) -> Dict:
-        model_params = copy.deepcopy(kwargs)
-
-        model_params["config"] = self.model.config.to_diff_dict()
-        model_params["_transform_names"] = self._transform_names()
-        return model_params
-
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
         self.model = model
         self.hash_params = self.create_model_params(**kwargs)
 
-        if hasattr(self.model.config, "architectures"):
-            self.model_architecture = self.model.config.architectures[0]
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
+        if hasattr(self.model.config, "architectures"):
+            self.model_architecture = getattr(self.model.config, "architectures", [None])[0]
 
         # Apply the transformations
         any_transformed = False
@@ -82,6 +75,13 @@ class QEFFBaseModel(ABC):
             warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+
+    def create_model_params(self, **kwargs) -> Dict:
+        model_params = copy.deepcopy(kwargs)
+        model_params["config"] = self.model.config.to_diff_dict()
+        model_params["peft_config"] = getattr(self.model, "active_peft_config", None)
+        model_params["applied_transform_names"] = self._transform_names()
+        return model_params
 
     @property
     @abstractmethod
@@ -150,17 +150,15 @@ class QEFFBaseModel(ABC):
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
         """
-
-        export_dir = Path(export_dir or (QEFF_HOME / self.model_architecture / self.model_name))
+        parent_dir = self.model_architecture or self.model_name
+        export_dir = Path(export_dir or (QEFF_HOME / parent_dir / self.model_name))
         export_hash, filtered_hash_params = filter_and_create_export_hash(
             model_params=self.hash_params,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_kwargs=export_kwargs,
             onnx_transform_kwargs=onnx_transform_kwargs,
-            export_dir=export_dir,
         )
-
         export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         onnx_path = export_dir / f"{self.model_name}.onnx"
         if onnx_path.is_file():
@@ -237,7 +235,7 @@ class QEFFBaseModel(ABC):
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
         # Dump JSON file with hashed parameters
-        hashed_params_export_path = export_dir / "hashed_model_params.json"
+        hashed_params_export_path = export_dir / "hashed_export_params.json"
         create_json(hashed_params_export_path, filtered_hash_params)
         logger.info("Hashed parameters exported successfully.")
 

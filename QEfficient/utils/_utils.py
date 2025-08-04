@@ -25,8 +25,8 @@ from transformers import (
     PreTrainedTokenizerFast,
 )
 
-from QEfficient.utils.cache import hash_dict_params
 from QEfficient.utils.constants import KWARGS_EXCLUSION_LIST, QEFF_MODELS_DIR, Constants, QnnConstants
+from QEfficient.utils.hash_utils import hash_dict_params
 from QEfficient.utils.logging_utils import logger
 
 
@@ -564,7 +564,7 @@ def create_json(file_path: str, json_data: object):
     """
     try:
         with open(file_path, "w") as file:
-            json.dump(json_data, file, indent=4)
+            json.dump(make_serializable(json_data), file, indent=4)
     except Exception as e:
         print(f"Failed to create JSON File {file_path}: {e}")
 
@@ -772,6 +772,8 @@ def filter_and_create_export_hash(**kwargs):
     onnx_transform_kwargs = kwargs.get("onnx_transform_kwargs")
     if onnx_transform_kwargs:
         filtered_params.update(onnx_transform_kwargs)
+    if filtered_params.get("peft_config") is not None:
+        filtered_params["peft_config"] = filtered_params["peft_config"].to_dict()
 
     return hash_dict_params(filtered_params), filtered_params
 

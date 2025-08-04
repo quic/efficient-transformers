@@ -21,14 +21,24 @@ from QEfficient.utils import load_hf_tokenizer
 configs = [
     pytest.param(
         AutoConfig.for_model(
-            "llama", num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2, hidden_size=128
+            "llama",
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            hidden_size=128,
+            architectures=["LlamaForCausalLM"],
         ),
         LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=8),
         id="llama-2l-4h-2kvh-128d-qv",
     ),
     pytest.param(
         AutoConfig.for_model(
-            "mistral", num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2, hidden_size=128
+            "mistral",
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            hidden_size=128,
+            architectures=["MistralForCausalLM"],
         ),
         LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=6),
         id="mistral-2l-4h-128d-qv",

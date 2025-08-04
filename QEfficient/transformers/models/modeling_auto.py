@@ -169,7 +169,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             self.model, _ = PoolingTransform.apply(self.model, pooling)
 
         self.model.base_model.config.use_cache = True
-        self.hash_params["qeff_class"] = self.__class__.__name__
+        self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     @classmethod
     @with_replaced_quantizers
@@ -430,7 +430,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
     def __init__(self, model: nn.modules, **kwargs):
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
-        self.hash_params["qeff_class"] = self.__class__.__name__
+        self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -485,7 +485,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     def __init__(self, model, **kwargs):
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
-        self.hash_params["qeff_class"] = self.__class__.__name__
+        self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -773,7 +773,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             inputs["input_ids"],
             (0, padded_len - input_ids_length),
             "constant",
-            1,
+            pad_token_id,
         )
         inputs["attention_mask"] = torch.nn.functional.pad(
             inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
@@ -911,7 +911,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             self.model.config.vision_config.use_flash_attn = "false"
         else:
             self.model.config.text_config.use_cache = True
-        self.hash_params["qeff_class"] = self.__class__.__name__
+        self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     @classmethod
     def from_pretrained(
@@ -1091,7 +1091,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             inputs["input_ids"],
             (0, padded_len - input_ids_length),
             "constant",
-            1,
+            pad_token_id,
         )
         inputs["attention_mask"] = torch.nn.functional.pad(
             inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
@@ -1360,7 +1360,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         self.is_tlm = transformed
-        self.hash_params["qeff_class"] = self.__class__.__name__
+        self.hash_params["qeff_auto_class"] = self.__class__.__name__
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
@@ -1901,7 +1901,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         super().__init__(model, **kwargs)
         self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
-        self.hash_params["qeff_class"] = self.__class__.__name__
+        self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     @property
     def get_model_config(self) -> dict:
