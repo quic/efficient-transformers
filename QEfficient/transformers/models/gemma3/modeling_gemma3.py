@@ -648,6 +648,17 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         return outputs.logits, pixel_values, image_idx, outputs.past_key_values
 
+    def get_npi_file(self, model_name: str, **compiler_options):
+        if model_name == "google/gemma-3-4b-it":
+            compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_4B_NODE_PRECISION_INFO
+        elif model_name == "google/gemma-3-27b-it":
+            compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_27B_NODE_PRECISION_INFO
+        else:
+            raise ValueError(
+                f"For Model {self.pretrained_model_name_or_path} default NPI file is not supported/added. Please use one of the following: google/gemma-3-4b-it, google/gemma-3-27b-it"
+            )
+        return compiler_options
+
     def get_specializations(
         self,
         batch_size: int,
@@ -693,18 +704,6 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             },
         ]
         specializations = {}
-
-        # Default node precision file added for Gemma3:AI-100
-        # if user provides a custom node precision file, it will override default one
-        if "node_precision_info" not in compiler_options:
-            if self.pretrained_model_name_or_path == "google/gemma-3-4b-it":
-                compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_4B_NODE_PRECISION_INFO
-            elif self.pretrained_model_name_or_path == "google/gemma-3-27b-it":
-                compiler_options["node_precision_info"] = constants.DEFAULT_GEMMA3_27B_NODE_PRECISION_INFO
-            else:
-                raise ValueError(
-                    f"For Model {self.pretrained_model_name_or_path} default NPI file is not supported/added. Please use one of the following: google/gemma-3-4b-it, google/gemma-3-27b-it"
-                )
 
         if kv_offload:
             specializations["vision"] = vision

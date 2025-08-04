@@ -681,6 +681,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             **compiler_options,
         )
 
+        if hasattr(self.model, "get_npi_file"):
+            compiler_options = self.model.get_npi_file(self.model.pretrained_model_name_or_path, **compiler_options)
+
         custom_io_vision = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io_vision["pixel_values"] = "float16"
@@ -1029,6 +1032,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             img_size=img_size,
             **compiler_options,
         )
+
+        if hasattr(self.model, "get_npi_file"):
+            self.model.get_npi_file(self.pretrained_model_name_or_path)
 
         custom_io = {}
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
