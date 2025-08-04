@@ -10,15 +10,14 @@ from typing import List
 import numpy as np
 import pytest
 
-from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
+from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
-from QEfficient.utils.device_utils import get_available_device_id
 
 configs = [
     pytest.param(
-        "meta-llama/Llama-3.1-8B",  # model
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
         Constants.INPUT_STR * 4,  # prompts
         32,  # prefill_seq_len
         256,  # ctx_len
@@ -54,8 +53,8 @@ def test_sampler_transform(
         "return_pdfs": False,
         "max_top_k_ids": 512,
     }
-    model_w_sampler = AutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=qaic_config)
-    model_wo_sampler = AutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=None)
+    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=qaic_config)
+    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=None)
     model_w_sampler_qpc_path: str = model_w_sampler.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
@@ -94,23 +93,14 @@ def test_sampler_transform(
     )
 
     # Validate sampler inputs
-    sampler_inputs = [
-        "last_accepted_output_tokens",
-        "repetition_penalties",
-        "presence_penalties",
-        "temperatures",
-        "top_ks",
-        "top_ps",
-        "min_ps",
-        "random_numbers",
-    ]
+    sampler_inputs = Constants.SAMPLER_INPUTS
     for input_name in sampler_inputs:
-        assert input_name in model_w_sampler_session.input_names, (
-            f"Sampler input {input_name} not found in QPC compiled with Sampler"
-        )
-        assert input_name not in model_wo_sampler_session.input_names, (
-            f"Sampler input {input_name} found in QPC compiled without Sampler"
-        )
+        assert (
+            input_name in model_w_sampler_session.input_names
+        ), f"Sampler input {input_name} not found in QPC compiled with On Device Sampler"
+        assert (
+            input_name not in model_wo_sampler_session.input_names
+        ), f"Sampler input {input_name} found in QPC compiled without On Device Sampler"
 
 
 @pytest.mark.on_qaic
@@ -136,8 +126,8 @@ def test_greedy_sampling(
         "return_pdfs": False,
         "max_top_k_ids": 512,
     }
-    model_w_sampler = AutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=qaic_config)
-    model_wo_sampler = AutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=None)
+    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=qaic_config)
+    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=None)
     model_w_sampler.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
@@ -164,7 +154,7 @@ def test_greedy_sampling(
     model_w_sampler_exec_info = model_w_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=get_available_device_id(),
+        device_id=None,
         generation_len=generation_len,
         include_sampler=True,
         return_pdfs=False,
@@ -182,7 +172,7 @@ def test_greedy_sampling(
     model_wo_sampler_exec_info = model_wo_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=get_available_device_id(),
+        device_id=None,
         generation_len=generation_len,
         include_sampler=False,
         return_pdfs=False,
@@ -190,12 +180,12 @@ def test_greedy_sampling(
     )
 
     # Compare generated texts and ids
-    assert model_w_sampler_exec_info.generated_texts == model_wo_sampler_exec_info.generated_texts, (
-        "Generated texts do not match"
-    )
-    assert (model_w_sampler_exec_info.generated_ids == model_wo_sampler_exec_info.generated_ids).all(), (
-        "Generated ids do not match"
-    )
+    assert (
+        model_w_sampler_exec_info.generated_texts == model_wo_sampler_exec_info.generated_texts
+    ), "Generated texts do not match"
+    assert (
+        model_w_sampler_exec_info.generated_ids == model_wo_sampler_exec_info.generated_ids
+    ).all(), "Generated ids do not match"
 
 
 @pytest.mark.on_qaic
@@ -221,8 +211,8 @@ def test_random_sampling(
         "return_pdfs": False,
         "max_top_k_ids": 512,
     }
-    model_w_sampler = AutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=qaic_config)
-    model_wo_sampler = AutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=None)
+    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=qaic_config)
+    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=None)
     model_w_sampler.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
@@ -249,15 +239,15 @@ def test_random_sampling(
     model_w_sampler_exec_info = model_w_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=get_available_device_id(),
+        device_id=None,
         generation_len=generation_len,
         include_sampler=True,
         return_pdfs=False,
         sampling_params={
-            "repetition_penalties": np.array(1.9, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-            "presence_penalties": np.array(0.8, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+            "repetition_penalties": np.array(20.2, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+            "presence_penalties": np.array(10.5, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             # "frequency_penalties": np.array(0.5, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
-            "temperatures": np.array(0.67, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
+            "temperatures": np.array(100.1, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "top_ks": np.array(54720, dtype=np.int32).repeat(full_batch_size).reshape(-1, 1),
             "top_ps": np.array(0.89, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
             "min_ps": np.array(0.6, dtype=np.float32).repeat(full_batch_size).reshape(-1, 1),
@@ -267,7 +257,7 @@ def test_random_sampling(
     model_wo_sampler_exec_info = model_wo_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=get_available_device_id(),
+        device_id=None,
         generation_len=generation_len,
         include_sampler=False,
         return_pdfs=False,
@@ -276,56 +266,56 @@ def test_random_sampling(
 
     # Compare generated texts
     golden_texts = {
-        "w_sampler": " Kelsey and I am a 20 year old college student. My major in school right now,",
-        "wo_sampler": " Kaitlyn and I am a 20 year old college student. I am a junior at the",
+        "w_sampler": "Raymond and my favorite color, alongside reds or purples (I can’t have either as",
+        "wo_sampler": "John Smith and I am a software engineer. I have been working in the industry for the past ",
     }
     golden_ids = {
         "w_sampler": [
             [
-                735,
-                93567,
-                323,
-                358,
-                1097,
-                264,
-                220,
+                21380,
+                322,
+                590,
+                25448,
+                2927,
+                29892,
+                19963,
+                2654,
+                29879,
+                470,
+                3708,
+                2701,
+                313,
+                29902,
                 508,
-                1060,
-                2362,
-                7926,
-                5575,
-                13,
-                3092,
-                3682,
-                304,
-                2978,
-                1314,
-                1457,
-                11,
+                30010,
+                29873,
+                505,
+                2845,
+                408,
             ]
         ],
         "wo_sampler": [
             [
-                735,
-                1339,
-                18499,
-                323,
-                358,
-                1097,
-                264,
-                220,
-                508,
-                1060,
-                2362,
-                7926,
-                5575,
-                13,
-                358,
-                1097,
-                264,
-                27144,
-                520,
-                279,
+                2259,
+                7075,
+                322,
+                306,
+                626,
+                263,
+                7047,
+                22055,
+                29889,
+                306,
+                505,
+                1063,
+                1985,
+                297,
+                278,
+                13661,
+                363,
+                278,
+                4940,
+                29871,
             ]
         ],
     }
@@ -333,12 +323,12 @@ def test_random_sampling(
         assert (
             tokenizer.decode(model_w_sampler_exec_info.generated_ids[i][:generation_len]) == golden_texts["w_sampler"]
         ), "Sampler generated texts does not match"
-        assert (model_w_sampler_exec_info.generated_ids[i][:generation_len] == golden_ids["w_sampler"]).all(), (
-            "Sampler generated ids do not match"
-        )
+        assert (
+            model_w_sampler_exec_info.generated_ids[i][:generation_len] == golden_ids["w_sampler"]
+        ).all(), "Sampler generated ids do not match"
         assert (
             tokenizer.decode(model_wo_sampler_exec_info.generated_ids[i][:generation_len]) == golden_texts["wo_sampler"]
         ), "Without sampler generated texts does not match"
-        assert (model_wo_sampler_exec_info.generated_ids[i][:generation_len] == golden_ids["wo_sampler"]).all(), (
-            "Without sampler generated ids do not match"
-        )
+        assert (
+            model_wo_sampler_exec_info.generated_ids[i][:generation_len] == golden_ids["wo_sampler"]
+        ).all(), "Without sampler generated ids do not match"
