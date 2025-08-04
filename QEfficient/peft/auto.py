@@ -27,7 +27,7 @@ from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils import constants
 from QEfficient.utils._utils import get_padding_shape_from_config
-from QEfficient.utils.cache import to_hashable
+from QEfficient.utils.hash_utils import to_hashable
 
 logger = logging.getLogger(__name__)
 

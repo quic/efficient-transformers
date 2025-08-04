@@ -159,6 +159,7 @@ class QEFFBaseModel(ABC):
             export_kwargs=export_kwargs,
             onnx_transform_kwargs=onnx_transform_kwargs,
         )
+        self.export_hash = export_hash
         export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         onnx_path = export_dir / f"{self.model_name}.onnx"
         if onnx_path.is_file():
@@ -321,7 +322,6 @@ class QEFFBaseModel(ABC):
         else:
             mdp_ts_json = None
 
-        # Check if already compiled
         compile_hash, hashed_params = hash_compile_params(
             command=command,
             specializations=specializations,
