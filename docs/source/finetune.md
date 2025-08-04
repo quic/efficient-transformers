@@ -98,8 +98,8 @@ tensorboard --logdir runs/<file> --bind_all
         ```
 
 2.  **Specifying the Preprocessing Function**
-    -   In `data_config.json`, include a `"preproc_file"` key to define the path to your preprocessing Python file and the function within it.
-    -   Use the format `"filename.py:function_name"`. In the absence of `function_name`, the `preproc_fn` function will be used as default preprocessing function from the `filename.py`.
+    -   In `data_config.json`, include a `"preproc_file"` mandatory key to define the path to your preprocessing Python file and the function within it.
+    -   Use the format `"filename.py:function_name"`. The filename and function name both are required. 
         _Example:_
         ```json
         "preproc_file": "sample_dataset_preproc.py:preprocessing_fn"
