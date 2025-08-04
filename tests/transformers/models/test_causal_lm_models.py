@@ -31,6 +31,7 @@ test_models_qaic = [
     "tiiuae/falcon-7b",
     "Qwen/Qwen2-0.5B",
     "bigcode/starcoder2-3b",
+    "Qwen/Qwen3-30B-A3B",
     "Felladrin/Minueza-32M-Base",
     "wtang06/mpt-125m-c4",
     "hakurei/gpt-j-random-tinier",
