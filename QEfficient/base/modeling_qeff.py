@@ -276,7 +276,11 @@ class QEFFBaseModel(ABC):
 
             return self.qpc_path
 
-        command = constants.COMPILER + [f"-m={onnx_path}"]
+        command = (
+            constants.COMPILER
+            + [f"-aic-hw-version={compiler_options.pop('aic-hw-version', '2.0')}"]
+            + [f"-m={onnx_path}"]
+        )
 
         if mdp_ts_json_path := compiler_options.pop("mdp_load_partition_config", None):
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
