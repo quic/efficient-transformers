@@ -33,7 +33,7 @@ def get_custom_dataset(dataset_config, tokenizer, split: str, context_length=Non
     if ":" in dataset_config.preproc_file:
         module_path, func_name = dataset_config.preproc_file.split(":")
     else:
-        module_path, func_name = dataset_config.preproc_file, "get_custom_dataset"
+        module_path, func_name = dataset_config.preproc_file, "preproc_fn"
         logger.log_rank_zero(
             f"Using '{func_name}' function from "
             f"{dataset_config.preproc_file} as preprocessing function in "
@@ -72,7 +72,7 @@ def get_data_collator(dataset_processer, dataset_config):
     if ":" in dataset_config.collate_file:
         module_path, func_name = dataset_config.collate_file.split(":")
     else:
-        module_path, func_name = dataset_config.collate_file, "get_data_collator"
+        module_path, func_name = dataset_config.collate_file, "data_collator_fn"
         logger.log_rank_zero(
             f"Using '{func_name}' function from {dataset_config.collate_file} as collate_fn in dataset preprocessing.",
             logging.WARNING,

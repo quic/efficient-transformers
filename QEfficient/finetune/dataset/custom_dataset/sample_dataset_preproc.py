@@ -26,7 +26,7 @@ def get_preprocessed_disc(dataset_config, tokenizer, split, context_length=None)
     # Only collect the samples for a given style.
     available_styles = set(dataset["category"])
     if disc_style not in available_styles:
-        raise RuntimeError(f"For DiSC dataset the provided disc_stype '{disc_style}' is not supported.")
+        raise RuntimeError(f"For DiSC dataset the provided disc_style '{disc_style}' is not supported.")
 
     dataset = dataset.filter(lambda example: example["category"] == disc_style)
 
