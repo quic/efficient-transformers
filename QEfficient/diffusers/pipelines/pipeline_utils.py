@@ -1,15 +1,19 @@
+import copy
+import hashlib
+
+import torch.nn as nn
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
-from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheExternalModuleMapperTransform, KVCacheTransform
+from QEfficient.transformers.models.pytorch_transforms import (
+    CustomOpsTransform,
+    KVCacheExternalModuleMapperTransform,
+    KVCacheTransform,
+)
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
-import hashlib
-import os
-from pathlib import Path
 from QEfficient.utils.cache import to_hashable
-import torch.nn as nn
-import copy
-from QEfficient.diffusers.models.pytorch_transforms import AutoencoderKLTransform
+from QEfficient. diffusers.models.pytorch_transforms import CustomOpsTransform, AttentionTransform
+
 
 class QEffTextEncoder(QEFFBaseModel):
     _pytorch_transforms = [
@@ -23,7 +27,7 @@ class QEffTextEncoder(QEFFBaseModel):
 
     def __init__(self, model: nn.modules):
         super().__init__(model)
-        self.model= copy.deepcopy(model)
+        self.model = copy.deepcopy(model)
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -72,6 +76,7 @@ class QEffTextEncoder(QEFFBaseModel):
     def get_model_config(self) -> dict:
         return self.model.model.vision_model.config.__dict__
 
+
 class QEffUNet(QEFFBaseModel):
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
@@ -84,7 +89,7 @@ class QEffUNet(QEFFBaseModel):
 
     def __init__(self, model: nn.modules):
         super().__init__(model.unet)
-        self.model=model.unet
+        self.model = model.unet
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -133,6 +138,7 @@ class QEffUNet(QEFFBaseModel):
     def get_model_config(self) -> dict:
         return self.model.model.vision_model.config.__dict__
 
+
 class QEffVAE(QEFFBaseModel):
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
@@ -145,8 +151,8 @@ class QEffVAE(QEFFBaseModel):
 
     def __init__(self, model: nn.modules, type: str):
         super().__init__(model.vae)
-        self.model= copy.deepcopy(model.vae)
-        self.type=type
+        self.model = copy.deepcopy(model.vae)
+        self.type = type
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -196,6 +202,7 @@ class QEffVAE(QEFFBaseModel):
     def get_model_config(self) -> dict:
         return self.model.model.vision_model.config.__dict__
 
+
 class QEffSafetyChecker(QEFFBaseModel):
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
@@ -203,13 +210,12 @@ class QEffSafetyChecker(QEFFBaseModel):
         CustomOpsTransform,
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
-        AutoencoderKLTransform
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.modules):
         super().__init__(model.vae)
-        self.model= model.safety_checker
+        self.model = model.safety_checker
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
         return self._export(inputs, output_names, dynamic_axes, export_dir)
@@ -258,31 +264,31 @@ class QEffSafetyChecker(QEFFBaseModel):
     def get_model_config(self) -> dict:
         return self.model.model.vision_model.config.__dict__
 
+
 class QEffSD3Transformer2DModel(QEFFBaseModel):
     _pytorch_transforms = [
-        AwqToMatmulNbitsTransform,
-        GPTQToMatmulNbitsTransform,
+        AttentionTransform, CustomOpsTransform
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
-    
+
     def __init__(self, model: nn.modules):
         super().__init__(model)
-        self.model=model
-    
+        self.model = model
+
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir) 
-    
+        return self._export(inputs, output_names, dynamic_axes, export_dir)
+
     def compile(
-    self,
-    compile_dir,
-    compile_only,
-    specializations,
-    convert_to_fp16,
-    mxfp6_matmul,
-    mdp_ts_num_devices,
-    aic_num_cores,
-    custom_io,
-    **compiler_options,
+        self,
+        compile_dir,
+        compile_only,
+        specializations,
+        convert_to_fp16,
+        mxfp6_matmul,
+        mdp_ts_num_devices,
+        aic_num_cores,
+        custom_io,
+        **compiler_options,
     ) -> str:
         return self._compile(
             compile_dir=compile_dir,

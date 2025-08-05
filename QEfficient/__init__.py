@@ -48,16 +48,17 @@ if check_qaic_sdk():
         QEFFCommonLoader,
     )
     from QEfficient.compile.compile_helper import compile
+
+    # Imports for the diffusers
+    from QEfficient.diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import QEFFStableDiffusionPipeline
+    from QEfficient.diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion3 import (
+        QEFFStableDiffusion3Pipeline,
+    )
     from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
     from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
     from QEfficient.peft import QEffAutoPeftModelForCausalLM
     from QEfficient.transformers.transform import transform
-    
-    
-    # Imports for the diffusers
-    
-    from QEfficient.diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import QEFFStableDiffusionPipeline
-    from QEfficient.diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion3 import QEFFStableDiffusion3Pipeline
+
     # Users can use QEfficient.export for exporting models to ONNX
     export = qualcomm_efficient_converter
 
