@@ -126,8 +126,6 @@ def train(
             intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
             if epoch < intermediate_epoch:
                 logger.log_rank_zero(f"Skipping epoch {epoch + 1} since fine tuning has already completed for it.")
-                # to bring the count of train_step in sync with where it left off
-                total_train_steps += len(train_dataloader)
                 continue
 
         logger.log_rank_zero(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
@@ -149,21 +147,22 @@ def train(
 
         num_dummy_samples = 0
         for step, batch in enumerate(train_dataloader):
+            # total_train_steps indicates the cumulative number of training steps completed across all epochs.
+            # When resuming fine-tuning from previously saved checkpoints, total_train_steps indicates the total number of steps trained across the earlier session and the ongoing one.
+            total_train_steps = (epoch) * len(train_dataloader) + step
             # resume training from a particular checkpoint, assuming the dataset is not shuffled
             if train_config.use_peft and train_config.from_peft_checkpoint:
                 intermediate_step = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1])
                 intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
                 # to bring the count of train_step in sync with where it left off
                 if epoch == intermediate_epoch and step == 0:
-                    total_train_steps += intermediate_step
                     logger.log_rank_zero(
                         f"Skipping first {intermediate_step} steps for epoch {epoch + 1}, since fine tuning has already completed for it."
                     )
                 if epoch == intermediate_epoch and step < intermediate_step:
                     continue
-            total_train_steps += 1
 
-            if train_config.max_train_step > 0 and total_train_steps > train_config.max_train_step:
+            if train_config.max_train_step > 0 and total_train_steps >= train_config.max_train_step:
                 max_steps_reached = True
                 logger.log_rank_zero(
                     "Maximum training steps reached "
@@ -209,7 +208,7 @@ def train(
             total_loss += loss.detach().float()
 
             if is_rank_zero():
-                tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps - 1)
+                tensorboard_updates.add_scalars("loss", {"train": loss}, total_train_steps)
                 if loss <= train_config.convergence_loss:
                     loss_0_counter += 1
                 else:
@@ -264,7 +263,7 @@ def train(
                     )
 
             pbar.set_description(
-                f"Training Epoch: {epoch + 1}/{train_config.num_epochs}, step {step + 1}/{len(train_dataloader)} completed (loss: {(loss).detach().float()})"
+                f"Training Epoch: {epoch + 1}/{train_config.num_epochs}, step {step + 1}/{len(train_dataloader)} completed (loss: {loss.detach().float()})"
             )
             if train_config.save_metrics:
                 save_to_json(
@@ -325,7 +324,7 @@ def train(
             )
 
             if is_rank_zero():
-                tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps - 1)
+                tensorboard_updates.add_scalars("loss", {"eval": eval_epoch_loss}, total_train_steps)
             if train_config.save_metrics:
                 eval_step_loss.extend(step_loss)
                 eval_step_metric.extend(step_metric)
