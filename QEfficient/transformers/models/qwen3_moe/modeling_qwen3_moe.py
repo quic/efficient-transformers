@@ -135,7 +135,7 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
             weights.append(top_w[:, i])
 
         # I = self.config.ffn_dim
-        Inter = self.config.ffn_dim  # TODO: Find a way to identify from config # Intermediate Size
+        Inter = 768
         breakpoint()
         upgate = []
         expert_out = []
