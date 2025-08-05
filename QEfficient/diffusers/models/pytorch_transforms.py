@@ -55,19 +55,33 @@ class NormalizationTransform(ModuleMappingTransform):
         AdaLayerNormContinuous: QEffAdaLayerNormContinuous,
     }
 from typing import Tuple
-from diffusers import AutoencoderKL
-from QEfficient.diffusers.models.autoencoders.autoencoder_kl import QEffAutoencoderKL 
-from QEfficient.base.pytorch_transforms import ModuleMappingTransform
+
 from torch import nn
+from QEfficient.customop import CustomRMSNormAIC
 
 
-class AutoencoderKLTransform(ModuleMappingTransform):
-    """Transforms a Diffusers AutoencoderKL model to a QEfficientAutoencoderKL model."""
+from diffusers import AutoencoderKL
+from QEfficient.base.pytorch_transforms import ModuleMappingTransform, ExternalModuleMapperTransform
+from diffusers.models.attention import JointTransformerBlock
+from diffusers.models.attention_processor import Attention, JointAttnProcessor2_0
 
+
+from QEfficient.diffusers.models.attention_processor import QEffAttention, QEffJointAttnProcessor2_0, JointAttnProcessor2_0
+from QEfficient.diffusers.models.attention import QEffJointTransformerBlock
+
+class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
-            AutoencoderKL: QEffAutoencoderKL,
-        }
+    }
+
+
+class AttentionTransform(ModuleMappingTransform):
+    _module_mapping = {
+       Attention: QEffAttention,
+       JointAttnProcessor2_0: QEffJointAttnProcessor2_0,
+       JointTransformerBlock: QEffJointTransformerBlock       
+    }
+    
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
-        return model, transformed    
+        return model, transformed
