@@ -63,7 +63,8 @@ class QEFFBaseModel(ABC):
         self.qpc_session: Optional[QAICInferenceSession] = None
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         if hasattr(self.model.config, "architectures"):
-            self.model_architecture = getattr(self.model.config, "architectures", [None])[0]
+            model_architecture = getattr(self.model.config, "architectures", None)
+            self.model_architecture = model_architecture[0] if isinstance(model_architecture, list) else None
 
         # Apply the transformations
         any_transformed = False
