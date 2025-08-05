@@ -1,15 +1,14 @@
 import os
-import time
 from typing import Any, Callable, Dict, List, Optional, Union
 from venv import logger
 
 import numpy as np
 import torch
-
 from diffusers import StableDiffusion3Pipeline
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
 from diffusers.pipelines.stable_diffusion_3.pipeline_output import StableDiffusion3PipelineOutput
+
 from QEfficient.diffusers.pipelines.pipeline_utils import QEffSD3Transformer2DModel, QEffTextEncoder, QEffVAE
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
@@ -310,10 +309,10 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         device_ids: List[int] = [0],
     ):
         if clip_model_index == 0:
-            text_encoder = self.text_encoder
+            # text_encoder = self.text_encoder
             tokenizer = self.tokenizer
         else:
-            text_encoder = self.text_encoder_2
+            # text_encoder = self.text_encoder_2
             tokenizer = self.tokenizer_2
 
         prompt = [prompt] if isinstance(prompt, str) else prompt
