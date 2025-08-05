@@ -1,6 +1,15 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+"""Reference data for the finetune tests."""
+
 # A dictionary to hold all reference data for all test sets.
 REFERENCE_DATA = {
-    # Scenario 1: Single-device llama training on Alpaca dataset.
+    # Scenario 1: Single-device llama 3.2-1B training on Alpaca dataset.
     "llama_config_alpaca_single_device": {
         "description": "Baseline for Llama on Alpaca single-device",
         "train_step_losses": [
@@ -70,7 +79,7 @@ REFERENCE_DATA = {
             2.099226474761963,
         ],
     },
-    # Scenario 2: Single-device llama training on GSM8k dataset.
+    # Scenario 2: Single-device llama 3.2-1B training on GSM8k dataset.
     "llama_config_gsm8k_single_device": {
         "description": "Baseline for Llama on GSM8k single-device",
         "train_step_losses": [
