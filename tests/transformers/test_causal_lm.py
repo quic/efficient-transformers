@@ -89,17 +89,17 @@ def test_causal_lm_pretrained(config, cb, tmp_path):
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_causal_lm_hash(config, cb):
-    hash_0_0 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb).model_hash
-    hash_0_1 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb).model_hash
+    hash_0_0 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb).export_hash
+    hash_0_1 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb).export_hash
 
     assert hash_0_0 == hash_0_1
 
     cfg1 = copy.deepcopy(config)
     cfg1.num_hidden_layers -= 1
-    hash_1_0 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(cfg1, **model_kwargs), cb).model_hash
+    hash_1_0 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(cfg1, **model_kwargs), cb).export_hash
     cfg2 = copy.deepcopy(config)
     cfg2.num_hidden_layers -= 1
-    hash_1_1 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(cfg2, **model_kwargs), cb).model_hash
+    hash_1_1 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(cfg2, **model_kwargs), cb).export_hash
     assert hash_1_0 == hash_1_1
 
     assert hash_0_0 != hash_1_0
@@ -107,7 +107,7 @@ def test_causal_lm_hash(config, cb):
     if cb:
         hash_0_no_cb = QEFFAutoModelForCausalLM(
             AutoModelForCausalLM.from_config(config, **model_kwargs), False
-        ).model_hash
+        ).export_hash
         assert hash_0_0 != hash_0_no_cb
 
 
@@ -117,7 +117,7 @@ def test_causal_lm_export(config, cb, tmp_path):
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
     qeff_model.export(tmp_path)
-    model_path = tmp_path.with_name(tmp_path.name + "-" + qeff_model.model_hash)
+    model_path = tmp_path.with_name(tmp_path.name + "-" + qeff_model.export_hash)
     assert model_path.is_dir()
     assert qeff_model.onnx_path.is_file()
     assert qeff_model.onnx_path.relative_to(model_path).parts == (qeff_model.model_name + ".onnx",)
@@ -153,7 +153,7 @@ def test_causal_lm_compile(config, cb, tmp_cache):
         compile_params["full_batch_size"] = 32
         compile_params["batch_size"] = 8
     qeff_model.compile(**compile_params)
-    model_path = tmp_cache / (qeff_model.model_name + "-" + qeff_model.model_hash)
+    model_path = tmp_cache / (qeff_model.model_name + "-" + qeff_model.export_hash)
 
     # Check if ONNX is exported properly
     assert model_path.is_dir()
@@ -163,7 +163,7 @@ def test_causal_lm_compile(config, cb, tmp_cache):
     # Check if QPC is compiled properly
     assert qeff_model.qpc_path.is_dir()
     assert (qeff_model.qpc_path / "programqpc.bin").is_file()
-    assert qeff_model.qpc_path.relative_to(tmp_cache).parts[0] == qeff_model.model_name + "-" + qeff_model.model_hash
+    assert qeff_model.qpc_path.relative_to(tmp_cache).parts[0] == qeff_model.model_name + "-" + qeff_model.export_hash
 
     # Check if there is no re-compilation
     start = perf_counter()

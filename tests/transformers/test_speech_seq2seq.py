@@ -73,17 +73,17 @@ def test_seq2seq_pretrained(config, tmp_path):
 
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_seq2seq_hash(config):
-    hash_0_0 = QEFFAutoModelForSpeechSeq2Seq(AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)).model_hash
-    hash_0_1 = QEFFAutoModelForSpeechSeq2Seq(AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)).model_hash
+    hash_0_0 = QEFFAutoModelForSpeechSeq2Seq(AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)).export_hash
+    hash_0_1 = QEFFAutoModelForSpeechSeq2Seq(AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)).export_hash
 
     assert hash_0_0 == hash_0_1
 
     cfg1 = copy.deepcopy(config)
     cfg1.num_hidden_layers -= 1
-    hash_1_0 = QEFFAutoModelForSpeechSeq2Seq(AutoModelForSpeechSeq2Seq.from_config(cfg1, **model_kwargs)).model_hash
+    hash_1_0 = QEFFAutoModelForSpeechSeq2Seq(AutoModelForSpeechSeq2Seq.from_config(cfg1, **model_kwargs)).export_hash
     cfg2 = copy.deepcopy(config)
     cfg2.num_hidden_layers -= 1
-    hash_1_1 = QEFFAutoModelForSpeechSeq2Seq(AutoModelForSpeechSeq2Seq.from_config(cfg2, **model_kwargs)).model_hash
+    hash_1_1 = QEFFAutoModelForSpeechSeq2Seq(AutoModelForSpeechSeq2Seq.from_config(cfg2, **model_kwargs)).export_hash
     assert hash_1_0 == hash_1_1
     assert hash_0_0 != hash_1_0
 
@@ -93,7 +93,7 @@ def test_seq2seq_export(config, tmp_path):
     model = AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
     qeff_model.export(tmp_path)
-    model_path = tmp_path.with_name(tmp_path.name + "-" + qeff_model.model_hash)
+    model_path = tmp_path.with_name(tmp_path.name + "-" + qeff_model.export_hash)
     assert model_path.is_dir()
     assert qeff_model.onnx_path.is_file()
     assert qeff_model.onnx_path.relative_to(model_path).parts == (qeff_model.model_name + ".onnx",)
@@ -125,7 +125,7 @@ def test_causal_lm_compile(config, tmp_cache):
     model = AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForSpeechSeq2Seq(model)
     qeff_model.compile()
-    model_path = tmp_cache / (qeff_model.model_name + "-" + qeff_model.model_hash)
+    model_path = tmp_cache / (qeff_model.model_name + "-" + qeff_model.export_hash)
 
     # Check if ONNX is exported properly
     assert model_path.is_dir()
@@ -135,7 +135,7 @@ def test_causal_lm_compile(config, tmp_cache):
     # Check if QPC is compiled properly
     assert qeff_model.qpc_path.is_dir()
     assert (qeff_model.qpc_path / "programqpc.bin").is_file()
-    assert qeff_model.qpc_path.relative_to(tmp_cache).parts[0] == qeff_model.model_name + "-" + qeff_model.model_hash
+    assert qeff_model.qpc_path.relative_to(tmp_cache).parts[0] == qeff_model.model_name + "-" + qeff_model.export_hash
 
     # Check if there is no re-compilation
     start = perf_counter()

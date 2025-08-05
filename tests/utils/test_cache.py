@@ -9,7 +9,7 @@ import random
 
 import pytest
 
-from QEfficient.utils.cache import to_hashable
+from QEfficient.utils.hash_utils import to_hashable
 
 
 def get_random_string(length: int) -> str:
