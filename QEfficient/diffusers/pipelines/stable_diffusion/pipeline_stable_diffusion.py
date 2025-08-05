@@ -3,9 +3,9 @@ from typing import List, Optional, Union
 
 import numpy as np
 import torch
-
 from diffusers import StableDiffusionPipeline
 from diffusers.image_processor import VaeImageProcessor
+
 from QEfficient.diffusers.pipelines.pipeline_utils import QEffSafetyChecker, QEffTextEncoder, QEffUNet, QEffVAE
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
@@ -252,14 +252,14 @@ class QEFFStableDiffusionPipeline(StableDiffusionPipeline):
 
         # Compile vae_encoder
 
-        encoder_specializations = [
-            {
-                "batch_size": batch_size,
-                "channels": self.vae_encoder.model.config.in_channels,
-                "height": self.vae_encoder.model.config.sample_size,
-                "width": self.vae_encoder.model.config.sample_size,
-            }
-        ]
+        # encoder_specializations = [
+        #     {
+        #         "batch_size": batch_size,
+        #         "channels": self.vae_encoder.model.config.in_channels,
+        #         "height": self.vae_encoder.model.config.sample_size,
+        #         "width": self.vae_encoder.model.config.sample_size,
+        #     }
+        # ]
 
         # self.vae_encoder_compile_path=self.vae_encoder._compile(
         #     onnx_path,
@@ -273,14 +273,14 @@ class QEFFStableDiffusionPipeline(StableDiffusionPipeline):
 
         # compile vae decoder
 
-        decoder_sepcializations = [
-            {
-                "batch_size": batch_size,
-                "channels": 4,
-                "height": self.vae_decoder.model.config.sample_size,
-                "width": self.vae_decoder.model.config.sample_size,
-            }
-        ]
+        # decoder_sepcializations = [
+        #     {
+        #         "batch_size": batch_size,
+        #         "channels": 4,
+        #         "height": self.vae_decoder.model.config.sample_size,
+        #         "width": self.vae_decoder.model.config.sample_size,
+        #     }
+        # ]
 
         # self.vae_decoder_compile_path=self.vae_decoder._compile(
         #     onnx_path,

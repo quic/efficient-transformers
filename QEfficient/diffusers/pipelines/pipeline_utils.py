@@ -5,6 +5,7 @@ import torch.nn as nn
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
@@ -12,7 +13,6 @@ from QEfficient.transformers.models.pytorch_transforms import (
 )
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils.cache import to_hashable
-from QEfficient. diffusers.models.pytorch_transforms import CustomOpsTransform, AttentionTransform
 
 
 class QEffTextEncoder(QEFFBaseModel):
@@ -266,9 +266,7 @@ class QEffSafetyChecker(QEFFBaseModel):
 
 
 class QEffSD3Transformer2DModel(QEFFBaseModel):
-    _pytorch_transforms = [
-        AttentionTransform, CustomOpsTransform
-    ]
+    _pytorch_transforms = [AttentionTransform, CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.modules):

@@ -1,14 +1,13 @@
-from diffusers.models.attention_processor import Attention
-import torch
 from typing import Optional
-import torch as nn
-from diffusers.models.attention_processor import JointAttnProcessor2_0
+
+import torch
+from diffusers.models.attention_processor import Attention, JointAttnProcessor2_0
+
 
 class QEffAttention(Attention):
-    
     def __qeff_init__(self):
-        processor=QEffJointAttnProcessor2_0()
-        self.processor=processor
+        processor = QEffJointAttnProcessor2_0()
+        self.processor = processor
         processor.query_block_size = 64
 
     def get_attention_scores(
@@ -47,8 +46,8 @@ class QEffAttention(Attention):
 
         return attention_probs
 
+
 class QEffJointAttnProcessor2_0(JointAttnProcessor2_0):
-    
     def __call__(
         self,
         attn: QEffAttention,
@@ -110,18 +109,18 @@ class QEffJointAttnProcessor2_0(JointAttnProcessor2_0):
 
         # pre-transpose the key
         key = key.transpose(-1, -2)
-        if query.size(-2) != value.size(-2): # cross-attention, use regular attention
+        if query.size(-2) != value.size(-2):  # cross-attention, use regular attention
             # QKV done in single block
             attention_probs = attn.get_attention_scores(query, key, attention_mask)
             hidden_states = torch.bmm(attention_probs, value)
-        else: # self-attention, use blocked attention
+        else:  # self-attention, use blocked attention
             # QKV done with block-attention (a la FlashAttentionV2)
             print(f"{query.shape = }, {key.shape = }, {value.shape = }")
             query_block_size = self.query_block_size
             query_seq_len = query.size(-2)
             num_blocks = (query_seq_len + query_block_size - 1) // query_block_size
             for qidx in range(num_blocks):
-                query_block = query[:,qidx*query_block_size:(qidx+1)*query_block_size,:]
+                query_block = query[:, qidx * query_block_size : (qidx + 1) * query_block_size, :]
                 attention_probs = attn.get_attention_scores(query_block, key, attention_mask)
                 hidden_states_block = torch.bmm(attention_probs, value)
                 if qidx == 0:
