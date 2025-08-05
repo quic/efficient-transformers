@@ -453,7 +453,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_vision_encoder()
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir)
+        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
 
     def compile(
         self,
@@ -702,7 +702,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         if not skip_vision:
             self.vision_model._compile(
-                compile_dir,
+                compile_dir=compile_dir,
                 compile_only=True,
                 specializations=specializations["vision"],
                 convert_to_fp16=True,
