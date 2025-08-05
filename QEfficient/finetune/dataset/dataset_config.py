@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-from functools import partial
 
 from QEfficient.finetune.dataset.alpaca_dataset import (
     InstructionDataset as get_alpaca_dataset,
@@ -23,7 +22,7 @@ from QEfficient.finetune.dataset.imdb_dataset import (
 )
 
 DATASET_PREPROC = {
-    "alpaca_dataset": partial(get_alpaca_dataset),
+    "alpaca_dataset": get_alpaca_dataset,
     "grammar_dataset": get_grammar_dataset,
     "gsm8k_dataset": get_gsm8k_dataset,
     "custom_dataset": get_custom_dataset,
