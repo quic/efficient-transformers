@@ -7,7 +7,7 @@
 
 import torch
 import transformers
-from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, TextStreamer
+from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
@@ -17,13 +17,11 @@ config = AutoConfig.from_pretrained(model_id)
 config.text_config.num_hidden_layers = 4
 config.vision_config.num_hidden_layers = 2
 
-model = AutoModelForImageTextToText.from_pretrained(model_id, attn_implementation="eager", config=config)
-model.eval()
+qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+    model_id, attn_implementation="eager", kv_offload=True, config=config
+)
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
-
-### For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
-qeff_model = QEFFAutoModelForImageTextToText(model, kv_offload=True)
 
 ### use skip_vision=Ture, if want to run only text, ow false ###
 skip_vision = True
