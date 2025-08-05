@@ -124,6 +124,7 @@ def train(
 
         if train_config.use_peft and train_config.from_peft_checkpoint:
             intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
+            intermediate_step = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1])
             if epoch < intermediate_epoch:
                 logger.log_rank_zero(f"Skipping epoch {epoch + 1} since fine tuning has already completed for it.")
                 continue
@@ -152,8 +153,6 @@ def train(
             total_train_steps = (epoch) * len(train_dataloader) + step
             # resume training from a particular checkpoint, assuming the dataset is not shuffled
             if train_config.use_peft and train_config.from_peft_checkpoint:
-                intermediate_step = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1])
-                intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
                 # to bring the count of train_step in sync with where it left off
                 if epoch == intermediate_epoch and step == 0:
                     logger.log_rank_zero(
