@@ -199,7 +199,7 @@ REFERENCE_DATA = {
         ],
         "eval_step_metrics": [1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0],
     },
-    # Scenario 4: Distributed training (world_size=2)
+    # Scenario 4: Distributed Bert training  (world_size=2)
     "bert_config_imdb_distributed_ws2": {
         "description": "Baseline for distributed training with 2 devices",
         "world_size": 2,
