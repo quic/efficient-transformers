@@ -104,7 +104,7 @@ tensorboard --logdir runs/<file> --bind_all
         ```json
         "preproc_file": "sample_dataset_preproc.py:preprocessing_fn"
         ```
-    -   The preprocessing function must follow the structure below. The signature of the function should not be altered. The sample illustrates `apply_prompt_template` and `tokenize` as sub-functions, but we can define our own sub-functions as needed. For reference, check the example files in the [./QEfficient/finetune/dataset/](https://github.com/quic/efficient-transformers/tree/main/QEfficient/finetune/dataset) directory.
+    -   The preprocessing function must follow the structure below. The function parameters and the return type of the function should not be altered. The sample illustrates `apply_prompt_template` and `tokenize` as sub-functions, but we can define our own sub-functions as needed. For reference, check the example files in the [./QEfficient/finetune/dataset/](https://github.com/quic/efficient-transformers/tree/main/QEfficient/finetune/dataset) directory.
         ```python
         def preprocessing_fn(dataset_config, tokenizer, split, context_length=None):
             # Load the dataset or read from the disk
@@ -139,12 +139,10 @@ tensorboard --logdir runs/<file> --bind_all
         -   In the sample preprocessing function above, the `split` variable takes its value from `data_config.json`. For the training dataset, the value will be taken from the `"train_split"` key, and for the evaluation/test dataset, it will be taken from the `"test_split"` key.
         -   Additional arguments needed for the preprocessing function can be passed in `data_config.json` and will be available via the `dataset_config` variable within the function. For instance, in the sample config above, `"test_split_ratio"` and `"disc_style"` keys can be used in the preprocessing function to define the test split ratio and style of the dataset. These values are accessed through the `dataset_config` variable. Check out the sample preprocessing file at [./QEfficient/finetune/dataset/custom_dataset/sample_dataset_preproc.py](https://github.com/quic/efficient-transformers/tree/main/QEfficient/finetune/dataset/custom_dataset/sample_dataset_preproc.py).
 
-
-
 3.  **Custom Collate Function for Batching**
     -   When using a batch size greater than 1, we may need to override the default collate (batching different samples together in a batch) behavior by including a `"collate_file"` key in `data_config.json`.
     -   Use the same `"file.py:function"` format. If omitted, the default Hugging Face `DataCollatorForSeq2Seq` is typically used, which pads sequences to the longest length in the batch.
-    -   A custom collate function must have the following signature. The signature of the function should not be altered:
+    -   A custom collate function must follow the structure below. The function parameters and the return type of the function should not be altered:
         ```python
         def get_data_collator(tokenizer):
             # Define and return a custom collate_fn here
