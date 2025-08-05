@@ -49,20 +49,16 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
     assert actual_list is not None and isinstance(actual_list, list), (
         f"Actual {name} data is missing or not a list for scenario '{scenario_key}'."
     )
-
     assert len(ref_list) == len(actual_list), (
         f"{name} length mismatch for scenario '{scenario_key}' (WS: {current_world_size}, Rank: {current_rank}). "
         f"Expected {len(ref_list)} elements, but got {len(actual_list)}."
     )
-
     max_diff = np.max(np.abs(np.array(ref_list) - np.array(actual_list)))
-
     assert max_diff <= atol, (
         f"{name} deviated too much for scenario '{scenario_key}' (WS: {current_world_size}, Rank: {current_rank}). "
-        f"Max Difference: {max_diff:.6f}, Allowed Tolerance: {atol:.6f}.\n"
+        f"Max Difference: {max_diff:.4f}, Allowed Tolerance: {atol:.4f}.\n"
         f"Reference: {ref_list}\nActual:    {actual_list}"
     )
-
     print(f"  ✅ {name} PASSED. Max Diff: {max_diff:.4f}")
 
 
