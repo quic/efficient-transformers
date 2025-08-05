@@ -7,6 +7,7 @@
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from QEfficient.transformers.models import gemma3 as gemma3
 
@@ -102,8 +103,12 @@ LLAMA4_ATTENTION_CHUNK_SIZE = 8192
 LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
 
 # Gemma3 Constant
-DEFAULT_GEMMA3_4B_NODE_PRECISION_INFO = "QEfficient/transformers/models/gemma3/fp32_nodes_gemma3_4b_mm.yaml"
-DEFAULT_GEMMA3_27B_NODE_PRECISION_INFO = "QEfficient/transformers/models/gemma3/fp32_nodes_gemma3_27b_mm.yaml"
+DEFAULT_GEMMA3_4B_NODE_PRECISION_INFO = (
+    Path(__file__).resolve().parent.parent / "transformers" / "models" / "gemma3" / "fp32_nodes_gemma3_4b_mm.yaml"
+)
+DEFAULT_GEMMA3_27B_NODE_PRECISION_INFO = (
+    Path(__file__).resolve().parent.parent / "transformers" / "models" / "gemma3" / "fp32_nodes_gemma3_27b_mm.yaml"
+)
 
 
 class Constants:
