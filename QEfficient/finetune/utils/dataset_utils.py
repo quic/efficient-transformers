@@ -4,6 +4,10 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
+import logging
+from typing import Dict, List, Tuple
+
 import datasets
 import torch
 import torch.distributed as dist
@@ -11,14 +15,15 @@ from transformers.data import DataCollatorForSeq2Seq
 
 from QEfficient.finetune.data.sampler import DistributedLengthBasedBatchSampler
 from QEfficient.finetune.dataset.dataset_config import DATALOADER_COLLATE_FUNC, DATASET_PREPROC
-from QEfficient.finetune.utils.helper import get_num_ddp_devices
+from QEfficient.finetune.utils.helper import get_world_size
+from QEfficient.finetune.utils.logging_utils import logger
 
 
 def get_preprocessed_dataset(
     tokenizer, dataset_config, split: str = "train", context_length: int = None
 ) -> torch.utils.data.Dataset:
     if dataset_config.dataset not in DATASET_PREPROC:
-        raise NotImplementedError(f"{dataset_config.dataset} is not (yet) implemented")
+        logger.raise_error(f"{dataset_config.dataset} is not (yet) implemented", NotImplementedError)
 
     def get_split():
         return dataset_config.train_split if split == "train" else dataset_config.test_split
@@ -39,8 +44,9 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
     if train_config.enable_ddp:
         if train_config.enable_sorting_for_ddp:
             if train_config.context_length:
-                raise ValueError(
-                    "Sorting cannot be done with padding, Please disable sorting or pass context_length as None to disable padding"
+                logger.raise_error(
+                    "Sorting cannot be done with padding, Please disable sorting or pass context_length as None to disable padding",
+                    ValueError,
                 )
             else:
                 kwargs["batch_sampler"] = DistributedLengthBasedBatchSampler(
@@ -64,6 +70,11 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
 
 
 def padding_dataset(train_config, dataset, batch_size):
+    num_replicas = get_world_size()
+    remainder = len(dataset) % (num_replicas * batch_size)
+    if remainder == 0:
+        return dataset
+
     if train_config.enable_ddp and train_config.enable_sorting_for_ddp:
         if isinstance(dataset, datasets.Dataset):
             # Hugging Face Dataset transformation
@@ -75,17 +86,18 @@ def padding_dataset(train_config, dataset, batch_size):
 
     dummy_row = next(iter(dataset))
     dummy_row["labels"] = torch.tensor([-100] * len(dummy_row["labels"]))
-    padding_size = 0
-    num_replicas = get_num_ddp_devices()
-    remainder = len(dataset) % (num_replicas * batch_size)
-    padding_size = (num_replicas * batch_size) - remainder
 
+    padding_size = (num_replicas * batch_size) - remainder
     dummy_data = [dummy_row.copy() for _ in range(padding_size)]
     dummy_dataset = datasets.Dataset.from_list(dummy_data)
     if isinstance(dataset, datasets.Dataset):
         combined_dataset = datasets.concatenate_datasets([dataset, dummy_dataset])
     else:
         combined_dataset = dataset + list(dummy_dataset)
+
+    logger.log_rank_zero("Padding dataset to make it divisible by batch_size * num_devices.", logging.DEBUG)
+    logger.log_rank_zero(f"Length of dataset before padding: {len(dataset)}", logging.DEBUG)
+    logger.log_rank_zero(f"Length of dataset after padding: {len(combined_dataset)}", logging.DEBUG)
     return combined_dataset
 
 
@@ -93,6 +105,7 @@ def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"
     dataset = get_preprocessed_dataset(tokenizer, dataset_config, split, context_length=train_config.context_length)
 
     batch_size = train_config.train_batch_size if split == "train" else train_config.val_batch_size
+
     dataset = padding_dataset(train_config, dataset, batch_size)
 
     dl_kwargs = get_dataloader_kwargs(train_config, dataset, tokenizer, split)
@@ -104,9 +117,9 @@ def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"
         print("custom_data_collator is used")
         dl_kwargs["collate_fn"] = custom_data_collator
 
-    print(f"length of dataset_{split}", len(dataset))
-    # Create data loader
+    logger.log_rank_zero(f"Length of {split} dataset is {len(dataset)}")
 
+    # Create data loader
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=train_config.num_workers_dataloader,
@@ -114,3 +127,11 @@ def get_dataloader(tokenizer, dataset_config, train_config, split: str = "train"
         **dl_kwargs,
     )
     return dataloader
+
+
+def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
+    # find out the minimum max_seq_length required during fine-tuning (saves memory!)
+    lengths = [len(d["input_ids"]) for d in data]
+    longest_seq_length = max(lengths)
+    longest_seq_ix = lengths.index(longest_seq_length)
+    return longest_seq_length, longest_seq_ix
