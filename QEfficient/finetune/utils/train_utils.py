@@ -355,7 +355,6 @@ def train(
         logger.log_rank_zero(
             f"Epoch {epoch + 1}: Train epoch loss: {train_epoch_loss:.4f}, Train metric: {train_epoch_metric:.4f}, Epoch time {epoch_end_time:.2f} sec"
         )
-        breakpoint()
         # Saving the results every epoch to plot later
         if train_config.save_metrics:
             save_to_json(

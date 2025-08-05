@@ -16,11 +16,11 @@ from torch.utils.data import DataLoader
 
 import QEfficient
 import QEfficient.cloud.finetune
-from . import reference_data as ref_data
 from QEfficient.cloud.finetune import main as finetune
 from QEfficient.finetune.utils.helper import Device, Task_Mode
+from QEfficient.utils import constants as constant
 
-LOSS_ATOL = 0.02
+from . import reference_data as ref_data
 
 alpaca_json_path = os.path.join(os.getcwd(), "alpaca_data.json")
 
@@ -209,6 +209,44 @@ def test_finetune(
     # assert np.allclose(results["last_epoch_eval_metric"], expected_eval_metric, atol=METRIC_ATOL), (
     #     "Eval metric is not matching."
     # )
+
+    # Assertions for step-level values using the helper function
+    assert_list_close(
+        ref_train_losses,
+        results["train_step_loss"],
+        constant.LOSS_ATOL,
+        "Train Step Losses",
+        scenario_key,
+        current_world_size,
+        current_rank,
+    )
+    assert_list_close(
+        ref_eval_losses,
+        results["eval_step_loss"],
+        constant.LOSS_ATOL,
+        "Eval Step Losses",
+        scenario_key,
+        current_world_size,
+        current_rank,
+    )
+    assert_list_close(
+        ref_train_metrics,
+        results["train_step_metric"],
+        constant.METRIC_ATOL,
+        "Train Step Metrics",
+        scenario_key,
+        current_world_size,
+        current_rank,
+    )
+    assert_list_close(
+        ref_eval_metrics,
+        results["eval_step_metric"],
+        constant.METRIC_ATOL,
+        "Eval Step Metrics",
+        scenario_key,
+        current_world_size,
+        current_rank,
+    )
 
     assert results["avg_epoch_time"] < 60, "Training should complete within 60 seconds."
 
