@@ -1,13 +1,8 @@
-from diffusers.models.attention import JointTransformerBlock, _chunked_feed_forward
 import torch
-import torch as nn
-from QEfficient.diffusers.models.attention_processor import QEffJointAttnProcessor2_0
-from QEfficient.diffusers.models.attention_processor import QEffAttention
-from typing import Optional
+from diffusers.models.attention import JointTransformerBlock, _chunked_feed_forward
 
 
 class QEffJointTransformerBlock(JointTransformerBlock):
-        
     def forward(
         self, hidden_states: torch.FloatTensor, encoder_hidden_states: torch.FloatTensor, temb: torch.FloatTensor
     ):
@@ -45,7 +40,7 @@ class QEffJointTransformerBlock(JointTransformerBlock):
             # "feed_forward_chunk_size" can be used to save memory
             ff_output = _chunked_feed_forward(self.ff, norm_hidden_states, self._chunk_dim, self._chunk_size)
         else:
-            #ff_output = self.ff(norm_hidden_states)
+            # ff_output = self.ff(norm_hidden_states)
             ff_output = self.ff(norm_hidden_states, block_size=4096)
         ff_output = gate_mlp.unsqueeze(1) * ff_output
 
@@ -66,7 +61,7 @@ class QEffJointTransformerBlock(JointTransformerBlock):
                     self.ff_context, norm_encoder_hidden_states, self._chunk_dim, self._chunk_size
                 )
             else:
-                #context_ff_output = self.ff_context(norm_encoder_hidden_states)
+                # context_ff_output = self.ff_context(norm_encoder_hidden_states)
                 context_ff_output = self.ff_context(norm_encoder_hidden_states, block_size=333)
             encoder_hidden_states = encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
 
