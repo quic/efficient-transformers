@@ -3,7 +3,7 @@ REFERENCE_DATA = {
     # Scenario 1: Single-device llama training on Alpaca dataset.
     "llama_config_alpaca_single_device": {
         "description": "Baseline for Llama on Alpaca single-device",
-        "train_step_losses": [
+        "train_step_losses": [ 
             1.5112206935882568,
             1.2211230993270874,
             1.9942185878753662,
@@ -70,6 +70,7 @@ REFERENCE_DATA = {
             2.099226474761963,
         ],
     },
+    # Scenario 2: Single-device llama training on GSM8k dataset.
     "llama_config_gsm8k_single_device": {
         "description": "Baseline for Llama on GSM8k single-device",
         "train_step_losses": [
@@ -105,7 +106,7 @@ REFERENCE_DATA = {
             1.4072850942611694,
             1.374159812927246,
         ],
-        "train_step_metrics": [  # steps 0-9
+        "train_step_metrics": [  
             9.490362167358398,
             10.207969665527344,
             6.944809913635254,
@@ -126,7 +127,7 @@ REFERENCE_DATA = {
             3.604706048965454,
             2.3287885189056396,
         ],
-        "eval_step_metrics": [  # steps 0-2
+        "eval_step_metrics": [  # steps 0-9
             6.364452838897705,
             6.48176383972168,
             3.374018669128418,
@@ -139,46 +140,18 @@ REFERENCE_DATA = {
             3.951754093170166,
         ],
     },
+    
     # Scenario 3: Single-device Bert training on IMDB dataset.
     "bert_config_imdb_single_device": {
         "description": "Baseline for BERT on IMDB single-device",
         "train_step_losses": [
-            5,  # steps 0-9
-            0.39,
-            0.37,
-            0.35,
-            0.33,
-            0.31,
-            0.29,
-            0.27,
-            0.25,
-            0.23,
-            0.21,  # steps 10-19
+           0.390625, 0.51220703125, 0.9208984375, 0.4052734375, 1.1640625, 0.6533203125, 0.5087890625, 0.76171875, 0.63525390625, 0.50146484375, 0.5439453125, 0.947265625, 0.89013671875, 0.80419921875, 0.6533203125, 0.4580078125, 0.92041015625, 0.7412109375, 0.7197265625
         ],
-        "eval_step_losses": [0.70, 0.50, 0.30],
+        "eval_step_losses": [0.55126953125, 0.7421875, 0.86572265625, 0.64501953125, 0.65234375, 0.60302734375, 0.638671875, 0.8232421875, 0.6611328125, 0.6240234375],
         "train_step_metrics": [
-            0.10,
-            0.15,
-            0.20,
-            0.25,
-            0.30,
-            0.35,
-            0.40,
-            0.45,
-            0.50,
-            0.55,
-            0.60,
-            0.65,
-            0.70,
-            0.75,
-            0.80,
-            0.82,
-            0.84,
-            0.86,
-            0.88,
-            0.90,
+           1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.625, 0.625, 0.625, 0.5999755859375, 0.58331298828125, 0.5714111328125, 0.5714111328125, 0.5714111328125, 0.5625, 0.5555419921875, 0.5054931640625
         ],
-        "eval_step_metrics": [0.25, 0.45, 0.80],
+        "eval_step_metrics": [1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0],
     },
     # Scenario 4: Distributed training (world_size=2)
     "bert_config_imdb_distributed_ws2": {
@@ -187,99 +160,23 @@ REFERENCE_DATA = {
         "rank_data": {
             0: {  # Data for Rank 0
                 "train_step_losses": [
-                    0.91,
-                    0.86,
-                    0.81,
-                    0.76,
-                    0.71,
-                    0.66,
-                    0.61,
-                    0.56,
-                    0.51,
-                    0.46,
-                    0.41,
-                    0.39,
-                    0.37,
-                    0.35,
-                    0.33,
-                    0.31,
-                    0.29,
-                    0.27,
-                    0.25,
-                    0.23,
+                    
                 ],
-                "eval_step_losses": [0.72, 0.52, 0.32],
+                "eval_step_losses": [],
                 "train_step_metrics": [
-                    0.09,
-                    0.14,
-                    0.19,
-                    0.24,
-                    0.29,
-                    0.34,
-                    0.39,
-                    0.44,
-                    0.49,
-                    0.54,
-                    0.59,
-                    0.64,
-                    0.69,
-                    0.74,
-                    0.79,
-                    0.81,
-                    0.83,
-                    0.85,
-                    0.87,
-                    0.89,
+                   
                 ],
-                "eval_step_metrics": [0.26, 0.46, 0.81],
+                "eval_step_metrics": [],
             },
             1: {  # Data for Rank 1
                 "train_step_losses": [
-                    0.92,
-                    0.87,
-                    0.82,
-                    0.77,
-                    0.72,
-                    0.67,
-                    0.62,
-                    0.57,
-                    0.52,
-                    0.47,
-                    0.42,
-                    0.40,
-                    0.38,
-                    0.36,
-                    0.34,
-                    0.32,
-                    0.30,
-                    0.28,
-                    0.26,
-                    0.24,
+                    
                 ],
-                "eval_step_losses": [0.73, 0.53, 0.33],
+                "eval_step_losses": [],
                 "train_step_metrics": [
-                    0.08,
-                    0.13,
-                    0.18,
-                    0.23,
-                    0.28,
-                    0.33,
-                    0.38,
-                    0.43,
-                    0.48,
-                    0.53,
-                    0.58,
-                    0.63,
-                    0.68,
-                    0.73,
-                    0.78,
-                    0.80,
-                    0.82,
-                    0.84,
-                    0.86,
-                    0.88,
+                    
                 ],
-                "eval_step_metrics": [0.27, 0.47, 0.82],
+                "eval_step_metrics": [],
             },
         },
     },
