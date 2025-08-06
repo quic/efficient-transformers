@@ -20,7 +20,7 @@ config.vision_config.num_hidden_layers = 2
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
 )
-tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 ### use skip_vision=Ture, if want to run only text, ow false ###
