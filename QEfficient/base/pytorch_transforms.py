@@ -144,7 +144,7 @@ class SplitGateUpWeightsTransform(PytorchTransform):
         sd = model_tmp.state_dict()
         for layer_idx in range(num_layers):
             # ---- build the textual prefix once per layer ----------
-            prefix = f"model.layers.{layer_idx}.mlp.experts."
+            prefix = f"model.layers.{layer_idx}.feed_forward.experts."
 
             fused_key = prefix + "gate_up_proj"
             gate_key = prefix + "gate_proj"
@@ -156,7 +156,7 @@ class SplitGateUpWeightsTransform(PytorchTransform):
             ffn_dim = two_I // 2
             gate, up = fused.split(ffn_dim, dim=-1)  # views – no copy
 
-            experts = model_tmp.model.layers[layer_idx].mlp.experts
+            experts = model_tmp.model.layers[layer_idx].feed_forward.experts
             experts.gate_proj.data.copy_(gate)
             experts.up_proj.data.copy_(up)
 
