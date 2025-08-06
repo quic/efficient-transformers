@@ -12,6 +12,7 @@ UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
 QEFF_DIR = os.path.dirname(UTILS_DIR)
 ROOT_DIR = os.path.dirname(QEFF_DIR)
 QEFF_CACHE_DIR_NAME = "qeff_cache"
+LOCK_DIR = "/tmp/device_locks"
 
 ONNX_EXPORT_EXAMPLE_BATCH_SIZE = 1
 ONNX_EXPORT_EXAMPLE_SEQ_LEN = 32

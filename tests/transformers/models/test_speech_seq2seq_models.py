@@ -318,18 +318,15 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 
     pytorch_kv_tokens = run_seq2seq_pytorch_with_kv(qeff_model, processor, data, sample_rate, ctx_len)
 
-    assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
-        "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
-    )
+    assert (
+        pytorch_hf_tokens == pytorch_kv_tokens
+    ).all(), "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
 
     qeff_model.export()
 
     ort_tokens = run_seq2seq_ort(qeff_model.onnx_path, qeff_model.model.config, processor, data, sample_rate, ctx_len)
 
     assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for pytorch output and ort output"
-
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
 
     qeff_model.compile(
         ctx_len=ctx_len,
@@ -340,12 +337,14 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     )
 
     exec_info = qeff_model.generate(
-        inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=ctx_len
+        inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"),
+        generation_len=ctx_len,
+        device_ids=get_available_device_id(),
     )
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
-    assert (pytorch_kv_tokens == cloud_ai_100_tokens).all(), (
-        "Tokens don't match for pytorch output and Cloud AI 100 output."
-    )
+    assert (
+        pytorch_kv_tokens == cloud_ai_100_tokens
+    ).all(), "Tokens don't match for pytorch output and Cloud AI 100 output."
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
 
