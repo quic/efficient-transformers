@@ -8,11 +8,9 @@
 import torch
 
 from diffusers import AutoencoderKL
-from diffusers.utils.accelerate_utils import apply_forward_hook
 
 
 class QEffAutoencoderKL(AutoencoderKL):
-    @apply_forward_hook
     def encode(self, x: torch.Tensor, return_dict: bool = True):
         """
         Encode a batch of images into latents.
