@@ -51,6 +51,15 @@ from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeForCausalLM,
     GPTBigCodeModel,
 )
+from transformers.models.gpt_oss.modeling_gpt_oss import (
+    GptOssAttention,
+    GptOssDecoderLayer,
+    GptOssExperts,
+    GptOssForCausalLM,
+    GptOssMLP,
+    GptOssModel,
+    GptOssRMSNorm,
+)
 from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
 from transformers.models.granite.modeling_granite import (
     GraniteAttention,
@@ -242,6 +251,14 @@ from QEfficient.transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     QEffGPTBigCodeBlock,
     QEffGPTBigCodeForCausalLM,
     QEffGPTBigCodeModel,
+)
+from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
+    QEffGptOssAttention,
+    QEffGptOssDecoderLayer,
+    QEffGptOssExperts,
+    QEffGptOssForCausalLM,
+    QEffGptOssMLP,
+    QEffGptOssModel,
 )
 from QEfficient.transformers.models.gptj.modeling_gptj import (
     QEffGPTJAttention,
@@ -502,6 +519,13 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma3TextModel: QEffGemma3TextModel,
         Gemma3ForCausalLM: QEffGemma3ForCausalLMModel,
         Gemma3ForConditionalGeneration: QEffGemma3ForConditionalGeneration,
+        # GPT_OSS
+        GptOssAttention: QEffGptOssAttention,
+        GptOssDecoderLayer: QEffGptOssDecoderLayer,
+        GptOssModel: QEffGptOssModel,
+        GptOssForCausalLM: QEffGptOssForCausalLM,
+        GptOssMLP: QEffGptOssMLP,
+        GptOssExperts: QEffGptOssExperts,
         # Granite
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
