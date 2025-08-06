@@ -76,7 +76,7 @@ def get_custom_n_layers(model_name):
     if model_name in {"microsoft/Phi-3-mini-4k-instruct", "neuralmagic/Qwen2-0.5B-Instruct-FP8"}:
         return 2
     elif model_name in ModelConfig.SWIFTKV_MODELS:
-        return 32
+        return None
     return 1
 
 
@@ -96,16 +96,27 @@ def load_causal_lm_model(model_name, n_layer=1, config=None):
         repo_id=model_name,
         ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
-    if config is None:
-        model_hf = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            use_cache=True,
-            num_hidden_layers=n_layer,
-            attn_implementation="eager",
-            low_cpu_mem_usage=False,
-            trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
-        )
-    else:
+    if config is None:  # If custom config is not provided, load the model config from Hugging Face
+        if n_layer is not None:
+            # If n_layer is specified, load the model with that many layers
+            model_hf = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                use_cache=True,
+                num_hidden_layers=n_layer,
+                attn_implementation="eager",
+                low_cpu_mem_usage=False,
+                trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
+            )
+        else:
+            # If n_layer is not specified, load the model without specifying the number of layers
+            model_hf = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                use_cache=True,
+                attn_implementation="eager",
+                low_cpu_mem_usage=False,
+                trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
+            )
+    else:  # If custom config is provided, load the model using the config
         model_hf = AutoModelForCausalLM.from_config(
             config,
             attn_implementation="eager",
