@@ -154,7 +154,6 @@ def test_greedy_sampling(
     model_w_sampler_exec_info = model_w_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=None,
         generation_len=generation_len,
         include_sampler=True,
         return_pdfs=False,
@@ -172,7 +171,6 @@ def test_greedy_sampling(
     model_wo_sampler_exec_info = model_wo_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=None,
         generation_len=generation_len,
         include_sampler=False,
         return_pdfs=False,
@@ -239,7 +237,6 @@ def test_random_sampling(
     model_w_sampler_exec_info = model_w_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=None,
         generation_len=generation_len,
         include_sampler=True,
         return_pdfs=False,
@@ -257,7 +254,6 @@ def test_random_sampling(
     model_wo_sampler_exec_info = model_wo_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=None,
         generation_len=generation_len,
         include_sampler=False,
         return_pdfs=False,
