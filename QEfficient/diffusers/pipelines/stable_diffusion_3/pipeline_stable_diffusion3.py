@@ -4,11 +4,11 @@ from venv import logger
 
 import numpy as np
 import torch
+
 from diffusers import StableDiffusion3Pipeline
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
 from diffusers.pipelines.stable_diffusion_3.pipeline_output import StableDiffusion3PipelineOutput
-
 from QEfficient.diffusers.pipelines.pipeline_utils import QEffSD3Transformer2DModel, QEffTextEncoder, QEffVAE
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
@@ -128,21 +128,19 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
         print("######################  TEXT ENCODER 2 EXPORTED ######################")
 
-        # # T5 TEXT ENCODER
-        # example_inputs = {
-        #     "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64)
-        # }
+        # T5 TEXT ENCODER
+        example_inputs = {"input_ids": torch.zeros((bs, seq_len), dtype=torch.int64)}
 
-        # dynamic_axes={"input_ids": {0: "batch_size", 1: "seq_len"}}
+        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}}
 
-        # output_names=["last_hidden_state"]
+        output_names = ["last_hidden_state"]
 
-        # self.text_encoder_3_onnx_path = self.text_encoder_3.export(
-        #     inputs=example_inputs,
-        #     output_names=output_names,
-        #     dynamic_axes=dynamic_axes,
-        #     export_dir=export_dir,
-        # )
+        self.text_encoder_3_onnx_path = self.text_encoder_3.export(
+            inputs=example_inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+        )
 
         print("######################  TEXT ENCODER 3 EXPORTED ######################")
 
@@ -177,24 +175,24 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
         print("######################  TRANSFORMER EXPORTED ######################")
 
-        # # VAE decode
-        # vae_decoder_input={
-        #     "latent_sample": torch.randn(bs, 4, 64, 64),
-        #     "return_dict": False,
-        # }
+        # VAE decode
+        vae_decoder_input = {
+            "latent_sample": torch.randn(bs, 16, 64, 64),
+            "return_dict": False,
+        }
 
-        # output_names=["sample"]
+        output_names = ["sample"]
 
-        # dynamic_axes={
-        #     "latent_sample": {0: "batch_size", 1: "channels", 2: "height", 3: "width"},
-        # }
+        dynamic_axes = {
+            "latent_sample": {0: "batch_size", 1: "channels", 2: "height", 3: "width"},
+        }
 
-        # self.vae_decoder_onnx_path = self.vae_decode.export(
-        #     vae_decoder_input,
-        #     output_names,
-        #     dynamic_axes,
-        #     export_dir=None,
-        # )
+        self.vae_decoder_onnx_path = self.vae_decode.export(
+            vae_decoder_input,
+            output_names,
+            dynamic_axes,
+            export_dir=None,
+        )
 
     def compile(
         self,
@@ -298,6 +296,24 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             **compiler_options,
         )
         print("######################  Transformer Compiled #####################")
+
+        # compile vae
+        decoder_sepcializations = [
+            {
+                "batch_size": batch_size,
+                "channels": 16,
+                "height": self.transformer.model.config.sample_size,
+                "width": self.transformer.model.config.sample_size,
+            }
+        ]
+
+        self.vae_decoder_compile_path = self.vae_decode._compile(
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            specializations=decoder_sepcializations,
+            convert_to_fp16=True,
+        )
 
     def _get_clip_prompt_embeds(
         self,
@@ -740,7 +756,20 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
                 latents / self.vae_decode.model.config.scaling_factor
             ) + self.vae_decode.model.config.shift_factor
 
-            image = self.vae_decode.model(latents, return_dict=False)[0]
+            # image = self.vae_decode.model(latents, return_dict=False)[0]
+
+            vae_session = QAICInferenceSession(str(self.vae_decoder_compile_path))
+
+            output_buffer = {
+                "sample": np.random.rand(
+                    batch_size, 3, self.vae_decode.model.config.sample_size, self.vae_decode.model.config.sample_size
+                ).astype(np.int32)
+            }
+
+            vae_session.set_buffers(output_buffer)
+            inputs = {"latent_sample": latents.numpy()}
+            image = vae_session.run(inputs)
+
             image = self.image_processor.postprocess(image.detach(), output_type=output_type)
 
         # Offload all models
