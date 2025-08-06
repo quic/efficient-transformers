@@ -435,7 +435,6 @@ class QEffTextGenerationBase:
         self._ctx_len = ctx_len
         self._write_io_dir = write_io_dir
         self.is_tlm = is_tlm
-        self.include_sampler = include_sampler
         self.return_pdfs = return_pdfs
         self.sampling_params = sampling_params
 
