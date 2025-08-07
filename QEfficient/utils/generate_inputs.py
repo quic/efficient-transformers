@@ -92,7 +92,7 @@ class InputHandler:
             inputs["batch_index"] = torch.arange(self.full_batch_size).view(-1, 1)
 
         past_key_values = []
-        sliding_padding_shape = self.padding_shape[:2] + [self.config.sliding_window] + self.padding_shape[-1]
+        sliding_padding_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
         for i in range(self.n_layer):
             if (
                 all(hasattr(self.config, attr) for attr in ["sliding_window", "layer_types"])
