@@ -31,6 +31,7 @@ DEFAULT_AIC_MXPF6_MATMUL = False
 
 # Hashing defaults
 HASH_HEXDIGEST_STR_LEN = 16
+# Why not use an Inclusion list instead?
 KWARGS_EXCLUSION_LIST = [
     "from_tf",
     "from_flax",

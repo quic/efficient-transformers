@@ -1351,13 +1351,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "Please use `from_pretrained` method to load quantized models, might give unexpected results"
             )
 
-        super().__init__(model, **kwargs)
         # Set use_cache=True to get KV values as output during ONNX export
-        self.model.config.use_cache = True
+        model.config.use_cache = True
+
+        super().__init__(model, **kwargs)
+
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
-        self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
         self.is_tlm = transformed
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -1898,8 +1899,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if not (model_class_name.endswith("ForConditionalGeneration")):
             raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
 
+        model.config.use_cache = True
         super().__init__(model, **kwargs)
-        self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
