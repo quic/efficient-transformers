@@ -28,7 +28,7 @@ from transformers.models.gpt_oss.modeling_gpt_oss import (
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 
-from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
@@ -294,6 +294,7 @@ class QEffGptOssAttention(GptOssAttention):
         past_key_value: Optional[Cache] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        sliding_mask=None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         input_shape = hidden_states.shape[:-1]
@@ -303,10 +304,10 @@ class QEffGptOssAttention(GptOssAttention):
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = key_states.shape[-2]
+        # kv_seq_len = key_states.shape[-2]
 
-        kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        # kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -317,8 +318,15 @@ class QEffGptOssAttention(GptOssAttention):
                 "batch_index": batch_index,
                 "position_ids": position_ids,
                 "config": self.config,
+                "is_sliding": self.sliding_window is not None,
+                "sliding_window": self.sliding_window,
             }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+        if self.sliding_window is not None:
+            attention_mask = sliding_mask
+        else:
+            attention_mask = attention_mask
 
         attention_interface: Callable = eager_attention_forward
         attn_output, attn_weights = attention_interface(
@@ -351,6 +359,7 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        sliding_mask=None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor]:
         residual = hidden_states
@@ -365,6 +374,7 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            sliding_mask=sliding_mask,
             **kwargs,
         )
         hidden_states = residual + hidden_states
@@ -413,11 +423,9 @@ class QEffGptOssModel(GptOssModel):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
         return_legacy_cache = False
-        # import ipdb; ipdb.set_trace()
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
-            # past_key_values = QEffHybridCache.from_legacy_cache(self.config, past_key_values)
+            past_key_values = QEffHybridCacheForGPTOSS.from_legacy_cache(self.config, past_key_values)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -430,13 +438,13 @@ class QEffGptOssModel(GptOssModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
-
-        # TODO: Enable SWA
-        # causal_mask = _create_causal_mask(
-        #     position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
-        # )
+        # target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.max_cache_len)
+        sliding_mask = _create_causal_mask(
+            position_ids=position_ids,
+            target_length=self.config.sliding_window,
+            sliding_window=self.config.sliding_window,
+        )
 
         hidden_states = inputs_embeds
         # position_embeddings = self.rotary_emb(hidden_states, position_ids)
@@ -458,6 +466,7 @@ class QEffGptOssModel(GptOssModel):
                 use_cache=use_cache,
                 output_attentions=output_attentions,
                 cache_position=cache_position,
+                sliding_mask=sliding_mask,
                 **kwargs,
             )
             hidden_states = layer_outputs[0]
@@ -564,3 +573,14 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
             attentions=outputs.attentions,
             router_logits=outputs.router_logits,
         )
+
+    def get_pkv_dynamic_axes(
+        self,
+    ):
+        pkv_dynamic_axes = []
+        for layer_type in self.config.layer_types:
+            if layer_type == "sliding_attention":
+                pkv_dynamic_axes.append({0: "batch_size", 2: "sliding_window"})
+            elif layer_type == "full_attention":
+                pkv_dynamic_axes.append({0: "batch_size", 2: "ctx_len"})
+        return pkv_dynamic_axes
