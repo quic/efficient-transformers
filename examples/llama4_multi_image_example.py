@@ -7,7 +7,7 @@
 
 import torch
 import transformers
-from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, TextStreamer
+from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
@@ -17,13 +17,11 @@ config = AutoConfig.from_pretrained(model_id)
 config.text_config.num_hidden_layers = 4
 config.vision_config.num_hidden_layers = 2
 
-model = AutoModelForImageTextToText.from_pretrained(model_id, attn_implementation="eager", config=config)
-model.eval()
-tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+    model_id, attn_implementation="eager", kv_offload=True, config=config
+)
+tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
-
-### For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
-qeff_model = QEFFAutoModelForImageTextToText(model, kv_offload=True)
 
 ### For multi-image, the value of max_num_tiles should be the sum of the num_tiles values across all the images ###
 qeff_model.compile(
