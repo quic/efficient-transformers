@@ -147,6 +147,17 @@ class QEFFBaseModel(ABC):
             self.onnx_path = onnx_path
             return onnx_path
 
+        # Storing state_dict to load model's weights if export called again
+        # if not any(name for name, param in self.model.named_parameters() if param.is_meta):
+        #     self.state_dict = self.model.state_dict()
+
+        # Loading model if weights are in meta state from state_dict
+        if any(name for name, param in self.model.named_parameters() if param.is_meta):
+            logger.warning("Export called again, this feature is not supported yet.")
+            # TODO: Handle weights loading for VLMs
+            # self.model = self.model.to_empty(device=torch.device("cpu"))
+            # self.model.load_state_dict(self.state_dict)
+
         tmp_onnx_dir = export_dir / "onnx_tmp"
         tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
@@ -217,11 +228,6 @@ class QEFFBaseModel(ABC):
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
         self.onnx_path = onnx_path
-
-        # Clear the model to free up memory
-        self.model = None
-        gc.collect()
-
         return onnx_path
 
     @dump_qconfig
@@ -260,12 +266,6 @@ class QEFFBaseModel(ABC):
         """
         if onnx_path is None and self.onnx_path is None:
             self.export()
-
-        # Method 1
-        # with init_empty_weights():
-        #     self.model = self.public_class.from_pretrained(
-        #         pretrained_model_name_or_path=self.config._name_or_path,
-        #     ).model
 
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
