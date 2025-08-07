@@ -56,6 +56,6 @@ exec_info = qeff_model.generate(
     device_ids=[0],
 )
 
-import ipdb; ipdb.set_trace()
 print(pytorch_hf_tokens)
 print(exec_info)
+assert (exec_info.generated_ids[0][0,:159] == pytorch_hf_tokens).all()
