@@ -1591,10 +1591,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         else:
+            # HACK: create common function for this including above if condition code
+            pkv_dynamic_axes = (
+                self.model.get_pkv_dynamic_axes() if hasattr(self.model, "get_pkv_dynamic_axes") else pkv_dynamic_axes
+            )
+            pkv_dynamic_axes = (
+                [pkv_dynamic_axes] * self.model.config.num_hidden_layers
+                if isinstance(pkv_dynamic_axes, dict)
+                else pkv_dynamic_axes
+            )
+
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
@@ -1840,6 +1850,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
                     custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+
+        # HACK for now
+        if self.model.config.model_type == "gpt_oss":
+            for spec in specializations:
+                spec.update({"sliding_window": 128})
 
         qpc_path = self._compile(
             onnx_path=onnx_path,
