@@ -67,10 +67,6 @@ class QEffGptOssMLP(GptOssMLP):
         for e in range(self.experts.num_experts):
             routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
 
-            # Skip if no tokens routed to this expert
-            # if (routing_weight > 0).sum() == 0:
-            #     continue
-
             W_g, W_u = self.experts.gate_proj[e], self.experts.up_proj[e]  # [H, I], [H, I]
             b_g, b_u = self.experts.gate_proj_bias[e], self.experts.up_proj_bias[e]  # [I], [I]
             W_d = self.experts.down_proj[e]  # [I, H]
@@ -98,9 +94,75 @@ class QEffGptOssMLP(GptOssMLP):
         # original shape [B, S, H]
         return expert_out.view(B, S, H), router_logits
 
+        # V2
+        # B, S, H = hidden.shape
+        # T = B * S  # Total number of tokens
+
+        # hidden = hidden.view(T, H)
+
+        # router_logits = F.linear(hidden, self.router.weight, self.router.bias)  # [T, num_experts]
+        # top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)  # both [T, K]
+        # top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
+        # routing_weights = torch.zeros_like(router_logits)  # [T, num_experts]
+        # routing_weights.scatter_(1, top_i, top_w)  # Scatter top-k weights to their positions
+
+        # ffn_dim = self.experts.intermediate_size  # Intermediate dimension
+        # upgate = hidden.new_zeros((T, ffn_dim))   # Buffer for up-gate activations
+        # expert_out = hidden.new_zeros((T, H))     # Buffer for final expert outputs
+
+        # for e in range(self.experts.num_experts):
+        #     # Get routing weight for this expert
+        #     routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
+
+        #     # Get weight matrices and biases for this expert
+        #     W_g = self.experts.gate_proj[e]      # [H, ffn_dim]
+        #     W_u = self.experts.up_proj[e]        # [H, ffn_dim]
+        #     b_g = self.experts.gate_proj_bias[e] # [ffn_dim]
+        #     b_u = self.experts.up_proj_bias[e]   # [ffn_dim]
+
+        #     # ===== Gate projection with bias and clamping =====
+        #     gate = (hidden @ W_g) + b_g  # [T, ffn_dim]
+        #     gate = gate.clamp(min=None, max=self.experts.limit)
+
+        #     # ===== Up projection with bias and clamping =====
+        #     up = (hidden @ W_u) + b_u    # [T, ffn_dim]
+        #     up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+        #     glu = gate * torch.sigmoid(gate * self.experts.alpha)
+        #     intermediate = (up + 1) * glu  # [T, ffn_dim]
+        #     masked_intermediate = torch.where(
+        #         routing_weight > 0,
+        #         intermediate,
+        #         torch.zeros_like(upgate)
+        #     )
+
+        #     # ===== Accumulate to upgate buffer using += =====
+        #     # The += operator is important for compiler optimization
+        #     upgate += masked_intermediate
+
+        # for e in range(self.experts.num_experts):
+        #     # Get routing weight for this expert
+        #     routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
+
+        #     # Get down projection matrix and bias
+        #     W_d = self.experts.down_proj[e]      # [ffn_dim, H]
+        #     b_d = self.experts.down_proj_bias[e] # [H]
+        #     down_out = (upgate @ W_d) + b_d  # [T, H]
+        #     down_out = down_out * routing_weight  # [T, H]
+        #     masked_down = torch.where(
+        #         routing_weight > 0,
+        #         down_out,
+        #         torch.zeros_like(expert_out)
+        #     )
+        #     expert_out += masked_down
+
+        # expert_out = expert_out.view(B, S, H)
+
+        # # Return output and router logits for loss computation
+        # return expert_out, router_logits
+
 
 #  Can be replaced with llama/modeling_llama.py::QEffLlamaRotaryEmbedding but keeping it following transformers ideology
-class QEffQwen2RotaryEmbedding(GptOssRotaryEmbedding):
+class QEffGptOssRotaryEmbedding(GptOssRotaryEmbedding):
     """
     Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
     The only differences are:
@@ -221,7 +283,7 @@ class QEffGptOssAttention(GptOssAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     def __qeff_init__(self):
-        self.rotary_emb = QEffQwen2RotaryEmbedding(config=self.config)
+        self.rotary_emb = QEffGptOssRotaryEmbedding(config=self.config)
 
     def forward(
         self,
@@ -370,23 +432,11 @@ class QEffGptOssModel(GptOssModel):
 
         target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
+
+        # TODO: Enable SWA
         # causal_mask = _create_causal_mask(
         #     position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
         # )
-
-        # # It may already have been prepared by e.g. `generate`
-        # if not isinstance(causal_mask_mapping := attention_mask, dict):
-        #     mask_kwargs = {
-        #         "config": self.config,
-        #         "input_embeds": inputs_embeds,
-        #         "attention_mask": attention_mask,
-        #         "cache_position": cache_position,
-        #         "past_key_values": past_key_values,
-        #     }
-        #     causal_mask_mapping = {
-        #         "full_attention": create_causal_mask(**mask_kwargs),
-        #         "sliding_attention": create_sliding_window_causal_mask(**mask_kwargs),
-        #     }
 
         hidden_states = inputs_embeds
         # position_embeddings = self.rotary_emb(hidden_states, position_ids)
@@ -504,25 +554,6 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
-
-        # # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
-        # slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-        # logits = self.lm_head(hidden_states[:, slice_indices, :])
-
-        # loss = None
-        # if labels is not None:
-        #     loss = self.loss_function(logits, labels, self.vocab_size, **kwargs)
-
-        # aux_loss = None
-        # if output_router_logits:
-        #     aux_loss = load_balancing_loss_func(
-        #         outputs.router_logits,
-        #         self.num_experts,
-        #         self.num_experts_per_tok,
-        #         attention_mask,
-        #     )
-        #     if labels is not None:
-        #         loss += self.router_aux_loss_coef * aux_loss.to(loss.device)  # make sure to reside in the same device
 
         return MoeCausalLMOutputWithPast(
             loss=None,
