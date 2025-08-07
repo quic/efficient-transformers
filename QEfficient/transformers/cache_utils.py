@@ -543,9 +543,10 @@ class QEffHybridChunkedCache(HybridChunkedCache):
 # We don't really need to inherit transformers classes as their cache classes are made to work with pytorch and
 # ours are made to work with AIC
 class QEffHybridCacheForGPTOSS:
-    def __init__(self, config, batch_size, max_cache_len):
+    def __init__(self, config, batch_size, max_cache_len, sliding_window_len):
         self.max_cache_len = max_cache_len
         self.batch_size = batch_size
+        self.sliding_window_len = sliding_window_len
         self.key_cache: List[torch.Tensor] = []
         self.value_cache: List[torch.Tensor] = []
 
@@ -555,7 +556,12 @@ class QEffHybridCacheForGPTOSS:
     ) -> "HybridCache":
         """Converts a cache in the legacy cache format into an equivalent `DynamicCache`. Used for
         backward compatibility."""
-        cache = cls(config, batch_size=past_key_values[0][0].shape[0], max_cache_len=past_key_values[1][0].shape[2])
+        cache = cls(
+            config,
+            batch_size=past_key_values[0][0].shape[0],
+            max_cache_len=past_key_values[1][0].shape[2],
+            sliding_window_len=past_key_values[0][0].shape[2],
+        )
         if past_key_values is not None:
             for layer_idx in range(len(past_key_values)):
                 key_states, value_states = past_key_values[layer_idx]
@@ -603,6 +609,7 @@ class QEffHybridCacheForGPTOSS:
             position_ids = cache_kwargs.get("position_ids")
             is_sliding_layer = cache_kwargs.get("is_sliding")
             sliding_window = cache_kwargs.get("sliding_window")
+
             if is_sliding_layer:
                 kv_position_ids = torch.where(position_ids == -1, position_ids, position_ids % sliding_window)
             else:
@@ -625,12 +632,15 @@ class QEffHybridCacheForGPTOSS:
                 invalid_idx_value = 0
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-            all_indices = torch.arange(sliding_window) + kv_position_ids.max() + 1
-            rolling_indices = torch.where(all_indices > (sliding_window - 1), all_indices % sliding_window, all_indices)
             if is_sliding_layer:
+                all_indices = torch.arange(sliding_window) + kv_position_ids.max() + 1
+                rolling_indices = torch.where(
+                    all_indices > (sliding_window - 1), all_indices % sliding_window, all_indices
+                )[None, None, ...]
                 final_indices = torch.where(position_ids.max() >= sliding_window, rolling_indices, ctx_indices)
             else:
                 final_indices = ctx_indices
+
             k_out = CtxGatherFunc.apply(k_out, final_indices)
             v_out = CtxGatherFunc.apply(v_out, final_indices)
             ctx_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
