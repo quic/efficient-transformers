@@ -41,7 +41,5 @@ class imdb_dataset:
 @dataclass
 class custom_dataset:
     dataset: str = "custom_dataset"
-    file: str = "dataset/custom_dataset.py"
     train_split: str = "train"
     test_split: str = "validation"
-    data_path: str = ""

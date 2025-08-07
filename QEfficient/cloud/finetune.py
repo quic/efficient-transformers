@@ -38,7 +38,10 @@ from QEfficient.utils._utils import hf_download
 try:
     import torch_qaic  # noqa: F401
 except ImportError as e:
-    logger.log_rank_zero(f"{e}. Moving ahead without these qaic modules.", logging.WARNING)
+    logger.log_rank_zero(
+        f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+        logging.WARNING,
+    )
 
 
 # Suppress all warnings
@@ -285,11 +288,10 @@ def main(**kwargs) -> None:
                 --model_name "meta-llama/Llama-3.2-1B" \\
                 --lr 5e-4
     """
-    # TODO:Remove TrainConfig() and update_config() as all params are passed in kwargs by parser
     train_config = TrainConfig()
     update_config(train_config, **kwargs)
-    dataset_config = generate_dataset_config(train_config.dataset)
-    update_config(dataset_config, **kwargs)
+    custom_dataset_config_file = kwargs.pop("custom_dataset_config", None)
+    dataset_config = generate_dataset_config(train_config.dataset, custom_dataset_config_file)
 
     logger.prepare_for_logs(train_config.output_dir, train_config.dump_logs, train_config.log_level)
 
