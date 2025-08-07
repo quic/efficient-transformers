@@ -183,6 +183,7 @@ qeff_supported_architectures = ModelArchitectures(
     ]
 )
 
+# This is for supporting different seq_len for different layers for Sliding window attn, chunked attn etc.
 DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "llama4", "gemma3_text", "llama4_text"}
 
 # Define a transformers layers to QEff layers dictionary
