@@ -729,7 +729,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     custom_io_lang[output_name] = "float16" if "vision_embeds" in output_name else kv_cache_dtype
 
             self.lang_model._compile(
-                compile_dir,
+                compile_dir=compile_dir,
                 compile_only=True,
                 retained_state=True,
                 specializations=specializations["lang"],
