@@ -1,27 +1,39 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, GptOssForCausalLM, TextStreamer
+from transformers import AutoConfig, GptOssForCausalLM, TextStreamer
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.run_utils import ApiRunner
 
-Constants.INPUT_STR=["Make sure tokens don't repeat\n\nTo make a simple cup of coffee, start by boiling water. Add one to two teaspoons of instant coffee powder to a mug. Pour the hot water over the coffee and stir well. Add sugar and milk to taste, if desired. For brewed coffee, use a French press or drip filter. Add coarsely ground coffee to the device, pour hot water over it, and let it steep for four minutes. Press or filter the coffee, then serve"]
+Constants.INPUT_STR = [
+    "Make sure tokens don't repeat\n\nTo make a simple cup of coffee, start by boiling water. Add one to two teaspoons of instant coffee powder to a mug. Pour the hot water over the coffee and stir well. Add sugar and milk to taste, if desired. For brewed coffee, use a French press or drip filter. Add coarsely ground coffee to the device, pour hot water over it, and let it steep for four minutes. Press or filter the coffee, then serve"
+]
 
 torch.manual_seed(42)
 model_id = "openai/gpt-oss-20b"
 config = AutoConfig.from_pretrained(model_id)
-config.num_hidden_layers=2
+config.num_hidden_layers = 2
 
 # Remove the quantization_config attribute if it exists, to avoid MXFP4 Issues
 if hasattr(config, "quantization_config"):
     delattr(config, "quantization_config")
 
 model = GptOssForCausalLM.from_pretrained(
-    "/home/vbaddi/transformers/src/transformers/models/gpt_oss/new_weights", torch_dtype=torch.float32, attn_implementation="eager", config=config
+    "/home/vbaddi/transformers/src/transformers/models/gpt_oss/new_weights",
+    torch_dtype=torch.float32,
+    attn_implementation="eager",
+    config=config,
 )
 model.eval()
-model.generation_config.sample=False
+model.generation_config.sample = False
 tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_id)
 config = model.config
 batch_size = len(Constants.INPUT_STR)
@@ -58,4 +70,4 @@ exec_info = qeff_model.generate(
 
 print(pytorch_hf_tokens)
 print(exec_info)
-assert (exec_info.generated_ids[0][0,:159] == pytorch_hf_tokens).all()
+assert (exec_info.generated_ids[0][0, :159] == pytorch_hf_tokens).all()
