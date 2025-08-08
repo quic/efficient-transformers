@@ -42,7 +42,7 @@ class QEffGptOssExperts(GptOssExperts):
 
 
 class QEffGptOssMLP(GptOssMLP):
-    def forward(self, hidden: torch.Tensor):
+    def alt_forward(self, hidden: torch.Tensor):
         B, S, H = hidden.shape
         T = B * S
         hidden = hidden.view(T, H)
@@ -94,71 +94,101 @@ class QEffGptOssMLP(GptOssMLP):
         # original shape [B, S, H]
         return expert_out.view(B, S, H), router_logits
 
-        # V2
-        # B, S, H = hidden.shape
-        # T = B * S  # Total number of tokens
+    def forward(self, hidden_states: torch.Tensor):
+        B, S, H = hidden_states.shape
+        T = B * S
+        hidden_states = hidden_states.view(T, H)
 
-        # hidden = hidden.view(T, H)
+        # Router computation
+        router_logits = F.linear(hidden_states, self.router.weight, self.router.bias)
 
-        # router_logits = F.linear(hidden, self.router.weight, self.router.bias)  # [T, num_experts]
-        # top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)  # both [T, K]
-        # top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
-        # routing_weights = torch.zeros_like(router_logits)  # [T, num_experts]
-        # routing_weights.scatter_(1, top_i, top_w)  # Scatter top-k weights to their positions
+        # Top-k selection
+        top_w, selected_experts = torch.topk(router_logits, self.router.top_k, dim=-1)  # both [T, K]
+        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
 
-        # ffn_dim = self.experts.intermediate_size  # Intermediate dimension
-        # upgate = hidden.new_zeros((T, ffn_dim))   # Buffer for up-gate activations
-        # expert_out = hidden.new_zeros((T, H))     # Buffer for final expert outputs
+        # Creating experts mask and routing weights masked
+        awesome_experts_mask_1 = (
+            torch.nn.functional.one_hot(selected_experts[:, 0], num_classes=self.experts.num_experts)
+            .bool()
+            .T.unsqueeze(-1)
+        )
+        awesome_experts_mask_2 = (
+            torch.nn.functional.one_hot(selected_experts[:, 1], num_classes=self.experts.num_experts)
+            .bool()
+            .T.unsqueeze(-1)
+        )
+        awesome_experts_mask_3 = (
+            torch.nn.functional.one_hot(selected_experts[:, 2], num_classes=self.experts.num_experts)
+            .bool()
+            .T.unsqueeze(-1)
+        )
+        awesome_experts_mask_4 = (
+            torch.nn.functional.one_hot(selected_experts[:, 3], num_classes=self.experts.num_experts)
+            .bool()
+            .T.unsqueeze(-1)
+        )
 
-        # for e in range(self.experts.num_experts):
-        #     # Get routing weight for this expert
-        #     routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
+        gateupout1 = torch.zeros(hidden_states.shape[0], self.experts.intermediate_size)  # T, hs
+        gateupout2 = torch.zeros(hidden_states.shape[0], self.experts.intermediate_size)  # T, hs
+        gateupout3 = torch.zeros(hidden_states.shape[0], self.experts.intermediate_size)  # T, hs
+        gateupout4 = torch.zeros(hidden_states.shape[0], self.experts.intermediate_size)  # T, hs
 
-        #     # Get weight matrices and biases for this expert
-        #     W_g = self.experts.gate_proj[e]      # [H, ffn_dim]
-        #     W_u = self.experts.up_proj[e]        # [H, ffn_dim]
-        #     b_g = self.experts.gate_proj_bias[e] # [ffn_dim]
-        #     b_u = self.experts.up_proj_bias[e]   # [ffn_dim]
+        # ───────────────────────── Expert computation loop ─────────────────────────────
+        for e in range(self.experts.num_experts):
+            W_g, W_u = self.experts.gate_proj[e], self.experts.up_proj[e]  # [H, I], [H, I]
+            b_g, b_u = self.experts.gate_proj_bias[e], self.experts.up_proj_bias[e]  # [I], [I]
 
-        #     # ===== Gate projection with bias and clamping =====
-        #     gate = (hidden @ W_g) + b_g  # [T, ffn_dim]
-        #     gate = gate.clamp(min=None, max=self.experts.limit)
+            # Gate and Up projections
+            gate = (hidden_states @ W_g) + b_g  # [T, I]
+            up = (hidden_states @ W_u) + b_u  # [T, I]
 
-        #     # ===== Up projection with bias and clamping =====
-        #     up = (hidden @ W_u) + b_u    # [T, ffn_dim]
-        #     up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
-        #     glu = gate * torch.sigmoid(gate * self.experts.alpha)
-        #     intermediate = (up + 1) * glu  # [T, ffn_dim]
-        #     masked_intermediate = torch.where(
-        #         routing_weight > 0,
-        #         intermediate,
-        #         torch.zeros_like(upgate)
-        #     )
+            # Apply GptOss activation with clamping
+            gate = gate.clamp(min=None, max=self.experts.limit)
+            up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
 
-        #     # ===== Accumulate to upgate buffer using += =====
-        #     # The += operator is important for compiler optimization
-        #     upgate += masked_intermediate
+            # GLU activation
+            glu = gate * torch.sigmoid(gate * self.experts.alpha)
+            intermediate = (up + 1) * glu  # [T, I]
 
-        # for e in range(self.experts.num_experts):
-        #     # Get routing weight for this expert
-        #     routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
+            gateupout1 += torch.where(awesome_experts_mask_1[e], intermediate, torch.zeros_like(gateupout1))
+            gateupout2 += torch.where(awesome_experts_mask_2[e], intermediate, torch.zeros_like(gateupout2))
+            gateupout3 += torch.where(awesome_experts_mask_3[e], intermediate, torch.zeros_like(gateupout3))
+            gateupout4 += torch.where(awesome_experts_mask_4[e], intermediate, torch.zeros_like(gateupout4))
 
-        #     # Get down projection matrix and bias
-        #     W_d = self.experts.down_proj[e]      # [ffn_dim, H]
-        #     b_d = self.experts.down_proj_bias[e] # [H]
-        #     down_out = (upgate @ W_d) + b_d  # [T, H]
-        #     down_out = down_out * routing_weight  # [T, H]
-        #     masked_down = torch.where(
-        #         routing_weight > 0,
-        #         down_out,
-        #         torch.zeros_like(expert_out)
-        #     )
-        #     expert_out += masked_down
+        concat_down = torch.zeros((self.router.top_k, T, H))
+        concat_mask = torch.cat(
+            (
+                awesome_experts_mask_1.unsqueeze(0),
+                awesome_experts_mask_2.unsqueeze(0),
+                awesome_experts_mask_3.unsqueeze(0),
+                awesome_experts_mask_4.unsqueeze(0),
+            ),
+            dim=0,
+        )
 
-        # expert_out = expert_out.view(B, S, H)
+        concat_gateout = torch.cat(
+            (gateupout1.unsqueeze(0), gateupout2.unsqueeze(0), gateupout3.unsqueeze(0), gateupout4.unsqueeze(0)), dim=0
+        )
 
-        # # Return output and router logits for loss computation
-        # return expert_out, router_logits
+        for e in range(self.experts.num_experts):
+            W_d = self.experts.down_proj[e]  # [I, H]
+            b_d = self.experts.down_proj_bias[e]  # [H]
+
+            # Down projection
+            down_out = (concat_gateout @ W_d) + b_d  # [T, H]
+
+            concat_down += torch.where(concat_mask[:, e, :], down_out, torch.zeros_like(concat_down))
+
+        downout1, downout2, downout3, downout4 = concat_down[0], concat_down[1], concat_down[2], concat_down[3]
+        hidden_states = (
+            downout1 * top_w[:, 0].unsqueeze(-1)
+            + downout2 * top_w[:, 1].unsqueeze(-1)
+            + downout3 * top_w[:, 2].unsqueeze(-1)
+            + downout4 * top_w[:, 3].unsqueeze(-1)
+        ).reshape(B, S, H)
+
+        # original shape [B, S, H]
+        return hidden_states, router_logits
 
 
 #  Can be replaced with llama/modeling_llama.py::QEffLlamaRotaryEmbedding but keeping it following transformers ideology
@@ -383,6 +413,7 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states, _ = self.mlp(hidden_states)  # diff with llama: router scores
+        # alth, _ = self.mlp.alt_forward(hidden_states)
         hidden_states = residual + hidden_states
         outputs = (hidden_states,)
 
