@@ -325,8 +325,8 @@ class QEFFAutoModel(QEFFTransformersBase):
         ]
 
         return self._compile(
-            onnx_path,
-            compile_dir,
+            onnx_path=onnx_path,
+            compile_dir=compile_dir,
             compile_only=True,
             specializations=specializations,
             convert_to_fp16=True,
@@ -702,7 +702,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         if not skip_vision:
             self.vision_model._compile(
-                compile_dir,
+                compile_dir=compile_dir,
                 compile_only=True,
                 specializations=specializations["vision"],
                 convert_to_fp16=True,
@@ -1041,8 +1041,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 custom_io[output_name] = "float16" if "pixel_values" in output_name else kv_cache_dtype
 
         self._compile(
-            onnx_path,
-            compile_dir,
+            onnx_path=onnx_path,
+            compile_dir=compile_dir,
             compile_only=True,
             retained_state=True,
             specializations=specializations,
@@ -2080,8 +2080,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
                 custom_io[output_name] = kv_cache_dtype
 
         return self._compile(
-            onnx_path,
-            compile_dir,
+            onnx_path=onnx_path,
+            compile_dir=compile_dir,
             compile_only=True,
             retained_state=True,
             specializations=specializations,
