@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# ----------------------------------------------------------------------------
+
 import torch
 from diffusers.models.attention import JointTransformerBlock, _chunked_feed_forward
 
