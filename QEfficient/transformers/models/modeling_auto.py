@@ -1888,6 +1888,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 prompt=prompts,
                 device_id=device_id,
                 generation_len=generation_len,
+                automation=kwargs.pop("automation", False),
+                iteration=kwargs.pop("iteration", 1),
                 is_tlm=self.is_tlm,
             )
         else:
