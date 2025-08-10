@@ -129,19 +129,59 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
         print("######################  TEXT ENCODER 2 EXPORTED ######################")
 
-        # # T5 TEXT ENCODER
-        # example_inputs = {"input_ids": torch.zeros((bs, seq_len), dtype=torch.int64)}
+        # T5 TEXT ENCODER
+        example_inputs = {"input_ids": torch.zeros((bs, seq_len), dtype=torch.int64)}
 
-        # dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}}
+        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}}
 
-        # output_names = ["last_hidden_state"]
+        output_names = ["last_hidden_state"]
 
-        # self.text_encoder_3_onnx_path = self.text_encoder_3.export(
-        #     inputs=example_inputs,
-        #     output_names=output_names,
-        #     dynamic_axes=dynamic_axes,
-        #     export_dir=export_dir,
-        # )
+        ## Changes for the testing ####
+        wo_sfs = [
+            61,
+            203,
+            398,
+            615,
+            845,
+            1190,
+            1402,
+            2242,
+            1875,
+            2393,
+            3845,
+            3213,
+            3922,
+            4429,
+            5020,
+            5623,
+            6439,
+            6206,
+            5165,
+            4593,
+            2802,
+            2618,
+            1891,
+            1419,
+        ]
+
+        assert len(wo_sfs) == 24
+        with torch.no_grad():
+            prev_sf = 1
+            for i in range(len(self.text_encoder_3.model.encoder.block)):
+                wosf = wo_sfs[i]
+                self.text_encoder_3.model.encoder.block[i].layer[0].SelfAttention.o.weight *= 1 / wosf
+                self.text_encoder_3.model.encoder.block[i].layer[0].scaling_factor *= prev_sf / wosf
+                self.text_encoder_3.model.encoder.block[i].layer[1].DenseReluDense.wo.weight *= 1 / wosf
+                prev_sf = wosf
+
+        ### End  ####
+
+        self.text_encoder_3_onnx_path = self.text_encoder_3.export(
+            inputs=example_inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+        )
 
         print("######################  TEXT ENCODER 3 EXPORTED ######################")
 
@@ -267,23 +307,23 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         print("######################  Text Encoder 2 Compiled #####################")
 
         # # Compile text_encoder 3
-        # seq_len= 256
+        seq_len = 256
 
-        # specializations = [
-        #     {"batch_size": batch_size, "seq_len": seq_len},
-        # ]
+        specializations = [
+            {"batch_size": batch_size, "seq_len": seq_len},
+        ]
 
-        # self.text_encoder_3_compile_path=self.text_encoder_3._compile(
-        #     onnx_path,
-        #     compile_dir,
-        #     compile_only=True,
-        #     specializations=specializations,
-        #     convert_to_fp16=True,
-        #     mxfp6_matmul=mxfp6_matmul,
-        #     mdp_ts_num_devices=num_devices_text_encoder,
-        #     aic_num_cores=num_cores,
-        #     **compiler_options,
-        # )
+        self.text_encoder_3_compile_path = self.text_encoder_3._compile(
+            onnx_path,
+            compile_dir,
+            compile_only=True,
+            specializations=specializations,
+            convert_to_fp16=True,
+            mxfp6_matmul=mxfp6_matmul,
+            mdp_ts_num_devices=num_devices_text_encoder,
+            aic_num_cores=num_cores,
+            **compiler_options,
+        )
         print("######################  Text Encoder 3 Compiled #####################")
 
         # Compile transformer
@@ -331,6 +371,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             convert_to_fp16=True,
             mdp_ts_num_devices=num_devices_vae_decoder,
         )
+        print("######################  vae_decoder Compiled #####################")
 
     def _get_clip_prompt_embeds(
         self,
@@ -480,12 +521,27 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
                 "The following part of your input was truncated because `max_sequence_length` is set to "
                 f" {max_sequence_length} tokens: {removed_text}"
             )
-        # if self.text_encoder_3.qpc_session is None:
-        #         self.text_encoder_3.qpc_session = QAICInferenceSession(str(self.text_encoder_3_compile_path))
+        if self.text_encoder_3.qpc_session is None:
+            self.text_encoder_3.qpc_session = QAICInferenceSession(str(self.text_encoder_3_compile_path))
 
         prompt_embeds = self.text_encoder_3.model(text_input_ids.to(device))[0]
-        # aic_text_input={"input_ids": text_input_ids.numpy().astype(np.int64)}
-        # aic_embeddings= self.text_encoder_3.qpc_session.run(aic_text_input)
+        aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
+        aic_embeddings = torch.tensor(self.text_encoder_3.qpc_session.run(aic_text_input)["last_hidden_state"])
+        mad = torch.abs(prompt_embeds - aic_embeddings).mean()
+        print("Clip text-encoder-3 Pytorch vs AI 100:", mad)
+        prompt_embeds = aic_embeddings
+
+        # import onnxruntime as ort
+        # ort_session=ort.InferenceSession(self.text_encoder_3_onnx_path)
+        # input_names = [input.name for input in ort_session.get_inputs()]
+        # output_names = [output.name for output in ort_session.get_outputs()]
+        # inputs={input_names[0]: text_input_ids.numpy()}
+        # output=ort_session.run(output_names, inputs)
+        # prompt_embeds_ort = torch.from_numpy(output[0])
+
+        # # mad between promp_embed and prompt_embed_ort
+        # mad=torch.abs(prompt_embeds-prompt_embeds_ort).mean()
+        # print("mad between ort and pytorch", mad)
 
         _, seq_len, _ = prompt_embeds.shape
 
@@ -623,16 +679,32 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 256,
-        sigmas: Optional[List[float]] = None,
-        skip_guidance_layers: List[int] = None,
-        skip_layer_guidance_scale: float = 2.8,
-        skip_layer_guidance_stop: float = 0.2,
-        skip_layer_guidance_start: float = 0.01,
-        mu: Optional[float] = None,
-        vae_type="vae",
     ):
         height = height or self.default_sample_size * self.vae_scale_factor
         width = width or self.default_sample_size * self.vae_scale_factor
+        device = "cpu"
+
+        self.check_inputs(
+            prompt,
+            prompt_2,
+            prompt_3,
+            height,
+            width,
+            negative_prompt=negative_prompt,
+            negative_prompt_2=negative_prompt_2,
+            negative_prompt_3=negative_prompt_3,
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
+            max_sequence_length=max_sequence_length,
+        )
+
+        self._guidance_scale = guidance_scale
+        self._clip_skip = clip_skip
+        self._joint_attention_kwargs = joint_attention_kwargs
+        self._interrupt = False
 
         (
             prompt_embeds,
@@ -654,11 +726,6 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             max_sequence_length=max_sequence_length,
         )
 
-        self._guidance_scale = guidance_scale
-        self._clip_skip = clip_skip
-        self._joint_attention_kwargs = joint_attention_kwargs
-        self._interrupt = False
-
         # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):
             batch_size = 1
@@ -667,10 +734,16 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         else:
             batch_size = prompt_embeds.shape[0]
 
-        prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-        pooled_prompt_embeds = torch.cat([negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0)
+        if self.do_classifier_free_guidance:
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+            pooled_prompt_embeds = torch.cat([negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0)
 
-        # 4. Prepare latent variables
+        # 4. Prepare timesteps
+        timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps)
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
+        self._num_timesteps = len(timesteps)
+
+        # 5. Prepare latent variables
         num_channels_latents = self.transformer.model.config.in_channels
         latents = self.prepare_latents(
             batch_size * num_images_per_prompt,
@@ -678,22 +751,10 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             height,
             width,
             prompt_embeds.dtype,
-            "cpu",
+            device,
             generator,
             latents,
         )
-
-        # 5. Prepare timesteps
-        scheduler_kwargs = {}
-        timesteps, num_inference_steps = retrieve_timesteps(
-            self.scheduler,
-            num_inference_steps,
-            "cpu",
-            sigmas=sigmas,
-            **scheduler_kwargs,
-        )
-        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
-        self._num_timesteps = len(timesteps)
 
         ###### AIC related changes of transformers ######
         if self.transformer.qpc_session is None:
