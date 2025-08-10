@@ -8,6 +8,7 @@
 from typing import Optional
 
 import torch
+
 from diffusers.models.attention_processor import Attention, JointAttnProcessor2_0
 
 

@@ -12,24 +12,18 @@ import torch.nn as nn
 
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
-from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform
+from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform, CustomOpsTransform
 from QEfficient.transformers.models.pytorch_transforms import (
-    CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
+    T5ModelTransform,
 )
 from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils.cache import to_hashable
 
 
 class QEffTextEncoder(QEFFBaseModel):
-    _pytorch_transforms = [
-        AwqToMatmulNbitsTransform,
-        GPTQToMatmulNbitsTransform,
-        CustomOpsTransform,
-        KVCacheTransform,
-        KVCacheExternalModuleMapperTransform,
-    ]
+    _pytorch_transforms = [CustomOpsTransform, T5ModelTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.modules):
@@ -129,8 +123,8 @@ class QEffUNet(QEFFBaseModel):
     def model_hash(self) -> str:
         # Compute the hash with: model_config, continuous_batching, transforms
         mhash = hashlib.sha256()
-        # mhash.update(to_hashable(dict(self.model.config)))
-        # mhash.update(to_hashable(self._transform_names()))
+        mhash.update(to_hashable(dict(self.model.config)))
+        mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
 
@@ -151,8 +145,6 @@ class QEffVAE(QEFFBaseModel):
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
         CustomOpsTransform,
-        KVCacheTransform,
-        KVCacheExternalModuleMapperTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
@@ -192,7 +184,7 @@ class QEffVAE(QEFFBaseModel):
     def model_hash(self) -> str:
         # Compute the hash with: model_config, continuous_batching, transforms
         mhash = hashlib.sha256()
-        # mhash.update(to_hashable(dict(self.model.config)))
+        mhash.update(to_hashable(dict(self.model.config)))
         mhash.update(to_hashable(self._transform_names()))
         mhash.update(to_hashable(self.type))
         mhash = mhash.hexdigest()[:16]
@@ -215,8 +207,6 @@ class QEffSafetyChecker(QEFFBaseModel):
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
         CustomOpsTransform,
-        KVCacheTransform,
-        KVCacheExternalModuleMapperTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
@@ -311,8 +301,8 @@ class QEffSD3Transformer2DModel(QEFFBaseModel):
     def model_hash(self) -> str:
         # Compute the hash with: model_config, continuous_batching, transforms
         mhash = hashlib.sha256()
-        # mhash.update(to_hashable(dict(self.model.config)))
-        # mhash.update(to_hashable(self._transform_names()))
+        mhash.update(to_hashable(dict(self.model.config)))
+        mhash.update(to_hashable(self._transform_names()))
         mhash = mhash.hexdigest()[:16]
         return mhash
 

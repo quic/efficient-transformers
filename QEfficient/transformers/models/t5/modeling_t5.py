@@ -7,10 +7,13 @@
 
 import torch
 import torch.nn as nn
-from transformers import EncoderDecoderCache
+
 from transformers.models.t5.modeling_t5 import (
     T5Attention,
+    T5LayerCrossAttention,
+    T5LayerFF,
     T5LayerNorm,
+    T5LayerSelfAttention,
 )
 
 
@@ -30,6 +33,14 @@ class QEffT5LayerNorm(T5LayerNorm):
             hidden_states = hidden_states.to(self.weight.dtype)
 
         return self.weight * hidden_states
+
+
+class QEffT5LayerFF(T5LayerFF):
+    def forward(self, hidden_states):
+        forwarded_states = self.layer_norm(hidden_states)
+        forwarded_states = self.DenseReluDense(forwarded_states)
+        hidden_states = hidden_states * 1.0 + self.dropout(forwarded_states)
+        return hidden_states
 
 
 class QEffT5Attention(T5Attention):
@@ -59,22 +70,19 @@ class QEffT5Attention(T5Attention):
         query_states = self.q(hidden_states)
         query_states = query_states.view(batch_size, -1, self.n_heads, self.key_value_proj_dim).transpose(1, 2)
 
-        # Check is encoder-decoder model is being used. Otherwise we'll get `DynamicCache`
-        if past_key_value is not None and isinstance(past_key_value, EncoderDecoderCache):
+        if past_key_value is not None:
             is_updated = past_key_value.is_updated.get(self.layer_idx)
             if is_cross_attention:
                 # after the first generated id, we can subsequently re-use all key/value_states from cache
                 curr_past_key_value = past_key_value.cross_attention_cache
             else:
                 curr_past_key_value = past_key_value.self_attention_cache
-        else:
-            curr_past_key_value = past_key_value
 
         current_states = key_value_states if is_cross_attention else hidden_states
         if is_cross_attention and past_key_value is not None and is_updated:
             # reuse k,v, cross_attentions
-            key_states = curr_past_key_value.layers[self.layer_idx].keys
-            value_states = curr_past_key_value.layers[self.layer_idx].values
+            key_states = curr_past_key_value.key_cache[self.layer_idx]
+            value_states = curr_past_key_value.value_cache[self.layer_idx]
         else:
             key_states = self.k(current_states)
             value_states = self.v(current_states)
@@ -108,7 +116,9 @@ class QEffT5Attention(T5Attention):
                 position_bias = self.compute_bias(
                     real_seq_length, key_length, device=scores.device, cache_position=cache_position
                 )
+                # Original line: position_bias = position_bias[:, :, -seq_length:, :]
                 if past_key_value is not None:  # This block is where the patch applies
+                    # position_bias = position_bias[:, :, -hidden_states.size(1) :, :] # Original line (commented in patch)
                     position_bias = position_bias[:, :, -1:, :]  # Added by patch
 
             if mask is not None:
@@ -138,8 +148,68 @@ class QEffT5Attention(T5Attention):
         attn_output = attn_output.view(batch_size, -1, self.inner_dim)
         attn_output = self.o(attn_output)
 
-        outputs = (attn_output, position_bias)
+        outputs = (attn_output, past_key_value, position_bias)
 
         if output_attentions:
             outputs = outputs + (attn_weights,)
+        return outputs
+
+
+class QEffT5LayerSelfAttention(T5LayerSelfAttention):
+    def forward(
+        self,
+        hidden_states,
+        attention_mask=None,
+        position_bias=None,
+        layer_head_mask=None,
+        past_key_value=None,
+        use_cache=False,
+        output_attentions=False,
+        cache_position=None,
+    ):
+        normed_hidden_states = self.layer_norm(hidden_states)
+        attention_output = self.SelfAttention(
+            normed_hidden_states,
+            mask=attention_mask,
+            position_bias=position_bias,
+            layer_head_mask=layer_head_mask,
+            past_key_value=past_key_value,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            cache_position=cache_position,
+        )
+        hidden_states = hidden_states * self.scaling_factor + self.dropout(attention_output[0])  # Modified by patch
+        outputs = (hidden_states,) + attention_output[1:]  # add attentions if we output them
+        return outputs
+
+
+class QEffT5LayerCrossAttention(T5LayerCrossAttention):
+    def forward(
+        self,
+        hidden_states,
+        key_value_states,
+        attention_mask=None,
+        position_bias=None,
+        layer_head_mask=None,
+        past_key_value=None,
+        use_cache=False,
+        query_length=None,
+        output_attentions=False,
+        cache_position=None,
+    ):
+        normed_hidden_states = self.layer_norm(hidden_states)
+        attention_output = self.EncDecAttention(
+            normed_hidden_states,
+            mask=attention_mask,
+            key_value_states=key_value_states,
+            position_bias=position_bias,
+            layer_head_mask=layer_head_mask,
+            past_key_value=past_key_value,
+            use_cache=use_cache,
+            query_length=query_length,
+            output_attentions=output_attentions,
+            cache_position=cache_position,
+        )
+        layer_output = hidden_states * 1.0 + self.dropout(attention_output[0])  # Modified by patch
+        outputs = (layer_output,) + attention_output[1:]  # add attentions if we output them
         return outputs

@@ -56,11 +56,13 @@ class NormalizationTransform(ModuleMappingTransform):
     }
 from typing import Tuple
 
-from diffusers.models.attention import JointTransformerBlock
-from diffusers.models.attention_processor import Attention, JointAttnProcessor2_0
 from torch import nn
 
+from diffusers.models.attention import JointTransformerBlock
+from diffusers.models.attention_processor import Attention, JointAttnProcessor2_0
+from diffusers.models.normalization import RMSNorm
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
+from QEfficient.customop.rms_norm import CustomRMSNormAIC
 from QEfficient.diffusers.models.attention import QEffJointTransformerBlock
 from QEfficient.diffusers.models.attention_processor import (
     QEffAttention,
@@ -69,7 +71,7 @@ from QEfficient.diffusers.models.attention_processor import (
 
 
 class CustomOpsTransform(ModuleMappingTransform):
-    _module_mapping = {}
+    _module_mapping = {RMSNorm: CustomRMSNormAIC}
 
 
 class AttentionTransform(ModuleMappingTransform):
