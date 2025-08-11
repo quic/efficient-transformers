@@ -94,7 +94,52 @@ class QEffGptOssMLP(GptOssMLP):
         # original shape [B, S, H]
         return expert_out.view(B, S, H), router_logits
 
-    def forward(self, hidden_states: torch.Tensor):
+    # ------------------- Gather based, weights as activation approach ---------------
+    def forward(self, hidden_states):
+        bs, seq_len, _ = hidden_states.shape
+        hidden_states = hidden_states.view(bs * seq_len, self.experts.hidden_size)
+
+        # Router computation
+        router_logits = F.linear(hidden_states, self.router.weight, self.router.bias)
+        router_top_value, router_indices = torch.topk(router_logits, self.router.top_k, dim=-1)
+        router_top_value = torch.nn.functional.softmax(router_top_value, dim=1, dtype=router_top_value.dtype)
+
+        # GATHER - collect weights for selected experts
+        gate_up_proj = self.experts.gate_up_proj[router_indices.flatten()]
+        gate_up_proj_bias = self.experts.gate_up_proj_bias[router_indices.flatten()]
+        down_proj = self.experts.down_proj[router_indices.flatten()]
+        down_proj_bias = self.experts.down_proj_bias[router_indices.flatten()]
+
+        # Apply Chosen Experts (without routing weights first)
+        # expert_in = hidden_states.repeat_interleave(self.router.top_k, dim=0)
+        # expert_in = expert_in.view(-1, 1, self.experts.hidden_size)
+        # Reshape for bmm: (bs*seq_len*top_k, 1, hidden_size)
+        expert_in = (
+            hidden_states.unsqueeze(1)
+            .expand(-1, self.router.top_k, -1)
+            .contiguous()
+            .view(-1, 1, self.experts.hidden_size)
+        )
+
+        gate_up = torch.bmm(expert_in, gate_up_proj) + gate_up_proj_bias.unsqueeze(1)
+        gate, up = gate_up[..., ::2], gate_up[..., 1::2]
+
+        # Apply activation with clamping
+        gate = gate.clamp(min=None, max=self.experts.limit)
+        up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+        glu = gate * torch.sigmoid(gate * self.experts.alpha)
+        gated_output = (up + 1) * glu
+
+        experts_out = torch.bmm(gated_output, down_proj) + down_proj_bias.unsqueeze(1)
+        experts_out = experts_out.view(bs * seq_len, self.router.top_k, self.experts.hidden_size)
+
+        # Apply routing weights AFTER expert computation (This is before on Llama4)
+        experts_out = experts_out * router_top_value.unsqueeze(-1)
+        experts_out = experts_out.sum(dim=1)
+
+        return experts_out, router_logits
+
+    def optimized_moe_forward(self, hidden_states: torch.Tensor):
         B, S, H = hidden_states.shape
         T = B * S
         hidden_states = hidden_states.view(T, H)
