@@ -183,19 +183,20 @@ pipeline {
         stage('vLLM Tests') {
             steps {
                 timeout(time: 25, unit: 'MINUTES') {
-                    sshagent(['84265c1c-e1ed-4522-9000-e782d1d079cd']) {
+                    withCredentials([usernamePassword(credentialsId: '84265c1c-e1ed-4522-9000-e782d1d079cd', usernameVariable: 'GERRIT_USER', passwordVariable: 'GERRIT_PASS')]) {
                         sh '''
                         sudo docker exec ${BUILD_TAG} bash -c "
                         cd / &&
-                        git clone ssh://review.qualcomm.com:29418/qranium/vllm vllm &&
+                        ls -lrt &&
+                        git clone https://${GERRIT_USER}:${GERRIT_PASS}@review.qualcomm.com/a/qranium/vllm vllm &&
                         ls -lrt &&
                         cd /efficient-transformers &&
-                        ls -lrt &&
                         . preflight_qeff/bin/activate &&
-                        cd /vllm &&
                         ls -lrt &&
+                        cd /vllm &&
                         pip install -e . &&
                         pwd &&
+                        ls -lrt &&
                         cd /efficient-transformers &&
                         ls -lrt &&
                         pytest --disable-warnings -s -v tests/vllm --junitxml=tests/tests_log_vllm.xml &&
