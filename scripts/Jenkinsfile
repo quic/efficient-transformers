@@ -188,12 +188,16 @@ pipeline {
                         sudo docker exec ${BUILD_TAG} bash -c "
                         cd / &&
                         git clone ssh://review.qualcomm.com:29418/qranium/vllm vllm &&
+                        ls -lrt &&
                         cd /efficient-transformers &&
+                        ls -lrt &&
                         . preflight_qeff/bin/activate &&
                         cd /vllm &&
+                        ls -lrt &&
                         pip install -e . &&
                         pwd &&
                         cd /efficient-transformers &&
+                        ls -lrt &&
                         pytest --disable-warnings -s -v tests/vllm --junitxml=tests/tests_log_vllm.xml &&
                         junitparser merge tests/tests_log_vllm.xml tests/tests_log.xml &&
                         deactivate"
