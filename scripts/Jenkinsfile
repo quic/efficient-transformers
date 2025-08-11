@@ -41,7 +41,6 @@ pipeline {
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_cli_qaic &&
                     pytest tests -m '(not cli) and (not on_qaic) and (not finetune)' --ignore tests/vllm -n auto --junitxml=tests/tests_log.xml &&
-                    junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                     deactivate"
                     '''
                 }
