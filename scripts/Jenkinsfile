@@ -183,7 +183,7 @@ pipeline {
         stage('vLLM Tests') {
             steps {
                 timeout(time: 25, unit: 'MINUTES') {
-                    withCredentials([usernamePassword(credentialsId: '84265c1c-e1ed-4522-9000-e782d1d079cd', usernameVariable: 'GERRIT_USER', passwordVariable: 'GERRIT_PASS')]) {
+                    withCredentials([usernamePassword(credentialsId: 'qeff_test_qraniumtest', usernameVariable: 'GERRIT_USER', passwordVariable: 'GERRIT_PASS')]) {
                         sh '''
                         sudo docker exec ${BUILD_TAG} bash -c "
                         cd / &&
