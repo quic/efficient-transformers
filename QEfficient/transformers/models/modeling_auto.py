@@ -634,10 +634,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             inputs["vision"],
             output_names["vision"],
             dynamic_axes["vision"],
-            export_dir,
+            export_dir=export_dir,
         )
 
-        self.lang_model.export(inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir)
+        self.lang_model.export(inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir=export_dir)
         return self.onnx_path
 
     def compile(
