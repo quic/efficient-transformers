@@ -33,6 +33,7 @@ dependencies = [
     "numpy==1.26.4",
     "protobuf==6.31.0",
     "onnxscript==0.2.5",
+    "onnxslim==0.1.64",
     "pillow===10.4.0",
     "sympy",
     "tensorboard",
