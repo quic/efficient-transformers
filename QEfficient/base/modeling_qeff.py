@@ -45,9 +45,10 @@ class QEFFBaseModel(ABC):
     def _transform_names(cls) -> List[str]:
         return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
-    def __init__(self, model: torch.nn.Module) -> None:
+    def __init__(self, model: torch.nn.Module,onnx_slim_transfom:bool=False) -> None:
         super().__init__()
         self.model = model
+        self.onnx_slim_transform = onnx_slim_transfom
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
@@ -119,6 +120,7 @@ class QEFFBaseModel(ABC):
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
+        onnx_slim_transform: bool = False,
         export_kwargs: Optional[Dict[str, any]] = None,
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
@@ -188,6 +190,7 @@ class QEFFBaseModel(ABC):
             transform_kwargs = {
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
+                "enable_onnx_slim_transform": onnx_slim_transform
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
