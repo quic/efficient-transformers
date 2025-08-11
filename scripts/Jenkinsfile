@@ -30,6 +30,23 @@ pipeline {
                '''
            }
        }
+       stage('Run Non-CLI Non-QAIC Tests') {
+            steps {
+                timeout(time: 25, unit: 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p $PWD/Non_cli_qaic &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/Non_cli_qaic &&
+                    pytest tests -m '(not cli) and (not on_qaic) and (not finetune)' --ignore tests/vllm -n auto --junitxml=tests/tests_log.xml &&
+                    junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
     }
 
     post {
