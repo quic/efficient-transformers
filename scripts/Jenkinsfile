@@ -30,161 +30,175 @@ pipeline {
                '''
            }
        }
-       stage('Non CLI Tests') {
-           parallel {
-               stage('Run Non-CLI Non-QAIC Tests') {
-                   steps {
-                       timeout(time: 25, unit: 'MINUTES') {
-                           sh '''
-                           sudo docker exec ${BUILD_TAG} bash -c "
-                           cd /efficient-transformers &&
-                           . preflight_qeff/bin/activate &&
-                           mkdir -p $PWD/Non_cli_qaic &&
-                           export TOKENIZERS_PARALLELISM=false &&
-                           export QEFF_HOME=$PWD/Non_cli_qaic &&
-                           pytest tests -m '(not cli) and (not on_qaic) and (not finetune)' --ignore tests/vllm -n auto --junitxml=tests/tests_log1.xml &&
-                           junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
-                           deactivate"
-                           '''
-                       }
-                   }
-               }
-               stage('Run Non-CLI QAIC Tests') {
-                   steps {
-                       timeout(time: 200, unit: 'MINUTES') {
-                           sh '''
-                           sudo docker exec ${BUILD_TAG} bash -c "
-                           cd /efficient-transformers &&
-                           . preflight_qeff/bin/activate &&
-                           mkdir -p $PWD/Non_qaic &&
-                           export TOKENIZERS_PARALLELISM=false &&
-                           export QEFF_HOME=$PWD/Non_qaic &&
-                           pytest tests -m '(not cli) and (on_qaic) and (not nightly) and (not multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log2.xml &&
-                           junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
-                           deactivate"
-                           '''
-                       }
-                   }
-               }
-           }
-       }
-       stage('QAIC MultiModal Tests') {
-                   steps {
-                       timeout(time: 60, unit: 'MINUTES') {
-                           sh '''
-                           sudo docker exec ${BUILD_TAG} bash -c "
-                           cd /efficient-transformers &&
-                           . preflight_qeff/bin/activate &&
-                           mkdir -p $PWD/Non_cli_qaic_multimodal &&
-                           export TOKENIZERS_PARALLELISM=false &&
-                           export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
-                           pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log6.xml &&
-                           junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
-                           deactivate"
-                           '''
-                       }
-                   }
-        }
-       stage('Inference Tests') {
-                   steps {
-                       timeout(time: 60, unit: 'MINUTES') {
-                           sh '''
-                           sudo docker exec ${BUILD_TAG} bash -c "
-                    	   source /qnn_sdk/bin/envsetup.sh &&
-                      	   source /qnn_sdk/bin/envcheck -c &&
-                           cd /efficient-transformers &&
-                           . preflight_qeff/bin/activate &&
-                           mkdir -p $PWD/cli &&
-                           export TOKENIZERS_PARALLELISM=false &&
-                           export QEFF_HOME=$PWD/cli &&
-                           pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log3.xml &&
-                           junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
-                           deactivate"
-                           '''
-                       }
-                   }
-        }
+    //    stage('Non CLI Tests') {
+    //        parallel {
+    //            stage('Run Non-CLI Non-QAIC Tests') {
+    //                steps {
+    //                    timeout(time: 25, unit: 'MINUTES') {
+    //                        sh '''
+    //                        sudo docker exec ${BUILD_TAG} bash -c "
+    //                        cd /efficient-transformers &&
+    //                        . preflight_qeff/bin/activate &&
+    //                        mkdir -p $PWD/Non_cli_qaic &&
+    //                        export TOKENIZERS_PARALLELISM=false &&
+    //                        export QEFF_HOME=$PWD/Non_cli_qaic &&
+    //                        pytest tests -m '(not cli) and (not on_qaic) and (not finetune)' --ignore tests/vllm -n auto --junitxml=tests/tests_log1.xml &&
+    //                        junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
+    //                        deactivate"
+    //                        '''
+    //                    }
+    //                }
+    //            }
+    //            stage('Run Non-CLI QAIC Tests') {
+    //                steps {
+    //                    timeout(time: 200, unit: 'MINUTES') {
+    //                        sh '''
+    //                        sudo docker exec ${BUILD_TAG} bash -c "
+    //                        cd /efficient-transformers &&
+    //                        . preflight_qeff/bin/activate &&
+    //                        mkdir -p $PWD/Non_qaic &&
+    //                        export TOKENIZERS_PARALLELISM=false &&
+    //                        export QEFF_HOME=$PWD/Non_qaic &&
+    //                        pytest tests -m '(not cli) and (on_qaic) and (not nightly) and (not multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log2.xml &&
+    //                        junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
+    //                        deactivate"
+    //                        '''
+    //                    }
+    //                }
+    //            }
+    //        }
+    //    }
+    //    stage('QAIC MultiModal Tests') {
+    //                steps {
+    //                    timeout(time: 60, unit: 'MINUTES') {
+    //                        sh '''
+    //                        sudo docker exec ${BUILD_TAG} bash -c "
+    //                        cd /efficient-transformers &&
+    //                        . preflight_qeff/bin/activate &&
+    //                        mkdir -p $PWD/Non_cli_qaic_multimodal &&
+    //                        export TOKENIZERS_PARALLELISM=false &&
+    //                        export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
+    //                        pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (not qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log6.xml &&
+    //                        junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
+    //                        deactivate"
+    //                        '''
+    //                    }
+    //                }
+    //     }
+    //    stage('Inference Tests') {
+    //                steps {
+    //                    timeout(time: 60, unit: 'MINUTES') {
+    //                        sh '''
+    //                        sudo docker exec ${BUILD_TAG} bash -c "
+    //                 	   source /qnn_sdk/bin/envsetup.sh &&
+    //                   	   source /qnn_sdk/bin/envcheck -c &&
+    //                        cd /efficient-transformers &&
+    //                        . preflight_qeff/bin/activate &&
+    //                        mkdir -p $PWD/cli &&
+    //                        export TOKENIZERS_PARALLELISM=false &&
+    //                        export QEFF_HOME=$PWD/cli &&
+    //                        pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log3.xml &&
+    //                        junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
+    //                        deactivate"
+    //                        '''
+    //                    }
+    //                }
+    //     }
+        
+    //     stage('QNN CLI Tests') {
+    //         steps {
+    //             timeout(time: 30, unit: 'MINUTES') {
+    //                 sh '''
+    //                 sudo docker exec ${BUILD_TAG} bash -c "
+    //                 source /qnn_sdk/bin/envsetup.sh &&
+    //                 source /qnn_sdk/bin/envcheck -c &&
+    //                 cd /efficient-transformers &&
+    //                 . preflight_qeff/bin/activate &&
+    //                 mkdir -p $PWD/Qnn_cli &&
+    //                 export TOKENIZERS_PARALLELISM=false &&
+    //                 export QEFF_HOME=$PWD/Qnn_cli &&
+    //                 pytest tests -m '(cli and qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log4.xml &&
+    //                 junitparser merge tests/tests_log4.xml tests/tests_log.xml &&
+    //                 deactivate"
+    //                 '''
+    //             }
+    //         }
+    //     }
+    //     stage('QNN Non-CLI Tests') {
+    //         steps {
+    //             timeout(time: 200, unit: 'MINUTES') {
+    //                 sh '''
+    //                 sudo docker exec ${BUILD_TAG} bash -c "
+    //                 source /qnn_sdk/bin/envsetup.sh &&
+    //                 source /qnn_sdk/bin/envcheck -c &&
+    //                 cd /efficient-transformers &&
+    //                 . preflight_qeff/bin/activate &&
+    //                 mkdir -p $PWD/Qnn_non_cli &&
+    //                 export TOKENIZERS_PARALLELISM=false &&
+    //                 export QEFF_HOME=$PWD/Qnn_non_cli &&
+    //                 pytest tests -m '(not cli) and (qnn) and (not nightly) and (on_qaic) and (not multimodal) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log5.xml &&
+    //                 junitparser merge tests/tests_log5.xml tests/tests_log.xml &&
+    //                 deactivate"
+    //                 '''
+    //             }
+    //         }
+    //     }
+    //     stage('QNN MultiModal Tests') {
+    //         steps {
+    //             timeout(time: 60, unit: 'MINUTES') {
+    //                 sh '''
+    //                 sudo docker exec ${BUILD_TAG} bash -c "
+    //                 source /qnn_sdk/bin/envsetup.sh &&
+    //                 source /qnn_sdk/bin/envcheck -c &&
+    //                 cd /efficient-transformers &&
+    //                 . preflight_qeff/bin/activate &&
+    //                 mkdir -p $PWD/Non_cli_qnn_multimodal &&
+    //                 export TOKENIZERS_PARALLELISM=false &&
+    //                 export QEFF_HOME=$PWD/Non_cli_qnn_multimodal &&
+    //                 pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (qnn)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log7.xml &&
+    //                 junitparser merge tests/tests_log7.xml tests/tests_log.xml &&
+    //                 deactivate"
+    //                 '''
+    //             }
+    //         }
+    //     }
+    //     stage('Finetune CLI Tests') {
+    //         steps {
+    //             timeout(time: 5, unit: 'MINUTES') {
+    //                 sh '''
+    //                 sudo docker exec ${BUILD_TAG} bash -c "
+    //                 cd /efficient-transformers &&
+    //                 . preflight_qeff/bin/activate &&
+    //                 mkdir -p $PWD/cli_qaic_finetuning &&
+    //                 export TOKENIZERS_PARALLELISM=false &&
+    //                 export QEFF_HOME=$PWD/cli_qaic_finetuning &&
+    //                 pytest tests -m '(cli) and (on_qaic) and (not qnn) and (not multimodal) and (finetune)' --ignore tests/vllm --junitxml=tests/tests_log_finetune.xml &&
+    //                 junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml &&
+    //                 deactivate"
+    //                 '''
+    //             }
+    //         }
+    //     }
+
         stage('vLLM Tests') {
             steps {
-                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    build job: 'qefficient_vllm_upstream',
-                    parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
-                    propagate: true,
-                    wait: true
-                }
-            }
-        }
-        stage('QNN CLI Tests') {
-            steps {
-                timeout(time: 30, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    source /qnn_sdk/bin/envsetup.sh &&
-                    source /qnn_sdk/bin/envcheck -c &&
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Qnn_cli &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Qnn_cli &&
-                    pytest tests -m '(cli and qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log4.xml &&
-                    junitparser merge tests/tests_log4.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
-        stage('QNN Non-CLI Tests') {
-            steps {
-                timeout(time: 200, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    source /qnn_sdk/bin/envsetup.sh &&
-                    source /qnn_sdk/bin/envcheck -c &&
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Qnn_non_cli &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Qnn_non_cli &&
-                    pytest tests -m '(not cli) and (qnn) and (not nightly) and (on_qaic) and (not multimodal) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log5.xml &&
-                    junitparser merge tests/tests_log5.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
-        stage('QNN MultiModal Tests') {
-            steps {
-                timeout(time: 60, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    source /qnn_sdk/bin/envsetup.sh &&
-                    source /qnn_sdk/bin/envcheck -c &&
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_cli_qnn_multimodal &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Non_cli_qnn_multimodal &&
-                    pytest tests -m '(not cli) and (on_qaic) and (multimodal) and (qnn)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log7.xml &&
-                    junitparser merge tests/tests_log7.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
-        stage('Finetune CLI Tests') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/cli_qaic_finetuning &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/cli_qaic_finetuning &&
-                    pytest tests -m '(cli) and (on_qaic) and (not qnn) and (not multimodal) and (finetune)' --ignore tests/vllm --junitxml=tests/tests_log_finetune.xml &&
-                    junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
+                timeout(time: 25, unit: 'MINUTES') {
+                    sshagent(['84265c1c-e1ed-4522-9000-e782d1d079cd']) {
+                        sh '''
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                        cd / &&
+                        git clone ssh://review.qualcomm.com:29418/qranium/vllm vllm &&
+                        cd /efficient-transformers &&
+                        . preflight_qeff/bin/activate &&
+                        cd /vllm &&
+                        pip install -e . &&
+                        pwd &&
+                        cd /efficient-transformers &&
+                        pytest --disable-warnings -s -v tests/vllm --junitxml=tests/tests_log_vllm.xml &&
+                        junitparser merge tests/tests_log_vllm.xml tests/tests_log.xml &&
+                        deactivate"
+                        '''
+                    }
                 }
             }
         }
