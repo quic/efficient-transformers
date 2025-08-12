@@ -28,6 +28,47 @@ ONNX_EXPORT_CTX_LEN = 1024
 # Compiler defaults
 DEFAULT_AIC_NUM_CORES = 16
 DEFAULT_AIC_MXPF6_MATMUL = False
+# Hashing defaults
+HASH_HEXDIGEST_STR_LEN = 16
+# Why not use an Inclusion list instead?
+KWARGS_EXCLUSION_LIST = [
+    "from_tf",
+    "from_flax",
+    "proxies",
+    "output_loading_info",
+    "use_auth_token",
+    "_from_pipeline",
+    "_from_auto",
+    "torch_dtype",
+    "device_map",
+    "max_memory",
+    "offload_folder",
+    "offload_state_dict",
+    "offload_buffers",
+    "load_in_8bit",
+    "load_in_4bit",
+    "quantization_config",
+    "subfolder",
+    "variant",
+    "generation_config",
+    "tp_plan",
+    "tp_size",
+    "device_mesh",
+    "trust_remote_code",
+    "use_kernels",
+    "resume_download",
+    "cache_dir",
+    "mirror",
+    "_fast_init",
+    "low_cpu_mem_usage",
+    "ignore_mismatched_sizes",
+    "force_download",
+    "local_files_only",
+    "token",
+    "use_safetensors",
+    "weights_only",
+]
+
 # Minimum value for causal mask
 MIN_MASKED_ATTENTION_VALUE = float("-inf")
 

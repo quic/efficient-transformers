@@ -25,7 +25,8 @@ from transformers import (
     PreTrainedTokenizerFast,
 )
 
-from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants, QnnConstants
+from QEfficient.utils.constants import KWARGS_EXCLUSION_LIST, QEFF_MODELS_DIR, Constants, QnnConstants
+from QEfficient.utils.hash_utils import hash_dict_params
 from QEfficient.utils.logging_utils import logger
 
 
@@ -606,6 +607,19 @@ def model_swap(func):
     return wrapper
 
 
+# Ensure input obj is JSON serializable
+def make_serializable(obj):
+    if isinstance(obj, (int, float, str, bool, type(None))):
+        return obj
+    elif isinstance(obj, (list, tuple)):
+        return [make_serializable(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {key: make_serializable(value) for key, value in obj.items()}
+    elif hasattr(obj, "__dict__"):
+        return make_serializable(vars(obj))
+    return str(obj)
+
+
 @dataclass
 class IOInfo:
     name: str
@@ -693,18 +707,6 @@ def create_and_dump_qconfigs(
     specializations_file_path = str(os.path.join(os.path.dirname(qpc_path), "specializations.json"))
     compile_dir = str(os.path.dirname(qpc_path))
 
-    # Ensure all objects in the configs dictionary are JSON serializable
-    def make_serializable(obj):
-        if isinstance(obj, (int, float, str, bool, type(None))):
-            return obj
-        elif isinstance(obj, (list, tuple)):
-            return [make_serializable(item) for item in obj]
-        elif isinstance(obj, dict):
-            return {key: make_serializable(value) for key, value in obj.items()}
-        elif hasattr(obj, "__dict__"):
-            return make_serializable(vars(obj))
-        return str(obj)
-
     qconfigs = {
         "huggingface_config": make_serializable(huggingface_config),
         "qpc_config": {
@@ -747,6 +749,41 @@ def create_and_dump_qconfigs(
             qconfigs["qpc_config"]["qnn_config"].update(qnn_sdk_details)
 
     create_json(qconfig_file_path, qconfigs)
+
+
+def filter_and_create_export_hash(**kwargs):
+    """
+    This Method prepares all the model params required to create the hash for export directory.
+    """
+    # TODO: Check and confirm if we want an exclusion list or an inclusion list
+    filtered_params = kwargs["model_params"]
+    filtered_params = {k: v for k, v in filtered_params.items() if k not in KWARGS_EXCLUSION_LIST}
+
+    export_params = {}
+    export_params["output_names"] = kwargs.get("output_names")
+    export_params["dynamic_axes"] = kwargs.get("dynamic_axes")
+
+    filtered_params["export_params"] = export_params
+
+    export_kwargs = kwargs.get("export_kwargs")
+    if export_kwargs:
+        filtered_params.update(export_kwargs)
+
+    onnx_transform_kwargs = kwargs.get("onnx_transform_kwargs")
+    if onnx_transform_kwargs:
+        filtered_params.update(onnx_transform_kwargs)
+    if filtered_params.get("peft_config") is not None:
+        filtered_params["peft_config"] = filtered_params["peft_config"].to_dict()
+
+    return hash_dict_params(filtered_params), filtered_params
+
+
+def hash_compile_params(**kwargs):
+    """
+    This Method creates the hash for qpc directory.
+    """
+
+    return hash_dict_params(kwargs.copy()), kwargs.copy()
 
 
 def filter_kwargs(func, kwargs):
