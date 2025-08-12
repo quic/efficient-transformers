@@ -14,9 +14,10 @@ import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional
+
 import onnx
 import torch
-import pdb
+
 from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
@@ -44,7 +45,7 @@ class QEFFBaseModel(ABC):
     def _transform_names(cls) -> List[str]:
         return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
-    def __init__(self, model: torch.nn.Module,onnx_slim_transfom:bool=False) -> None:
+    def __init__(self, model: torch.nn.Module, onnx_slim_transfom: bool = False) -> None:
         super().__init__()
         self.model = model
         self.onnx_slim_transform = onnx_slim_transfom
@@ -190,7 +191,7 @@ class QEFFBaseModel(ABC):
                 "enable_onnx_slim_transform": onnx_slim_transform,
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
-                "enable_onnx_slim_transform": onnx_slim_transform
+                "enable_onnx_slim_transform": onnx_slim_transform,
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
@@ -215,7 +216,7 @@ class QEFFBaseModel(ABC):
 
         self.onnx_path = onnx_path
         return onnx_path
-    
+
     @dump_qconfig
     def _compile(
         self,

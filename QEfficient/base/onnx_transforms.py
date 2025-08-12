@@ -6,10 +6,12 @@
 # ----------------------------------------------------------------------------
 
 from typing import Optional, Tuple
+
 import numpy as np
 import onnx
+import onnxslim
 from onnx import ModelProto, external_data_helper, numpy_helper
-import onnxslim 
+
 
 class OnnxTransform:
     """
@@ -36,7 +38,9 @@ class FP16ClipTransform(OnnxTransform):
     """
     Clips the tensor values to be in FP16 range, but preserves -inf values.
     """
+
     print("FP16ClipTransform is applied")
+
     @classmethod
     def apply(cls, model: ModelProto, *, onnx_base_dir: Optional[str] = None, **kwargs) -> Tuple[ModelProto, bool]:
         """
@@ -48,7 +52,6 @@ class FP16ClipTransform(OnnxTransform):
         transformed = False
 
         for tensor in external_data_helper._get_all_tensors(model):
-                  
             nptensor = numpy_helper.to_array(tensor, onnx_base_dir)
             if nptensor.dtype == np.float32 and (np.any(nptensor > fp16_max) or np.any(nptensor < fp16_min)):
                 neg_inf_mask = np.isinf(nptensor) & (nptensor < 0)
@@ -112,21 +115,20 @@ class OnnxSlimTransform(OnnxTransform):
         cls,
         model: ModelProto,
         *,
-        onnx_base_dir: Optional[str]= None,
+        onnx_base_dir: Optional[str] = None,
         **kwargs,
     ) -> Tuple[ModelProto, bool]:
         """
         :param enable_onnx_slim_transform: If True, applies onnx-slim transformations.
         """
         # print(kwargs)
-        transformed=False
+        transformed = False
         onnx_slim_transform = kwargs.get("enable_onnx_slim_transform", False)
         temp_onnx_path = kwargs.get("temp_onnx_path", None)
         if onnx_slim_transform:
             print("onnx slim transform done")
-            transformed= True
+            transformed = True
             slimmed_model = onnxslim.slim(model)
             onnx.save(slimmed_model, temp_onnx_path)
             return slimmed_model, transformed
         return model, transformed
-   

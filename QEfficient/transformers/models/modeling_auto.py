@@ -26,7 +26,7 @@ from transformers import (
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform, OnnxSlimTransform
+from QEfficient.base.onnx_transforms import FP16ClipTransform, OnnxSlimTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import (
@@ -82,17 +82,23 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str,onnx_slim_transform: bool=False, *args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, onnx_slim_transform: bool = False, *args, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
         if kwargs.get("low_cpu_mem_usage", None):
             logger.warning("Updating low_cpu_mem_usage=False")
 
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False,"enable_onnx_slim_transform":onnx_slim_transform})
+        kwargs.update(
+            {
+                "attn_implementation": "eager",
+                "low_cpu_mem_usage": False,
+                "enable_onnx_slim_transform": onnx_slim_transform,
+            }
+        )
 
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path,**kwargs)
+        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
 
     @property
     def model_name(self) -> str:
@@ -163,7 +169,7 @@ class QEFFAutoModel(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [OnnxSlimTransform, FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, pooling=None,onnx_slim_transform:bool=False ,**kwargs):
+    def __init__(self, model: nn.Module, pooling=None, onnx_slim_transform: bool = False, **kwargs):
         super().__init__(model)
 
         # Make Embedding specific transforms like appending pooling
@@ -176,7 +182,9 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path, pooling=None,onnx_slim_transform: bool=False, *args, **kwargs):
+    def from_pretrained(
+        cls, pretrained_model_name_or_path, pooling=None, onnx_slim_transform: bool = False, *args, **kwargs
+    ):
         """
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModel.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
@@ -228,7 +236,13 @@ class QEFFAutoModel(QEFFTransformersBase):
                 model, kv_offload=kv_offload
             )
 
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, pooling=pooling,onnx_slim_transform=onnx_slim_transform, **kwargs)
+        return cls(
+            model,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            pooling=pooling,
+            onnx_slim_transform=onnx_slim_transform,
+            **kwargs,
+        )
 
     @property
     def model_hash(self) -> str:
@@ -278,7 +292,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             example_inputs,
             output_names,
             dynamic_axes,
-            onnx_slim_transform= self.onnx_slim_transform,
+            onnx_slim_transform=self.onnx_slim_transform,
             export_dir=export_dir,
         )
 
@@ -449,13 +463,19 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
     ]
     _onnx_transforms = [OnnxSlimTransform, FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.modules,onnx_slim_transform: bool = False):
+    def __init__(self, model: nn.modules, onnx_slim_transform: bool = False):
         super().__init__(model)
         self.model = model.get_qeff_vision_encoder()
         self.onnx_slim_transform = onnx_slim_transform
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir,onnx_slim_transform= self.onnx_slim_transform,)
+        return self._export(
+            inputs,
+            output_names,
+            dynamic_axes,
+            export_dir,
+            onnx_slim_transform=self.onnx_slim_transform,
+        )
 
     def compile(
         self,
@@ -518,13 +538,19 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     ]
     _onnx_transforms = [OnnxSlimTransform, FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model,onnx_slim_transform: bool = False):
+    def __init__(self, model, onnx_slim_transform: bool = False):
         super().__init__(model)
         self.model = model.get_qeff_language_decoder()
-        self.onnx_slim_transform=onnx_slim_transform
+        self.onnx_slim_transform = onnx_slim_transform
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir,onnx_slim_transform= self.onnx_slim_transform,)
+        return self._export(
+            inputs,
+            output_names,
+            dynamic_axes,
+            export_dir,
+            onnx_slim_transform=self.onnx_slim_transform,
+        )
 
     def compile(
         self,
@@ -603,7 +629,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         return mname
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str,onnx_slim_transform: bool=False, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, onnx_slim_transform: bool = False, **kwargs):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -611,8 +637,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, onnx_slim_transform,**kwargs)
-        return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path,onnx_slim_transform=onnx_slim_transform, **kwargs)
+        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, onnx_slim_transform, **kwargs)
+        return cls(
+            model,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            onnx_slim_transform=onnx_slim_transform,
+            **kwargs,
+        )
 
     @property
     def onnx_path(self):
@@ -962,12 +993,13 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         else:
             self.model.config.text_config.use_cache = True
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
-        self.onnx_slim_transform=onnx_slim_transform
+        self.onnx_slim_transform = onnx_slim_transform
+
     @classmethod
     def from_pretrained(
         cls,
         pretrained_model_name_or_path,
-        onnx_slim_transform: bool=False,
+        onnx_slim_transform: bool = False,
         *args,
         **kwargs,
     ):
@@ -980,10 +1012,14 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         from transformers import AutoConfig
 
-        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True,onnx_slim_transform=onnx_slim_transform, **kwargs)
+        config = AutoConfig.from_pretrained(
+            pretrained_model_name_or_path, trust_remote_code=True, onnx_slim_transform=onnx_slim_transform, **kwargs
+        )
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, onnx_slim_transform= onnx_slim_transform, *args, **kwargs)
+        model = cls._hf_auto_class.from_pretrained(
+            pretrained_model_name_or_path, config, onnx_slim_transform=onnx_slim_transform, *args, **kwargs
+        )
 
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
 
@@ -995,7 +1031,13 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
-        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir,onnx_slim_transform=self.onnx_slim_transform,)
+        return self._export(
+            inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+            onnx_slim_transform=self.onnx_slim_transform,
+        )
 
     def compile(
         self,
@@ -1315,7 +1357,13 @@ class QEFFAutoModelForImageTextToText:
 
     @classmethod
     @with_replaced_quantizers
-    def from_pretrained(cls, pretrained_model_name_or_path: str,onnx_slim_transform: bool=False, kv_offload: Optional[bool] = None, **kwargs):
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str,
+        onnx_slim_transform: bool = False,
+        kv_offload: Optional[bool] = None,
+        **kwargs,
+    ):
         """Used to load models supported by transformers.AutoModelForImageTextToText for Cloud AI 100.
 
         Args:
@@ -1336,8 +1384,16 @@ class QEFFAutoModelForImageTextToText:
             NotImplementedError("Continuous batching is not supported for image-text-to-text models yet.")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path,onnx_slim_transform=onnx_slim_transform, **kwargs)
-        return cls(model, kv_offload=kv_offload, pretrained_model_name_or_path=pretrained_model_name_or_path, onnx_slim_transform=onnx_slim_transform, **kwargs)
+        model = cls._hf_auto_class.from_pretrained(
+            pretrained_model_name_or_path, onnx_slim_transform=onnx_slim_transform, **kwargs
+        )
+        return cls(
+            model,
+            kv_offload=kv_offload,
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            onnx_slim_transform=onnx_slim_transform,
+            **kwargs,
+        )
 
 
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoModelForImageTextToText}
@@ -1449,7 +1505,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         pretrained_model_name_or_path,
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
-        onnx_slim_transform: bool=False,
+        onnx_slim_transform: bool = False,
         *args,
         **kwargs,
     ):
@@ -1625,7 +1681,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names,
             dynamic_axes,
             export_dir=export_dir,
-            onnx_slim_transform=self.onnx_slim_transform
+            onnx_slim_transform=self.onnx_slim_transform,
         )
 
     def get_sampling_inputs_and_outputs(
@@ -1972,7 +2028,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, KVCacheTransform]
     _onnx_transforms = [OnnxSlimTransform, FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module,onnx_slim_transform:bool=False, **kwargs):
+    def __init__(self, model: nn.Module, onnx_slim_transform: bool = False, **kwargs):
         model_class_name = model.__class__.__name__
         if not (model_class_name.endswith("ForConditionalGeneration")):
             raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
@@ -1982,6 +2038,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         self.num_layers = model.config.num_hidden_layers
         self.pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
         self.onnx_slim_transform = onnx_slim_transform
+
     @property
     def model_hash(self) -> str:
         # NOTE: model_config.to_diff_dict() has "_name_or_path" attribute which is the model card name or path.
@@ -2015,7 +2072,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         inputs = self.model.get_dummy_inputs()
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
-        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir,onnx_slim_transform=self.onnx_slim_transform)
+        return self._export(
+            inputs, output_names, dynamic_axes, export_dir=export_dir, onnx_slim_transform=self.onnx_slim_transform
+        )
 
     def compile(
         self,
