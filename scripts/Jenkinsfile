@@ -56,19 +56,22 @@ pipeline {
                 wait: false
         }
         always {
-            // script {
-            //     try {
-            //         sh '''
-            //         sudo docker rm -f ${BUILD_TAG}
-            //         sudo chown -R ubuntu .
-            //         '''
-            //     } catch (error) {
-            //         echo "Failed to delete container ${BUILD_TAG}: ${error}"
-            //     }
-            // }
             junit testResults: 'tests/tests_log.xml'
-            // echo 'Cleaning Workspace'
-            // deleteDir()
         }
+        unsuccessful {
+            script {
+                try {
+                    sh '''
+                    sudo docker rm -f ${BUILD_TAG}
+                    sudo chown -R ubuntu .
+                    '''
+                } catch (error) {
+                    echo "Failed to delete container ${BUILD_TAG}: ${error}"
+                }
+            }
+            echo 'Cleaning Workspace'
+            deleteDir()
+        }
+
     }
 }
