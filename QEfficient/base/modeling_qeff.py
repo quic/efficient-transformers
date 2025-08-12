@@ -14,7 +14,6 @@ import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional
-import time
 import onnx
 import torch
 import pdb
@@ -253,7 +252,6 @@ class QEFFBaseModel(ABC):
         """
         if onnx_path is None and self.onnx_path is None:
             self.export()
-        t1=time.time()
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
@@ -372,6 +370,4 @@ class QEFFBaseModel(ABC):
             )
 
         self.qpc_path = qpc_path
-        t2=time.time()
-        print('qpc_path time used:', t2-t1)
         return qpc_path

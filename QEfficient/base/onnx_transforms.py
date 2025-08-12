@@ -10,7 +10,7 @@ import numpy as np
 import onnx
 from onnx import ModelProto, external_data_helper, numpy_helper
 import onnxslim 
-import time
+
 class OnnxTransform:
     """
     OnnxTransform is the base class for graph modifications on exported onnx.
@@ -123,13 +123,10 @@ class OnnxSlimTransform(OnnxTransform):
         onnx_slim_transform = kwargs.get("enable_onnx_slim_transform", False)
         temp_onnx_path = kwargs.get("temp_onnx_path", None)
         if onnx_slim_transform:
-            # t1=time.time()
             print("onnx slim transform done")
             transformed= True
             slimmed_model = onnxslim.slim(model)
             onnx.save(slimmed_model, temp_onnx_path)
-            # t2=time.time()
-            # print(f"Time taken to slim: {t2-t1} seconds")
             return slimmed_model, transformed
         return model, transformed
    
