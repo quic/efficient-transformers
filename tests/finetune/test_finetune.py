@@ -19,9 +19,8 @@ import QEfficient.cloud.finetune
 from QEfficient.cloud.finetune import main as finetune
 from QEfficient.finetune.utils.helper import Device, Task_Mode
 from QEfficient.utils import constants as constant
-
-from . import reference_data as ref_data
-
+from QEfficient.finetune.utils import reference_data as ref_data
+from QEfficient.finetune.utils.helper import get_world_size, get_rank
 alpaca_json_path = os.path.join(os.getcwd(), "alpaca_data.json")
 
 
@@ -56,10 +55,10 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
     max_diff = np.max(np.abs(np.array(ref_list) - np.array(actual_list)))
     assert max_diff <= atol, (
         f"{name} deviated too much for scenario '{scenario_key}' (WS: {current_world_size}, Rank: {current_rank}). "
-        f"Max Difference: {max_diff:.4f}, Allowed Tolerance: {atol:.4f}.\n"
+        f"Max Difference: {max_diff:.2f}, Allowed Tolerance: {atol:.2f}.\n"
         f"Reference: {ref_list}\nActual:    {actual_list}"
     )
-    print(f"  ✅ {name} PASSED. Max Diff: {max_diff:.4f}")
+    print(f"  ✅ {name} PASSED. Max Diff: {max_diff:.2f}")
 
 
 configs = [
@@ -76,10 +75,6 @@ configs = [
         True,  # use_peft
         Device.QAIC,  # device
         "llama_config_gsm8k_single_device",
-        # 1.5416,  # expected_train_loss
-        # 4.6722,  # expected_train_metric
-        # 1.4040,  # expected_eval_loss
-        # 4.0715,  # expected_eval_metric
         id="llama_config_gsm8k",  # config name
     ),
     pytest.param(
@@ -95,10 +90,6 @@ configs = [
         True,  # use_peft
         Device.QAIC,  # device
         "llama_config_alpaca_single_device",
-        # 1.3477,  # expected_train_loss
-        # 3.8486,  # expected_train_metric
-        # 1.5305,  # expected_eval_loss
-        # 4.6207,  # expected_eval_metric
         id="llama_config_alpaca",  # config name
     ),
     pytest.param(
@@ -114,10 +105,6 @@ configs = [
         False,  # use_peft
         Device.QAIC,  # device
         "bert_config_imdb_single_device",
-        # 0.6566,  # expected_train_loss
-        # 0.5055,  # expected_train_metric
-        # 0.6188,  # expected_eval_loss
-        # 0.6904,  # expected_eval_metric
         id="bert_config_imdb",  # config name
     ),
 ]
@@ -175,8 +162,8 @@ def test_finetune(
     reference_data = ref_data.REFERENCE_DATA.get(scenario_key)
     if reference_data is None:
         pytest.fail(f"Reference data for scenario '{scenario_key}' not found in REFERENCE_DATA.")
-    current_world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    current_rank = int(os.environ.get("RANK", "0"))
+    current_world_size = get_world_size()
+    current_rank = get_rank()
     if current_world_size > 1:
         rank_reference_data = reference_data.get("rank_data", {}).get(str(current_rank))
         if rank_reference_data is None:
@@ -195,16 +182,6 @@ def test_finetune(
         download_alpaca()
 
     results = finetune(**kwargs)
-
-    # assert np.allclose(results["last_epoch_train_loss"], expected_train_loss, atol=constants.LOSS_ATOL), "Train loss is not matching."
-
-    # assert np.allclose(results["last_epoch_train_metric"], expected_train_metric, atol=METRIC_ATOL), (
-    #     "Train metric is not matching."
-    # )
-    # assert np.allclose(results["last_epoch_eval_loss"], expected_eval_loss, atol=LOSS_ATOL), "Eval loss is not matching."
-    # assert np.allclose(results["last_epoch_eval_metric"], expected_eval_metric, atol=METRIC_ATOL), (
-    #     "Eval metric is not matching."
-    # )
 
     # Assertions for step-level values using the helper function
     assert_list_close(
