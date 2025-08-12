@@ -326,8 +326,8 @@ class QEFFAutoModel(QEFFTransformersBase):
         ]
 
         return self._compile(
-            onnx_path,
-            compile_dir,
+            onnx_path=onnx_path,
+            compile_dir=compile_dir,
             compile_only=True,
             specializations=specializations,
             convert_to_fp16=True,
@@ -454,7 +454,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_vision_encoder()
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir)
+        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
 
     def compile(
         self,
@@ -522,7 +522,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_language_decoder()
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
-        return self._export(inputs, output_names, dynamic_axes, export_dir)
+        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir)
 
     def compile(
         self,
@@ -635,10 +635,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             inputs["vision"],
             output_names["vision"],
             dynamic_axes["vision"],
-            export_dir,
+            export_dir=export_dir,
         )
 
-        self.lang_model.export(inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir)
+        self.lang_model.export(inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir=export_dir)
         return self.onnx_path
 
     def compile(
@@ -703,7 +703,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         if not skip_vision:
             self.vision_model._compile(
-                compile_dir,
+                compile_dir=compile_dir,
                 compile_only=True,
                 specializations=specializations["vision"],
                 convert_to_fp16=True,
@@ -730,7 +730,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     custom_io_lang[output_name] = "float16" if "vision_embeds" in output_name else kv_cache_dtype
 
             self.lang_model._compile(
-                compile_dir,
+                compile_dir=compile_dir,
                 compile_only=True,
                 retained_state=True,
                 specializations=specializations["lang"],
@@ -1042,8 +1042,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 custom_io[output_name] = "float16" if "pixel_values" in output_name else kv_cache_dtype
 
         self._compile(
-            onnx_path,
-            compile_dir,
+            onnx_path=onnx_path,
+            compile_dir=compile_dir,
             compile_only=True,
             retained_state=True,
             specializations=specializations,
@@ -2108,8 +2108,8 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
                 custom_io[output_name] = kv_cache_dtype
 
         return self._compile(
-            onnx_path,
-            compile_dir,
+            onnx_path=onnx_path,
+            compile_dir=compile_dir,
             compile_only=True,
             retained_state=True,
             specializations=specializations,
