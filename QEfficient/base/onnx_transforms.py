@@ -8,6 +8,8 @@
 from typing import Optional, Tuple
 
 import numpy as np
+import onnx
+import onnxslim
 from onnx import ModelProto, external_data_helper, numpy_helper
 
 
@@ -36,6 +38,8 @@ class FP16ClipTransform(OnnxTransform):
     """
     Clips the tensor values to be in FP16 range, but preserves -inf values.
     """
+
+    print("FP16ClipTransform is applied")
 
     @classmethod
     def apply(cls, model: ModelProto, *, onnx_base_dir: Optional[str] = None, **kwargs) -> Tuple[ModelProto, bool]:
@@ -98,4 +102,33 @@ class SplitTensorsTransform(OnnxTransform):
                     file_num += 1
                     current_file_size = tsize
                 external_data_helper.set_external_data(tensor, f"{model_name}_{file_num}.onnx.data")
+        return model, transformed
+
+
+class OnnxSlimTransform(OnnxTransform):
+    """
+    Applies onnx-slim transformations on the given ONNX graph.
+    """
+
+    @classmethod
+    def apply(
+        cls,
+        model: ModelProto,
+        *,
+        onnx_base_dir: Optional[str] = None,
+        **kwargs,
+    ) -> Tuple[ModelProto, bool]:
+        """
+        :param enable_onnx_slim_transform: If True, applies onnx-slim transformations.
+        """
+        # print(kwargs)
+        transformed = False
+        onnx_slim_transform = kwargs.get("enable_onnx_slim_transform", False)
+        temp_onnx_path = kwargs.get("temp_onnx_path", None)
+        if onnx_slim_transform:
+            print("onnx slim transform done")
+            transformed = True
+            slimmed_model = onnxslim.slim(model)
+            onnx.save(slimmed_model, temp_onnx_path)
+            return slimmed_model, transformed
         return model, transformed

@@ -45,9 +45,10 @@ class QEFFBaseModel(ABC):
     def _transform_names(cls) -> List[str]:
         return [x.__name__ for x in cls._pytorch_transforms + cls._onnx_transforms]
 
-    def __init__(self, model: torch.nn.Module) -> None:
+    def __init__(self, model: torch.nn.Module, onnx_slim_transfom: bool = False) -> None:
         super().__init__()
         self.model = model
+        self.onnx_slim_transform = onnx_slim_transfom
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
@@ -119,6 +120,7 @@ class QEFFBaseModel(ABC):
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
+        onnx_slim_transform: bool = False,
         export_kwargs: Optional[Dict[str, any]] = None,
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
@@ -146,7 +148,6 @@ class QEFFBaseModel(ABC):
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
 
         # Create input_names from example_inputs
-
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
@@ -183,11 +184,14 @@ class QEFFBaseModel(ABC):
                 **export_kwargs,
             )
             logger.info("Pytorch export successful")
-
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
+                "temp_onnx_path": tmp_onnx_path,
+                "model_name": self.model_name,
+                "enable_onnx_slim_transform": onnx_slim_transform,
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
+                "enable_onnx_slim_transform": onnx_slim_transform,
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
@@ -249,7 +253,6 @@ class QEFFBaseModel(ABC):
         """
         if onnx_path is None and self.onnx_path is None:
             self.export()
-
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
@@ -368,5 +371,4 @@ class QEFFBaseModel(ABC):
             )
 
         self.qpc_path = qpc_path
-
         return qpc_path
