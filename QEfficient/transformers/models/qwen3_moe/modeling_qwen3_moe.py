@@ -81,7 +81,7 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    # breakpoint()
+    
     cos = cos[position_ids].unsqueeze(unsqueeze_dim)
     sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
@@ -133,10 +133,7 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         for i in range(self.top_k):
             expert_idx.append(top_i[:, i])
             weights.append(top_w[:, i])
-
-        # I = self.config.ffn_dim
         Inter = 768
-        breakpoint()
         upgate = []
         expert_out = []
         for i in range(self.top_k):
@@ -185,7 +182,6 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
         query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        # breakpoint()
         kv_seq_len = key_states.shape[-2]
         kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
