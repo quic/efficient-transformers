@@ -14,10 +14,10 @@ import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional
-
+import time
 import onnx
 import torch
-
+import pdb
 from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
@@ -148,7 +148,6 @@ class QEFFBaseModel(ABC):
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
 
         # Create input_names from example_inputs
-
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
@@ -185,9 +184,11 @@ class QEFFBaseModel(ABC):
                 **export_kwargs,
             )
             logger.info("Pytorch export successful")
-
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
+                "temp_onnx_path": tmp_onnx_path,
+                "model_name": self.model_name,
+                "enable_onnx_slim_transform": onnx_slim_transform,
                 "onnx_base_dir": str(tmp_onnx_dir),
                 "model_name": self.model_name,
                 "enable_onnx_slim_transform": onnx_slim_transform
@@ -215,7 +216,7 @@ class QEFFBaseModel(ABC):
 
         self.onnx_path = onnx_path
         return onnx_path
-
+    
     @dump_qconfig
     def _compile(
         self,
@@ -252,7 +253,7 @@ class QEFFBaseModel(ABC):
         """
         if onnx_path is None and self.onnx_path is None:
             self.export()
-
+        t1=time.time()
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
@@ -371,5 +372,6 @@ class QEFFBaseModel(ABC):
             )
 
         self.qpc_path = qpc_path
-
+        t2=time.time()
+        print('qpc_path time used:', t2-t1)
         return qpc_path
