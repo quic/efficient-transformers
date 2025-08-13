@@ -17,9 +17,9 @@ from torch.utils.data import DataLoader
 import QEfficient
 import QEfficient.cloud.finetune
 from QEfficient.cloud.finetune import main as finetune
-from QEfficient.finetune.utils import reference_data as ref_data
+from tests.finetune import reference_data as ref_data
 from QEfficient.finetune.utils.helper import Device, Task_Mode, get_rank, get_world_size
-from QEfficient.utils import constants as constant
+from  tests.finetune import constants as constant
 
 alpaca_json_path = os.path.join(os.getcwd(), "alpaca_data.json")
 
@@ -55,7 +55,7 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
     max_diff = np.max(np.abs(np.array(ref_list) - np.array(actual_list)))
     assert max_diff <= atol, (
         f"{name} deviated too much for scenario '{scenario_key}' (WS: {current_world_size}, Rank: {current_rank}). "
-        f"Max Difference: {max_diff:.2f}, Allowed Tolerance: {atol:.2f}.\n"
+        f"Max Difference: {max_diff:.2f}, Allowed Tolerance: {atol:.4f}.\n"
         f"Reference: {ref_list}\nActual:    {actual_list}"
     )
     print(f"  ✅ {name} PASSED. Max Diff: {max_diff:.2f}")
@@ -115,8 +115,7 @@ configs = [
 @pytest.mark.on_qaic
 @pytest.mark.finetune
 @pytest.mark.parametrize(
-    "model_name,task_mode,max_eval_step,max_train_step,dataset_name,data_path,intermediate_step_save,context_length,run_validation,use_peft,device,",
-    "scenario_key",  # This parameter will be used to look up reference data
+    "model_name,task_mode,max_eval_step,max_train_step,dataset_name,data_path,intermediate_step_save,context_length,run_validation,use_peft,device,scenario_key",  # This parameter will be used to look up reference data
     configs,
 )
 def test_finetune(

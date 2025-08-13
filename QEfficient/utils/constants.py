@@ -31,11 +31,6 @@ DEFAULT_AIC_MXPF6_MATMUL = False
 # Minimum value for causal mask
 MIN_MASKED_ATTENTION_VALUE = float("-inf")
 
-# Finetuning
-LOSS_ATOL = 1e-3
-METRIC_ATOL = 1e-3
-
-
 # Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
 def get_models_dir():
     """
