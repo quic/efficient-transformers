@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 import torch
-
 from diffusers.models.attention import JointTransformerBlock, _chunked_feed_forward
 
 
