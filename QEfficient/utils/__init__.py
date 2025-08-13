@@ -12,9 +12,10 @@ from QEfficient.transformers.quantizers.auto import (  # noqa: F401
 from QEfficient.utils._utils import (  # noqa: F401
     check_and_assign_cache_dir,
     create_json,
+    create_model_params,
     custom_format_warning,
     dump_qconfig,
-    filter_and_create_export_hash,
+    export_wrapper,
     generate_mdp_partition_config,
     get_num_layers_from_config,
     get_num_layers_vlm,
@@ -24,7 +25,6 @@ from QEfficient.utils._utils import (  # noqa: F401
     get_qpc_dir_path,
     get_sliding_window_layers,
     get_sliding_window_shapes,
-    hash_compile_params,
     hf_download,
     load_hf_processor,
     load_hf_tokenizer,
@@ -34,4 +34,8 @@ from QEfficient.utils._utils import (  # noqa: F401
     onnx_exists,
     padding_check_and_fix,
     qpc_exists,
+)
+from QEfficient.utils.hash_utils import (  # noqa: F401
+    create_export_hash,
+    hash_dict_params,
 )

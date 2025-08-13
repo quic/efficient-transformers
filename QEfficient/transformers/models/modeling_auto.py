@@ -1347,10 +1347,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             logger.warning(
                 "Please use `from_pretrained` method to load quantized models, might give unexpected results"
             )
+        # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
         super().__init__(model, **kwargs)
-        # Set use_cache=True to get KV values as output during ONNX export
-        self.model.config.use_cache = True
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config

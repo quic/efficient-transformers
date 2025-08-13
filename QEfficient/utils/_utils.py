@@ -5,12 +5,14 @@
 #
 # -----------------------------------------------------------------------------
 
+import copy
 import inspect
 import json
 import os
 import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
@@ -25,8 +27,9 @@ from transformers import (
     PreTrainedTokenizerFast,
 )
 
-from QEfficient.utils.constants import KWARGS_EXCLUSION_LIST, QEFF_MODELS_DIR, Constants, QnnConstants
-from QEfficient.utils.hash_utils import hash_dict_params
+from QEfficient.utils.cache import QEFF_HOME
+from QEfficient.utils.constants import KWARGS_INCLUSION_LIST, QEFF_MODELS_DIR, Constants, QnnConstants
+from QEfficient.utils.hash_utils import create_export_hash, json_serializable
 from QEfficient.utils.logging_utils import logger
 
 
@@ -477,6 +480,73 @@ def get_padding_shape_vlm(config, ctx_len, batch_size=1):
     return padding_shape
 
 
+def create_model_params(qeff_model, **kwargs) -> Dict:
+    """
+    Constructs a dictionary of model parameters.
+
+    Includes core model config, PEFT config (if present), and applied
+    transform names, merged with any provided `kwargs`.
+
+    Args:
+        qeff_model: The qeff_model instance containing the model and its parameters.
+        **kwargs: Arbitrary parameters to include or override.
+
+    Returns:
+        Dict: A dictionary containing comprehensive model parameters.
+    """
+    model_params = copy.deepcopy(kwargs)
+    model_params = {k: v for k, v in model_params.items() if k in KWARGS_INCLUSION_LIST}
+    model_params["config"] = qeff_model.model.config.to_diff_dict()
+    model_params["peft_config"] = getattr(qeff_model.model, "active_peft_config", None)
+    model_params["applied_transform_names"] = qeff_model._transform_names()
+    return model_params
+
+
+def export_wrapper(func):
+    def wrapper(self, *args, **kwargs):
+        export_dir = kwargs.get("export_dir", None)
+        parent_dir = self.model_architecture or self.model_name
+        export_dir = Path(export_dir or (QEFF_HOME / parent_dir / self.model_name))
+
+        # PREPROCESSING OF PARAMETERS
+
+        # Get the original signature
+        original_sig = inspect.signature(func)
+
+        # Remove 'self' from parameters
+        params = list(original_sig.parameters.values())[1:]  # skip 'self'
+        new_sig = inspect.Signature(params)
+
+        # Bind args and kwargs to the new signature
+        bound_args = new_sig.bind(*args, **kwargs)
+        bound_args.apply_defaults()
+
+        # Get arguments as a dictionary
+        all_args = bound_args.arguments
+
+        export_hash, filtered_hash_params = create_export_hash(
+            model_params=self.hash_params,
+            output_names=all_args.get("output_names"),
+            dynamic_axes=all_args.get("dynamic_axes"),
+            export_kwargs=all_args.get("export_kwargs", None),
+            onnx_transform_kwargs=all_args.get("onnx_transform_kwargs", None),
+        )
+        export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
+        kwargs["export_dir"] = export_dir
+        self.export_hash = export_hash
+
+        # _EXPORT CALL
+        func(self, *args, **kwargs)
+
+        # POST-PROCESSING
+        # Dump JSON file with hashed parameters
+        hashed_params_export_path = export_dir / "hashed_export_params.json"
+        create_json(hashed_params_export_path, filtered_hash_params)
+        logger.info("Hashed parameters exported successfully.")
+
+    return wrapper
+
+
 def execute_command(process: str, command: str, output_file_path: Optional[str] = None):
     """
     Executes the give command using subprocess.
@@ -564,7 +634,18 @@ def create_json(file_path: str, json_data: object):
     """
     try:
         with open(file_path, "w") as file:
-            json.dump(json_data, file, indent=4)
+            json.dump(
+                json_data,
+                file,
+                skipkeys=False,
+                ensure_ascii=True,
+                check_circular=True,
+                allow_nan=False,
+                indent=4,
+                separators=(",", ":"),
+                default=json_serializable,
+                sort_keys=True,
+            )
     except Exception as e:
         print(f"Failed to create JSON File {file_path}: {e}")
 
@@ -749,41 +830,6 @@ def create_and_dump_qconfigs(
             qconfigs["qpc_config"]["qnn_config"].update(qnn_sdk_details)
 
     create_json(qconfig_file_path, qconfigs)
-
-
-def filter_and_create_export_hash(**kwargs):
-    """
-    This Method prepares all the model params required to create the hash for export directory.
-    """
-    # TODO: Check and confirm if we want an exclusion list or an inclusion list
-    filtered_params = kwargs["model_params"]
-    filtered_params = {k: v for k, v in filtered_params.items() if k not in KWARGS_EXCLUSION_LIST}
-
-    export_params = {}
-    export_params["output_names"] = kwargs.get("output_names")
-    export_params["dynamic_axes"] = kwargs.get("dynamic_axes")
-
-    filtered_params["export_params"] = export_params
-
-    export_kwargs = kwargs.get("export_kwargs")
-    if export_kwargs:
-        filtered_params.update(export_kwargs)
-
-    onnx_transform_kwargs = kwargs.get("onnx_transform_kwargs")
-    if onnx_transform_kwargs:
-        filtered_params.update(onnx_transform_kwargs)
-    if filtered_params.get("peft_config") is not None:
-        filtered_params["peft_config"] = filtered_params["peft_config"].to_dict()
-
-    return hash_dict_params(filtered_params), filtered_params
-
-
-def hash_compile_params(**kwargs):
-    """
-    This Method creates the hash for qpc directory.
-    """
-
-    return hash_dict_params(kwargs.copy()), kwargs.copy()
 
 
 def filter_kwargs(func, kwargs):

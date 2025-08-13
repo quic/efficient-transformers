@@ -141,7 +141,7 @@ def test_seq2seq_hash_creation(config, tmp_path):
 
 @pytest.fixture
 def tmp_cache(tmp_path, monkeypatch):
-    monkeypatch.setattr("QEfficient.base.modeling_qeff.QEFF_HOME", tmp_path)
+    monkeypatch.setattr("QEfficient.utils._utils.QEFF_HOME", tmp_path)
     yield tmp_path
 
 

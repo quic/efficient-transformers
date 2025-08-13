@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import copy
 import inspect
 import logging
 import shutil
@@ -25,13 +24,13 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import (
     constants,
     create_json,
+    create_model_params,
     dump_qconfig,
-    filter_and_create_export_hash,
+    export_wrapper,
     generate_mdp_partition_config,
-    hash_compile_params,
+    hash_dict_params,
     load_json,
 )
-from QEfficient.utils.cache import QEFF_HOME
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +55,13 @@ class QEFFBaseModel(ABC):
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
         self.model = model
-        self.hash_params = self.create_model_params(**kwargs)
+        self.hash_params = create_model_params(self, **kwargs)
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
-        if hasattr(self.model.config, "architectures"):
-            model_architecture = getattr(self.model.config, "architectures", None)
-            self.model_architecture = model_architecture[0] if isinstance(model_architecture, list) else None
+        self.model_architecture = (
+            (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
+        ) or None
 
         # Apply the transformations
         any_transformed = False
@@ -74,13 +73,6 @@ class QEFFBaseModel(ABC):
             warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
-
-    def create_model_params(self, **kwargs) -> Dict:
-        model_params = copy.deepcopy(kwargs)
-        model_params["config"] = self.model.config.to_diff_dict()
-        model_params["peft_config"] = getattr(self.model, "active_peft_config", None)
-        model_params["applied_transform_names"] = self._transform_names()
-        return model_params
 
     @property
     @abstractmethod
@@ -129,6 +121,7 @@ class QEFFBaseModel(ABC):
             :str: Path of the compiled ``qpc`` package.
         """
 
+    @export_wrapper
     def _export(
         self,
         example_inputs: Dict[str, torch.Tensor],
@@ -149,17 +142,6 @@ class QEFFBaseModel(ABC):
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
         """
-        parent_dir = self.model_architecture or self.model_name
-        export_dir = Path(export_dir or (QEFF_HOME / parent_dir / self.model_name))
-        export_hash, filtered_hash_params = filter_and_create_export_hash(
-            model_params=self.hash_params,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            export_kwargs=export_kwargs,
-            onnx_transform_kwargs=onnx_transform_kwargs,
-        )
-        self.export_hash = export_hash
-        export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         onnx_path = export_dir / f"{self.model_name}.onnx"
         if onnx_path.is_file():
             self.onnx_path = onnx_path
@@ -233,11 +215,6 @@ class QEFFBaseModel(ABC):
 
         finally:
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
-
-        # Dump JSON file with hashed parameters
-        hashed_params_export_path = export_dir / "hashed_export_params.json"
-        create_json(hashed_params_export_path, filtered_hash_params)
-        logger.info("Hashed parameters exported successfully.")
 
         self.onnx_path = onnx_path
         return onnx_path
@@ -328,14 +305,15 @@ class QEFFBaseModel(ABC):
         else:
             mdp_ts_json = None
 
-        compile_hash, hashed_params = hash_compile_params(
-            command=command,
-            specializations=specializations,
-            custom_io=custom_io,
-            mdp_ts_num_devices=mdp_ts_num_devices,
-            mdp_ts_json=mdp_ts_json,
-            num_speculative_tokens=num_speculative_tokens,
-        )
+        compile_hash_params = {
+            "command": command,
+            "specializations": specializations,
+            "custom_io": custom_io,
+            "mdp_ts_num_devices": mdp_ts_num_devices,
+            "mdp_ts_json": mdp_ts_json,
+            "num_speculative_tokens": num_speculative_tokens,
+        }
+        compile_hash = hash_dict_params(compile_hash_params)
 
         compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
         qpc_path = compile_dir / "qpc"
@@ -389,7 +367,7 @@ class QEFFBaseModel(ABC):
             )
         # Dump JSON file with hashed parameters
         hashed_compile_params_path = compile_dir / "hashed_compile_params.json"
-        create_json(hashed_compile_params_path, hashed_params)
+        create_json(hashed_compile_params_path, compile_hash_params)
         logger.info("Hashed parameters exported successfully.")
 
         self.qpc_path = qpc_path
