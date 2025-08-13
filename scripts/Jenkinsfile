@@ -104,25 +104,25 @@ pipeline {
     //                    }
     //                }
     //     }
-    //     stage('QNN CLI Tests') {
-    //         steps {
-    //             timeout(time: 30, unit: 'MINUTES') {
-    //                 sh '''
-    //                 sudo docker exec ${BUILD_TAG} bash -c "
-    //                 source /qnn_sdk/bin/envsetup.sh &&
-    //                 source /qnn_sdk/bin/envcheck -c &&
-    //                 cd /efficient-transformers &&
-    //                 . preflight_qeff/bin/activate &&
-    //                 mkdir -p $PWD/Qnn_cli &&
-    //                 export TOKENIZERS_PARALLELISM=false &&
-    //                 export QEFF_HOME=$PWD/Qnn_cli &&
-    //                 pytest tests -m '(cli and qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log4.xml &&
-    //                 junitparser merge tests/tests_log4.xml tests/tests_log.xml &&
-    //                 deactivate"
-    //                 '''
-    //             }
-    //         }
-    //     }
+        stage('QNN CLI Tests') {
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    source /qnn_sdk/bin/envsetup.sh &&
+                    source /qnn_sdk/bin/envcheck -c &&
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p $PWD/Qnn_cli &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/Qnn_cli &&
+                    pytest tests -m '(cli and qnn) and (not finetune)' --ignore tests/vllm -n 4 --junitxml=tests/tests_log4.xml &&
+                    junitparser merge tests/tests_log4.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
     //     stage('QNN Non-CLI Tests') {
     //         steps {
     //             timeout(time: 200, unit: 'MINUTES') {
