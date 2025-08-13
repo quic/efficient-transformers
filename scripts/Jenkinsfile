@@ -187,6 +187,9 @@ pipeline {
                 parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
                 wait: false
         }
+        always {
+            junit testResults: 'tests/tests_log.xml'
+        }
         unsuccessful {
             script {
                 try {
@@ -198,13 +201,8 @@ pipeline {
                     echo "Failed to delete container ${BUILD_TAG}: ${error}"
                 }
             }
-            
-        }
-        always {
-            junit testResults: 'tests/tests_log.xml'
             echo 'Cleaning Workspace'
             deleteDir()
         }
-
     }
 }
