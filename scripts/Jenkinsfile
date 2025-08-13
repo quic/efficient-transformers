@@ -184,7 +184,10 @@ pipeline {
         success {
             // Trigger downstream job only if this pipeline succeeds
             build job: 'qefficient_vllm_upstream',
-                parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
+                parameters: [
+                    string(name: 'NAME', value: "${BUILD_TAG}"),
+                    string(name: 'QEFF_WORKSPACE', value: "${env.WORKSPACE}")
+                ],
                 wait: false
         }
         always {
@@ -198,9 +201,6 @@ pipeline {
                 }
             }
             junit testResults: 'tests/tests_log.xml'
-            echo 'Cleaning Workspace'
-            deleteDir()
-            
         }
         unsuccessful {
             script {
@@ -212,6 +212,8 @@ pipeline {
                     echo "Failed to delete container ${BUILD_TAG}: ${error}"
                 }
             }
+            echo 'Cleaning Workspace'
+            deleteDir()
         }
     }
 }
