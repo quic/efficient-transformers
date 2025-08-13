@@ -45,9 +45,9 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
     Asserts that two lists of floats are numerically close element-wise.
 
     """
-    assert actual_list is not None and isinstance(actual_list, list), (
-        f"Actual {name} data is missing or not a list for scenario '{scenario_key}'."
-    )
+    assert actual_list is not None and isinstance(
+        actual_list, list
+    ), f"Actual {name} data is missing or not a list for scenario '{scenario_key}'."
     assert len(ref_list) == len(actual_list), (
         f"{name} length mismatch for scenario '{scenario_key}' (WS: {current_world_size}, Rank: {current_rank}). "
         f"Expected {len(ref_list)} elements, but got {len(actual_list)}."
@@ -230,7 +230,7 @@ def test_finetune(
     print_model_size_spy.assert_called_once()
     train_spy.assert_called_once()
 
-    assert update_config_spy.call_count == 2
+    assert update_config_spy.call_count == 1
     assert get_custom_data_collator_spy.call_count == 2
     assert get_dataloader_kwargs_spy.call_count == 2
     assert get_preprocessed_dataset_spy.call_count == 2
