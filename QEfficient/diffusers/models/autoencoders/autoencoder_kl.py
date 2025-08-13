@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 import torch
-
 from diffusers import AutoencoderKL
 
 

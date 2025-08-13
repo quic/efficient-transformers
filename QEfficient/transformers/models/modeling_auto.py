@@ -14,6 +14,15 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 import torch
 import torch.nn as nn
+from transformers import (
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoModelForImageTextToText,
+    AutoModelForSpeechSeq2Seq,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+    TextStreamer,
+)
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
@@ -49,15 +58,6 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.cache import to_hashable
 from QEfficient.utils.logging_utils import logger
-from transformers import (
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoModelForImageTextToText,
-    AutoModelForSpeechSeq2Seq,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-    TextStreamer,
-)
 
 
 class QEFFTransformersBase(QEFFBaseModel):

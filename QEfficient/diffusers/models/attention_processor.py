@@ -8,7 +8,6 @@
 from typing import Optional
 
 import torch
-
 from diffusers.models.attention_processor import Attention, JointAttnProcessor2_0
 
 
@@ -123,7 +122,6 @@ class QEffJointAttnProcessor2_0(JointAttnProcessor2_0):
             hidden_states = torch.bmm(attention_probs, value)
         else:  # self-attention, use blocked attention
             # QKV done with block-attention (a la FlashAttentionV2)
-            print(f"{query.shape = }, {key.shape = }, {value.shape = }")
             query_block_size = self.query_block_size
             query_seq_len = query.size(-2)
             num_blocks = (query_seq_len + query_block_size - 1) // query_block_size
