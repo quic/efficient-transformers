@@ -6,11 +6,11 @@
 # -----------------------------------------------------------------------------
 from typing import Tuple
 
-from torch import nn
-
 from diffusers.models.attention import JointTransformerBlock
 from diffusers.models.attention_processor import Attention, JointAttnProcessor2_0
 from diffusers.models.normalization import RMSNorm
+from torch import nn
+
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop.rms_norm import CustomRMSNormAIC
 from QEfficient.diffusers.models.attention import QEffJointTransformerBlock
@@ -22,6 +22,11 @@ from QEfficient.diffusers.models.attention_processor import (
 
 class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {RMSNorm: CustomRMSNormAIC}
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        model, transformed = super().apply(model)
+        return model, transformed
 
 
 class AttentionTransform(ModuleMappingTransform):

@@ -62,15 +62,6 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.logging_utils import logger
-from transformers import (
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoModelForImageTextToText,
-    AutoModelForSpeechSeq2Seq,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-    TextStreamer,
-)
 
 
 class QEFFTransformersBase(QEFFBaseModel):

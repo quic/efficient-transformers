@@ -197,6 +197,13 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2ForCausalLM,
     Starcoder2Model,
 )
+from transformers.models.t5.modeling_t5 import (
+    T5Attention,
+    T5LayerCrossAttention,
+    T5LayerFF,
+    T5LayerNorm,
+    T5LayerSelfAttention,
+)
 from transformers.models.whisper.modeling_whisper import (
     WhisperAttention,
     WhisperDecoder,
@@ -436,154 +443,6 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
-from transformers.models.codegen.modeling_codegen import (
-    CodeGenAttention,
-    CodeGenBlock,
-    CodeGenForCausalLM,
-    CodeGenModel,
-)
-from transformers.models.falcon.modeling_falcon import (
-    FalconAttention,
-    FalconDecoderLayer,
-    FalconForCausalLM,
-    FalconModel,
-)
-from transformers.models.gemma.modeling_gemma import (
-    GemmaAttention,
-    GemmaDecoderLayer,
-    GemmaForCausalLM,
-    GemmaModel,
-    GemmaRMSNorm,
-)
-from transformers.models.gemma2.modeling_gemma2 import (
-    Gemma2Attention,
-    Gemma2DecoderLayer,
-    Gemma2ForCausalLM,
-    Gemma2Model,
-    Gemma2RMSNorm,
-)
-from transformers.models.gemma3.modeling_gemma3 import (
-    Gemma3Attention,
-    Gemma3DecoderLayer,
-    Gemma3ForCausalLM,
-    Gemma3ForConditionalGeneration,
-    Gemma3RMSNorm,
-    Gemma3TextModel,
-)
-from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
-from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
-    GPTBigCodeAttention,
-    GPTBigCodeBlock,
-    GPTBigCodeForCausalLM,
-    GPTBigCodeModel,
-)
-from transformers.models.gptj.modeling_gptj import GPTJAttention, GPTJBlock, GPTJForCausalLM, GPTJModel
-from transformers.models.granite.modeling_granite import (
-    GraniteAttention,
-    GraniteForCausalLM,
-    GraniteModel,
-    GraniteRMSNorm,
-)
-from transformers.models.granitemoe.modeling_granitemoe import (
-    GraniteMoeAttention,
-    GraniteMoeForCausalLM,
-    GraniteMoeModel,
-    GraniteMoeMoE,
-    GraniteMoeParallelExperts,
-    GraniteMoeRMSNorm,
-    GraniteMoeRotaryEmbedding,
-    GraniteMoeTopKGating,
-)
-from transformers.models.llama.modeling_llama import (
-    LlamaAttention,
-    LlamaDecoderLayer,
-    LlamaForCausalLM,
-    LlamaModel,
-    LlamaRMSNorm,
-)
-from transformers.models.llama4.modeling_llama4 import (
-    Llama4ForCausalLM,
-    Llama4ForConditionalGeneration,
-    Llama4TextAttention,
-    Llama4TextDecoderLayer,
-    Llama4TextExperts,
-    Llama4TextModel,
-    Llama4TextMoe,
-    Llama4TextRMSNorm,
-    Llama4VisionAttention,
-    Llama4VisionModel,
-)
-from transformers.models.llava.modeling_llava import (
-    LlavaForConditionalGeneration,
-)
-from transformers.models.llava_next.modeling_llava_next import (
-    LlavaNextForConditionalGeneration,
-)
-from transformers.models.mistral.modeling_mistral import (
-    MistralAttention,
-    MistralDecoderLayer,
-    MistralForCausalLM,
-    MistralModel,
-    MistralRMSNorm,
-)
-from transformers.models.mixtral.modeling_mixtral import (
-    MixtralAttention,
-    MixtralDecoderLayer,
-    MixtralForCausalLM,
-    MixtralModel,
-    MixtralRMSNorm,
-    MixtralSparseMoeBlock,
-)
-from transformers.models.mllama.modeling_mllama import (
-    MllamaCrossAttentionDecoderLayer,
-    MllamaForCausalLM,
-    MllamaForConditionalGeneration,
-    MllamaRotaryEmbedding,
-    MllamaSelfAttentionDecoderLayer,
-    MllamaTextCrossAttention,
-    MllamaTextModel,
-    MllamaTextRMSNorm,
-    MllamaTextSelfAttention,
-    MllamaVisionModel,
-)
-from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
-from transformers.models.phi.modeling_phi import PhiAttention, PhiDecoderLayer, PhiForCausalLM, PhiModel
-from transformers.models.phi3.modeling_phi3 import (
-    Phi3Attention,
-    Phi3DecoderLayer,
-    Phi3ForCausalLM,
-    Phi3Model,
-    Phi3RMSNorm,
-)
-from transformers.models.qwen2.modeling_qwen2 import (
-    Qwen2Attention,
-    Qwen2DecoderLayer,
-    Qwen2ForCausalLM,
-    Qwen2Model,
-    Qwen2RMSNorm,
-)
-from transformers.models.starcoder2.modeling_starcoder2 import (
-    Starcoder2Attention,
-    Starcoder2DecoderLayer,
-    Starcoder2ForCausalLM,
-    Starcoder2Model,
-)
-from transformers.models.t5.modeling_t5 import (
-    T5Attention,
-    T5LayerCrossAttention,
-    T5LayerFF,
-    T5LayerNorm,
-    T5LayerSelfAttention,
-)
-from transformers.models.whisper.modeling_whisper import (
-    WhisperAttention,
-    WhisperDecoder,
-    WhisperDecoderLayer,
-    WhisperEncoder,
-    WhisperForConditionalGeneration,
-    WhisperModel,
-    WhisperPositionalEmbedding,
-)
 
 SPD_TARGET = "target"
 
