@@ -6,11 +6,11 @@
 # ----------------------------------------------------------------------------
 
 import os
-import numpy as np
-from typing import Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
-from onnx import ModelProto, external_data_helper, numpy_helper
+from typing import Optional, Tuple
 
+import numpy as np
+from onnx import ModelProto, external_data_helper, numpy_helper
 
 
 class OnnxTransform:
