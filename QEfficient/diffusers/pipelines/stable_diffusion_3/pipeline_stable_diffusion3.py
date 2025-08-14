@@ -32,17 +32,18 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
     """
 
     def __init__(self, model, *args, **kwargs):
-        self.tokenizer = model.tokenizer
-        self.tokenizer_2 = model.tokenizer_2
-        self.tokenizer_3 = model.tokenizer_3
-        self.tokenizer_max_length = model.tokenizer_max_length
-        self.scheduler = model.scheduler
-
         self.text_encoder = QEffTextEncoder(model.text_encoder)
         self.text_encoder_2 = QEffTextEncoder(model.text_encoder_2)
         self.text_encoder_3 = QEffTextEncoder(model.text_encoder_3)
         self.transformer = QEffSD3Transformer2DModel(model.transformer)
         self.vae_decode = QEffVAE(model, "decoder")
+
+        self.tokenizer = model.tokenizer
+        self.text_encoder.tokenizer = model.tokenizer
+        self.text_encoder_2.tokenizer = model.tokenizer_2
+        self.text_encoder_3.tokenizer = model.tokenizer_3
+        self.tokenizer_max_length = model.tokenizer_max_length
+        self.scheduler = model.scheduler
 
         self.vae_decode.model.forward = lambda latent_sample, return_dict: self.vae_decode.model.decode(
             latent_sample, return_dict
@@ -99,147 +100,75 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         """
 
         # text_encoder
-
-        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len = self.tokenizer.model_max_length
-
-        example_inputs = {
-            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "output_hidden_states": True,
-        }
-
-        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}}
-
-        output_names = ["pooler_output", "last_hidden_state"]
+        example_inputs_text_encoder, dynamic_axes_text_encoder, output_names_text_encoder = (
+            self.text_encoder.get_onnx_config()
+        )
 
         for i in range(0, 13):
-            output_names.append("hidden_states_" + str(i))
-
-        self.text_encoder_onnx_path = self.text_encoder.export(
-            inputs=example_inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
+            output_names_text_encoder.append("hidden_states_" + str(i))
+        self.text_encoder.export(
+            inputs=example_inputs_text_encoder,
+            output_names=output_names_text_encoder,
+            dynamic_axes=dynamic_axes_text_encoder,
             export_dir=export_dir,
         )
 
         # text_encoder_2
-        example_inputs = {
-            "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "output_hidden_states": True,
-        }
-
-        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}}
-
-        output_names = ["pooler_output", "last_hidden_state"]
+        example_inputs_text_encoder_2, dynamic_axes_text_encoder_2, output_names_text_encoder_2 = (
+            self.text_encoder_2.get_onnx_config()
+        )
 
         for i in range(0, 33):
-            output_names.append("hidden_states_" + str(i))
+            output_names_text_encoder_2.append("hidden_states_" + str(i))
 
-        self.text_encoder_2_onnx_path = self.text_encoder_2.export(
-            inputs=example_inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
+        self.text_encoder_2.export(
+            inputs=example_inputs_text_encoder_2,
+            output_names=output_names_text_encoder_2,
+            dynamic_axes=dynamic_axes_text_encoder_2,
             export_dir=export_dir,
         )
 
         # t5_text_encoder
-        example_inputs = {"input_ids": torch.zeros((bs, seq_len), dtype=torch.int64)}
+        example_inputs_text_encoder_3, dynamic_axes_text_encoder_3, output_names_text_encoder_3 = (
+            self.text_encoder_3.get_onnx_config()
+        )
 
-        dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}}
-
-        output_names = ["last_hidden_state"]
-
-        wo_sfs = [
-            61,
-            203,
-            398,
-            615,
-            845,
-            1190,
-            1402,
-            2242,
-            1875,
-            2393,
-            3845,
-            3213,
-            3922,
-            4429,
-            5020,
-            5623,
-            6439,
-            6206,
-            5165,
-            4593,
-            2802,
-            2618,
-            1891,
-            1419,
-        ]
-
-        assert len(wo_sfs) == 24
         with torch.no_grad():
             prev_sf = 1
             for i in range(len(self.text_encoder_3.model.encoder.block)):
-                wosf = wo_sfs[i]
+                wosf = constants.WO_SFS[i]
                 self.text_encoder_3.model.encoder.block[i].layer[0].SelfAttention.o.weight *= 1 / wosf
                 self.text_encoder_3.model.encoder.block[i].layer[0].scaling_factor *= prev_sf / wosf
                 self.text_encoder_3.model.encoder.block[i].layer[1].DenseReluDense.wo.weight *= 1 / wosf
                 prev_sf = wosf
 
-        self.text_encoder_3_onnx_path = self.text_encoder_3.export(
-            inputs=example_inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
+        self.text_encoder_3.export(
+            inputs=example_inputs_text_encoder_3,
+            output_names=output_names_text_encoder_3,
+            dynamic_axes=dynamic_axes_text_encoder_3,
             export_dir=export_dir,
         )
 
-        # Transformers
-        example_inputs = {
-            "hidden_states": torch.randn(
-                2,
-                self.transformer.model.config.in_channels,
-                self.transformer.model.config.sample_size,
-                self.transformer.model.config.sample_size,
-            ),
-            "encoder_hidden_states": torch.randn(2, 333, self.transformer.model.config.joint_attention_dim),
-            "pooled_projections": torch.randn(2, self.transformer.model.config.pooled_projection_dim),
-            "timestep": torch.randint(0, 20, (2,), dtype=torch.int64),
-        }
+        # transformers
+        example_inputs_transformer, dynamic_axes_transformer, output_names_transformer = (
+            self.transformer.get_onnx_config()
+        )
 
-        output_names = ["output"]
-
-        dynamic_axes = {
-            "hidden_states": {0: "batch_size", 1: "latent_channels", 2: "latent_height", 3: "latent_width"},
-            "encoder_hidden_states": {0: "batch_size", 1: "seq_len"},
-            "pooled_projections": {0: "batch_size"},
-            "timestep": {0: "steps"},
-            "output": {0: "batch_size", 1: "latent_channels", 2: "latent_height", 3: "latent_width"},
-        }
-
-        self.transformer_onnx_path = self.transformer.export(
-            inputs=example_inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
+        self.transformer.export(
+            inputs=example_inputs_transformer,
+            output_names=output_names_transformer,
+            dynamic_axes=dynamic_axes_transformer,
             export_dir=export_dir,
         )
 
-        # VAE decode
-        vae_decoder_input = {
-            "latent_sample": torch.randn(bs, 16, 64, 64),
-            "return_dict": False,
-        }
-
-        output_names = ["sample"]
-
-        dynamic_axes = {
-            "latent_sample": {0: "batch_size", 1: "channels", 2: "height", 3: "width"},
-        }
+        # vae
+        example_inputs_vae, dynamic_axes_vae, output_names_vae = self.vae_decode.get_onnx_config()
 
         self.vae_decoder_onnx_path = self.vae_decode.export(
-            vae_decoder_input,
-            output_names,
-            dynamic_axes,
-            export_dir=None,
+            example_inputs_vae,
+            output_names_vae,
+            dynamic_axes_vae,
+            export_dir=export_dir,
         )
 
     def compile(
@@ -295,14 +224,6 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             `str`: A message indicating the compilation status or path to compiled artifacts.
             (Note: The current implementation might need to return specific paths for each compiled model).
         """
-
-        # Compile text_encoder
-        seq_len = self.tokenizer.model_max_length
-
-        specializations = [
-            {"batch_size": batch_size, "seq_len": seq_len},
-        ]
-
         if any(
             path is None
             for path in [
@@ -315,11 +236,15 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         ):
             self.export()
 
+        # text_encoder
+        specializations_text_encoder = self.text_encoder.get_specializations(
+            batch_size, self.tokenizer.model_max_length
+        )
+
         self.text_encoder_compile_path = self.text_encoder._compile(
-            onnx_path,
             compile_dir,
             compile_only=True,
-            specializations=specializations,
+            specializations=specializations_text_encoder,
             convert_to_fp16=True,
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices_text_encoder,
@@ -327,16 +252,16 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             **compiler_options,
         )
 
-        # Compile text encoder 2
-        specializations = [
-            {"batch_size": batch_size, "seq_len": seq_len},
-        ]
+        # text encoder 2
+        specializations_text_encoder_2 = self.text_encoder_2.get_specializations(
+            batch_size, self.tokenizer.model_max_length
+        )
 
         self.text_encoder_2_compile_path = self.text_encoder_2._compile(
             onnx_path,
             compile_dir,
             compile_only=True,
-            specializations=specializations,
+            specializations=specializations_text_encoder_2,
             convert_to_fp16=True,
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices_text_encoder,
@@ -344,17 +269,14 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             **compiler_options,
         )
 
-        # Compile text_encoder 3
-        seq_len = 256
-        specializations = [
-            {"batch_size": batch_size, "seq_len": seq_len},
-        ]
+        # text_encoder 3
+        specializations_text_encoder_3 = self.text_encoder_3.get_specializations(batch_size, 256)
 
         self.text_encoder_3_compile_path = self.text_encoder_3._compile(
             onnx_path,
             compile_dir,
             compile_only=True,
-            specializations=specializations,
+            specializations=specializations_text_encoder_3,
             convert_to_fp16=True,
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices_text_encoder,
@@ -362,24 +284,15 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             **compiler_options,
         )
 
-        # Compile transformer
-        specializations = [
-            {
-                "batch_size": 2 * batch_size,
-                "latent_channels": self.transformer.model.config.in_channels,
-                "latent_height": self.transformer.model.config.sample_size,
-                "latent_width": self.transformer.model.config.sample_size,
-                "seq_len": 333,
-                "steps": 1,
-            }
-        ]
+        # transformer
+        specializations_transformer = self.transformer.get_specializations(batch_size, 333)
 
         compiler_options = {"mos": 1, "ols": 2}
         self.trasformers_compile_path = self.transformer._compile(
             onnx_path,
             compile_dir,
             compile_only=True,
-            specializations=specializations,
+            specializations=specializations_transformer,
             convert_to_fp16=True,
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices_transformer,
@@ -387,21 +300,14 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             **compiler_options,
         )
 
-        # compile vae
-        decoder_sepcializations = [
-            {
-                "batch_size": batch_size,
-                "channels": 16,
-                "height": self.transformer.model.config.sample_size,
-                "width": self.transformer.model.config.sample_size,
-            }
-        ]
+        # vae
+        specializations_vae = self.vae_decode.get_specializations(batch_size)
 
         self.vae_decoder_compile_path = self.vae_decode._compile(
             onnx_path,
             compile_dir,
             compile_only=True,
-            specializations=decoder_sepcializations,
+            specializations=specializations_vae,
             convert_to_fp16=True,
             mdp_ts_num_devices=num_devices_vae_decoder,
         )
@@ -410,12 +316,29 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         self,
         text_encoder,
         tokenizer,
-        clip_index: int,
+        clip_index: bool,
         prompt: Union[str, List[str]],
         num_images_per_prompt: Optional[int] = 1,
         clip_skip: Optional[int] = None,
         device_ids: List[int] = None,
     ):
+        """
+        Get CLIP prompt embeddings for a given text encoder and tokenizer.
+
+        Args:
+            text_encoder: The QEffTextEncoder instance to use for encoding.
+            tokenizer: The tokenizer to use for text preprocessing.
+            clip_index (int): Index of the CLIP model (0 or 1) to determine embedding dimensions and hidden state range.
+            prompt (Union[str, List[str]]): The input prompt(s) to encode.
+            num_images_per_prompt (Optional[int], defaults to 1): Number of images to generate per prompt.
+            clip_skip (Optional[int], optional): Number of layers to skip from the end when extracting hidden states.
+            device_ids (List[int], optional): List of device IDs to use for inference.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+                - prompt_embd_text_encoder: The prompt embeddings from the text encoder.
+                - pooled_prompt_embeds_text_encoder: The pooled prompt embeddings.
+        """
         prompt = [prompt] if isinstance(prompt, str) else prompt
         batch_size = len(prompt)
 
@@ -492,10 +415,23 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
+        """
+        Get T5 prompt embeddings for the given prompt(s).
+
+        Args:
+            prompt (Union[str, List[str]], optional): The input prompt(s) to encode.
+            num_images_per_prompt (int, defaults to 1): Number of images to generate per prompt.
+            max_sequence_length (int, defaults to 256): Maximum sequence length for tokenization.
+            device (Optional[torch.device], optional): The device to place tensors on.
+            dtype (Optional[torch.dtype], optional): The data type for tensors.
+
+        Returns:
+            torch.Tensor: The T5 prompt embeddings with shape (batch_size * num_images_per_prompt, seq_len, hidden_size).
+        """
         prompt = [prompt] if isinstance(prompt, str) else prompt
         batch_size = len(prompt)
 
-        text_inputs = self.tokenizer_3(
+        text_inputs = self.text_encoder_3.tokenizer(
             prompt,
             padding="max_length",
             max_length=max_sequence_length,
@@ -504,10 +440,12 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             return_tensors="pt",
         )
         text_input_ids = text_inputs.input_ids
-        untruncated_ids = self.tokenizer_3(prompt, padding="longest", return_tensors="pt").input_ids
+        untruncated_ids = self.text_encoder_3.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
 
         if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
-            removed_text = self.tokenizer_3.batch_decode(untruncated_ids[:, self.tokenizer_max_length - 1 : -1])
+            removed_text = self.text_encoder_3.tokenizer.batch_decode(
+                untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
+            )
             logger.warning(
                 "The following part of your input was truncated because `max_sequence_length` is set to "
                 f" {max_sequence_length} tokens: {removed_text}"
@@ -515,10 +453,9 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         if self.text_encoder_3.qpc_session is None:
             self.text_encoder_3.qpc_session = QAICInferenceSession(str(self.text_encoder_3_compile_path))
 
-        
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
         prompt_embeds = torch.tensor(self.text_encoder_3.qpc_session.run(aic_text_input)["last_hidden_state"])
-        
+
         # AIC Testing
         # prompt_embeds_torch = self.text_encoder_3.model(text_input_ids.to(device))[0]
         # mad = torch.abs(prompt_embeds - aic_embeddings).mean()
@@ -550,6 +487,37 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         clip_skip: Optional[int] = None,
         max_sequence_length: int = 256,
     ):
+        """
+        Encode the given prompts into text embeddings using the three text encoders (CLIP and T5).
+
+        This method processes prompts through multiple text encoders to generate embeddings suitable
+        for Stable Diffusion 3 generation. It handles both positive and negative prompts for
+        classifier-free guidance.
+
+        Args:
+            prompt (Union[str, List[str]]): The primary prompt(s) to encode.
+            prompt_2 (Union[str, List[str]]): The secondary prompt(s) for the second CLIP encoder.
+            prompt_3 (Union[str, List[str]]): The tertiary prompt(s) for the T5 encoder.
+            device_ids (List[int], optional): List of device IDs to use for inference.
+            num_images_per_prompt (int, defaults to 1): Number of images to generate per prompt.
+            do_classifier_free_guidance (bool, defaults to True): Whether to use classifier-free guidance.
+            negative_prompt (Optional[Union[str, List[str]]], optional): The negative prompt(s) to encode.
+            negative_prompt_2 (Optional[Union[str, List[str]]], optional): The negative prompt(s) for the second CLIP encoder.
+            negative_prompt_3 (Optional[Union[str, List[str]]], optional): The negative prompt(s) for the T5 encoder.
+            prompt_embeds (Optional[torch.FloatTensor], optional): Pre-computed prompt embeddings.
+            negative_prompt_embeds (Optional[torch.FloatTensor], optional): Pre-computed negative prompt embeddings.
+            pooled_prompt_embeds (Optional[torch.FloatTensor], optional): Pre-computed pooled prompt embeddings.
+            negative_pooled_prompt_embeds (Optional[torch.FloatTensor], optional): Pre-computed negative pooled prompt embeddings.
+            clip_skip (Optional[int], optional): Number of layers to skip from the end when extracting CLIP hidden states.
+            max_sequence_length (int, defaults to 256): Maximum sequence length for T5 tokenization.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+                - prompt_embeds: The combined prompt embeddings from all encoders.
+                - negative_prompt_embeds: The combined negative prompt embeddings (if classifier-free guidance is enabled).
+                - pooled_prompt_embeds: The pooled prompt embeddings from CLIP encoders.
+                - negative_pooled_prompt_embeds: The pooled negative prompt embeddings (if classifier-free guidance is enabled).
+        """
         prompt = [prompt] if isinstance(prompt, str) else prompt
         if prompt is not None:
             batch_size = len(prompt)
@@ -565,7 +533,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
             prompt_embed, pooled_prompt_embed = self._get_clip_prompt_embeds(
                 self.text_encoder,
-                self.tokenizer,
+                self.text_encoder.tokenizer,
                 clip_index=0,
                 prompt=prompt,
                 num_images_per_prompt=num_images_per_prompt,
@@ -575,7 +543,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
             prompt_2_embed, pooled_prompt_2_embed = self._get_clip_prompt_embeds(
                 self.text_encoder_2,
-                self.tokenizer_2,
+                self.text_encoder_2.tokenizer,
                 clip_index=1,
                 prompt=prompt_2,
                 num_images_per_prompt=num_images_per_prompt,
@@ -626,7 +594,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
 
             negative_prompt_embed, negative_pooled_prompt_embed = self._get_clip_prompt_embeds(
                 self.text_encoder,
-                self.tokenizer,
+                self.text_encoder.tokenizer,
                 clip_index=0,
                 prompt=negative_prompt,
                 num_images_per_prompt=num_images_per_prompt,
@@ -635,7 +603,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
             )
             negative_prompt_2_embed, negative_pooled_prompt_2_embed = self._get_clip_prompt_embeds(
                 self.text_encoder_2,
-                self.tokenizer_2,
+                self.text_encoder_2.tokenizer,
                 clip_index=1,
                 prompt=negative_prompt_2,
                 num_images_per_prompt=num_images_per_prompt,
@@ -691,6 +659,76 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 256,
     ):
+        """
+        Generate images from text prompts using the QEfficient-optimized Stable Diffusion 3 pipeline.
+
+        This method performs text-to-image generation by encoding the input prompts through multiple
+        text encoders, running the diffusion process with the transformer model, and decoding the
+        final latents to images using the VAE decoder. All components are optimized for Qualcomm AI hardware.
+
+        Args:
+            prompt (Union[str, List[str]], optional): The primary text prompt(s) to guide image generation.
+            prompt_2 (Optional[Union[str, List[str]]], optional): Secondary prompt(s) for the second CLIP encoder.
+                If None, defaults to `prompt`.
+            prompt_3 (Optional[Union[str, List[str]]], optional): Tertiary prompt(s) for the T5 encoder.
+                If None, defaults to `prompt`.
+            height (Optional[int], optional): Height of the generated image in pixels. If None, uses default
+                sample size scaled by VAE scale factor.
+            width (Optional[int], optional): Width of the generated image in pixels. If None, uses default
+                sample size scaled by VAE scale factor.
+            num_inference_steps (int, defaults to 28): Number of denoising steps during generation.
+            timesteps (List[int], optional): Custom timesteps to use for denoising. If provided, overrides
+                `num_inference_steps`.
+            guidance_scale (float, defaults to 7.0): Guidance scale for classifier-free guidance. Higher values
+                result in images more closely linked to the prompt at the expense of lower image quality.
+            negative_prompt (Optional[Union[str, List[str]]], optional): Negative prompt(s) to guide what not
+                to include in image generation.
+            negative_prompt_2 (Optional[Union[str, List[str]]], optional): Negative prompt(s) for the second
+                CLIP encoder.
+            negative_prompt_3 (Optional[Union[str, List[str]]], optional): Negative prompt(s) for the T5 encoder.
+            num_images_per_prompt (Optional[int], defaults to 1): Number of images to generate per prompt.
+            generator (Optional[Union[torch.Generator, List[torch.Generator]]], optional): Random number
+                generator(s) for reproducible generation.
+            latents (Optional[torch.FloatTensor], optional): Pre-generated noisy latents sampled from a Gaussian
+                distribution to be used as inputs for image generation.
+            prompt_embeds (Optional[torch.FloatTensor], optional): Pre-generated text embeddings. Can be used
+                to easily tweak text inputs (prompt weighting).
+            negative_prompt_embeds (Optional[torch.FloatTensor], optional): Pre-generated negative text embeddings.
+            pooled_prompt_embeds (Optional[torch.FloatTensor], optional): Pre-generated pooled text embeddings.
+            negative_pooled_prompt_embeds (Optional[torch.FloatTensor], optional): Pre-generated negative pooled
+                text embeddings.
+            output_type (Optional[str], defaults to "pil"): Output format of the generated images. Choose between
+                "pil", "np", "pt", or "latent".
+            return_dict (bool, defaults to True): Whether to return a `StableDiffusion3PipelineOutput` instead
+                of a plain tuple.
+            joint_attention_kwargs (Optional[Dict[str, Any]], optional): Additional keyword arguments to pass
+                to the joint attention layers.
+            clip_skip (Optional[int], optional): Number of layers to skip from the end when extracting CLIP
+                hidden states.
+            callback_on_step_end (Optional[Callable[[int, int, Dict], None]], optional): Callback function
+                called at the end of each denoising step.
+            callback_on_step_end_tensor_inputs (List[str], defaults to ["latents"]): List of tensor inputs
+                to pass to the callback function.
+            max_sequence_length (int, defaults to 256): Maximum sequence length for T5 text encoder tokenization.
+
+        Returns:
+            Union[StableDiffusion3PipelineOutput, Tuple]: If `return_dict` is True, returns a
+            `StableDiffusion3PipelineOutput` object containing the generated images. Otherwise,
+            returns a tuple with the generated images.
+
+        Examples:
+            ```python
+            # Basic text-to-image generation
+            from QEfficient import QEFFStableDiffusion3Pipeline
+
+            pipeline = QEFFStableDiffusion3Pipeline.from_pretrained("stabilityai/stable-diffusion-3.5-large")
+            pipeline.compile(num_devices_text_encoder=1, num_devices_transformer=4, num_devices_vae_decoder=1)
+
+            # NOTE: guidance_scale <=1 is not supported
+            image = pipeline("A girl laughing", num_inference_steps=28, guidance_scale=2.0).images[0]
+            image.save("girl_laughing.png")
+            ```
+        """
         height = height or self.default_sample_size * self.vae_scale_factor
         width = width or self.default_sample_size * self.vae_scale_factor
         device = "cpu"
