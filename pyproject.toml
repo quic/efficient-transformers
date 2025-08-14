@@ -41,9 +41,9 @@ dependencies = [
     "torchmetrics==1.7.0",
     "torch==2.7.1; platform_machine=='aarch64'",
     # Specifying torch cpu package URL per python version, update the list once pytorch releases whl for python>3.11
-    "torch@https://download.pytorch.org/whl/cpu/torch-2.7.1%2Bcpu-cp38-cp38-linux_x86_64.whl ; python_version=='3.8' and platform_machine=='x86_64'",
-    "torch@https://download.pytorch.org/whl/cpu/torch-2.7.1%2Bcpu-cp39-cp39-linux_x86_64.whl ; python_version=='3.9' and platform_machine=='x86_64'",
-    "torch@https://download.pytorch.org/whl/cpu/torch-2.7.1%2Bcpu-cp310-cp310-linux_x86_64.whl ; python_version=='3.10' and platform_machine=='x86_64'",
+    "torch@https://download.pytorch.org/whl/cpu/torch-2.4.1%2Bcpu-cp38-cp38-linux_x86_64.whl ; python_version=='3.8' and platform_machine=='x86_64'",
+    "torch@https://download.pytorch.org/whl/cpu/torch-2.7.1%2Bcpu-cp39-cp39-manylinux_2_28_x86_64.whl ; python_version=='3.9' and platform_machine=='x86_64'",
+    "torch@https://download.pytorch.org/whl/cpu/torch-2.7.1%2Bcpu-cp310-cp310-manylinux_2_28_x86_64.whl ; python_version=='3.10' and platform_machine=='x86_64'",
 ]
 
 [project.optional-dependencies]
