@@ -462,10 +462,10 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         aic_text_encoder_emb = aic_embeddings["pooler_output"]
 
         ## [TEMP] CHECK ACC ##
-        prompt_embeds_pytorch = text_encoder.model(text_input_ids, output_hidden_states=True)
-        pt_pooled_embed = prompt_embeds_pytorch[0].detach().numpy()
-        mad = np.mean(np.abs(pt_pooled_embed - aic_text_encoder_emb))
-        print(f"CLIP text encoder {clip_index}- pooled embed MAD: ", mad)
+        # prompt_embeds_pytorch = text_encoder.model(text_input_ids, output_hidden_states=True)
+        # pt_pooled_embed = prompt_embeds_pytorch[0].detach().numpy()
+        # mad = np.mean(np.abs(pt_pooled_embed - aic_text_encoder_emb))
+        # print(f"CLIP text encoder {clip_index}- pooled embed MAD: ", mad)
         ### END CHECK ACC ##
 
         pooled_prompt_embeds = torch.tensor(aic_text_encoder_emb)
@@ -515,12 +515,14 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         if self.text_encoder_3.qpc_session is None:
             self.text_encoder_3.qpc_session = QAICInferenceSession(str(self.text_encoder_3_compile_path))
 
-        prompt_embeds = self.text_encoder_3.model(text_input_ids.to(device))[0]
+        
         aic_text_input = {"input_ids": text_input_ids.numpy().astype(np.int64)}
-        aic_embeddings = torch.tensor(self.text_encoder_3.qpc_session.run(aic_text_input)["last_hidden_state"])
-        mad = torch.abs(prompt_embeds - aic_embeddings).mean()
-        print("Clip text-encoder-3 Pytorch vs AI 100:", mad)
-        prompt_embeds = aic_embeddings
+        prompt_embeds = torch.tensor(self.text_encoder_3.qpc_session.run(aic_text_input)["last_hidden_state"])
+        
+        # AIC Testing
+        # prompt_embeds_torch = self.text_encoder_3.model(text_input_ids.to(device))[0]
+        # mad = torch.abs(prompt_embeds - aic_embeddings).mean()
+        # print("Clip text-encoder-3 Pytorch vs AI 100:", mad)
 
         _, seq_len, _ = prompt_embeds.shape
 

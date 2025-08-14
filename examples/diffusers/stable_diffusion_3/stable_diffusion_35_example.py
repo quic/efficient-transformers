@@ -9,5 +9,7 @@ from QEfficient import QEFFStableDiffusion3Pipeline
 
 pipeline = QEFFStableDiffusion3Pipeline.from_pretrained("stabilityai/stable-diffusion-3.5-large")
 pipeline.compile(num_devices_text_encoder=1, num_devices_transformer=4, num_devices_vae_decoder=1)
-image = pipeline("A girl laughing", num_inference_steps=1, guidance_scale=0.0).images[0]
-image.save("new_testing.png")
+
+# NOTE: guidance_scale <=1 is not supported 
+image = pipeline("A girl laughing", num_inference_steps=28, guidance_scale=2.0).images[0]
+image.save("girl_laughing.png")
