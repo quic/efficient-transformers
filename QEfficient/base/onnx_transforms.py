@@ -4,12 +4,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
-
+import os
 from typing import Optional, Tuple
-
 import numpy as np
 from onnx import ModelProto, external_data_helper, numpy_helper
-
+from concurrent.futures import ThreadPoolExecutor
 
 class OnnxTransform:
     """
@@ -30,45 +29,29 @@ class OnnxTransform:
         :returns: Boolean indicating whether transform was applied
         """
         raise NotImplementedError("Use subclasses for ONNX transform")
-
-
+    
 class FP16ClipTransform(OnnxTransform):
-    """
-    Clips the tensor values to be in FP16 range, but preserves -inf values.
-    """
-
     @classmethod
     def apply(cls, model: ModelProto, *, onnx_base_dir: Optional[str] = None, **kwargs) -> Tuple[ModelProto, bool]:
-        """
-        :param onnx_base_dir: Base directory to load tensors
-        """
         finfo = np.finfo(np.float16)
         fp16_max = finfo.max
         fp16_min = finfo.min
-        transformed = False
-
-        for tensor in external_data_helper._get_all_tensors(model):
+        def clip_tensor(tensor):
             nptensor = numpy_helper.to_array(tensor, onnx_base_dir)
             if nptensor.dtype == np.float32 and (np.any(nptensor > fp16_max) or np.any(nptensor < fp16_min)):
-                neg_inf_mask = np.isinf(nptensor) & (nptensor < 0)
                 clipped_tensor = np.clip(nptensor, fp16_min, fp16_max)
-
-                # Restore -inf values
-                if neg_inf_mask.any():
-                    clipped_tensor = np.where(neg_inf_mask, np.float32("-inf"), clipped_tensor)
-
                 new_tensor = numpy_helper.from_array(clipped_tensor, tensor.name)
                 tensor.CopyFrom(new_tensor)
-                transformed = True
+                return True
+            return False
 
+        tensors = external_data_helper._get_all_tensors(model)
+        with ThreadPoolExecutor(max_workers=os.cpu_count() * 4) as executor:
+            results = list(executor.map(clip_tensor, tensors))
+        transformed = any(results)
         return model, transformed
 
-
 class SplitTensorsTransform(OnnxTransform):
-    """
-    Split external tensors file
-    """
-
     @classmethod
     def apply(
         cls,
@@ -76,26 +59,31 @@ class SplitTensorsTransform(OnnxTransform):
         *,
         model_name: str,
         onnx_base_dir: Optional[str] = None,
-        file_chunk_size: int = 10 * 2**30,  # 10 GiB
+        file_chunk_size: int = 10 * 2**30,
         size_threshold: int = 1024,
         **kwargs,
     ) -> Tuple[ModelProto, bool]:
-        """
-        :param model_name: Used for naming external files. i.e. {model_name}_0.onnx.data
-        :param onnx_base_dir: Base directory to load tensors (if not already loaded).
-        :param file_chunk_size: Chunk size to split external files into.
-        :param size_threshold: Only tensors greater than this threshold (in bytes) will be saved externally.
-        """
+        
+        external_data_helper.load_external_data_for_model(model, onnx_base_dir)
+        tensors = external_data_helper._get_all_tensors(model)
+        file_assignments = []
         file_num = 0
         current_file_size = 0
-        transformed = False
-        external_data_helper.load_external_data_for_model(model, onnx_base_dir)
-        for tensor in external_data_helper._get_all_tensors(model):
-            if tensor.HasField("raw_data") and ((tsize := len(tensor.raw_data)) > size_threshold):
+        transformed = False 
+        
+        for tensor in tensors:
+            if tensor.HasField("raw_data") and (tsize := len(tensor.raw_data)) > size_threshold:
                 transformed = True
-                current_file_size += tsize
-                if current_file_size > file_chunk_size:
+                if current_file_size + tsize > file_chunk_size:
                     file_num += 1
-                    current_file_size = tsize
-                external_data_helper.set_external_data(tensor, f"{model_name}_{file_num}.onnx.data")
+                    current_file_size = 0
+                current_file_size += tsize
+                file_assignments.append((tensor, f"{model_name}_{file_num}.onnx.data"))
+
+        def process_tensor(args):
+            tensor, file_name = args
+            external_data_helper.set_external_data(tensor, file_name)
+
+        with ThreadPoolExecutor(max_workers=os.cpu_count() * 4) as executor:
+            executor.map(process_tensor, file_assignments)
         return model, transformed
