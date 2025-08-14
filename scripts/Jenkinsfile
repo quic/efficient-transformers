@@ -104,16 +104,6 @@ pipeline {
                        }
                    }
         }
-        stage('vLLM Tests') {
-            steps {
-                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    build job: 'qefficient_vllm_upstream',
-                    parameters: [string(name: 'NAME', value: "${BUILD_TAG}")],
-                    propagate: true,
-                    wait: true
-                }
-            }
-        }
         stage('QNN CLI Tests') {
             steps {
                 timeout(time: 30, unit: 'MINUTES') {
@@ -191,20 +181,39 @@ pipeline {
     }
 
    post {
-       always {
-           script {
-               try {
-                   sh '''
-                   sudo docker rm -f ${BUILD_TAG}
-                   sudo chown -R ubuntu .
-                   '''
-               } catch (error) {
-                   echo "Failed to delete container ${BUILD_TAG}: ${error}"
-               }
-           }
-           junit testResults: 'tests/tests_log.xml'
-           echo 'Cleaning Workspace'
-           deleteDir()
-       }
-   }
+        success {
+            // Trigger downstream job only if this pipeline succeeds
+            build job: 'qefficient_vllm_upstream',
+                parameters: [
+                    string(name: 'NAME', value: "${BUILD_TAG}"),
+                    string(name: 'QEFF_WORKSPACE', value: "${env.WORKSPACE}")
+                ],
+                wait: false
+        }
+        always {
+            script {
+                try {
+                    sh '''
+                    sudo chown -R ubuntu .
+                    '''
+                } catch (error) {
+                    echo "Failed to change ownership: ${error}"
+                }
+            }
+            junit testResults: 'tests/tests_log.xml'
+        }
+        unsuccessful {
+            script {
+                try {
+                    sh '''
+                    sudo docker rm -f ${BUILD_TAG}
+                    '''
+                } catch (error) {
+                    echo "Failed to delete container ${BUILD_TAG}: ${error}"
+                }
+            }
+            echo 'Cleaning Workspace'
+            deleteDir()
+        }
+    }
 }
