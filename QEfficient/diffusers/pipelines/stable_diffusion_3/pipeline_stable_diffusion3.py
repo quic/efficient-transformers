@@ -242,6 +242,7 @@ class QEFFStableDiffusion3Pipeline(StableDiffusion3Pipeline):
         )
 
         self.text_encoder_compile_path = self.text_encoder._compile(
+            onnx_path,
             compile_dir,
             compile_only=True,
             specializations=specializations_text_encoder,

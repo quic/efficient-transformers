@@ -15,11 +15,8 @@ from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.diffusers.models.pytorch_transforms import AttentionTransform, CustomOpsTransform
 from QEfficient.transformers.models.pytorch_transforms import (
-    KVCacheExternalModuleMapperTransform,
-    KVCacheTransform,
     T5ModelTransform,
 )
-from QEfficient.transformers.quantizers.quant_transforms import AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform
 from QEfficient.utils import constants
 from QEfficient.utils.cache import to_hashable
 
@@ -27,6 +24,12 @@ from QEfficient.utils.cache import to_hashable
 class QEffTextEncoder(QEFFBaseModel):
     _pytorch_transforms = [CustomOpsTransform, T5ModelTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    """
+    QEffTextEncoder is a wrapper class for text encoder models that provides ONNX export and compilation capabilities.
+
+    This class extends QEFFBaseModel to handle text encoder models (like T5EncoderModel) with specific
+    transformations and optimizations for efficient inference on Qualcomm AI hardware.
+    """
 
     def __init__(self, model: nn.modules):
         super().__init__(model)
@@ -38,12 +41,16 @@ class QEffTextEncoder(QEFFBaseModel):
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "output_hidden_states": True,
         }
 
         dynamic_axes = {"input_ids": {0: "batch_size", 1: "seq_len"}}
 
         output_names = ["pooler_output", "last_hidden_state"]
+        if self.model.__class__.__name__ == "T5EncoderModel":
+            output_names = ["last_hidden_state"]
+        else:
+            example_inputs["output_hidden_states"] = (True,)
+
         return example_inputs, dynamic_axes, output_names
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None):
@@ -106,14 +113,16 @@ class QEffTextEncoder(QEFFBaseModel):
 
 
 class QEffUNet(QEFFBaseModel):
-    _pytorch_transforms = [
-        AwqToMatmulNbitsTransform,
-        GPTQToMatmulNbitsTransform,
-        CustomOpsTransform,
-        KVCacheTransform,
-        KVCacheExternalModuleMapperTransform,
-    ]
+    _pytorch_transforms = [CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    """
+    QEffUNet is a wrapper class for UNet models that provides ONNX export and compilation capabilities.
+
+    This class extends QEFFBaseModel to handle UNet models with specific transformations and optimizations
+    for efficient inference on Qualcomm AI hardware. It is commonly used in diffusion models for image
+    generation tasks.
+    """
 
     def __init__(self, model: nn.modules):
         super().__init__(model.unet)
@@ -168,12 +177,16 @@ class QEffUNet(QEFFBaseModel):
 
 
 class QEffVAE(QEFFBaseModel):
-    _pytorch_transforms = [
-        AwqToMatmulNbitsTransform,
-        GPTQToMatmulNbitsTransform,
-        CustomOpsTransform,
-    ]
+    _pytorch_transforms = [CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    """
+    QEffVAE is a wrapper class for Variational Autoencoder (VAE) models that provides ONNX export and compilation capabilities.
+
+    This class extends QEFFBaseModel to handle VAE models with specific transformations and optimizations
+    for efficient inference on Qualcomm AI hardware. VAE models are commonly used in diffusion pipelines
+    for encoding images to latent space and decoding latent representations back to images.
+    """
 
     def __init__(self, model: nn.modules, type: str):
         super().__init__(model.vae)
@@ -259,12 +272,16 @@ class QEffVAE(QEFFBaseModel):
 
 
 class QEffSafetyChecker(QEFFBaseModel):
-    _pytorch_transforms = [
-        AwqToMatmulNbitsTransform,
-        GPTQToMatmulNbitsTransform,
-        CustomOpsTransform,
-    ]
+    _pytorch_transforms = [CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    """
+    QEffSafetyChecker is a wrapper class for safety checker models that provides ONNX export and compilation capabilities.
+
+    This class extends QEFFBaseModel to handle safety checker models with specific transformations and optimizations
+    for efficient inference on Qualcomm AI hardware. Safety checker models are commonly used in diffusion pipelines
+    to filter out potentially harmful or inappropriate generated content.
+    """
 
     def __init__(self, model: nn.modules):
         super().__init__(model.vae)
@@ -321,6 +338,14 @@ class QEffSafetyChecker(QEFFBaseModel):
 class QEffSD3Transformer2DModel(QEFFBaseModel):
     _pytorch_transforms = [AttentionTransform, CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+
+    """
+    QEffSD3Transformer2DModel is a wrapper class for Stable Diffusion 3 Transformer2D models that provides ONNX export and compilation capabilities.
+
+    This class extends QEFFBaseModel to handle SD3 Transformer2D models with specific transformations and optimizations
+    for efficient inference on Qualcomm AI hardware. It is designed for the newer Stable Diffusion 3 architecture
+    that uses transformer-based diffusion models instead of traditional UNet architectures.
+    """
 
     def __init__(self, model: nn.modules):
         super().__init__(model)
