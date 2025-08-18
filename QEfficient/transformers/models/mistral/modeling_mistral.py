@@ -24,7 +24,6 @@ from transformers.models.mistral.modeling_mistral import (
     MistralForCausalLM,
     MistralModel,
     MistralRotaryEmbedding,
-    logger,
     repeat_kv,
     rotate_half,
 )
@@ -32,6 +31,7 @@ from transformers.models.mistral.modeling_mistral import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.logging_utils import logger
 
 
 class QEffMistralRotaryEmbedding(MistralRotaryEmbedding):

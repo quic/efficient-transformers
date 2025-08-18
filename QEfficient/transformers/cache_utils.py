@@ -92,17 +92,21 @@ class QEffDynamicCache(DynamicCache):
 
     def __init__(self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs):
         # Remove layer_classes if present to avoid duplicate argument
-        def __init__(
-            self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs
-        ):
-            # Remove layer_classes if present to avoid duplicate argument
-            kwargs.pop("layer_classes", None)
-            from transformers.cache_utils import Cache  # Import here to avoid circular import
+        kwargs.pop("layer_classes", None)
+        from transformers.cache_utils import Cache  # Import here to avoid circular import
 
-            Cache.__init__(self, layer_classes=QEffDynamicLayer, *args, **kwargs)
-            if ddp_cache_data is not None:
-                for key_states, value_states in ddp_cache_data:
-                    self.layers.append(QEffDynamicLayer.from_tensors(key_states, value_states))
+        Cache.__init__(self, layer_classes=QEffDynamicLayer, *args, **kwargs)
+        if ddp_cache_data is not None:
+            for key_states, value_states in ddp_cache_data:
+                self.layers.append(QEffDynamicLayer.from_tensors(key_states, value_states))
+
+    """# Specialized constructor for DDP cache data, needed for BC
+    def __init__(self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs):
+        super().__init__(self, layer_classes=QEffDynamicLayer, *args, **kwargs)
+        if ddp_cache_data is not None:
+            for key_states, value_states in ddp_cache_data:
+                self.layers.append(QEffDynamicLayer.from_tensors(key_states, value_states))
+    """
 
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
         """
