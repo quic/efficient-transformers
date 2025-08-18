@@ -22,7 +22,7 @@ from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils import constants, create_json, dump_qconfig, generate_mdp_partition_config, load_json
+from QEfficient.utils import constants, create_json, generate_mdp_partition_config, load_json
 from QEfficient.utils.cache import QEFF_HOME, to_hashable
 
 logger = logging.getLogger(__name__)
@@ -179,7 +179,8 @@ class QEFFBaseModel(ABC):
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
+                opset_version=17,
+                # verbose=True,
                 **export_kwargs,
             )
             logger.info("Pytorch export successful")
@@ -213,7 +214,7 @@ class QEFFBaseModel(ABC):
         self.onnx_path = onnx_path
         return onnx_path
 
-    @dump_qconfig
+    # @dump_qconfig
     def _compile(
         self,
         onnx_path: Optional[str] = None,
@@ -352,6 +353,7 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
+        print(command)
         try:
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:

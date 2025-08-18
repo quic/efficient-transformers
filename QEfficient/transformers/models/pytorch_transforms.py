@@ -142,6 +142,13 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2ForCausalLM,
     Starcoder2Model,
 )
+from transformers.models.t5.modeling_t5 import (
+    T5Attention,
+    T5LayerCrossAttention,
+    T5LayerFF,
+    T5LayerNorm,
+    T5LayerSelfAttention,
+)
 from transformers.models.whisper.modeling_whisper import (
     WhisperAttention,
     WhisperDecoder,
@@ -308,6 +315,13 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEFFStarcoder2DecoderLayer,
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
+)
+from QEfficient.transformers.models.t5.modeling_t5 import (
+    QEffT5Attention,
+    QEffT5LayerCrossAttention,
+    QEffT5LayerFF,
+    QEffT5LayerNorm,
+    QEffT5LayerSelfAttention,
 )
 from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperAttention,
@@ -615,6 +629,22 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
     }
 
     _match_class_replace_method = {}
+
+
+class T5ModelTransform(ModuleMappingTransform):
+    # supported architectures
+    _module_mapping = {
+        T5LayerFF: QEffT5LayerFF,
+        T5LayerSelfAttention: QEffT5LayerSelfAttention,
+        T5LayerCrossAttention: QEffT5LayerCrossAttention,
+        T5Attention: QEffT5Attention,
+        T5LayerNorm: QEffT5LayerNorm,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        model, transformed = super().apply(model)
+        return model, transformed
 
 
 class PoolingTransform:
