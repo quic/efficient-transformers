@@ -434,7 +434,9 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True):
-        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights)
+        return self._export(
+            inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
+        )
 
     def compile(
         self,
@@ -489,7 +491,9 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
     def export(self, inputs, output_names, dynamic_axes, export_dir=None, offload_pt_weights=True):
-        return self._export(inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights)
+        return self._export(
+            inputs, output_names, dynamic_axes, export_dir=export_dir, offload_pt_weights=offload_pt_weights
+        )
 
     def compile(
         self,
@@ -583,22 +587,18 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         inputs = self.model.get_dummy_inputs(kv_offload=True)
         dynamic_axes = self.model.get_onnx_dynamic_axes(kv_offload=True)
         output_names = self.model.get_output_names(kv_offload=True)
-        
+
         self.vision_model.export(
             inputs["vision"],
             output_names["vision"],
             dynamic_axes["vision"],
             export_dir=export_dir,
-            offload_pt_weights=False
+            offload_pt_weights=False,
         )
         self.lang_model.export(
-            inputs["lang"], 
-            output_names["lang"], 
-            dynamic_axes["lang"], 
-            export_dir=export_dir,
-            offload_pt_weights=True  
+            inputs["lang"], output_names["lang"], dynamic_axes["lang"], export_dir=export_dir, offload_pt_weights=True
         )
-        
+
         return self.onnx_path
 
     def compile(

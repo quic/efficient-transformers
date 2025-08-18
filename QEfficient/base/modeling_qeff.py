@@ -77,11 +77,10 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-
     def _offload_model_weights(self, offload_pt_weights) -> bool:
         """
         Clear PyTorch weights after export if offload_pt_weights is set to True
-        
+
         Returns:
             bool: True if weights were successfully offloaded, False otherwise
         """
@@ -91,33 +90,31 @@ class QEFFBaseModel(ABC):
                 self.model = self.model.to_empty(device="meta")
                 self._is_weights_offloaded = True
                 logger.info("Model weights offloaded to meta device")
-            
+
                 gc.collect()
                 logger.info("PyTorch weights cleared after export")
                 return True
-        
+
             except Exception as e:
                 logger.error(f"Failed to offload model weights: {e}")
                 return False
         return False
-            
 
     def _model_offloaded_check(self) -> None:
         """
         Check if the model is in meta state or weights are offloaded.
-        
+
         Raises:
-            RuntimeError: If model is in meta state or if weights are offloaded 
+            RuntimeError: If model is in meta state or if weights are offloaded
         """
-        if self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters()): 
+        if self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters()):
             error_msg = (
-            "Cannot re-export model: weights have been offloaded to save memory. "
-            "To re-export, please create a new model instance using from_pretrained() method.")
+                "Cannot re-export model: weights have been offloaded to save memory. "
+                "To re-export, please create a new model instance using from_pretrained() method."
+            )
             logger.error(error_msg)
             raise RuntimeError(error_msg)
-    
-    
-            
+
     @property
     @abstractmethod
     def model_name(self) -> str: ...
@@ -178,7 +175,7 @@ class QEFFBaseModel(ABC):
     ) -> str:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
-        
+
         This method:
         1. Exports PyTorch model to ONNX using torch.onnx.export
         2. Clears PyTorch weights after export
@@ -191,16 +188,16 @@ class QEFFBaseModel(ABC):
             :export_kwargs (dict): Additional arguments to be passed to `torch.onnx.export`.
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
-            :offload_pt_weights (bool): If True, offload PyTorch model weights to meta device 
-            after successful export to reduce memory usage. Set to False if you need to 
+            :offload_pt_weights (bool): If True, offload PyTorch model weights to meta device
+            after successful export to reduce memory usage. Set to False if you need to
             keep weights for further operations. Defaults to True.
             Note:
-            Once weights are offloaded, the model cannot be re-exported. Create a new 
+            Once weights are offloaded, the model cannot be re-exported. Create a new
             instance using from_pretrained() for re-export.
-     
+
         """
         onnx_path = export_dir / f"{self.model_name}.onnx"
-        
+
         # Return early if ONNX already exists
         if onnx_path.is_file():
             self.onnx_path = onnx_path
@@ -253,7 +250,6 @@ class QEFFBaseModel(ABC):
             logger.info("PyTorch export successful")
 
             _ = self._offload_model_weights(offload_pt_weights)
-            
 
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
@@ -265,7 +261,7 @@ class QEFFBaseModel(ABC):
 
             for transform in self._onnx_transforms:
                 model, transformed = transform.apply(model, **transform_kwargs)
-            
+
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
