@@ -536,13 +536,15 @@ def export_wrapper(func):
         self.export_hash = export_hash
 
         # _EXPORT CALL
-        func(self, *args, **kwargs)
+        onnx_path = func(self, *args, **kwargs)
 
         # POST-PROCESSING
         # Dump JSON file with hashed parameters
         hashed_params_export_path = export_dir / "hashed_export_params.json"
         create_json(hashed_params_export_path, filtered_hash_params)
         logger.info("Hashed parameters exported successfully.")
+
+        return onnx_path
 
     return wrapper
 
