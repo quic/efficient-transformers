@@ -135,8 +135,7 @@ class QEffFalconAttention(FalconAttention):
         key_layer = key_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
         value_layer = value_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
 
-        kv_seq_len = key_layer.shape[-2]
-        kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+        kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         cos, sin = self.rotary_emb(value_layer, seq_len=kv_seq_len)
         query_layer, key_layer = qeff_apply_rotary_pos_emb(query_layer, key_layer, cos, sin, position_ids)
 
