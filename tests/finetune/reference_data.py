@@ -10,7 +10,7 @@
 # A dictionary to hold all reference data for all test sets.
 REFERENCE_DATA = {
     # Scenario 1: Single-device llama 3.2-1B training on Alpaca dataset.
-    "llama_config_alpaca_single_device": {
+    "llama_3.2_1B_config_alpaca_single_device": {
         "description": "Baseline for Llama on Alpaca single-device",
         "train_step_losses": [
             1.5112206935882568,
@@ -82,7 +82,7 @@ REFERENCE_DATA = {
         ],
     },
     # Scenario 2: Single-device llama 3.2-1B training on GSM8k dataset.
-    "llama_config_gsm8k_single_device": {
+    "llama_3.2_1B_config_gsm8k_single_device": {
         "description": "Baseline for Llama on GSM8k single-device",
         "train_step_losses": [
             2.250276803970337,
@@ -153,9 +153,9 @@ REFERENCE_DATA = {
             3.6967368125915527,
         ],
     },
-    # Scenario 3: Single-device Bert training on IMDB dataset.
-    "bert_config_imdb_single_device": {
-        "description": "Baseline for BERT on IMDB single-device",
+    # Scenario 3: Single-device google-bert/bert-base-uncased training on IMDB dataset.
+    "bert_base_uncased_config_imdb_single_device": {
+        "description": "Baseline for google-bert/bert-base-uncased on IMDB single-device",
         "train_step_losses": [
             0.357421875,
             0.546875,
@@ -214,8 +214,8 @@ REFERENCE_DATA = {
         ],
         "eval_step_metrics": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
     },
-    # Scenario 4: Distributed Bert training  (world_size=2)
-    "bert_config_imdb_distributed_ws2": {
+    # Scenario 4: Distributed google-bert/bert-base-uncased training  (world_size=2)
+    "bert_base_uncased_config_imdb_distributed_ws2": {
         "description": "Baseline for distributed training with 2 devices",
         "world_size": 2,
         "rank_data": {

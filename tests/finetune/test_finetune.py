@@ -40,11 +40,14 @@ def download_alpaca():
 
 
 # Define a helper function for comparing lists
+
+
 def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_world_size, current_rank):
     """
     Asserts that two lists of floats are numerically close element-wise.
-
+    If not close, reports the step numbers and the differences at those steps.
     """
+    # --- Initial Checks ---
     assert actual_list is not None and isinstance(actual_list, list), (
         f"Actual {name} data is missing or not a list for scenario '{scenario_key}'."
     )
@@ -52,13 +55,40 @@ def assert_list_close(ref_list, actual_list, atol, name, scenario_key, current_w
         f"{name} length mismatch for scenario '{scenario_key}' (WS: {current_world_size}, Rank: {current_rank}). "
         f"Expected {len(ref_list)} elements, but got {len(actual_list)}."
     )
-    max_diff = np.max(np.abs(np.array(ref_list) - np.array(actual_list)))
-    assert max_diff <= atol, (
-        f"{name} deviated too much for scenario '{scenario_key}' (WS: {current_world_size}, Rank: {current_rank}). "
-        f"Max Difference: {max_diff:.2f}, Allowed Tolerance: {atol:.4f}.\n"
-        f"Reference: {ref_list}\nActual:    {actual_list}"
-    )
-    print(f"  ✅ {name} PASSED. Max Diff: {max_diff:.2f}")
+
+    # --- Convert to NumPy arrays for efficient comparison ---
+    ref_arr = np.array(ref_list)
+    actual_arr = np.array(actual_list)
+
+    # --- Check if all elements are close using np.allclose ---
+    # This is the primary assertion that will fail if any deviation is too large
+    if not np.allclose(ref_arr, actual_arr, atol=atol):
+        # If not all close, identify the specific deviations
+        deviated_indices = np.where(~np.isclose(ref_arr, actual_arr, atol=atol))[0]
+        deviation_details = []
+        for idx in deviated_indices:
+            ref_val = ref_arr[idx]
+            actual_val = actual_arr[idx]
+            diff = actual_val - ref_val
+            deviation_details.append(f"Step {idx}: Ref={ref_val:.6f}, Actual={actual_val:.6f}, Diff={diff:.6f}")
+
+        # Calculate max_diff
+        max_diff = np.max(np.abs(ref_arr - actual_arr))
+
+        # --- Report detailed deviation in the AssertionError ---
+        error_message = (
+            f"{name} deviated too much for scenario '{scenario_key}' "
+            f"(WS: {current_world_size}, Rank: {current_rank}).\n"
+            f"Max Difference: {max_diff:.6f}, Allowed Tolerance: {atol:.6f}.\n"
+            f"Deviations found at {len(deviated_indices)} steps:\n" + "\n".join(deviation_details) + "\n"
+            f"Reference (first 10): {ref_list[:10]}...\n"
+            f"Actual    (first 10): {actual_list[:10]}..."
+        )
+        assert False, error_message  # Force the assertion to fail with the custom message
+    else:
+        # If all close, report success and max_diff for printing
+        max_diff = np.max(np.abs(ref_arr - actual_arr))
+        print(f"  ✅ {name} PASSED. Max Diff: {max_diff:.6f}")
 
 
 configs = [
@@ -74,7 +104,7 @@ configs = [
         True,  # run_validation
         True,  # use_peft
         Device.QAIC,  # device
-        "llama_config_gsm8k_single_device",
+        "llama_3.2_1B_config_gsm8k_single_device",
         id="llama_config_gsm8k",  # config name
     ),
     pytest.param(
@@ -89,7 +119,7 @@ configs = [
         True,  # run_validation
         True,  # use_peft
         Device.QAIC,  # device
-        "llama_config_alpaca_single_device",
+        "llama_3.2_1B_config_alpaca_single_device",
         id="llama_config_alpaca",  # config name
     ),
     pytest.param(
@@ -104,7 +134,7 @@ configs = [
         True,  # run_validation
         False,  # use_peft
         Device.QAIC,  # device
-        "bert_config_imdb_single_device",
+        "bert_base_uncased_config_imdb_single_device",
         id="bert_config_imdb",  # config name
     ),
 ]
