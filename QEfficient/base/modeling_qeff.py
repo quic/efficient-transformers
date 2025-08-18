@@ -62,6 +62,9 @@ class QEFFBaseModel(ABC):
         self.model_architecture = (
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
         ) or None
+        
+        # Flag for checking if weights are offloaded
+        self._is_weights_offloaded: bool = False
 
         # Apply the transformations
         any_transformed = False
@@ -74,6 +77,47 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
+
+    def _offload_model_weights(self, offload_pt_weights) -> bool:
+        """
+        Clear PyTorch weights after export if offload_pt_weights is set to True
+        
+        Returns:
+            bool: True if weights were successfully offloaded, False otherwise
+        """
+        # Check if offloading is enabled and weights are not already offloaded
+        if offload_pt_weights and not self._is_weights_offloaded:
+            try:
+                self.model = self.model.to_empty(device="meta")
+                self._is_weights_offloaded = True
+                logger.info("Model weights offloaded to meta device")
+            
+                gc.collect()
+                logger.info("PyTorch weights cleared after export")
+                return True
+        
+            except Exception as e:
+                logger.error(f"Failed to offload model weights: {e}")
+                return False
+        return False
+            
+
+    def _model_offloaded_check(self) -> None:
+        """
+        Check if the model is in meta state or weights are offloaded.
+        
+        Raises:
+            RuntimeError: If model is in meta state or if weights are offloaded 
+        """
+        if self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters()): 
+            error_msg = (
+            "Cannot re-export model: weights have been offloaded to save memory. "
+            "To re-export, please create a new model instance using from_pretrained() method.")
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+    
+    
+            
     @property
     @abstractmethod
     def model_name(self) -> str: ...
@@ -130,9 +174,15 @@ class QEFFBaseModel(ABC):
         export_kwargs: Optional[Dict[str, any]] = None,
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
+        offload_pt_weights: bool = True,
     ) -> str:
         """
-        Export the Pytorch model to ONNX.
+        Export the PyTorch model to ONNX and apply ONNX transforms
+        
+        This method:
+        1. Exports PyTorch model to ONNX using torch.onnx.export
+        2. Clears PyTorch weights after export
+        3. Applies ONNX transforms with reduced memory footprint
 
         Args:
             :example_inputs (dict): Sample inputs to trace the model.
@@ -141,29 +191,30 @@ class QEFFBaseModel(ABC):
             :export_kwargs (dict): Additional arguments to be passed to `torch.onnx.export`.
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
+            :offload_pt_weights (bool): If True, offload PyTorch model weights to meta device 
+            after successful export to reduce memory usage. Set to False if you need to 
+            keep weights for further operations. Defaults to True.
+            Note:
+            Once weights are offloaded, the model cannot be re-exported. Create a new 
+            instance using from_pretrained() for re-export.
+     
         """
         onnx_path = export_dir / f"{self.model_name}.onnx"
+        
+        # Return early if ONNX already exists
         if onnx_path.is_file():
             self.onnx_path = onnx_path
             return onnx_path
 
-        # Storing state_dict to load model's weights if export called again
-        # if not any(name for name, param in self.model.named_parameters() if param.is_meta):
-        #     self.state_dict = self.model.state_dict()
+        # check if the model is in meta state or weights are offloaded
+        self._model_offloaded_check()
 
-        # Loading model if weights are in meta state from state_dict
-        if any(name for name, param in self.model.named_parameters() if param.is_meta):
-            logger.warning("Export called again, this feature is not supported yet.")
-            # TODO: Handle weights loading for VLMs
-            # self.model = self.model.to_empty(device=torch.device("cpu"))
-            # self.model.load_state_dict(self.state_dict)
-
+        # Setup temporary paths
         tmp_onnx_dir = export_dir / "onnx_tmp"
         tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
 
         # Create input_names from example_inputs
-
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
@@ -199,7 +250,10 @@ class QEFFBaseModel(ABC):
                 opset_version=constants.ONNX_EXPORT_OPSET,
                 **export_kwargs,
             )
-            logger.info("Pytorch export successful")
+            logger.info("PyTorch export successful")
+
+            _ = self._offload_model_weights(offload_pt_weights)
+            
 
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
@@ -211,17 +265,17 @@ class QEFFBaseModel(ABC):
 
             for transform in self._onnx_transforms:
                 model, transformed = transform.apply(model, **transform_kwargs)
+            
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
             logger.info("ONNX transforms applied")
 
             onnx.save(model, onnx_path)
-            logger.info("Transformed onnx saved")
+            logger.info("Transformed ONNX saved")
 
         except Exception as e:
-            logger.error(f"ONNX export (or) ONNXTransforms failed: {e}")
-
+            logger.error(f"ONNX export or transforms failed: {e}")
             raise e
 
         finally:
