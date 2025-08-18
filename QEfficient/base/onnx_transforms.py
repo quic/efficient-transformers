@@ -38,9 +38,6 @@ class FP16ClipTransform(OnnxTransform):
     """
     Clips the tensor values to be in FP16 range, but preserves -inf values.
     """
-
-    print("FP16ClipTransform is applied")
-
     @classmethod
     def apply(cls, model: ModelProto, *, onnx_base_dir: Optional[str] = None, **kwargs) -> Tuple[ModelProto, bool]:
         """
@@ -120,13 +117,15 @@ class OnnxSlimTransform(OnnxTransform):
     ) -> Tuple[ModelProto, bool]:
         """
         :param enable_onnx_slim_transform: If True, applies onnx-slim transformations.
+        :param temp_onnx_path: Path to save the slimmed ONNX model.
         """
-        # print(kwargs)
         transformed = False
         onnx_slim_transform = kwargs.get("enable_onnx_slim_transform", False)
         temp_onnx_path = kwargs.get("temp_onnx_path", None)
+        if not temp_onnx_path:
+            err_str = "temp_onnx_path is required for onnx-slim transform."
+            raise RuntimeError(err_str)
         if onnx_slim_transform:
-            print("onnx slim transform done")
             transformed = True
             slimmed_model = onnxslim.slim(model)
             onnx.save(slimmed_model, temp_onnx_path)

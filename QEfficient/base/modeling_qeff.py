@@ -14,10 +14,8 @@ import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional
-
 import onnx
 import torch
-
 from QEfficient.base.onnx_transforms import OnnxTransform
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
@@ -190,8 +188,8 @@ class QEFFBaseModel(ABC):
                 "model_name": self.model_name,
                 "enable_onnx_slim_transform": onnx_slim_transform,
                 "onnx_base_dir": str(tmp_onnx_dir),
-                "model_name": self.model_name,
-                "enable_onnx_slim_transform": onnx_slim_transform,
+                
+               
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
@@ -252,7 +250,7 @@ class QEFFBaseModel(ABC):
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
         if onnx_path is None and self.onnx_path is None:
-            self.export()
+            self.export()  
         onnx_path = Path(onnx_path or self.onnx_path)
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"

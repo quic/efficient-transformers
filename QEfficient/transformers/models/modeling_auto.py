@@ -93,7 +93,7 @@ class QEFFTransformersBase(QEFFBaseModel):
             {
                 "attn_implementation": "eager",
                 "low_cpu_mem_usage": False,
-                "enable_onnx_slim_transform": onnx_slim_transform,
+               
             }
         )
 
