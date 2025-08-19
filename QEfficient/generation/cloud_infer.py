@@ -64,7 +64,7 @@ class QAICInferenceSession:
         :activate: bool. If false, activation will be disabled. Default=True.
         :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
         """
-        
+
         # Build the dtype map one time, not on every property access
         self.aic_to_np_dtype_mapping = {
             self.aicapi.FLOAT_TYPE: np.dtype(np.float32),
