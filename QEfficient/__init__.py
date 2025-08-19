@@ -39,35 +39,32 @@ def check_qaic_sdk():
 # Conditionally import QAIC-related modules if the SDK is installed
 __version__ = "0.0.1.dev0"
 
-if check_qaic_sdk():
-    from QEfficient.base import (
-        QEFFAutoModel,
-        QEFFAutoModelForCausalLM,
-        QEFFAutoModelForImageTextToText,
-        QEFFAutoModelForSpeechSeq2Seq,
-        QEFFCommonLoader,
-    )
-    from QEfficient.compile.compile_helper import compile
-    from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
-    from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-    from QEfficient.peft import QEffAutoPeftModelForCausalLM
-    from QEfficient.transformers.transform import transform
 
-    # Users can use QEfficient.export for exporting models to ONNX
-    export = qualcomm_efficient_converter
+from QEfficient.base import (
+    QEFFAutoModel,
+    QEFFAutoModelForCausalLM,
+    QEFFAutoModelForImageTextToText,
+    QEFFAutoModelForSpeechSeq2Seq,
+    QEFFCommonLoader,
+)
+from QEfficient.compile.compile_helper import compile
+from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
+from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
+from QEfficient.peft import QEffAutoPeftModelForCausalLM
+from QEfficient.transformers.transform import transform
 
-    __all__ = [
-        "transform",
-        "export",
-        "compile",
-        "cloud_ai_100_exec_kv",
-        "QEFFAutoModel",
-        "QEFFAutoModelForCausalLM",
-        "QEffAutoPeftModelForCausalLM",
-        "QEFFAutoModelForImageTextToText",
-        "QEFFAutoModelForSpeechSeq2Seq",
-        "QEFFCommonLoader",
-    ]
+# Users can use QEfficient.export for exporting models to ONNX
+export = qualcomm_efficient_converter
 
-else:
-    logger.warning("QAIC SDK is not installed, eager mode features won't be available!")
+__all__ = [
+    "transform",
+    "export",
+    "compile",
+    "cloud_ai_100_exec_kv",
+    "QEFFAutoModel",
+    "QEFFAutoModelForCausalLM",
+    "QEffAutoPeftModelForCausalLM",
+    "QEFFAutoModelForImageTextToText",
+    "QEFFAutoModelForSpeechSeq2Seq",
+    "QEFFCommonLoader",
+]
