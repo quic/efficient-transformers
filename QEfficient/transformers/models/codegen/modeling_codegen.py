@@ -47,7 +47,7 @@ class QEffCodeGenAttention(CodeGenAttention):
 
         attn_weights = torch.matmul(query, key.transpose(-1, -2))
 
-        attn_weights = attn_weights / self.scale_attn
+        # attn_weights = attn_weights / self.scale_attn
 
         # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
         # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
@@ -57,6 +57,7 @@ class QEffCodeGenAttention(CodeGenAttention):
             # Apply the attention mask
             attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
+        attn_weights = attn_weights / self.scale_attn
         attn_weights = nn.Softmax(dim=-1)(attn_weights)
         attn_weights = attn_weights.to(value.dtype)
         attn_weights = self.attn_dropout(attn_weights)
@@ -124,23 +125,14 @@ class QEffCodeGenAttention(CodeGenAttention):
         query = query.permute(0, 2, 1, 3)
 
         if layer_past is not None:
-            # Update the cache_kwargs with position_ids for Cloud AI 100
-            past_key_value = layer_past
             cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "partial_rotation_size": self.rotary_dim,
+                "cache_position": cache_position,
                 "position_ids": position_ids,
-                "batch_index": batch_index,
             }
-            pkv = QEffDynamicCache()
-            pkv.key_cache.append(past_key_value[0])
-            pkv.value_cache.append(past_key_value[1])
-            key, value = pkv.update(key, value, 0, cache_kwargs)
-
-        if use_cache is True:
-            # Note that this cast is quite ugly, but is not implemented before ROPE as k_rot in the original codebase is always in fp32.
-            # Reference: https://github.com/salesforce/CodeGen/blob/f210c3bb1216c975ad858cd4132c0fdeabf4bfc2/codegen1/jaxformer/hf/codegen/modeling_codegen.py#L38
-            present = (pkv.key_cache[0].to(hidden_states.dtype), pkv.value_cache[0])
-        else:
-            present = None
+            key, value = layer_past.update(key.to(hidden_states.dtype), value, self.layer_idx, cache_kwargs)
 
         # compute self-attention: V x Softmax(QK^T)
         attn_output, attn_weights = self._attn(query, key, value, attention_mask, head_mask)
@@ -148,12 +140,7 @@ class QEffCodeGenAttention(CodeGenAttention):
         attn_output = self._merge_heads(attn_output, self.num_attention_heads, self.head_dim)
         attn_output = self.out_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
-
-        outputs = (attn_output, present)
-        if output_attentions:
-            outputs += (attn_weights,)
-
-        return outputs  # a, present, (attentions)
+        return attn_output, attn_weights
 
 
 class QEffCodeGenModel(CodeGenModel):
@@ -167,7 +154,7 @@ class QEffCodeGenModel(CodeGenModel):
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        past_key_values: Optional[Union[Cache, tuple[tuple[torch.Tensor]]]] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -179,7 +166,14 @@ class QEffCodeGenModel(CodeGenModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-    ) -> Union[Tuple, BaseModelOutputWithPast]:
+        **kwargs,  # NOOP kwargs, for now
+    ) -> Union[tuple, BaseModelOutputWithPast]:
+        r"""
+        inputs_embeds (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_dim)`, *optional*):
+            Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
+            is useful if you want more control over how to convert *input_ids* indices into associated vectors than the
+            model's internal embedding lookup matrix.
+        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -200,20 +194,34 @@ class QEffCodeGenModel(CodeGenModel):
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
-        device = input_ids.device if input_ids is not None else inputs_embeds.device
+        if inputs_embeds is None:
+            inputs_embeds = self.wte(input_ids)
 
-        if token_type_ids is not None:
-            token_type_ids = token_type_ids.view(-1, input_shape[-1])
+        if use_cache and not isinstance(past_key_values, Cache):
+            if past_key_values is None:
+                past_key_values = QEffDynamicCache()
+            else:
+                past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
-        if past_key_values is None:
-            past_length = 0
-            past_key_values = tuple([None] * len(self.h))
-        else:
-            past_length = past_key_values[0][0].size(-2)
+        """# TODO (joao): remove this exception in v4.56 -- it exists for users that try to pass a legacy cache
+        if not isinstance(past_key_values, (type(None), Cache)):
+            raise ValueError("The `past_key_values` should be either a `Cache` object or `None`.")
+
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache()
+        """
+
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        seq_length = inputs_embeds.shape[1]
+        if cache_position is None:
+            cache_position = torch.arange(past_seen_tokens, past_seen_tokens + seq_length, device=inputs_embeds.device)
 
         if position_ids is None:
-            position_ids = torch.arange(past_length, input_shape[-1] + past_length, dtype=torch.long, device=device)
-            position_ids = position_ids.unsqueeze(0)
+            position_ids = cache_position.unsqueeze(0)
+
+        # causal_mask = self._update_causal_mask(
+        #    attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
+        # )
 
         # Attention mask.
         if attention_mask is not None:
@@ -237,7 +245,7 @@ class QEffCodeGenModel(CodeGenModel):
 
         elif attention_mask is None:
             # 4d mask is passed through the layers
-            attention_mask = _create_causal_mask(position_ids=position_ids, target_length=past_length)
+            attention_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
 
         # Prepare head mask if needed
         # 1.0 in head_mask indicate we keep the head
@@ -245,32 +253,25 @@ class QEffCodeGenModel(CodeGenModel):
         # head_mask has shape n_layer x batch x num_attention_heads x N x N
         head_mask = self.get_head_mask(head_mask, self.config.n_layer)
 
-        if inputs_embeds is None:
-            inputs_embeds = self.wte(input_ids)
-
         hidden_states = inputs_embeds
 
         if token_type_ids is not None:
+            token_type_ids = token_type_ids.view(-1, seq_length)
             token_type_embeds = self.wte(token_type_ids)
             hidden_states = hidden_states + token_type_embeds
 
         hidden_states = self.drop(hidden_states)
+        output_shape = (-1, seq_length, hidden_states.size(-1))
 
-        output_shape = input_shape + (hidden_states.size(-1),)
-
-        if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
-
-        presents = () if use_cache else None
         all_self_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
-        for i, (block, layer_past) in enumerate(zip(self.h, past_key_values)):
+        for i, block in enumerate(self.h):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             outputs = block(
-                hidden_states=hidden_states,
-                layer_past=layer_past,
+                hidden_states,
+                layer_past=past_key_values,
                 batch_index=batch_index,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
@@ -281,11 +282,9 @@ class QEffCodeGenModel(CodeGenModel):
             )
 
             hidden_states = outputs[0]
-            if use_cache is True:
-                presents = presents + (outputs[1],)
 
             if output_attentions:
-                all_self_attentions = all_self_attentions + (outputs[2 if use_cache else 1],)
+                all_self_attentions = all_self_attentions + (outputs[1],)
 
         hidden_states = self.ln_f(hidden_states)
 
@@ -295,11 +294,13 @@ class QEffCodeGenModel(CodeGenModel):
             all_hidden_states = all_hidden_states + (hidden_states,)
 
         if not return_dict:
-            return tuple(v for v in [hidden_states, presents, all_hidden_states, all_self_attentions] if v is not None)
+            return tuple(
+                v for v in [hidden_states, past_key_values, all_hidden_states, all_self_attentions] if v is not None
+            )
 
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
-            past_key_values=presents,
+            past_key_values=past_key_values,
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
         )
@@ -389,7 +390,7 @@ class QeffCodeGenBlock(CodeGenBlock):
     ) -> Union[Tuple[torch.Tensor], Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor, ...]]]]:
         residual = hidden_states
         hidden_states = self.ln_1(hidden_states)
-        attn_outputs = self.attn(
+        attn_outputs, attn_weights = self.attn(
             hidden_states=hidden_states,
             layer_past=layer_past,
             attention_mask=attention_mask,
@@ -400,15 +401,8 @@ class QeffCodeGenBlock(CodeGenBlock):
             output_attentions=output_attentions,
             cache_position=cache_position,
         )
-        attn_output = attn_outputs[0]  # output_attn: a, present, (attentions)
-        outputs = attn_outputs[1:]
 
         feed_forward_hidden_states = self.mlp(hidden_states)
-        hidden_states = attn_output + feed_forward_hidden_states + residual
+        hidden_states = attn_outputs + feed_forward_hidden_states + residual
 
-        if use_cache:
-            outputs = (hidden_states,) + outputs
-        else:
-            outputs = (hidden_states,) + outputs[1:]
-
-        return outputs  # hidden_states, present, (attentions)
+        return hidden_states, attn_weights
