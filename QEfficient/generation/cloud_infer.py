@@ -14,15 +14,6 @@ from warnings import warn
 
 import numpy as np
 
-# try:
-#     import qaicrt
-# except ImportError:
-#     import platform
-#     import sys
-
-#     sys.path.append(f"/opt/qti-aic/dev/lib/{platform.machine()}")
-#     import qaicrt
-
 
 class QAICInferenceSession:
     _qaicrt = None
@@ -135,14 +126,25 @@ class QAICInferenceSession:
         return [binding.name for binding in self.bindings if binding.dir == self.aicapi.BUFFER_IO_TYPE_OUTPUT]
 
     def activate(self):
+        """Activate qpc"""
+
         self.program.activate()
         self.execObj = self.qaicrt.ExecObj(self.context, self.program)
 
     def deactivate(self):
+        """Deactivate qpc"""
+
         del self.execObj
         self.program.deactivate()
 
     def set_buffers(self, buffers: Dict[str, np.ndarray]):
+        """
+        Provide buffer mapping for input and output
+
+        Args:
+            :buffer (Dict[str, np.ndarray]): Parameter for buffer mapping.
+        """
+
         for buffer_name, buffer in buffers.items():
             if buffer_name not in self.binding_index_map:
                 warn(f'Buffer: "{buffer_name}" not found')
@@ -155,9 +157,26 @@ class QAICInferenceSession:
             )
 
     def skip_buffers(self, skipped_buffer_names: List[str]):
+        """
+        skip buffer mapping for given list of buffer names
+
+        Args:
+            :skipped_buffer_name: List[str]. List of buffer name to be skipped.
+        """
+
         self.set_buffers({k: np.array([]) for k in skipped_buffer_names})
 
     def run(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        """
+        Execute on cloud AI 100
+
+        Args:
+            :inputs (Dict[str, np.ndarray]): Processed numpy inputs for the model.
+
+        Return:
+            :Dict[str, np.ndarray]:
+        """
+
         self.set_buffers(inputs)
         if self.execObj.setData(self.qbuffers, self.buf_dims) != self.qaicrt.QStatus.QS_SUCCESS:
             raise MemoryError("Failed to setData")
