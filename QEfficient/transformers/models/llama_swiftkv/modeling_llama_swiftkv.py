@@ -106,7 +106,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
                     "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                     "with a layer index."
                 )
-            kv_seq_len = past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+            kv_seq_len = past_key_value.get_seq_length(self.layer_idx)
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
         key_states, value_states = past_key_value.read_only(self.layer_idx, cache_kwargs=cache_kwargs)
 
@@ -359,7 +359,7 @@ class QEffLlamaSwiftKVModel(nn.Module):
                         "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                         "with a layer index."
                     )
-                kv_seq_len = past_key_values.get_usable_length(kv_seq_len, self_attn.layer_idx)
+                kv_seq_len = past_key_values.get_seq_length(self_attn.layer_idx, cache_position)
 
             cos, sin = self_attn.rotary_emb(value_states, seq_len=kv_seq_len)
             _, key_states = qeff_apply_rotary_pos_emb(torch.empty_like(key_states), key_states, cos, sin, position_ids)
