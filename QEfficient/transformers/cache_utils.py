@@ -25,6 +25,81 @@ from QEfficient.customop import (
 
 
 class QEffDynamicLayer(DynamicLayer):
+    def update(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        cache_kwargs: Optional[dict[str, Any]] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # Update the cache
+        if self.keys is None:
+            self.keys = key_states
+            self.values = value_states
+            k_out, v_out = self.keys, self.values
+        else:
+            position_ids = cache_kwargs.get("position_ids")
+            batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
+
+            # Scatter
+            if batch_index is not None:
+                invalid_scatter_index = torch.iinfo(torch.int32).max
+                scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
+
+                self.keys = CtxScatterFuncCB.apply(self.keys, batch_index, scatter_position_ids, key_states)
+
+                self.values = CtxScatterFuncCB.apply(self.values, batch_index, scatter_position_ids, value_states)
+            else:
+                self.keys = CtxScatterFunc.apply(self.keys, position_ids, key_states)
+                self.values = CtxScatterFunc.apply(self.values, position_ids, value_states)
+
+            k_out, v_out = self.keys, self.values
+
+            # Gather
+            ctx_len = k_out.shape[2]
+            ctx_indices = torch.arange(ctx_len)[None, None, ...]
+            gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+            invalid_mask = ctx_indices > gather_limit
+
+            if torch.onnx.is_in_onnx_export():
+                invalid_idx_value = torch.iinfo(torch.int32).max
+            else:
+                invalid_idx_value = 0
+
+            ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+            if batch_index is not None:
+                k_out = CtxGatherFuncCB.apply(k_out, batch_index, ctx_indices)
+                v_out = CtxGatherFuncCB.apply(v_out, batch_index, ctx_indices)
+            else:
+                k_out = CtxGatherFunc.apply(k_out, ctx_indices)
+                v_out = CtxGatherFunc.apply(v_out, ctx_indices)
+            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+
+        return k_out, v_out
+
+
+class QEffDynamicCache(DynamicCache):
+    """
+    A cache that grows dynamically as more tokens are generated. This is the default for generative models.
+
+    It stores the Key and Value states as a list of tensors, one for each layer. The expected shape for each tensor is
+    `[batch_size, num_heads, seq_len, head_dim]`.
+
+    - Optimized implementation for the Cloud AI 100 to reuse KV Cache.
+    - get the position_ids input using kwargs.
+    - Use custom Onnxscript ops to write optimized version to generate Onnx model.
+
+    """
+
+    def __init__(self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs):
+        # Remove layer_classes if present to avoid duplicate argument
+        kwargs.pop("layer_classes", None)
+        from transformers.cache_utils import Cache  # Import here to avoid circular import
+
+        Cache.__init__(self, layer_classes=QEffDynamicLayer, *args, **kwargs)
+        if ddp_cache_data is not None:
+            for key_states, value_states in ddp_cache_data:
+                self.layers.append(QEffDynamicLayer.from_tensors(key_states, value_states))
+
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
         """
         Write in the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
@@ -102,57 +177,6 @@ class QEffDynamicLayer(DynamicLayer):
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return k_out, v_out
 
-    def update(
-        self,
-        key_states: torch.Tensor,
-        value_states: torch.Tensor,
-        cache_kwargs: Optional[dict[str, Any]] = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        # Update the cache
-        if self.keys is None:
-            self.keys = key_states
-            self.values = value_states
-            k_out, v_out = self.keys, self.values
-        else:
-            position_ids = cache_kwargs.get("position_ids")
-            batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
-
-            # Scatter
-            if batch_index is not None:
-                invalid_scatter_index = torch.iinfo(torch.int32).max
-                scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
-
-                self.keys = CtxScatterFuncCB.apply(self.keys, batch_index, scatter_position_ids, key_states)
-
-                self.values = CtxScatterFuncCB.apply(self.values, batch_index, scatter_position_ids, value_states)
-            else:
-                self.keys = CtxScatterFunc.apply(self.keys, position_ids, key_states)
-                self.values = CtxScatterFunc.apply(self.values, position_ids, value_states)
-
-            k_out, v_out = self.keys, self.values
-
-            # Gather
-            ctx_len = k_out.shape[2]
-            ctx_indices = torch.arange(ctx_len)[None, None, ...]
-            gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
-            invalid_mask = ctx_indices > gather_limit
-
-            if torch.onnx.is_in_onnx_export():
-                invalid_idx_value = torch.iinfo(torch.int32).max
-            else:
-                invalid_idx_value = 0
-
-            ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
-            if batch_index is not None:
-                k_out = CtxGatherFuncCB.apply(k_out, batch_index, ctx_indices)
-                v_out = CtxGatherFuncCB.apply(v_out, batch_index, ctx_indices)
-            else:
-                k_out = CtxGatherFunc.apply(k_out, ctx_indices)
-                v_out = CtxGatherFunc.apply(v_out, ctx_indices)
-            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
-
-        return k_out, v_out
-
     def update3D(
         self,
         key_states: torch.Tensor,
@@ -224,30 +248,6 @@ class QEffDynamicLayer(DynamicLayer):
             v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
 
         return k_out, v_out
-
-
-class QEffDynamicCache(DynamicCache):
-    """
-    A cache that grows dynamically as more tokens are generated. This is the default for generative models.
-
-    It stores the Key and Value states as a list of tensors, one for each layer. The expected shape for each tensor is
-    `[batch_size, num_heads, seq_len, head_dim]`.
-
-    - Optimized implementation for the Cloud AI 100 to reuse KV Cache.
-    - get the position_ids input using kwargs.
-    - Use custom Onnxscript ops to write optimized version to generate Onnx model.
-
-    """
-
-    def __init__(self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs):
-        # Remove layer_classes if present to avoid duplicate argument
-        kwargs.pop("layer_classes", None)
-        from transformers.cache_utils import Cache  # Import here to avoid circular import
-
-        Cache.__init__(self, layer_classes=QEffDynamicLayer, *args, **kwargs)
-        if ddp_cache_data is not None:
-            for key_states, value_states in ddp_cache_data:
-                self.layers.append(QEffDynamicLayer.from_tensors(key_states, value_states))
 
 
 class QEffEncoderDecoderCache(EncoderDecoderCache):
