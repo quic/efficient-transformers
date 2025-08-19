@@ -11,10 +11,7 @@ import torch
 from torch import nn
 from transformers.cache_utils import Cache
 from transformers.generation import GenerationMixin
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPast,
-    CausalLMOutputWithPast,
-)
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.gemma2.modeling_gemma2 import (
     Gemma2Attention,
     Gemma2Config,

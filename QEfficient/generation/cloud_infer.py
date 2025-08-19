@@ -5,12 +5,12 @@
 #
 # -----------------------------------------------------------------------------
 
+import importlib
+import platform
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from warnings import warn
-import importlib
-import sys
-import platform
 
 import numpy as np
 
@@ -64,19 +64,18 @@ class QAICInferenceSession:
         :activate: bool. If false, activation will be disabled. Default=True.
         :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
         """
-        qaicrt = self.qaicrt
-        aicapi = self.aicapi
+        
         # Build the dtype map one time, not on every property access
         self.aic_to_np_dtype_mapping = {
-            aicapi.FLOAT_TYPE: np.dtype(np.float32),
-            aicapi.FLOAT_16_TYPE: np.dtype(np.float16),
-            aicapi.INT8_Q_TYPE: np.dtype(np.int8),
-            aicapi.UINT8_Q_TYPE: np.dtype(np.uint8),
-            aicapi.INT16_Q_TYPE: np.dtype(np.int16),
-            aicapi.INT32_Q_TYPE: np.dtype(np.int32),
-            aicapi.INT32_I_TYPE: np.dtype(np.int32),
-            aicapi.INT64_I_TYPE: np.dtype(np.int64),
-            aicapi.INT8_TYPE: np.dtype(np.int8),
+            self.aicapi.FLOAT_TYPE: np.dtype(np.float32),
+            self.aicapi.FLOAT_16_TYPE: np.dtype(np.float16),
+            self.aicapi.INT8_Q_TYPE: np.dtype(np.int8),
+            self.aicapi.UINT8_Q_TYPE: np.dtype(np.uint8),
+            self.aicapi.INT16_Q_TYPE: np.dtype(np.int16),
+            self.aicapi.INT32_Q_TYPE: np.dtype(np.int32),
+            self.aicapi.INT32_I_TYPE: np.dtype(np.int32),
+            self.aicapi.INT64_I_TYPE: np.dtype(np.int64),
+            self.aicapi.INT8_TYPE: np.dtype(np.int8),
         }
 
         # Load QPC

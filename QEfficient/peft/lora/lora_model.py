@@ -8,9 +8,7 @@
 from typing import List, Optional, Tuple, Union
 
 import torch
-from transformers.modeling_outputs import (
-    CausalLMOutputWithPast,
-)
+from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaForCausalLM
 from QEfficient.transformers.models.mistral.modeling_mistral import QEffMistralForCausalLM

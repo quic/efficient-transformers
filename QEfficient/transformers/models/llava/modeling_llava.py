@@ -8,9 +8,7 @@
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint
-from transformers.models.llava.modeling_llava import (
-    LlavaForConditionalGeneration,
-)
+from transformers.models.llava.modeling_llava import LlavaForConditionalGeneration
 
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.logging_utils import logger

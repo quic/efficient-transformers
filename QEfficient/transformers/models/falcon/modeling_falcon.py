@@ -14,10 +14,7 @@ import torch
 import torch.utils.checkpoint
 from torch.nn import functional as F
 from transformers.cache_utils import Cache
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPastAndCrossAttentions,
-    CausalLMOutputWithCrossAttentions,
-)
+from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions, CausalLMOutputWithCrossAttentions
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconConfig,

@@ -13,10 +13,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from transformers.cache_utils import Cache
-from transformers.modeling_outputs import (
-    MoeCausalLMOutputWithPast,
-    MoeModelOutputWithPast,
-)
+from transformers.modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
     MixtralConfig,

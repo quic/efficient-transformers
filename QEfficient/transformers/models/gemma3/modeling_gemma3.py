@@ -11,10 +11,7 @@ from typing import Optional, Tuple, Union
 import torch
 from torch import nn
 from transformers.cache_utils import Cache, HybridCache
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPast,
-    CausalLMOutputWithPast,
-)
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.gemma3.modeling_gemma3 import (
     Gemma3Attention,
     Gemma3Config,

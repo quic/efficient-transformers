@@ -87,12 +87,8 @@ from transformers.models.llama4.modeling_llama4 import (
     Llama4VisionAttention,
     Llama4VisionModel,
 )
-from transformers.models.llava.modeling_llava import (
-    LlavaForConditionalGeneration,
-)
-from transformers.models.llava_next.modeling_llava_next import (
-    LlavaNextForConditionalGeneration,
-)
+from transformers.models.llava.modeling_llava import LlavaForConditionalGeneration
+from transformers.models.llava_next.modeling_llava_next import LlavaNextForConditionalGeneration
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
     MistralDecoderLayer,
@@ -227,10 +223,7 @@ from QEfficient.transformers.models.grok_1.modeling_grok1 import (
     QEffGrok1MoeBlock,
     QEffGrok1MultiHeadAttention,
 )
-from QEfficient.transformers.models.internvl.modeling_internvl import (
-    QEffInternVisionEmbeddings,
-    QEffInternVLModel,
-)
+from QEfficient.transformers.models.internvl.modeling_internvl import QEffInternVisionEmbeddings, QEffInternVLModel
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
@@ -248,12 +241,8 @@ from QEfficient.transformers.models.llama4.modeling_llama4 import (
     QEffLlama4VisionAttention,
     QEffLlama4VisionModel,
 )
-from QEfficient.transformers.models.llava.modeling_llava import (
-    QEffLlavaForConditionalGeneration,
-)
-from QEfficient.transformers.models.llava_next.modeling_llava_next import (
-    QEffLlavaNextForConditionalGeneration,
-)
+from QEfficient.transformers.models.llava.modeling_llava import QEffLlavaForConditionalGeneration
+from QEfficient.transformers.models.llava_next.modeling_llava_next import QEffLlavaNextForConditionalGeneration
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
     QEffMistralDecoderLayer,

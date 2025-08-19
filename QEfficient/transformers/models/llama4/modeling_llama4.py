@@ -11,11 +11,7 @@ from typing import Callable, List, Optional, Tuple, Union
 import torch
 from torch import nn
 from transformers.cache_utils import Cache
-from transformers.modeling_outputs import (
-    BaseModelOutput,
-    BaseModelOutputWithPast,
-    CausalLMOutputWithPast,
-)
+from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers.models.llama4.modeling_llama4 import (
     Llama4ForCausalLM,

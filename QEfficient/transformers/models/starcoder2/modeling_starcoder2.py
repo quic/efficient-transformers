@@ -12,10 +12,7 @@ from typing import Callable, List, Optional, Tuple, Union
 import torch
 from torch import nn
 from transformers.cache_utils import Cache
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPast,
-    CausalLMOutputWithPast,
-)
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,

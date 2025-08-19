@@ -18,12 +18,7 @@ import torch
 import yaml
 from huggingface_hub import login, snapshot_download
 from requests.exceptions import HTTPError
-from transformers import (
-    AutoProcessor,
-    AutoTokenizer,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-)
+from transformers import AutoProcessor, AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.utils.constants import QEFF_MODELS_DIR, Constants, QnnConstants
 from QEfficient.utils.logging_utils import logger

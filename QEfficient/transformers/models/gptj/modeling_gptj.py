@@ -12,10 +12,7 @@ from typing import Optional, Tuple, Union
 import torch
 from torch import nn
 from transformers.cache_utils import Cache
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPast,
-    CausalLMOutputWithPast,
-)
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.gptj.modeling_gptj import (
     GPTJAttention,
     GPTJBlock,

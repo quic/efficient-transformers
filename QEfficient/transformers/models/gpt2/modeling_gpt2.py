@@ -9,10 +9,7 @@ from typing import Callable, Optional, Tuple, Union
 
 import torch
 from torch import nn
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPastAndCrossAttentions,
-    CausalLMOutputWithCrossAttentions,
-)
+from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions, CausalLMOutputWithCrossAttentions
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
