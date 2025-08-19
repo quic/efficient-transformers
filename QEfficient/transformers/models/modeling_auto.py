@@ -1578,12 +1578,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         dynamic_axes["repetition_penalties"] = {0: "batch_size"}
 
         example_inputs["past_presence_penalty_buffer"] = torch.zeros(
-            (fbs if self.continuous_batching else bs, self.model.config.vocab_size), dtype=torch.bool
+            (fbs if self.continuous_batching else bs, self.model.config.vocab_size), dtype=torch.int32
         )
         dynamic_axes["past_presence_penalty_buffer"] = {
             0: "full_batch_size" if self.continuous_batching else "batch_size",
         }
         output_names.append("past_presence_penalty_buffer_RetainedState")
+
+        example_inputs["frequency_penalties"] = (
+            torch.zeros((bs, 1), dtype=torch.float) + constants.ONNX_EXPORT_EXAMPLE_FREQUENCY_PENALTIES
+        )
+        dynamic_axes["frequency_penalties"] = {0: "batch_size"}
 
         example_inputs["presence_penalties"] = (
             torch.zeros((bs, 1), dtype=torch.float) + constants.ONNX_EXPORT_EXAMPLE_PRESENCE_PENALTIES
@@ -1819,6 +1824,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 device_id=device_id,
                 generation_len=generation_len,
                 is_tlm=self.is_tlm,
+                **kwargs,
             )
         else:
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
