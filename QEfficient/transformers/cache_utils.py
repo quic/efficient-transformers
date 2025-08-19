@@ -624,7 +624,7 @@ class QEffHybridCacheForGPTOSS:
             # Original Gather
             ctx_len = self.key_cache[layer_idx].shape[2]
             ctx_indices = torch.arange(ctx_len)[None, None, ...]
-            gather_limit = kv_position_ids.max(1, keepdim=True).values.unsqueeze(1)
+            gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
             invalid_mask = ctx_indices > gather_limit
             if torch.onnx.is_in_onnx_export():
                 invalid_idx_value = torch.iinfo(torch.int32).max
@@ -632,18 +632,7 @@ class QEffHybridCacheForGPTOSS:
                 invalid_idx_value = 0
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-            if is_sliding_layer:
-                all_indices = torch.arange(sliding_window) + kv_position_ids.max() + 1
-                rolling_indices = torch.where(
-                    all_indices > (sliding_window - 1), all_indices % sliding_window, all_indices
-                )[None, None, ...]
-                final_indices = torch.where(position_ids.max() >= sliding_window, rolling_indices, ctx_indices)
-            else:
-                final_indices = ctx_indices
-
-            k_out = CtxGatherFunc.apply(k_out, final_indices)
-            v_out = CtxGatherFunc.apply(v_out, final_indices)
-            ctx_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
-            if is_sliding_layer:
-                v_out = torch.where(position_ids.max() >= sliding_window, v_out, ctx_v_out)
+            k_out = CtxGatherFunc.apply(k_out, ctx_indices)
+            v_out = CtxGatherFunc.apply(v_out, ctx_indices)
+            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return k_out, v_out
