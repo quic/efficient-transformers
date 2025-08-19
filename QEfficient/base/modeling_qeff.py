@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import gc
 import inspect
 import logging
 import shutil
@@ -62,7 +63,7 @@ class QEFFBaseModel(ABC):
         self.model_architecture = (
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
         ) or None
-        
+
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
 
