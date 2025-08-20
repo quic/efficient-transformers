@@ -44,6 +44,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     SpDTransform,
     VlmKVOffloadTransform,
     VlmNoKVOffloadTransform,
+    EmbeddingTransform
 )
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
@@ -158,7 +159,7 @@ class QEFFAutoModel(QEFFTransformersBase):
     """
 
     _hf_auto_class = AutoModel
-    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
+    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, EmbeddingTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     def __init__(self, model: nn.Module, pooling=None, **kwargs):
@@ -381,7 +382,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         )
         attention_mask = np.array(
             torch.nn.functional.pad(
-                inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
+                inputs["attention_mask"], (0, self.seq_len - input_ids_len), "constant", 0
             )
         )
 
@@ -403,6 +404,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             self.qpc_session.set_buffers(outputs)
             outputs = self.qpc_session.run(inputs)
         return outputs
+
 
     def pytorch_feature_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
         """

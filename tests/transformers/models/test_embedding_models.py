@@ -22,8 +22,15 @@ from QEfficient.utils.constants import Constants, QnnConstants
 embed_test_models = [
     {"model_name": "jinaai/jina-embeddings-v2-base-code", "pooling": "mean"},
     {"model_name": "sentence-transformers/nli-bert-base-cls-pooling", "pooling": "cls"},
+    {"model_name": "intfloat/e5-mistral-7b-instruct", "pooling":"cls"},
+    {"model_name": "sentence-transformers/multi-qa-mpnet-base-cos-v1"},
+    {"model_name": "intfloat/e5-mistral-7b-instruct", "pooling": "cls"},
+    {"model_name": "nomic-ai/nomic-embed-text-v1.5", "pooling": "cls"},
+    {"model_name": "NovaSearch/stella_en_1.5B_v5", "pooling": "cls"},
+    {"model_name": "ibm-granite/granite-embedding-30m-english", "pooling": "cls"},
+    {"model_name": "BAAI/bge-reranker-v2-m3", "pooling": "cls"},
+    {"model_name": "ibm-granite/granite-embedding-107m-multilingual", "pooling": "cls"},
 ]
-
 
 def check_embed_pytorch_vs_ort_vs_ai100(
     model_name: str,
@@ -119,7 +126,7 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model", embed_test_models[:1])
+@pytest.mark.parametrize("model", embed_test_models)
 def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with multiple seq_len.

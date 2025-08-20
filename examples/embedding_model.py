@@ -24,12 +24,12 @@ def max_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) 
 sentences = "This is an example sentence"
 
 # Load model from HuggingFace Hub
-tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+tokenizer = AutoTokenizer.from_pretrained("intfloat/e5-mistral-7b-instruct")
 
 
 # You can specify the pooling strategy either as a string (e.g., "max") or by passing a custom pooling function.
 # If no pooling is specified, the model will return its default output (typically token embeddings).
-qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling=max_pooling)
+qeff_model = AutoModel.from_pretrained("intfloat/e5-mistral-7b-instruct", num_hidden_layers=1, pooling=max_pooling)
 # qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling="max")
 # qeff_model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
