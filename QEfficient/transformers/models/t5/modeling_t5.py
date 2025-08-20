@@ -155,6 +155,9 @@ class QEffT5Attention(T5Attention):
 
 
 class QEffT5LayerSelfAttention(T5LayerSelfAttention):
+    def __qeff_init__(self):
+        self.scaling_factor = 1.0
+
     def forward(
         self,
         hidden_states,
@@ -177,7 +180,7 @@ class QEffT5LayerSelfAttention(T5LayerSelfAttention):
             output_attentions=output_attentions,
             cache_position=cache_position,
         )
-        hidden_states = hidden_states * self.scaling_factor + self.dropout(attention_output[0])  # Modified by patch
+        hidden_states = hidden_states * 1.0 + self.dropout(attention_output[0])  # Modified by patch
         outputs = (hidden_states,) + attention_output[1:]  # add attentions if we output them
         return outputs
 
