@@ -1380,7 +1380,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         FP8DeQuantLinearToLinearTransform,
         CustomOpsTransform,
         KVCacheTransform,
-        # SplitGateUpWeightsTransform,
+        SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
