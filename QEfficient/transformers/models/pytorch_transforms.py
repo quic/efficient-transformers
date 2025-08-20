@@ -55,6 +55,7 @@ from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
 from transformers.models.gpt_oss.modeling_gpt_oss import (
     GptOssAttention,
     GptOssDecoderLayer,
+    GptOssExperts,
     GptOssForCausalLM,
     GptOssMLP,
     GptOssModel,
@@ -260,6 +261,7 @@ from QEfficient.transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
 from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
     QEffGptOssAttention,
     QEffGptOssDecoderLayer,
+    QEffGptOssExperts,
     QEffGptOssForCausalLM,
     QEffGptOssMLP,
     QEffGptOssModel,
@@ -535,7 +537,7 @@ class KVCacheTransform(ModuleMappingTransform):
         GptOssModel: QEffGptOssModel,
         GptOssForCausalLM: QEffGptOssForCausalLM,
         GptOssMLP: QEffGptOssMLP,
-        # GptOssExperts: QEffGptOssExperts,
+        GptOssExperts: QEffGptOssExperts,
         # Granite
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,

@@ -2278,7 +2278,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
         KVCacheTransform,
-        # SplitGateUpWeightsTransform,
+        SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
 
