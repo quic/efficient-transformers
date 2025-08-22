@@ -37,14 +37,12 @@ class ClipAndSplitTransform(OnnxTransform):
         size_threshold: int = 1024,
         **kwargs,
     ) -> Tuple[ModelProto, bool]:
-
         external_data_helper.load_external_data_for_model(model, onnx_base_dir)
         tensors = external_data_helper._get_all_tensors(model)
 
         TensorInfo = namedtuple("TensorInfo", ["tensor", "tsize"])
         tensor_infos = [
-            TensorInfo(tensor, len(tensor.raw_data) if tensor.HasField("raw_data") else 0)
-            for tensor in tensors
+            TensorInfo(tensor, len(tensor.raw_data) if tensor.HasField("raw_data") else 0) for tensor in tensors
         ]
 
         fp16_min, fp16_max = np.finfo(np.float16).min, np.finfo(np.float16).max
@@ -69,7 +67,7 @@ class ClipAndSplitTransform(OnnxTransform):
 
             return transformed
 
-        with ThreadPoolExecutor(max_workers=os.cpu_count()*4) as executor:
+        with ThreadPoolExecutor(max_workers=os.cpu_count() * 4) as executor:
             transformed_flags = list(executor.map(process_tensor, tensor_infos))
         return model, any(transformed_flags)
 
