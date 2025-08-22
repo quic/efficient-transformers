@@ -1373,6 +1373,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
+        self.hash_params["qaic_config"] = self.model.qaic_config  # Explicitly add `qaic_config` to model hash
 
     @property
     def model_name(self) -> str:

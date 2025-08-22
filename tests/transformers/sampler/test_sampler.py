@@ -48,13 +48,23 @@ def test_sampler_transform(
     next tokens and/or probability distributions.
     """
     # Export and compile QEfficient models
-    qaic_config = {
-        "include_sampler": True,
-        "return_pdfs": False,
-        "max_top_k_ids": 512,
-    }
-    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=qaic_config)
-    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=None)
+    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        qaic_config={
+            "include_sampler": True,
+            "return_pdfs": False,
+            "max_top_k_ids": 512,
+        },
+    )
+    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        qaic_config={
+            "include_sampler": False,
+            "return_pdfs": False,
+        },
+    )
     model_w_sampler_qpc_path: str = model_w_sampler.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
@@ -121,13 +131,23 @@ def test_greedy_sampling(
     Test greedy sampling with QPC compiled with and without On Device Sampling.
     """
     # Export and compile QEfficient models
-    qaic_config = {
-        "include_sampler": True,
-        "return_pdfs": False,
-        "max_top_k_ids": 512,
-    }
-    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=qaic_config)
-    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=None)
+    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        qaic_config={
+            "include_sampler": True,
+            "return_pdfs": False,
+            "max_top_k_ids": 512,
+        },
+    )
+    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        qaic_config={
+            "include_sampler": False,
+            "return_pdfs": False,
+        },
+    )
     model_w_sampler.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
@@ -204,13 +224,23 @@ def test_random_sampling(
     Test random sampling with QPC compiled with and without On Device Sampling.
     """
     # Export and compile QEfficient models
-    qaic_config = {
-        "include_sampler": True,
-        "return_pdfs": False,
-        "max_top_k_ids": 512,
-    }
-    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=qaic_config)
-    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=None)
+    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        qaic_config={
+            "include_sampler": True,
+            "return_pdfs": False,
+            "max_top_k_ids": 512,
+        },
+    )
+    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        qaic_config={
+            "include_sampler": False,
+            "return_pdfs": False,
+        },
+    )
     model_w_sampler.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
