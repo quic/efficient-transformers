@@ -5,13 +5,13 @@
 #
 # ----------------------------------------------------------------------------
 
-from typing import Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor
-from collections import namedtuple
 import os
+from collections import namedtuple
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional, Tuple
 
 import numpy as np
-from onnx import ModelProto, external_data_helper, numpy_helper, TensorProto
+from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
 
 
 class OnnxTransform:
