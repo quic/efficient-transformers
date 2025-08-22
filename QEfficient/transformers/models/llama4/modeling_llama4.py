@@ -929,14 +929,6 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         )
         vision_size = num_features_per_tile * max_num_tiles
 
-        downsample_ratio = int(round(1.0 / (self.config.vision_config.pixel_shuffle_ratio**2)))
-        num_features_per_tile = int(
-            (img_size // self.config.vision_config.patch_size)
-            * (img_size // self.config.vision_config.patch_size)
-            // downsample_ratio
-        )
-        vision_size = num_features_per_tile * max_num_tiles
-
         vision = [
             {
                 "batch_size": batch_size,
