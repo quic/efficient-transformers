@@ -64,8 +64,9 @@ def get_dataloader_kwargs(train_config, dataset, dataset_processer, split):
             kwargs["drop_last"] = False
     else:
         kwargs["batch_size"] = batch_size
-        kwargs["drop_last"] = False
-    kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer)
+        kwargs["drop_last"] = True
+    # todo: -100 should be changed to a variable. or tokenizer.pad_token_id
+    kwargs["collate_fn"] = DataCollatorForSeq2Seq(dataset_processer, label_pad_token_id=-100)
     return kwargs
 
 
