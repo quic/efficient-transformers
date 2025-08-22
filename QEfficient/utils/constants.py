@@ -86,6 +86,7 @@ ONNX_EXPORT_EXAMPLE_MIN_PS = 0.99
 ONNX_EXPORT_OPSET = 13
 
 COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw"]
+DEFAULT_AIC_HW_VERSION = "ai100"
 
 # InternVL constants
 # Fixing the feature size with reference to OpenGVLab/InternVL2_5-1B, OpenGVLab/InternVL2_5-38B and OpenGVLab/InternVL2_5-78B

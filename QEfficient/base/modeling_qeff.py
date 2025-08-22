@@ -284,7 +284,7 @@ class QEFFBaseModel(ABC):
 
         command = (
             constants.COMPILER
-            + [f"-aic-hw-version={compiler_options.pop('aic-hw-version', '2.0')}"]
+            + [f"-aic-hw-version={compiler_options.pop('aic-hw-version', constants.DEFAULT_AIC_HW_VERSION)}"]
             + [f"-m={onnx_path}"]
         )
 
