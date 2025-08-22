@@ -17,7 +17,7 @@ import onnxruntime
 import torch
 from onnx import external_data_helper
 
-from QEfficient.base.onnx_transforms import FP16ClipTransform
+from QEfficient.base.onnx_transforms import ClipAndSplitTransform
 
 
 def export_onnx(
