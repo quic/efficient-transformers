@@ -194,6 +194,7 @@ class QEFFBaseModel(ABC):
 
             for transform in self._onnx_transforms:
                 model, transformed = transform.apply(model, **transform_kwargs)
+
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
