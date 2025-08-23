@@ -28,6 +28,7 @@ from transformers.models.qwen3_moe.modeling_qwen3_moe import (
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 class QEffQwen3MoeRotaryEmbedding(Qwen3MoeRotaryEmbedding):
@@ -107,7 +108,9 @@ def eager_attention_forward(
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
-        attn_weights = torch.where(attention_mask, torch.tensor(-10000.0, dtype=torch.float32), attn_weights)
+        attn_weights = torch.where(
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+        )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -134,6 +137,7 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         for i in range(self.top_k):
             expert_idx.append(top_i[:, i])
             weights.append(top_w[:, i])
+        breakpoint()
         Inter = 768
         upgate = []
         expert_out = []
@@ -460,12 +464,9 @@ class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
         logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
         logits = self.lm_head(hidden_states)
-        # logits = logits * self.output_multiplier_scale
         logits = logits.float()
 
         return MoeCausalLMOutputWithPast(
-            # loss=loss,
-            # aux_loss=aux_loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
