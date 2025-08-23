@@ -137,7 +137,6 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         for i in range(self.top_k):
             expert_idx.append(top_i[:, i])
             weights.append(top_w[:, i])
-        breakpoint()
         Inter = 768
         upgate = []
         expert_out = []
