@@ -1,3 +1,4 @@
+
 # -----------------------------------------------------------------------------
 #
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
@@ -9,7 +10,7 @@ import warnings
 from pathlib import Path
 from time import perf_counter
 from typing import Dict, List, Optional, Union
-import pdb
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -56,7 +57,6 @@ from QEfficient.utils import (
     get_padding_shape_from_config,
 )
 from QEfficient.utils.logging_utils import logger
-import pdb
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -1341,21 +1341,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **kwargs,
     ):
         model_class_name = model.__class__.__name__
-
-        # checking whether the model is of causal nature of not.
-        # if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
-        #     raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
+        if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
+            raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
 
         # TODO: remove from version 1.20
-        # if full_batch_size is not present in argument dict make continuous_batching True.
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
             warnings.warn(
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
-
-        # if model.config object has quantization_config attribute quantization_config and if present it shouldn't one of the
-        # expected types listed in QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values()
         if hasattr(model.config, "quantization_config") and not isinstance(
             model.config.quantization_config, tuple(QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.values())
         ):
@@ -1443,7 +1437,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
 
-        # if in attribute dict there is no attn_implementation return None and check whether retrived is not in None or eager.
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
@@ -1451,21 +1444,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kv_offload = kwargs.pop("kv_offload", None)
-        # updating attn_implementation and low_cpu_mem_usage forcefully.
+
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        # loading model Hugging Face model AutoModelForCausalLM.
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        # model = torch.compile(model)
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
+
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model, kv_offload=kv_offload, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs
             )
-
-        # returns a new QEFF instance wrapping the loaded model.
         return cls(
             model,
             continuous_batching=continuous_batching,
@@ -1514,7 +1504,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 2: "ctx_len",
             }
         output_names = []
-        # checking config if the user ask for prof distribution, next tokens or logistics.
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
             if self.model.qaic_config.get("return_pdfs", False):
                 output_names.append("probs")
@@ -1523,16 +1512,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names.append("logits")
 
         # TODO Update the get_padding_shape_from_config method to handle the case when the model config has attention_chunk_size or sliding_window and it should return a list of shapes for each layer
-
-        # Checking model type and if it support dynamic seq length like attn chunking, sliding windows or variable length inputs per tokens.
         if (
             hasattr(self.model.config, "model_type")
             and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
         ):
             pkv_cache = self.model.get_dummy_pkv_cache(
-                self.model.config,
-                fbs if self.continuous_batching else bs,
-                seq_len,  # mistake i think if self.continous_batching then it should be (fbs,seq_len).
+                self.model.config, fbs if self.continuous_batching else bs, seq_len
             )
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
@@ -1548,18 +1533,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
-            example_inputs["batch_index"] = torch.arange(bs).view(
-                bs, 1
-            )  # Add a  batch_index tensor to help distinguish samples in a batch.
-            dynamic_axes["batch_index"] = {0: "batch_size"}  # Register its dynamic shape in dynamic_axes.
+            example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
+            dynamic_axes["batch_index"] = {0: "batch_size"}
 
         if self.is_tlm:
             nlk = constants.ONNX_EXPORT_EXAMPLE_NLK  # Number of Logits to Keep
             example_inputs["num_logits_to_keep"] = torch.arange(nlk).view(nlk, 1)
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
 
-        # if sampling is enabled in qaic config call a method to augment example_inputs, output_names and dynamic axes with sampling related elements.
-        # ensures the exported ONNX graph support runtime sampling.
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
             example_inputs, output_names, dynamic_axes = self.get_sampling_inputs_and_outputs(
                 example_inputs=example_inputs,
@@ -1739,22 +1720,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if prefill_only is not None and not isinstance(prefill_only, bool):
             raise TypeError("`prefill_only` must be a boolean.")
 
-        # if speculative decoding model adjust num_speculative_tokens based on thr model constrints.
         if self.is_tlm:
             num_speculative_tokens = self.check_and_get_num_speculative_tokens(num_speculative_tokens, prefill_seq_len)
 
-        # force user to provide full_batch_size when continous batching is enabled.
         if self.continuous_batching and full_batch_size is None:
             raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
 
-        # KV cache needed for decoding is only supported in continous batching.
         if kv_cache_batch_size and not full_batch_size:
             raise ValueError(
                 "KV caching requires continuous batching. Please set `full_batch_size` and "
                 "enable `continuous_batching=True` in `from_pretrained`."
             )
 
-        # sampler mode cannot coexist with speculative decoding.
         if (
             self.model.qaic_config is not None
             and self.model.qaic_config.get("include_sampler", False)
@@ -1789,7 +1766,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
             if decode_spec:
                 specializations.append(decode_spec)
-        pdb.set_trace()
+
         # --- Compilation ---
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
         custom_io = {}

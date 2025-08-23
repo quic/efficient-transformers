@@ -218,7 +218,7 @@ def fix_onnx_fp16(
         :str: Updated base name of exported ONNX model.
     """
     model = onnx.load(os.path.join(gen_models_path, f"{model_base_name}.onnx"))
-    model, fp16_fix = FP16ClipTransform.apply(model, onnx_base_dir=gen_models_path)
+    model, fp16_fix = ClipAndSplitTransform.apply(model, onnx_base_dir=gen_models_path, apply_split=False)
 
     if fp16_fix:
         # Save FP16 model

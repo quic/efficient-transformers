@@ -1,10 +1,17 @@
-from typing import Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor
-from collections import namedtuple
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# ----------------------------------------------------------------------------
+
 import os
+from collections import namedtuple
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional, Tuple
 
 import numpy as np
-from onnx import ModelProto, external_data_helper, numpy_helper, TensorProto
+from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
 
 
 class OnnxTransform:
