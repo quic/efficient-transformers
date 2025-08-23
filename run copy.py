@@ -37,10 +37,9 @@
 
 # qeff_model.generate(prompts=["My name is"])
 
-import torch
-import pdb
-from QEfficient import QEFFAutoModelForCausalLM
 from transformers import AutoTokenizer
+
+from QEfficient import QEFFAutoModelForCausalLM
 
 print("done")
 model_name = "gpt2"
@@ -53,7 +52,7 @@ model = QEFFAutoModelForCausalLM.from_pretrained(model_name)
 ##########################################
 model.export()
 model.compile(prefill_seq_len=128, ctx_len=256, num_cores=16, num_devices=1)  # Qpc file
- 
+
 # model.compile(
 #     num_cores=14,
 #     mxfp6=True,
@@ -62,7 +61,7 @@ model.compile(prefill_seq_len=128, ctx_len=256, num_cores=16, num_devices=1)  # 
 print("done")
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 print("done")
-model.generate(prompts=["Hi there!!"], tokenizer=tokenizer,device_group=[0])
+model.generate(prompts=["Hi there!!"], tokenizer=tokenizer, device_group=[0])
 print("done")
 
 # from qgenie import ChatMessage, QGenieClient
