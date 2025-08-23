@@ -287,7 +287,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         generation_config = generation_config or self.model.generation_config
         generation_config, model_kwargs = self.model._prepare_generation_config(generation_config, **kwargs)
-        self.model._prepare_special_tokens(generation_config)
+        self.model._prepare_special_tokens(generation_config, device="cpu")
         if generation_config.do_sample:
             raise NotImplementedError("do_sample=True not supported currently")
         if generation_config.num_beams > 1:
