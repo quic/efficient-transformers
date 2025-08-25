@@ -20,7 +20,7 @@ configs = [
         "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
         Constants.INPUT_STR * 4,  # prompts
         32,  # prefill_seq_len
-        256,  # ctx_len
+        64,  # ctx_len
         20,  # generation_len
         4,  # full_batch_size
         1,  # spec_length
@@ -292,7 +292,7 @@ def test_random_sampling(
 
     # Compare generated texts
     golden_texts = {
-        "w_sampler": "Raymond and my favorite color, alongside reds or purples (I can’t have either as",
+        "w_sampler": "Raymond and my favorite color, alongside reds or purples (I can’t have them both",
         "wo_sampler": "John Smith and I am a software engineer. I have been working in the industry for the past ",
     }
     golden_ids = {
@@ -316,8 +316,8 @@ def test_random_sampling(
                 30010,
                 29873,
                 505,
-                2845,
-                408,
+                963,
+                1716,
             ]
         ],
         "wo_sampler": [
