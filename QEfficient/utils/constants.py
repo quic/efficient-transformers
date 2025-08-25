@@ -85,6 +85,8 @@ ONNX_EXPORT_EXAMPLE_TOP_PS = 0.80
 ONNX_EXPORT_EXAMPLE_MIN_PS = 0.99
 ONNX_EXPORT_OPSET = 13
 
+ONNX_TRANSFROM_MEMORY_CLEANUP_INTERVAL = 100
+
 COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-aic-hw-version=2.0"]
 
 # InternVL constants
