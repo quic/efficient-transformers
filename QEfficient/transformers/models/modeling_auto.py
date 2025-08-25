@@ -1447,8 +1447,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        if qaic_config is not None:
-            qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
+        # if qaic_config is not None:
+        #     qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
 
