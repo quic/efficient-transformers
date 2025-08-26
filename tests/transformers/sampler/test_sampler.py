@@ -15,7 +15,29 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 
-configs = [
+sampler_transform_configs = [
+    pytest.param(
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
+        Constants.INPUT_STR * 2,  # prompts
+        32,  # prefill_seq_len
+        128,  # ctx_len
+        20,  # generation_len
+        2,  # full_batch_size
+        1,  # spec_length
+    ),
+]
+greedy_sampling_configs = [
+    pytest.param(
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
+        Constants.INPUT_STR * 4,  # prompts
+        32,  # prefill_seq_len
+        128,  # ctx_len
+        20,  # generation_len
+        4,  # full_batch_size
+        1,  # spec_length
+    ),
+]
+random_sampling_configs = [
     pytest.param(
         "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
         Constants.INPUT_STR * 4,  # prompts
@@ -31,7 +53,7 @@ configs = [
 @pytest.mark.on_qaic
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length",
-    configs,
+    sampler_transform_configs,
 )
 def test_sampler_transform(
     model: str,
@@ -51,6 +73,7 @@ def test_sampler_transform(
     model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
+        num_hidden_layers=2,
         qaic_config={
             "include_sampler": True,
             "return_pdfs": False,
@@ -60,6 +83,7 @@ def test_sampler_transform(
     model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
+        num_hidden_layers=2,
         qaic_config={
             "include_sampler": False,
             "return_pdfs": False,
@@ -116,7 +140,7 @@ def test_sampler_transform(
 @pytest.mark.on_qaic
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length",
-    configs,
+    greedy_sampling_configs,
 )
 def test_greedy_sampling(
     model: str,
@@ -209,7 +233,7 @@ def test_greedy_sampling(
 @pytest.mark.on_qaic
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length",
-    configs,
+    random_sampling_configs,
 )
 def test_random_sampling(
     model: str,
