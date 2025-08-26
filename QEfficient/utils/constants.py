@@ -41,6 +41,7 @@ KWARGS_INCLUSION_LIST = [
     "pretrained_model_name_or_path",
     "attn_implementation",
     "_attn_implementation",
+    "qaic_config",
 ]
 
 # Minimum value for causal mask
