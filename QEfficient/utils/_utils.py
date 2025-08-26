@@ -48,7 +48,19 @@ def login_and_download_hf_lm(model_name, *args, **kwargs):
     model_path = hf_download(
         repo_id=model_name,
         cache_dir=cache_dir,
-        ignore_patterns=["*.txt", "*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.msgpack", "*.h5", "*.pth"],
+        ignore_patterns=[
+            "*.txt",
+            "*.onnx",
+            "*.ot",
+            "*.md",
+            "*.tflite",
+            "*.pdf",
+            "*.msgpack",
+            "*.h5",
+            "*.pth",
+            "*.pt",
+            "*.bin",
+        ],
     )
     return model_path
 
