@@ -17,7 +17,7 @@ ONNX_EXPORT_EXAMPLE_BATCH_SIZE = 1
 ONNX_EXPORT_EXAMPLE_SEQ_LEN = 32
 ONNX_EXPORT_EXAMPLE_FBS = 4
 ONNX_EXPORT_EXAMPLE_NLK = 2  # Number of Logits to Keep
-ONNX_EXPORT_OPSET = 13
+ONNX_EXPORT_OPSET = 18
 ONNX_EXPORT_MAX_NUM_IMAGES = 1
 ONNX_EXPORT_MAX_IMAGE_TILES = 4
 ONNX_EXPORT_IMAGE_WIDTH = 560
@@ -41,6 +41,7 @@ KWARGS_INCLUSION_LIST = [
     "pretrained_model_name_or_path",
     "attn_implementation",
     "_attn_implementation",
+    "pooling",
 ]
 
 # Minimum value for causal mask
@@ -83,7 +84,7 @@ ONNX_EXPORT_EXAMPLE_TEMPERATURES = 0.80
 ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS = 512
 ONNX_EXPORT_EXAMPLE_TOP_PS = 0.80
 ONNX_EXPORT_EXAMPLE_MIN_PS = 0.99
-ONNX_EXPORT_OPSET = 13
+ONNX_EXPORT_OPSET = 18
 
 COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-aic-hw-version=2.0"]
 

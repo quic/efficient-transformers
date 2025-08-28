@@ -313,6 +313,7 @@ class QEFFBaseModel(ABC):
             "mdp_ts_json": mdp_ts_json,
             "num_speculative_tokens": num_speculative_tokens,
         }
+
         compile_hash = hash_dict_params(compile_hash_params)
 
         compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)

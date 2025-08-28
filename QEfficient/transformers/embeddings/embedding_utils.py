@@ -97,12 +97,14 @@ class PooledModel(nn.Module):
         output = self.base_model(input_ids, attention_mask, **kwargs)
         return self.pooling_fn(output[0], attention_mask)
 
+
 def embedding_forward(
-        self, input_ids: Optional[torch.Tensor] = None, attention_mask: Optional[torch.Tensor] = None, **kwargs
-    ):
+    self, input_ids: Optional[torch.Tensor] = None, attention_mask: Optional[torch.Tensor] = None, **kwargs
+):
     print("Forward swapped with new one")
     output = self.old_forward(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
     return output[0]
+
 
 def validate_user_pooling_function(user_function):
     """

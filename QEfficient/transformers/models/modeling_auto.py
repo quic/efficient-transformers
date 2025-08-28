@@ -44,7 +44,6 @@ from QEfficient.transformers.models.pytorch_transforms import (
     SpDTransform,
     VlmKVOffloadTransform,
     VlmNoKVOffloadTransform,
-    EmbeddingTransform
 )
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
@@ -159,17 +158,19 @@ class QEFFAutoModel(QEFFTransformersBase):
     """
 
     _hf_auto_class = AutoModel
-    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, EmbeddingTransform]
+    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, pooling=None, **kwargs):
+    def __init__(self, model: nn.Module, **kwargs):
         super().__init__(model, **kwargs)
 
         # Make Embedding specific transforms like appending pooling
-        if pooling:
-            self.model, _ = PoolingTransform.apply(self.model, pooling)
+        if kwargs["pooling"]:
+            self.model, _ = PoolingTransform.apply(self.model, kwargs["pooling"])
+        # else:
+        #     self.model, _ = EmbeddingTransform.apply(self.model)
 
-        self.model.base_model.config.use_cache = True
+        # self.model.base_model.config.use_cache = True
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
@@ -382,7 +383,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         )
         attention_mask = np.array(
             torch.nn.functional.pad(
-                inputs["attention_mask"], (0, self.seq_len - input_ids_len), "constant", 0
+                inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
             )
         )
 
@@ -397,14 +398,13 @@ class QEFFAutoModel(QEFFTransformersBase):
             outputs = self.qpc_session.run(inputs)
         except Exception:
             outputs = {
-                "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[1]).astype(
+                "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[0]).astype(
                     np.float32
                 ),
             }
             self.qpc_session.set_buffers(outputs)
             outputs = self.qpc_session.run(inputs)
         return outputs
-
 
     def pytorch_feature_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
         """
