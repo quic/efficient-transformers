@@ -161,14 +161,16 @@ class QEFFAutoModel(QEFFTransformersBase):
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
-    def __init__(self, model: nn.Module, pooling=None, **kwargs):
+    def __init__(self, model: nn.Module, **kwargs):
         super().__init__(model, **kwargs)
 
         # Make Embedding specific transforms like appending pooling
-        if pooling:
-            self.model, _ = PoolingTransform.apply(self.model, pooling)
+        if kwargs["pooling"]:
+            self.model, _ = PoolingTransform.apply(self.model, kwargs["pooling"])
+        # else:
+        #     self.model, _ = EmbeddingTransform.apply(self.model)
 
-        self.model.base_model.config.use_cache = True
+        # self.model.base_model.config.use_cache = True
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
@@ -396,7 +398,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             outputs = self.qpc_session.run(inputs)
         except Exception:
             outputs = {
-                "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[1]).astype(
+                "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[0]).astype(
                     np.float32
                 ),
             }
