@@ -231,7 +231,6 @@ def main(
             tokenizer,
             prompts=prompt,
             device_id=device_group,
-            prompt=prompt,
             prompts_txt_file_path=prompts_txt_file_path,
             generation_len=generation_len,
         )
