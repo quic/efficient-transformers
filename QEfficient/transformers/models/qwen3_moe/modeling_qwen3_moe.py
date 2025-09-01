@@ -131,39 +131,27 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
             top_w /= top_w.sum(-1, keepdim=True)
         top_w = top_w.to(x.dtype)
+        masked_logits = torch.zeros_like(router_logits)
+        masked_logits.scatter_(1, top_i, top_w)
 
-        expert_idx = []
-        weights = []
-        for i in range(self.top_k):
-            expert_idx.append(top_i[:, i])
-            weights.append(top_w[:, i])
-        Inter = 768
-        upgate = []
-        expert_out = []
-        for i in range(self.top_k):
-            upgate.append(x.new_zeros((T, Inter)))
-            expert_out.append(x.new_zeros((T, H)))
+        # Routing weights for each expert [T, E]
+        routing_weights = masked_logits
 
+        # ────────────────── allocate the output tensor ─────
+        expert_out = x.new_zeros((T, H))  # accumulation buffer
+
+        # ───────────────────────── Expert computation loop ─────────────────────────────
         for e in range(self.num_experts):
-            exp = self.experts[e]
-            mask = []
-            for i in range(self.top_k):
-                mask.append((expert_idx[i] == e).unsqueeze(1))
-            hidden_gate = (exp.act_fn(exp.gate_proj(x))) * exp.up_proj(x)
-            for i in range(self.top_k):
-                upgate[i] += torch.where(mask[i], hidden_gate, torch.zeros_like(upgate[i]))
+            routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
+            W_g, W_u = self.experts[e].gate_proj, self.experts[e].up_proj  # [H, I], [H, I]
+            W_d = self.experts[e].down_proj  # [I, H]
+            gate = W_g(x)  # [T, I]
+            up = W_u(x)  # [T, I]
+            down = W_d(up * self.experts[e].act_fn(gate))  # [T, H]
 
-        for e in range(self.num_experts):
-            exp = self.experts[e]
-            mask = []
-            for i in range(self.top_k):
-                mask.append((expert_idx[i] == e).unsqueeze(1))
-                expert_out[i] += torch.where(
-                    mask[i], exp.down_proj(upgate[i]) * (weights[i].unsqueeze(1)), torch.zeros_like(expert_out[i])
-                )
-
-        expert_out_sum = sum(expert_out)
-        return expert_out_sum.view(B, S, H), router_logits
+            masked_down = torch.where(routing_weight > 0, down * routing_weight, torch.zeros_like(expert_out))
+            expert_out += masked_down
+        return expert_out.view(B, S, H), router_logits
 
 
 class QEffQwen3MoeAttention(Qwen3MoeAttention):
