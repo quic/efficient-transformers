@@ -107,7 +107,9 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
             else:
                 image_feature = image_feature[0]
                 if self.model.model.image_newline is not None:
-                    image_feature = torch.cat((image_feature, self.model.model.image_newline[None].to(image_feature)), dim=0)
+                    image_feature = torch.cat(
+                        (image_feature, self.model.model.image_newline[None].to(image_feature)), dim=0
+                    )
             new_image_features.append(image_feature)
         image_features = torch.cat(new_image_features, dim=0)
         return image_features.unsqueeze(0)
