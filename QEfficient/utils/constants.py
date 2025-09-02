@@ -28,6 +28,23 @@ ONNX_EXPORT_CTX_LEN = 1024
 # Compiler defaults
 DEFAULT_AIC_NUM_CORES = 16
 DEFAULT_AIC_MXPF6_MATMUL = False
+# Hashing defaults
+HASH_HEXDIGEST_STR_LEN = 16
+KWARGS_INCLUSION_LIST = [
+    "state_dict",
+    "revision",
+    "key_mapping",
+    "commit_hash",
+    "adapter_kwargs",
+    "adapter_name",
+    "gguf_file",
+    "pretrained_model_name_or_path",
+    "attn_implementation",
+    "_attn_implementation",
+]
+
+# Minimum value for causal mask
+MIN_MASKED_ATTENTION_VALUE = float("-inf")
 
 
 # Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
