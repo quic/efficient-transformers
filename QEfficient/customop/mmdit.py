@@ -2,9 +2,8 @@
 import onnxscript
 import torch
 import torch.nn as nn
+import math
 
-# Define your ONNXScript Opset domain
-# All custom ONNX functions (like norms, attention, FF) should ideally be in the same domain.
 CUSTOM_OPSET = onnxscript.values.Opset(domain="com.qualcomm.cloud", version=1)
 # Import the ONNX Script opset for version 13
 ops = getattr(onnxscript, "opset" + str(13))
@@ -13,17 +12,15 @@ ops = getattr(onnxscript, "opset" + str(13))
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def SD35AdaLayerNormZeroX(
     hidden_states: onnxscript.FLOAT,
-    emb: onnxscript.FLOAT, # temb in the JointTransformerBlock forward
+    emb: onnxscript.FLOAT, 
     linear_weight: onnxscript.FLOAT,
     linear_bias: onnxscript.FLOAT,
-    norm_epsilon: float, # For LayerNorm's epsilon (elementwise_affine=False means no weight/bias on norm)
+    norm_epsilon: float, 
 ):
-    # This is `self.silu = nn.SiLU(); self.linear = nn.Linear(embedding_dim, 9 * embedding_dim, bias=bias)`
-    # then chunk, then LayerNorm, then operations with chunked outputs.
-
+   
     # 1. emb = self.linear(self.silu(emb))
-    silu_emb = ops.Mul(emb, ops.Sigmoid(emb)) # Equivalent to nn.SiLU()
-    linear_out = ops.MatMul(silu_emb, ops.Transpose(linear_weight, perm=[1, 0])) # PyTorch Linear behavior (input@W.T)
+    silu_emb = ops.Mul(emb, ops.Sigmoid(emb)) 
+    linear_out = ops.MatMul(silu_emb, ops.Transpose(linear_weight, perm=[1, 0])) 
     linear_out = ops.Add(linear_out, linear_bias)
 
     # 2. Chunk `linear_out` into 9
@@ -32,7 +29,6 @@ def SD35AdaLayerNormZeroX(
     output_dim_linear = ops.Shape(linear_out)[-1]
     chunk_size = ops.Cast(output_dim_linear / 9, to=6) # Cast to Int64
 
-    # The ops.Split operator requires explicit sizes for each chunk
     split_sizes = ops.Constant(value_ints=[chunk_size] * 9) # A tuple of 9 chunk_size values
     split_outputs = ops.Split(linear_out, split_size=split_sizes, axis=1)
 
@@ -47,12 +43,6 @@ def SD35AdaLayerNormZeroX(
     gate_msa2 = split_outputs[8]
 
     # 3. norm_hidden_states = self.norm(hidden_states)
-    # self.norm is nn.LayerNorm(embedding_dim, elementwise_affine=False, eps=1e-6)
-    # ONNX opset16 LayerNormalization has elementwise_affine=True by default.
-    # To simulate elementwise_affine=False, pass `None` for scale/bias, or `ops.Constant(value_float=1.0)`/`ops.Constant(value_float=0.0)`
-    # The LayerNormalization operator requires scale and bias inputs, even if they are identity.
-    # Let's assume the scale is implicit 1.0 and bias implicit 0.0 for elementwise_affine=False.
-    # The easiest way is to apply LayerNormalization without learnable weights/bias:
     norm_hidden_states = ops.LayerNormalization(
         hidden_states,
         scale=ops.Constant(value_float=1.0, output_dtype=1), # float
@@ -78,33 +68,22 @@ def SD35AdaLayerNormZeroX(
     return output_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp, output_norm_hidden_states2, gate_msa2
 
 
- # Use the appropriate opset
-
-
-
 @onnxscript.script(CUSTOM_OPSET)
 def AdaLayerNormZero(
-    x: onnxscript.FLOAT, # Corresponds to 'hidden_states' in your PyTorch code
-    emb: onnxscript.FLOAT, # This is the 'emb' after potential `self.emb` processing
-                           # (i.e., the input to self.linear)
+    x: onnxscript.FLOAT, 
+    emb: onnxscript.FLOAT, 
 
     linear_weight: onnxscript.FLOAT, # Weight for self.linear
     linear_bias: onnxscript.FLOAT,   # Bias for self.linear
 
-    norm_epsilon: float,             # eps for self.norm (LayerNorm)
-    # If your LayerNorm can be `fp32_layer_norm` (as per `norm_type` in init),
-    # its ONNX equivalent would be a specialized operator, or `ops.LayerNormalization`
-    # with the appropriate settings/conversions. For now, assuming `layer_norm`.
+    norm_epsilon: float,             
 ):
-    # This ONNXScript function assumes `emb` is already processed by `self.emb` (if it exists)
-    # and is the direct input to `self.linear`.
+    
 
     # 1. `emb = self.linear(self.silu(emb))`
     silu_emb = ops.Mul(emb, ops.Sigmoid(emb)) # Equivalent to nn.SiLU()
 
-    # Apply the linear layer
-    # PyTorch's nn.Linear internally does `input @ weight.T + bias`
-    # So, we need to transpose the weight for ops.MatMul(input, weight)
+   
     linear_out = ops.MatMul(silu_emb, ops.Transpose(linear_weight, perm=[1, 0]))
     linear_out = ops.Add(linear_out, linear_bias)
 
@@ -125,9 +104,6 @@ def AdaLayerNormZero(
     gate_mlp = split_outputs[5]
 
     # 3. `x = self.norm(x) * (1 + scale_msa[:, None]) + shift_msa[:, None]`
-    # `self.norm` is `nn.LayerNorm(embedding_dim, elementwise_affine=False, eps=1e-6)`
-    # ONNX LayerNormalization operator requires `scale` and `bias` inputs.
-    # For `elementwise_affine=False`, these should be identity tensors.
     norm_x = ops.LayerNormalization(
         x,
         scale=ops.Constant(value_float=1.0, output_dtype=1), # float type (ONNX FLOAT)
@@ -136,17 +112,90 @@ def AdaLayerNormZero(
     )
 
     # Apply the scaling and shifting: `norm_x * (1 + scale_msa[:, None]) + shift_msa[:, None]`
-    # Use ops.Unsqueeze for `[:, None]` equivalent
+    # Use ops.Unsqueeze for `[:, None]` 
     scaled_shifted_x = ops.Add(
         ops.Mul(norm_x, ops.Add(ops.Constant(value_float=1.0), ops.Unsqueeze(scale_msa, axes=[1]))),
         ops.Unsqueeze(shift_msa, axes=[1])
     )
 
-    # Return signature: x, gate_msa, shift_mlp, scale_mlp, gate_mlp
     return scaled_shifted_x, gate_msa, shift_mlp, scale_mlp, gate_mlp
 
+@onnxscript.script(CUSTOM_OPSET)
+def GELUOnnx(
+    hidden_states: onnxscript.FLOAT,
+    proj_weight: onnxscript.FLOAT,
+    proj_bias: onnxscript.FLOAT,
+):
+    """
+    ONNXScript equivalent of GELU with approximate="tanh" activation.
+    Corresponds to:
+    hidden_states = nn.Linear(in_dim, out_dim)(hidden_states)
+    return 0.5 * hidden_states * (1 + torch.tanh(torch.sqrt(torch.tensor(2.0 / math.pi)) * (hidden_states + 0.044715 * torch.pow(hidden_states, 3))))
+    """
+    projected_states = ops.MatMul(hidden_states, ops.Transpose(proj_weight, perm=[1, 0]))
+    projected_states = ops.Add(projected_states, proj_bias)
 
+    x = projected_states
+    x_cubed = ops.Pow(x, ops.Constant(value_float=3.0))
+    term_x_plus_044715_x_cubed = ops.Add(x, ops.Mul(ops.Constant(value_float=0.044715), x_cubed))
+    sqrt_2_div_pi = ops.Constant(value_float=math.sqrt(2.0 / math.pi))
+    argument_for_tanh = ops.Mul(sqrt_2_div_pi, term_x_plus_044715_x_cubed)
+    tanh_val = ops.Tanh(argument_for_tanh)
+    one_plus_tanh_val = ops.Add(ops.Constant(value_float=1.0), tanh_val)
+    final_gelu_output = ops.Mul(ops.Mul(ops.Constant(value_float=0.5), x), one_plus_tanh_val)
 
+    return final_gelu_output
+
+# ff_context #ff
+@onnxscript.script(CUSTOM_OPSET)
+def FeedForward(
+    hidden_states: onnxscript.FLOAT,
+
+    # Parameters derived from FeedForward __init__
+    dim: int,           # `dim` from FeedForward init (input dimension to the block)
+    dim_out: int,       # `dim_out` from FeedForward init (output dimension of the block)
+    mult: int,          # `mult` from FeedForward init (used to calculate inner_dim)
+    dropout_ratio: float, # `dropout` for nn.Dropout
+    final_dropout: bool, # `final_dropout` bool
+    # We no longer need 'activation_fn_type' as we're fixed to GELU-approximate
+
+    # Weights for the internal components
+    # Weights for the 'act_fn' (which is GELU in this case)
+    act_fn_proj_weight: onnxscript.FLOAT, # This is the weight for GELU's internal Linear layer
+    act_fn_proj_bias: onnxscript.FLOAT,   # This is the bias for GELU's internal Linear layer
+
+    # Weights for the final Linear layer (self.net.append(nn.Linear(...)))
+    project_out_weight: onnxscript.FLOAT,
+    project_out_bias: onnxscript.FLOAT,
+):
+    # Calculate inner_dim as in PyTorch FeedForward.__init__
+    # inner_dim = int(dim * mult)
+    inner_dim_val = ops.Cast(ops.Mul(dim, mult), to=6) # 6 is ONNX INT64
+    # 1. Apply act_fn (which is GELUOnnx here)
+    # The GELUOnnx function handles its own internal projection.
+    # The output dimension of GELU's internal projection is `inner_dim`.
+    ff_output = GELU(
+        hidden_states,
+        act_fn_proj_weight,
+        act_fn_proj_bias,
+    )
+
+    # 2. Apply first Dropout
+    # For inference, dropout_ratio is typically 0.0, which means ops.Dropout acts as ops.Identity.
+    # If opset is < 12 and dropout_ratio is 0.0, it might be removed by optimizers.
+    ff_output = ops.Dropout(ff_output, ratio=dropout_ratio)
+
+    # 3. Apply project out (final Linear layer)
+    # The input to this linear layer is `ff_output`, which has shape [..., inner_dim_val].
+    # The output dimension of this linear layer is `dim_out`.
+    ff_output = ops.MatMul(ff_output, ops.Transpose(project_out_weight, perm=[1, 0]))
+    ff_output = ops.Add(ff_output, project_out_bias)
+
+    # 4. Apply final Dropout (if final_dropout is True)
+    if final_dropout:
+        ff_output = ops.Dropout(ff_output, ratio=dropout_ratio) # Re-use dropout_ratio
+
+    return ff_output
 
 
 
