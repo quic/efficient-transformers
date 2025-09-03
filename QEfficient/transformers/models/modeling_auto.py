@@ -287,12 +287,20 @@ class QEFFAutoModel(QEFFTransformersBase):
             :num_cores (int): Number of cores used to compile the model.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
             :compiler_options (dict, optional): Additional compiler options.
+
                 For QAIC Compiler: Extra arguments for qaic-exec can be passed.
                     :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
                     :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+
+                    Params are converted to flags as below:
+
+                    - aic_hw_version=ai100 -> -aic-hw-version=ai100
+                    - aic_hw_version=ai200 -> -aic-hw-version=ai200
+
                 For QNN Compiler: Following arguments can be passed.
                     :enable_qnn (bool): Enables QNN Compilation.
                     :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
+
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
@@ -1701,13 +1709,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             :num_speculative_tokens (int, optional): Number of speculative tokens to take as input for Speculative Decoding Target Language Model.
             :prefill_only (bool): if ``True`` compile for prefill only and if ``False`` compile for decode only. Defaults to None, which compiles for both ``prefill and ``decode``.
             :compiler_options (dict, optional): Additional compiler options. ``Defaults to None``.
+
                 For QAIC Compiler: Extra arguments for qaic-exec can be passed.
                     :mos (int, optional): Effort level to reduce on-chip memory. Defaults to -1, meaning no effort. ``Defaults to -1``.
                     :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
                     :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+
                     Params are converted to flags as below:
+
                     - aic_num_cores=16 -> -aic-num-cores=16
                     - convert_to_fp16=True -> -convert-to-fp16
+                    - aic_hw_version=ai100 -> -aic-hw-version=ai100
+                    - aic_hw_version=ai200 -> -aic-hw-version=ai200
+
                 For QNN Compiler: Following arguments can be passed.
                     :enable_qnn (bool): Enables QNN Compilation.
                     :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
@@ -1960,6 +1974,10 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             :num_cores (int): Number of cores used to compile the model.
             :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
             :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+            :compiler_options (dict, optional): Additional compiler options. ``Defaults to None``.
+
+                - aic_hw_version=ai100 -> -aic-hw-version=ai100
+                - aic_hw_version=ai200 -> -aic-hw-version=ai200
 
             Other args are not yet implemented for AutoModelForSpeechSeq2Seq
         Returns:
