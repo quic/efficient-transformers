@@ -6,6 +6,7 @@
 # ----------------------------------------------------------------------------
 
 import os
+import warnings
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
@@ -15,11 +16,23 @@ from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
 
 
 class OnnxTransform:
+    """
+    OnnxTransform is the base class for graph modifications on exported onnx.
+    """
+
     def __init__(self):
         raise TypeError("Transform classes are not to be instantiated. Use the `apply` method directly.")
 
     @classmethod
     def apply(cls, model: ModelProto, **kwargs) -> Tuple[ModelProto, bool]:
+        """
+        Override this class to apply a transformation.
+        :param model: The model's ONNX graph to transform
+        :param kwargs: Parameters needed for specific transforms. All transforms should take **kwargs to ignore unneeded kwargs.
+
+        :returns: ONNX graph after applying the transform
+        :returns: Boolean indicating whether transform was applied
+        """
         raise NotImplementedError("Use subclasses for ONNX transform")
 
 
@@ -37,6 +50,10 @@ class ClipAndSplitTransform(OnnxTransform):
         size_threshold: int = 1024,
         **kwargs,
     ) -> Tuple[ModelProto, bool]:
+        if not apply_clip and not apply_split:
+            warnings.warn("Both apply_clip and apply_split are False. Skipping transformation.")
+            return model, False
+
         external_data_helper.load_external_data_for_model(model, onnx_base_dir)
         tensors = external_data_helper._get_all_tensors(model)
 
