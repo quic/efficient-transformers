@@ -41,6 +41,7 @@ KWARGS_INCLUSION_LIST = [
     "pretrained_model_name_or_path",
     "attn_implementation",
     "_attn_implementation",
+    "qaic_config",
 ]
 
 # Minimum value for causal mask
@@ -130,6 +131,16 @@ class Constants:
     MAX_RETRIES = 10  # This constant will be used set the maximum number of retry attempts for downloading a model using huggingface_hub snapshot_download
     NUM_SPECULATIVE_TOKENS = 2
     MAX_TOP_K_IDS = ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS
+    SAMPLER_OPS = {
+        "repetition_penalties",
+        "presence_penalties",
+        "temperatures",
+        "top_ks",
+        "top_ps",
+        "min_ps",
+        "random_numbers",
+    }
+    SAMPLER_INPUTS = SAMPLER_OPS | {"last_accepted_output_tokens"}
     SDK_APPS_XML = "/opt/qti-aic/versions/apps.xml"  # This xml file is parsed to find out the SDK apps version.
     SDK_PLATFORM_XML = (
         "/opt/qti-aic/versions/platform.xml"  # This xml file is parsed to find out the SDK platform version.
