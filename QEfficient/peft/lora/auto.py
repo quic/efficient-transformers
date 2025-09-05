@@ -18,7 +18,7 @@ import QEfficient
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.peft.lora.pytorch_transforms import LoraModelInputsTransform, TargetModulesTransform
 from QEfficient.utils import constants, get_padding_shape_from_config
-from QEfficient.utils.cache import to_hashable
+from QEfficient.utils.hash_utils import to_hashable
 from QEfficient.utils.logging_utils import logger
 
 

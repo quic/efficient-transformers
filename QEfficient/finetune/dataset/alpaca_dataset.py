@@ -11,6 +11,8 @@ import json
 import torch
 from torch.utils.data import Dataset
 
+from QEfficient.finetune.utils.logging_utils import logger
+
 PROMPT_DICT = {
     "prompt_input": (
         "Below is an instruction that describes a task, paired with an input that provides further context. "
@@ -27,7 +29,13 @@ PROMPT_DICT = {
 
 class InstructionDataset(Dataset):
     def __init__(self, dataset_config, tokenizer, partition="train", context_length=None):
-        self.ann = json.load(open(dataset_config.data_path))
+        try:
+            self.ann = json.load(open(dataset_config.data_path))
+        except FileNotFoundError:
+            logger.raise_error(
+                "Loading of alpaca dataset failed! Please use (wget -c https://raw.githubusercontent.com/tatsu-lab/stanford_alpaca/refs/heads/main/alpaca_data.json -P dataset/) to download the alpaca dataset.",
+                FileNotFoundError,
+            )
         # Use 5% of the dataset for evaluation
         eval_length = int(len(self.ann) / 20)
         if partition == "train":

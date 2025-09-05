@@ -27,7 +27,7 @@ from QEfficient.peft.pytorch_transforms import PeftModelInputsTransform
 from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform
 from QEfficient.utils import constants
 from QEfficient.utils._utils import get_padding_shape_from_config
-from QEfficient.utils.cache import to_hashable
+from QEfficient.utils.hash_utils import to_hashable
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +287,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
 
         generation_config = generation_config or self.model.generation_config
         generation_config, model_kwargs = self.model._prepare_generation_config(generation_config, **kwargs)
-        self.model._prepare_special_tokens(generation_config)
+        self.model._prepare_special_tokens(generation_config, device="cpu")
         if generation_config.do_sample:
             raise NotImplementedError("do_sample=True not supported currently")
         if generation_config.num_beams > 1:

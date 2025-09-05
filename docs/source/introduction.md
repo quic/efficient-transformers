@@ -31,8 +31,6 @@ For other models, there is comprehensive documentation to inspire upon the chang
 <details>
 <summary>More</summary>
 
-- [04/2025] Added support for [Granite Vision models](https://huggingface.co/collections/ibm-granite/granite-vision-models-67b3bd4ff90c915ba4cd2800)
-- [04/2025] Added support for [Granite MOE models](https://huggingface.co/ibm-granite/granite-3.0-1b-a400m-base)
 - [04/2025] Support for [SpD, multiprojection heads](https://quic.github.io/efficient-transformers/source/quick_start.html#draft-based-speculative-decoding). Implemented post-attention hidden size projections to speculate tokens ahead of the base model
 - [04/2025] [QNN Compilation support](https://github.com/quic/efficient-transformers/pull/374) for AutoModel classes. QNN compilation capabilities for multi-models, embedding models and causal models.
 - [04/2025] Added support for separate prefill and decode compilation for encoder (vision) and language models. This feature will be utilized for [disaggregated serving](https://github.com/quic/efficient-transformers/pull/365).

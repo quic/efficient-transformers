@@ -28,6 +28,23 @@ ONNX_EXPORT_CTX_LEN = 1024
 # Compiler defaults
 DEFAULT_AIC_NUM_CORES = 16
 DEFAULT_AIC_MXPF6_MATMUL = False
+# Hashing defaults
+HASH_HEXDIGEST_STR_LEN = 16
+KWARGS_INCLUSION_LIST = [
+    "state_dict",
+    "revision",
+    "key_mapping",
+    "commit_hash",
+    "adapter_kwargs",
+    "adapter_name",
+    "gguf_file",
+    "pretrained_model_name_or_path",
+    "attn_implementation",
+    "_attn_implementation",
+]
+
+# Minimum value for causal mask
+MIN_MASKED_ATTENTION_VALUE = float("-inf")
 
 
 # Store the qeff_models inside the ~/.cache directory or over-ride with an env variable.
@@ -68,7 +85,8 @@ ONNX_EXPORT_EXAMPLE_TOP_PS = 0.80
 ONNX_EXPORT_EXAMPLE_MIN_PS = 0.99
 ONNX_EXPORT_OPSET = 13
 
-COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw", "-aic-hw-version=2.0"]
+COMPILER = ["/opt/qti-aic/exec/qaic-exec", "-aic-hw"]
+DEFAULT_AIC_HW_VERSION = "ai100"
 
 # InternVL constants
 # Fixing the feature size with reference to OpenGVLab/InternVL2_5-1B, OpenGVLab/InternVL2_5-38B and OpenGVLab/InternVL2_5-78B

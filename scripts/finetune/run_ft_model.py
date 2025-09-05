@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 import os
 import warnings
 
@@ -13,6 +14,7 @@ from peft import AutoPeftModelForCausalLM
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient.finetune.configs.training import TrainConfig
+from QEfficient.finetune.utils.logging_utils import logger
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
@@ -22,7 +24,10 @@ try:
 
     device = "qaic:0"
 except ImportError as e:
-    print(f"Warning: {e}. Moving ahead without these qaic modules.")
+    logger.log_rank_zero(
+        f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+        logging.WARNING,
+    )
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 train_config = TrainConfig()
@@ -40,17 +45,13 @@ tokenizer = AutoTokenizer.from_pretrained(
 if not tokenizer.pad_token_id:
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
-eval_prompt = """
-    Summarize this dialog:
-    A: Hi Tom, are you busy tomorrow’s afternoon?
-    B: I’m pretty sure I am. What’s up?
-    A: Can you go with me to the animal shelter?.
-    B: What do you want to do?
-    A: I want to get a puppy for my son.
-    B: That will make him so happy.
-    ---
-    Summary:
-    """
+# This prompt template is specific to alpaca dataset, please change it according to your dataset.
+eval_prompt = """"Below is an instruction that describes a task. Write a response that appropriately completes the request.
+
+### Instruction:
+Give three tips for staying healthy.
+
+### Response:"""
 
 model_input = tokenizer(eval_prompt, return_tensors="pt")
 
@@ -59,18 +60,15 @@ model_input.to(device)
 model.eval()
 
 with torch.inference_mode():
-    print(
+    logger.log_rank_zero(
         tokenizer.decode(
             model.generate(**model_input, max_new_tokens=50, do_sample=False)[0],
             skip_special_tokens=True,
         )
     )
 
-trained_weights_path = os.path.join(train_config.output_dir, "trained_weights")
-list_paths = [d for d in os.listdir(trained_weights_path) if os.path.isdir(os.path.join(trained_weights_path, d))]
-max_index = max([int(path[5:]) for path in list_paths])
-
-save_dir = os.path.join(trained_weights_path, "step_" + str(max_index))
+# Load the pre-trained model from latest checkpoint
+save_dir = os.path.join(train_config.output_dir, "complete_epoch_" + str(train_config.num_epochs))
 
 # Load PEFT model on CPU
 model = AutoPeftModelForCausalLM.from_pretrained(save_dir)
@@ -85,7 +83,7 @@ model_peft = AutoModelForCausalLM.from_pretrained(model_id, use_cache=False, att
 model_peft.to(device)
 model_peft.eval()
 with torch.inference_mode():
-    print(
+    logger.log_rank_zero(
         tokenizer.decode(
             model_peft.generate(**model_input, max_new_tokens=50, do_sample=False)[0],
             skip_special_tokens=True,

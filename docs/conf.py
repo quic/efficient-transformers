@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.abspath(".."))
 # -- Project information -----------------------------------------------------
 
 project = "efficient-transformers"
-copyright = "2024, Qualcomm"
+copyright = "2025, Qualcomm"
 
 # The full version, including alpha/beta/rc tags
 release = "main"
