@@ -1,63 +1,8 @@
-# Python API
-
 **This page give you an overview about the all the APIs that you might need to integrate the `QEfficient` into your python applications.**
 
-## High Level API
+# Python API
 
-### `QEFFAutoModelForCausalLM`
-
-```{eval-rst}
-.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM
-   :member-order: bysource
-   :members:
-``` 
-
-(QEFFAutoModel)=
-### `QEFFAutoModel`
-
-```{eval-rst}
-.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModel
-   :member-order: bysource
-   :members:
-``` 
-
-(QEffAutoPeftModelForCausalLM)=
-### `QEffAutoPeftModelForCausalLM`
-
-```{eval-rst}
-.. autoclass:: QEfficient.peft.auto.QEffAutoPeftModelForCausalLM
-   :member-order: bysource
-   :members:
-```
-
-(QEffAutoLoraModelForCausalLM)=
-### `QEffAutoLoraModelForCausalLM`
-
-```{eval-rst}
-.. autoclass:: QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM
-   :member-order: bysource
-   :members:
-```
-
-(QEFFAutoModelForImageTextToText)=
-### `QEFFAutoModelForImageTextToText`
-
-```{eval-rst}
-.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText
-   :member-order: bysource
-   :members:
-```
-
-(QEFFAutoModelForSpeechSeq2Seq)=
-### `QEFFAutoModelForSpeechSeq2Seq`
-
-```{eval-rst}
-.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq
-   :member-order: bysource
-   :members:
-```
-
-### `export`
+## `export`
 
 ```{eval-rst}
 .. automodule:: QEfficient.exporter.export_hf_to_cloud_ai_100
@@ -68,7 +13,7 @@
    This function will be deprecated in version 1.19, please use QEFFAutoModelForCausalLM.export instead
 ```
 
-### `compile`
+## `compile`
 
 ```{eval-rst}
 .. automodule:: QEfficient.compile.compile_helper
@@ -83,7 +28,7 @@
    This function will be deprecated in version 1.19, please use QEFFAutoModelForCausalLM.compile instead
 ```
 
-### `Execute`
+## `Execute`
 
 ```{eval-rst}
 .. automodule:: QEfficient.generation.text_generation_inference
@@ -91,9 +36,8 @@
    :show-inheritance:
    :exclude-members:  latency_stats_bertstyle,cloud_ai_100_exec_kv_helper
 ```
-## Low Level API
 
-### `convert_to_cloud_kvstyle`
+## `convert_to_cloud_kvstyle`
 
 ```{eval-rst}
 .. automodule:: QEfficient.exporter.export_hf_to_cloud_ai_100
@@ -102,7 +46,7 @@
    :exclude-members: qualcomm_efficient_converter, convert_to_cloud_bertstyle
 ```
 
-### `convert_to_cloud_bertstyle`
+## `convert_to_cloud_bertstyle`
 
 ```{eval-rst}
 .. automodule:: QEfficient.exporter.export_hf_to_cloud_ai_100
@@ -111,7 +55,7 @@
    :exclude-members: qualcomm_efficient_converter, convert_to_cloud_kvstyle
 ```
 
-### `utils`
+## `utils`
 
 ```{eval-rst}
 .. automodule:: QEfficient.utils.device_utils

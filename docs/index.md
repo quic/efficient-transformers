@@ -45,6 +45,7 @@ source/upgrade
 :maxdepth: 4
 
 source/quick_start
+source/autoclass
 source/cli_api
 source/python_api
 ```
