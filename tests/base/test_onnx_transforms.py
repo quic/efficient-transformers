@@ -8,7 +8,7 @@
 import numpy as np
 import onnx
 
-from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.base.onnx_transforms import ClipAndSplitTransform
 
 
 def test_fp16clip_transform():
@@ -32,7 +32,7 @@ def test_fp16clip_transform():
     }
     """)
     onnx.checker.check_model(test_onnx, True, True, True)
-    transformed_onnx, transformed = FP16ClipTransform.apply(test_onnx)
+    transformed_onnx, transformed = ClipAndSplitTransform.apply(test_onnx, model_name="", apply_split=False)
     assert transformed
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[0]) == 65504.0
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[1]) == 2147483647
@@ -63,7 +63,9 @@ def test_fp16clip_transform_external(tmp_path):
     np.array(-1e10, dtype="float32").tofile(tmp_path / external_tensors_file)
     onnx.checker.check_model(onnx_path, True, True, True)
 
-    transformed_onnx, transformed = FP16ClipTransform.apply(test_onnx, onnx_base_dir=str(tmp_path))
+    transformed_onnx, transformed = ClipAndSplitTransform.apply(
+        test_onnx, model_name="", onnx_base_dir=str(tmp_path), apply_split=False
+    )
     assert transformed
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[0]) == -65504.0
 
@@ -92,12 +94,13 @@ def test_split_tensors_transform(tmp_path):
     tensors.tofile(tmp_path / external_tensors_file)
     onnx.checker.check_model(onnx_path, True, True, True)
 
-    trans_onnx, transformed = SplitTensorsTransform.apply(
+    trans_onnx, transformed = ClipAndSplitTransform.apply(
         test_onnx,
         model_name="test_split",
         onnx_base_dir=str(tmp_path),
         file_chunk_size=32 * 4,
         size_threshold=16 * 4,
+        apply_clip=True,
     )
 
     tensor0_ext_data = onnx.external_data_helper.ExternalDataInfo(trans_onnx.graph.initializer[0])
