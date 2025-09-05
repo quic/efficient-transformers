@@ -48,6 +48,7 @@ test_models_causal = [
     "ibm-granite/granite-3.1-2b-instruct",
     "ibm-granite/granite-guardian-3.1-2b",
     "hpcai-tech/grok-1",
+    "allenai/OLMo-2-0425-1B",
     "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
 ]
 

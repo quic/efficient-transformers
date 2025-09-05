@@ -32,6 +32,7 @@ configs = [
     ("qwen2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("starcoder2", 256, 2, 4, 128, 512, 127, {}),
     ("granite", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    ("olmo2", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
 ]
 
 configs = [
