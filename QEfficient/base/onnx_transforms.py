@@ -67,10 +67,11 @@ class ClipAndSplitTransform(OnnxTransform):
 
         def process_tensor(info: TensorInfo) -> bool:
             tensor, tsize = info
-            transformed = False
+            transformed_clip = False
+            transformed_split = False
 
-            if apply_clip and cls._clip_tensor(tensor, onnx_base_dir, fp16_min, fp16_max):
-                transformed = True
+            if apply_clip:
+                transformed_clip = cls._clip_tensor(tensor, onnx_base_dir, fp16_min, fp16_max)
 
             if apply_split and tsize > size_threshold:
                 if file_num_tracker["size"] + tsize > file_chunk_size:
@@ -80,9 +81,11 @@ class ClipAndSplitTransform(OnnxTransform):
                     file_num_tracker["size"] += tsize
 
                 cls._split_tensor(tensor, model_name, file_num_tracker["num"])
-                transformed = True
+                transformed_split = True
 
-            return transformed
+            if apply_clip and apply_split:
+                return transformed_clip and transformed_split
+            return transformed_clip or transformed_split
 
         with ThreadPoolExecutor(max_workers=os.cpu_count() * 4) as executor:
             transformed_flags = list(executor.map(process_tensor, tensor_infos))
