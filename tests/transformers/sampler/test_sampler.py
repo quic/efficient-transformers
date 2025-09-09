@@ -158,6 +158,7 @@ def test_greedy_sampling(
     model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
+        num_hidden_layers=4,
         qaic_config={
             "include_sampler": True,
             "return_pdfs": False,
@@ -167,6 +168,7 @@ def test_greedy_sampling(
     model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
         model,
         continuous_batching=True,
+        num_hidden_layers=4,
         qaic_config={
             "include_sampler": False,
             "return_pdfs": False,
