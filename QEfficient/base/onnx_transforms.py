@@ -76,7 +76,6 @@ class OnnxTransform:
             cls._external_data_loaded_cache[model_id] = True
         else:
             logger.info("External data already loaded (or cached). Skipping bulk load.")
-    
 
     @classmethod
     def _cleanup_external_data_and_cache(cls, model: ModelProto):
@@ -87,12 +86,12 @@ class OnnxTransform:
         for tensor in external_data_helper._get_all_tensors(model):
             if tensor.HasField("raw_data"):
                 tensor.ClearField("raw_data")
-        
+
         # Clear the cache entry for this model using its ID
         model_id = id(model)
         if model_id in cls._external_data_loaded_cache:
             del cls._external_data_loaded_cache[model_id]
-        
+
         logger.info("External data and cache cleaned up.")
 
     @classmethod
@@ -124,7 +123,7 @@ class FP16ClipTransform(OnnxTransform):
 
             processed_count = 0
             for tensor in external_data_helper._get_all_tensors(model):
-                nptensor = numpy_helper.to_array(tensor) # Removed onnx_base_dir as data is already loaded
+                nptensor = numpy_helper.to_array(tensor)  # Removed onnx_base_dir as data is already loaded
                 if nptensor.dtype == np.float32 and (np.any(nptensor > fp16_max) or np.any(nptensor < fp16_min)):
                     neg_inf_mask = np.isinf(nptensor) & (nptensor < 0)
                     clipped_tensor = np.clip(nptensor, fp16_min, fp16_max)

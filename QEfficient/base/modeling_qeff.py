@@ -285,7 +285,7 @@ class QEFFBaseModel(ABC):
             shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
             # Clear external data from memory and cache after all transforms and saving
             # Make sure model exists before trying to clean it up
-            if 'model' in locals():
+            if "model" in locals():
                 OnnxTransform._cleanup_external_data_and_cache(model)
                 OnnxTransform._cleanup_memory()
             logger.info("Cleanup complete.")
