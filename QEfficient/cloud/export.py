@@ -12,7 +12,7 @@ from typing import Optional
 from QEfficient.base.common import QEFFCommonLoader
 from QEfficient.utils import check_and_assign_cache_dir
 from QEfficient.utils.logging_utils import logger
-
+from .custom_yaml import generate_custom_io
 # Specifically for Docker images.
 ROOT_DIR = os.path.dirname(os.path.abspath(""))
 
@@ -45,6 +45,7 @@ def get_onnx_model_path(
         full_batch_size=full_batch_size,
         local_model_dir=local_model_dir,
     )
+    generate_custom_io(qeff_model, cache_dir=".", mxint8_kv_cache=False)
     onnx_model_path = qeff_model.export()
     logger.info(f"Generated onnx_path: {onnx_model_path}")
     return onnx_model_path

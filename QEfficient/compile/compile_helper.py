@@ -171,6 +171,7 @@ def compile(
     Returns:
         :str: Path to compiled ``qpc`` package.
     """
+    
     if full_batch_size and batch_size != 1:
         raise ValueError("Only either batch_size or full_batch_size should be greater than one")
 
@@ -184,12 +185,21 @@ def compile(
         path=specialization_json_path,
         full_batch_size=full_batch_size,
     )
+    
+    dtype_suffix = "int8" if mxint8 else "fp16"
+    source_path = f"./custom_io_{dtype_suffix}.yaml"
+    destination_path = os.path.join(os.path.dirname(qpc_path), f"custom_io_{dtype_suffix}.yaml")
 
-    # Select the customIO config based on the mx flag.
-    custom_io_file_name = "custom_io_int8.yaml" if mxint8 else "custom_io_fp16.yaml"
+    # Move the custom YAML file to the cache/qeff_model directory
+    try:
+        shutil.move(source_path, destination_path)
+        print(f"Successfully moved '{source_path}' to '{destination_path}'.")
+    except Exception as e:
+        print(f"Error while moving file '{source_path}': {e}")
 
+    custom_io_file_name = f"custom_io_{dtype_suffix}.yaml"
     if custom_io_file_path is None:
-        custom_io_file_path = os.path.join(os.path.dirname(onnx_path), custom_io_file_name)
+        custom_io_file_path = os.path.join(os.path.dirname(qpc_path), custom_io_file_name)
 
     if not os.path.isfile(custom_io_file_path):
         raise FileNotFoundError(
