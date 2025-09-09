@@ -440,18 +440,18 @@ Disk I/O Statistics:
 
         report = f"""
 QEFFICIENT PERFORMANCE MONITORING REPORT
-{'='*60}
+{"=" * 60}
 Peak Memory Usage:
-   • RSS (Physical): {self.peak_rss/rss_scale:.2f} {rss_unit} at {self.peak_rss_time.strftime('%H:%M:%S') if self.peak_rss_time else 'N/A'}
-   • VMS (Virtual):  {self.peak_vms/rss_scale:.2f} {rss_unit} at {self.peak_vms_time.strftime('%H:%M:%S') if self.peak_vms_time else 'N/A'}
+   • RSS (Physical): {self.peak_rss / rss_scale:.2f} {rss_unit} at {self.peak_rss_time.strftime("%H:%M:%S") if self.peak_rss_time else "N/A"}
+   • VMS (Virtual):  {self.peak_vms / rss_scale:.2f} {rss_unit} at {self.peak_vms_time.strftime("%H:%M:%S") if self.peak_vms_time else "N/A"}
    • Peak during:    {self.peak_operation}
 
 Memory Statistics:
-   • Current RSS:    {current_sample.rss_mb/rss_scale:.2f} {rss_unit} (Delta: {(current_sample.rss_mb - initial_sample.rss_mb)/rss_scale:+.2f} {rss_unit})
-   • Current VMS:    {current_sample.vms_mb/rss_scale:.2f} {rss_unit} (Delta: {(current_sample.vms_mb - initial_sample.vms_mb)/rss_scale:+.2f} {rss_unit})
-   • Average RSS:    {avg_rss/rss_scale:.2f} {rss_unit}
-   • Min/Max RSS:    {min_rss/rss_scale:.2f} / {max_rss/rss_scale:.2f} {rss_unit}
-   • Memory Range:   {(max_rss - min_rss)/rss_scale:.2f} {rss_unit}{disk_io_stats}
+   • Current RSS:    {current_sample.rss_mb / rss_scale:.2f} {rss_unit} (Delta: {(current_sample.rss_mb - initial_sample.rss_mb) / rss_scale:+.2f} {rss_unit})
+   • Current VMS:    {current_sample.vms_mb / rss_scale:.2f} {rss_unit} (Delta: {(current_sample.vms_mb - initial_sample.vms_mb) / rss_scale:+.2f} {rss_unit})
+   • Average RSS:    {avg_rss / rss_scale:.2f} {rss_unit}
+   • Min/Max RSS:    {min_rss / rss_scale:.2f} / {max_rss / rss_scale:.2f} {rss_unit}
+   • Memory Range:   {(max_rss - min_rss) / rss_scale:.2f} {rss_unit}{disk_io_stats}
 
 Monitoring Info:
    • Duration:       {(current_sample.timestamp - initial_sample.timestamp).total_seconds():.1f} seconds
@@ -470,9 +470,9 @@ QEfficient Operations Timeline:"""
                 memory_delta = self.operation_memory_deltas.get(op_name, 0)
 
                 duration_str = f"({duration:.1f}s)" if duration > 0 else ""
-                memory_str = f"[{memory_delta/rss_scale:+.1f} {rss_unit}]" if abs(memory_delta) > 10 else ""
+                memory_str = f"[{memory_delta / rss_scale:+.1f} {rss_unit}]" if abs(memory_delta) > 10 else ""
 
-                report += f"\n   {i+1:2d}. {relative_time:6.1f}s - {op_name} {duration_str} {memory_str}"
+                report += f"\n   {i + 1:2d}. {relative_time:6.1f}s - {op_name} {duration_str} {memory_str}"
 
         return report
 
