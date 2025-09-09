@@ -12,7 +12,7 @@ from typing import Optional, Tuple
 import numpy as np
 from onnx import ModelProto, external_data_helper, numpy_helper
 
-from QEfficient.utils.constants import ONNX_TRANSFROM_MEMORY_CLEANUP_INTERVAL
+from QEfficient.utils.constants import ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,8 @@ class OnnxTransform:
     """
     OnnxTransform is the base class for graph modifications on exported onnx.
     """
+
+    _external_data_loaded_cache = {}  # Dict[int, bool]
 
     def __init__(self):
         raise TypeError("Transform classes are not to be instantiated. Directly use the `apply` method.")
@@ -45,11 +47,53 @@ class OnnxTransform:
         :param model: The ONNX model to check
         :returns: True if external data is already loaded, False otherwise
         """
+        # Use object ID as key instead of the object itself
+        model_id = id(model)
+        # Return cached result if available
+        if model_id in cls._external_data_loaded_cache:
+            return cls._external_data_loaded_cache[model_id]
+
+        # Load the model if not already loaded
         for tensor in external_data_helper._get_all_tensors(model):
             # Check if tensor has external data but no raw data loaded
             if len(tensor.external_data) > 0 and not tensor.HasField("raw_data"):
+                cls._external_data_loaded_cache[model_id] = False
                 return False
+
+        cls._external_data_loaded_cache[model_id] = True
         return True
+
+    @classmethod
+    def _load_external_data(cls, model: ModelProto, onnx_base_dir: Optional[str] = None):
+        """
+        Performs a bulk load of external data if it's not already loaded.
+        Updates the cache upon successful load.
+        """
+        model_id = id(model)
+        if not cls._check_external_data_loaded(model):
+            logger.info("External data not loaded. Performing bulk load.")
+            external_data_helper.load_external_data_for_model(model, onnx_base_dir)
+            cls._external_data_loaded_cache[model_id] = True
+        else:
+            logger.info("External data already loaded (or cached). Skipping bulk load.")
+    
+
+    @classmethod
+    def _cleanup_external_data_and_cache(cls, model: ModelProto):
+        """
+        Combines clearing external data from the model and its cache entry.
+        """
+        # Remove the loaded raw data from tensors
+        for tensor in external_data_helper._get_all_tensors(model):
+            if tensor.HasField("raw_data"):
+                tensor.ClearField("raw_data")
+        
+        # Clear the cache entry for this model using its ID
+        model_id = id(model)
+        if model_id in cls._external_data_loaded_cache:
+            del cls._external_data_loaded_cache[model_id]
+        
+        logger.info("External data and cache cleaned up.")
 
     @classmethod
     def _cleanup_memory(cls):
@@ -69,36 +113,42 @@ class FP16ClipTransform(OnnxTransform):
         """
         :param onnx_base_dir: Base directory to load tensors
         """
-        finfo = np.finfo(np.float16)
-        fp16_max = finfo.max
-        fp16_min = finfo.min
-        transformed = False
+        try:
+            # --- FIX: Ensure external data is loaded efficiently BEFORE processing ---
+            cls._load_external_data(model, onnx_base_dir)
 
-        processed_count = 0
-        for tensor in external_data_helper._get_all_tensors(model):
-            nptensor = numpy_helper.to_array(tensor, onnx_base_dir)
-            if nptensor.dtype == np.float32 and (np.any(nptensor > fp16_max) or np.any(nptensor < fp16_min)):
-                neg_inf_mask = np.isinf(nptensor) & (nptensor < 0)
-                clipped_tensor = np.clip(nptensor, fp16_min, fp16_max)
+            finfo = np.finfo(np.float16)
+            fp16_max = finfo.max
+            fp16_min = finfo.min
+            transformed = False
 
-                # Restore -inf values
-                if neg_inf_mask.any():
-                    clipped_tensor = np.where(neg_inf_mask, np.float32("-inf"), clipped_tensor)
+            processed_count = 0
+            for tensor in external_data_helper._get_all_tensors(model):
+                nptensor = numpy_helper.to_array(tensor) # Removed onnx_base_dir as data is already loaded
+                if nptensor.dtype == np.float32 and (np.any(nptensor > fp16_max) or np.any(nptensor < fp16_min)):
+                    neg_inf_mask = np.isinf(nptensor) & (nptensor < 0)
+                    clipped_tensor = np.clip(nptensor, fp16_min, fp16_max)
 
-                new_tensor = numpy_helper.from_array(clipped_tensor, tensor.name)
-                tensor.CopyFrom(new_tensor)
-                transformed = True
+                    # Restore -inf values
+                    if neg_inf_mask.any():
+                        clipped_tensor = np.where(neg_inf_mask, np.float32("-inf"), clipped_tensor)
 
-                del neg_inf_mask, clipped_tensor, new_tensor
+                    new_tensor = numpy_helper.from_array(clipped_tensor, tensor.name)
+                    tensor.CopyFrom(new_tensor)
+                    transformed = True
 
-            del nptensor
-            processed_count += 1
+                    del neg_inf_mask, clipped_tensor, new_tensor
 
-            if processed_count % ONNX_TRANSFROM_MEMORY_CLEANUP_INTERVAL == 0:
-                cls._cleanup_memory()
+                del nptensor
+                processed_count += 1
 
-        cls._cleanup_memory()
-        return model, transformed
+                if processed_count % ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL == 0:
+                    cls._cleanup_memory()
+
+            return model, transformed
+        finally:
+            # Ensure cleanup happens even if an exception occurs
+            cls._cleanup_memory()
 
 
 class SplitTensorsTransform(OnnxTransform):
@@ -123,32 +173,30 @@ class SplitTensorsTransform(OnnxTransform):
         :param file_chunk_size: Chunk size to split external files into.
         :param size_threshold: Only tensors greater than this threshold (in bytes) will be saved externally.
         """
-        file_num = 0
-        current_file_size = 0
-        transformed = False
+        try:
+            file_num = 0
+            current_file_size = 0
+            transformed = False
 
-        # Check if external data is already loaded to avoid redundant loading
-        external_data_already_loaded = cls._check_external_data_loaded(model)
+            # --- Adjustment: The initial check and load will now use the new bulk loader ---
+            # This will either use the cache (if FP16ClipTransform loaded it) or perform the bulk load itself.
+            cls._load_external_data(model, onnx_base_dir)
 
-        if not external_data_already_loaded:
-            external_data_helper.load_external_data_for_model(model, onnx_base_dir)
-        else:
-            logger.info("External data already loaded, skipping redundant load operation")
+            processed_count = 0
+            for tensor in external_data_helper._get_all_tensors(model):
+                if tensor.HasField("raw_data") and ((tsize := len(tensor.raw_data)) > size_threshold):
+                    transformed = True
+                    current_file_size += tsize
+                    if current_file_size > file_chunk_size:
+                        file_num += 1
+                        current_file_size = tsize
+                    external_data_helper.set_external_data(tensor, f"{model_name}_{file_num}.onnx.data")
 
-        processed_count = 0
-        for tensor in external_data_helper._get_all_tensors(model):
-            if tensor.HasField("raw_data") and ((tsize := len(tensor.raw_data)) > size_threshold):
-                transformed = True
-                current_file_size += tsize
-                if current_file_size > file_chunk_size:
-                    file_num += 1
-                    current_file_size = tsize
-                external_data_helper.set_external_data(tensor, f"{model_name}_{file_num}.onnx.data")
+                processed_count += 1
+                if processed_count % ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL == 0:
+                    cls._cleanup_memory()
 
-            processed_count += 1
-            if processed_count % ONNX_TRANSFROM_MEMORY_CLEANUP_INTERVAL == 0:
-                cls._cleanup_memory()
-
-        cls._cleanup_memory()
-
-        return model, transformed
+            return model, transformed
+        finally:
+            # Ensure cleanup happens even if an exception occurs
+            cls._cleanup_memory()
