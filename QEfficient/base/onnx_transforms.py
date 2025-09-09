@@ -42,7 +42,7 @@ class ClipAndSplitTransform(OnnxTransform):
         cls,
         model: ModelProto,
         *,
-        model_name: str,
+        model_name: str = "",
         onnx_base_dir: Optional[str] = None,
         apply_clip: bool = True,
         apply_split: bool = True,

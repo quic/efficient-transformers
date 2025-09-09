@@ -32,7 +32,7 @@ def test_fp16clip_transform():
     }
     """)
     onnx.checker.check_model(test_onnx, True, True, True)
-    transformed_onnx, transformed = ClipAndSplitTransform.apply(test_onnx, model_name="", apply_split=False)
+    transformed_onnx, transformed = ClipAndSplitTransform.apply(test_onnx, apply_split=False)
     assert transformed
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[0]) == 65504.0
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[1]) == 2147483647
@@ -64,7 +64,7 @@ def test_fp16clip_transform_external(tmp_path):
     onnx.checker.check_model(onnx_path, True, True, True)
 
     transformed_onnx, transformed = ClipAndSplitTransform.apply(
-        test_onnx, model_name="", onnx_base_dir=str(tmp_path), apply_split=False
+        test_onnx, onnx_base_dir=str(tmp_path), apply_split=False
     )
     assert transformed
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[0]) == -65504.0
