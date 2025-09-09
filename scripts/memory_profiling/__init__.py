@@ -30,10 +30,10 @@ __author__ = "Qualcomm Technologies, Inc."
 
 # Core profiler components
 from .profiler import (
-    QEffMemoryProfiler,
+    MetricsCollector,
     ProfilerConfig,
     ProfileSample,
-    MetricsCollector,
+    QEffMemoryProfiler,
 )
 
 # Visualization component (imported on-demand)
@@ -44,10 +44,10 @@ except ImportError:
     QEffMemoryVisualizer = None
 
 __all__ = [
-    'QEffMemoryProfiler',
-    'ProfilerConfig', 
-    'ProfileSample',
-    'MetricsCollector',
-    'QEffMemoryVisualizer',
-    '__version__',
+    "QEffMemoryProfiler",
+    "ProfilerConfig",
+    "ProfileSample",
+    "MetricsCollector",
+    "QEffMemoryVisualizer",
+    "__version__",
 ]
