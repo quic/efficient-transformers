@@ -88,7 +88,7 @@ class QEffGrok1MultiHeadAttention(nn.Module):
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
-            kv_seq_len = past_key_value.get_usable_length(kv_seq_len, layer_idx)
+            kv_seq_len = past_key_value.get_seq_length(layer_idx)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
