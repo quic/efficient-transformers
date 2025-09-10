@@ -1,76 +1,204 @@
 from pathlib import Path
 import warnings
 
-def dump_custom_io(custom_io, cache_dir, dtype_suffix):
-    custom_io_yaml = Path(cache_dir) / f"custom_io_{dtype_suffix}.yaml"
-    with open(custom_io_yaml, "w") as fp:
-        for io_name, dtype in custom_io.items():
-            fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
+class CustomIOGenerator:
+    """
+    Abstract base class for generating custom IO mappings for different model types.
 
-def generate_custom_io(qeff_model, cache_dir=".", mxint8_kv_cache=False):
-    model_class_name = type(qeff_model).__name__
-    if not model_class_name == "QEFFAutoModelForCausalLM":
-        output_names = qeff_model.model.get_output_names()
-    kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
-    dtype_suffix = "int8" if mxint8_kv_cache else "fp16"
+    Args:
+        model (object): The model instance for which IO mappings are to be generated.
+        cache_dir (str): Directory path where the generated YAML files will be saved.
+        mxint8_kv_cache (bool): If True, use 'mxint8' precision for KV cache; otherwise, use 'float16'.
+    """
 
-    custom_io = {}
+    def __init__(self, model, cache_dir=".", mxint8_kv_cache=False):
+        self.model = model
+        self.cache_dir = Path(cache_dir)
+        self.kv_cache_dtype = "mxint8" if mxint8_kv_cache else "float16"
+        self.dtype_suffix = "int8" if mxint8_kv_cache else "fp16"
 
-    # if model_class_name in [
-    #     "QEffCausalLMForTextImageToTextModel",
-    #     "QEffVisionEncoderForTextImageToTextModel"
-    # ]:
-    #     dump_custom_io(custom_io, cache_dir, dtype_suffix)
-    #     warnings.warn(
-    #         f"custom_io generated for these '{model_class_name}' class is empty.",
-    #         UserWarning
-    #     )
+    def dump(self, custom_io: dict, suffix: str):
+        """
+        Writes the custom IO mapping to a YAML file.
 
-    # Dual QPC: generate two YAML files
-    if model_class_name == "_QEFFAutoModelForImageTextToTextDualQPC":
-        custom_io_vision = {}
-        for output_name in output_names.get("vision", []):
-            custom_io_vision[output_name] = kv_cache_dtype if output_name.startswith("past_") else "float16"
+        Args:
+            custom_io (dict): Dictionary containing IO names and their precision types.
+            suffix (str): Suffix to append to the output filename.
+        """
+        custom_io_yaml = self.cache_dir / f"custom_io_{suffix}.yaml"
+        with open(custom_io_yaml, "w") as fp:
+            for io_name, dtype in custom_io.items():
+                fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
 
-        custom_io_lang = {}
-        for output_name in output_names.get("lang", []):
-            if output_name.endswith("_RetainedState"):
-                base_name = output_name[: -len("_RetainedState")]
-                custom_io_lang[base_name] = "float16" if "vision_embeds" in output_name else kv_cache_dtype
-                custom_io_lang[output_name] = "float16" if "vision_embeds" in output_name else kv_cache_dtype
+    def generate(self) -> dict:
+        """
+        Abstract method to generate custom IO mappings.
 
-        dump_custom_io(custom_io_vision, cache_dir, f'{dtype_suffix}_vision')
-        dump_custom_io(custom_io_lang, cache_dir, f'{dtype_suffix}_lang')
-        return {**custom_io_vision, **custom_io_lang}
+        Returns:
+            dict: A dictionary of IO names and their precision types.
 
-    # Single QPC
-    elif model_class_name == "_QEFFAutoModelForImageTextToTextSingleQPC":
-        for input_name in output_names:
-            if input_name.endswith("_RetainedState"):
-                custom_io[input_name[: -len("_RetainedState")]] = (
-                    "float16" if "pixel_values" in input_name else kv_cache_dtype
-                )
-        for output_name in output_names:
-            if output_name.endswith("_RetainedState"):
-                custom_io[output_name] = "float16" if "pixel_values" in output_name else kv_cache_dtype
+        Raises:
+            NotImplementedError: Must be implemented by subclasses.
+        """
+        raise NotImplementedError("Subclasses must implement this method")
 
-    # Causal LM
-    elif model_class_name == "QEFFAutoModelForCausalLM":
+
+class CausalLMIOGenerator(CustomIOGenerator):
+    """
+    IO generator for causal language models.
+    """
+
+    def generate(self) -> dict:
+        """
+        Generates IO mappings for past key/value states in causal language models.
+
+        Returns:
+            dict: Mapping of IO names to precision types.
+        """
+        custom_io = {}
+        num_layers = getattr(self.model, "num_layers", 12)
         for suffix in ["", "_RetainedState"]:
-            num_layers = getattr(qeff_model, "num_layers", 12)
             for i in range(num_layers):
                 for kv in ["key", "value"]:
-                    custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+                    custom_io[f"past_{kv}.{i}{suffix}"] = self.kv_cache_dtype
+        self.dump(custom_io, self.dtype_suffix)
+        return custom_io
 
-    # Speech Seq2Seq
-    elif model_class_name == "QEFFAutoModelForSpeechSeq2Seq":
-        custom_io["input_features"] = kv_cache_dtype
-        for output_name in output_names:
-            if output_name.endswith("_RetainedState"):
-                custom_io[output_name[: -len("_RetainedState")]] = kv_cache_dtype
-                custom_io[output_name] = kv_cache_dtype
-    else:
-        warnings.warn(f"Unsupported model class: {model_class_name}", UserWarning)
-    
-    dump_custom_io(custom_io, cache_dir, dtype_suffix)
-    return custom_io
+
+class DualQPCIOGenerator(CustomIOGenerator):
+    """
+    IO generator for dual QPC models (e.g., vision-language models).
+    """
+
+    def generate(self) -> dict:
+        """
+        Generates IO mappings for both vision and language components.
+
+        Returns:
+            dict: Combined mapping of IO names to precision types for vision and language outputs.
+        """
+        output_names = self.model.model.get_output_names()
+        custom_io_vision = {
+            name: self.kv_cache_dtype if name.startswith("past_") else "float16"
+            for name in output_names.get("vision", [])
+        }
+
+        custom_io_lang = {}
+        for name in output_names.get("lang", []):
+            if name.endswith("_RetainedState"):
+                base = name[:-len("_RetainedState")]
+                dtype = "float16" if "vision_embeds" in name else self.kv_cache_dtype
+                custom_io_lang[base] = dtype
+                custom_io_lang[name] = dtype
+
+        self.dump(custom_io_vision, f"{self.dtype_suffix}_vision")
+        self.dump(custom_io_lang, f"{self.dtype_suffix}_lang")
+        return {**custom_io_vision, **custom_io_lang}
+
+
+class SingleQPCIOGenerator(CustomIOGenerator):
+    """
+    IO generator for single QPC models.
+    """
+
+    def generate(self) -> dict:
+        """
+        Generates IO mappings for retained states in single QPC models.
+
+        Returns:
+            dict: Mapping of IO names to precision types.
+        """
+        output_names = self.model.model.get_output_names()
+        custom_io = {}
+        for name in output_names:
+            if name.endswith("_RetainedState"):
+                base = name[:-len("_RetainedState")]
+                dtype = "float16" if "pixel_values" in name else self.kv_cache_dtype
+                custom_io[base] = dtype
+                custom_io[name] = dtype
+        self.dump(custom_io, self.dtype_suffix)
+        return custom_io
+
+
+class SpeechSeq2SeqIOGenerator(CustomIOGenerator):
+    """
+    IO generator for speech sequence-to-sequence models.
+    """
+
+    def generate(self) -> dict:
+        """
+        Generates IO mappings for input features and retained states in speech models.
+
+        Returns:
+            dict: Mapping of IO names to precision types.
+        """
+        output_names = self.model.model.get_output_names()
+        custom_io = {"input_features": self.kv_cache_dtype}
+        for name in output_names:
+            if name.endswith("_RetainedState"):
+                base = name[:-len("_RetainedState")]
+                custom_io[base] = self.kv_cache_dtype
+                custom_io[name] = self.kv_cache_dtype
+        self.dump(custom_io, self.dtype_suffix)
+        return custom_io
+
+
+class UnsupportedModelIOGenerator(CustomIOGenerator):
+    """
+    Fallback IO generator for unsupported model types.
+    """
+
+    def generate(self) -> dict:
+        """
+        Emits a warning for unsupported model types.
+
+        Returns:
+            dict: Empty dictionary.
+        """
+        warnings.warn(f"Unsupported model class: {type(self.model).__name__}", UserWarning)
+        return {}
+
+
+class CustomIOFactory:
+    """
+    Factory class to instantiate the appropriate IO generator based on model type.
+    """
+
+    @staticmethod
+    def get_generator(model, cache_dir=".", mxint8_kv_cache=False) -> CustomIOGenerator:
+        """
+        Returns the appropriate IO generator instance for the given model.
+
+        Args:
+            model (object): The model instance.
+            cache_dir (str): Directory to store YAML files.
+            mxint8_kv_cache (bool): Flag to use 'mxint8' precision.
+
+        Returns:
+            CustomIOGenerator: An instance of the appropriate subclass.
+        """
+        model_class_name = type(model).__name__
+        mapping = {
+            "QEFFAutoModelForCausalLM": CausalLMIOGenerator,
+            "_QEFFAutoModelForImageTextToTextDualQPC": DualQPCIOGenerator,
+            "_QEFFAutoModelForImageTextToTextSingleQPC": SingleQPCIOGenerator,
+            "QEFFAutoModelForSpeechSeq2Seq": SpeechSeq2SeqIOGenerator,
+        }
+        generator_class = mapping.get(model_class_name, UnsupportedModelIOGenerator)
+        return generator_class(model, cache_dir, mxint8_kv_cache)
+
+
+def generate_custom_io(qeff_model, cache_dir=".", mxint8_kv_cache=False) -> dict:
+    """
+    Generates and returns custom IO mappings for the given QEFF model.
+
+    Args:
+        qeff_model (object): The model instance.
+        cache_dir (str): Directory to store YAML files.
+        mxint8_kv_cache (bool): Flag to use 'mxint8' precision.
+
+    Returns:
+        dict: Custom IO mapping generated by the appropriate generator.
+    """
+    generator = CustomIOFactory.get_generator(qeff_model, cache_dir, mxint8_kv_cache)
+    return generator.generate()
