@@ -136,6 +136,9 @@ from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Model,
     Qwen2RMSNorm,
 )
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    Qwen2_5_VLForConditionalGeneration,
+)
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -303,6 +306,9 @@ from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2ForCausalLM,
     QEffQwen2Model,
 )
+from QEfficient.transformers.models.qwen_2_5_vl.modeling_qwen2_5_vl import (
+    QEffQwen_2_5_vl_ForConditionalGeneration,
+)
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
     QEFFStarcoder2DecoderLayer,
@@ -383,6 +389,8 @@ class KVCacheTransform(ModuleMappingTransform):
         LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
         # Llava Next
         LlavaNextForConditionalGeneration: QEffLlavaNextForConditionalGeneration,
+        # Qwen2.5 VL
+        Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
         # Gemma
         GemmaAttention: QEffGemmaAttention,
         GemmaDecoderLayer: QEffGemmaDecoderLayer,
