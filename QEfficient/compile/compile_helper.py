@@ -171,7 +171,7 @@ def compile(
     Returns:
         :str: Path to compiled ``qpc`` package.
     """
-    
+
     if full_batch_size and batch_size != 1:
         raise ValueError("Only either batch_size or full_batch_size should be greater than one")
 
@@ -185,7 +185,7 @@ def compile(
         path=specialization_json_path,
         full_batch_size=full_batch_size,
     )
-    
+
     dtype_suffix = "int8" if mxint8 else "fp16"
     source_path = f"./custom_io_{dtype_suffix}.yaml"
     destination_path = os.path.join(os.path.dirname(qpc_path), f"custom_io_{dtype_suffix}.yaml")

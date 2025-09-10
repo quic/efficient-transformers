@@ -1,5 +1,6 @@
-from pathlib import Path
 import warnings
+from pathlib import Path
+
 
 class CustomIOGenerator:
     """
@@ -86,7 +87,7 @@ class DualQPCIOGenerator(CustomIOGenerator):
         custom_io_lang = {}
         for name in output_names.get("lang", []):
             if name.endswith("_RetainedState"):
-                base = name[:-len("_RetainedState")]
+                base = name[: -len("_RetainedState")]
                 dtype = "float16" if "vision_embeds" in name else self.kv_cache_dtype
                 custom_io_lang[base] = dtype
                 custom_io_lang[name] = dtype
@@ -112,7 +113,7 @@ class SingleQPCIOGenerator(CustomIOGenerator):
         custom_io = {}
         for name in output_names:
             if name.endswith("_RetainedState"):
-                base = name[:-len("_RetainedState")]
+                base = name[: -len("_RetainedState")]
                 dtype = "float16" if "pixel_values" in name else self.kv_cache_dtype
                 custom_io[base] = dtype
                 custom_io[name] = dtype
@@ -136,7 +137,7 @@ class SpeechSeq2SeqIOGenerator(CustomIOGenerator):
         custom_io = {"input_features": self.kv_cache_dtype}
         for name in output_names:
             if name.endswith("_RetainedState"):
-                base = name[:-len("_RetainedState")]
+                base = name[: -len("_RetainedState")]
                 custom_io[base] = self.kv_cache_dtype
                 custom_io[name] = self.kv_cache_dtype
         self.dump(custom_io, self.dtype_suffix)
