@@ -129,7 +129,6 @@ class ApiRunner:
 
         generated_ids = []
         inputs = self.input_handler.prepare_pytorch_inputs()
-
         pt_outputs = model(**inputs)
         for _ in range(1, self.gen_len):
             generated_ids.append(pt_outputs["logits"].argmax(-1).reshape(-1, 1))
@@ -291,9 +290,11 @@ class ApiRunnerVlm:
         generation_len = self.gen_len
         generated_ids = torch.full((self.batch_size, generation_len), self.processor.tokenizer.pad_token_id)
         inputs = self.input_handler_vlm.prepare_pytorch_inputs()
+        inputs["image_idx"] = torch.tensor([[0]])
 
         outputs = model(**inputs)
         inputs["input_ids"] = outputs[0].argmax(2)
+        inputs["image_idx"] = outputs[2]
         if "cross_attention_mask" in inputs:
             bs, _, num_images, img_tiles = inputs["cross_attention_mask"].shape
             inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64)
@@ -308,6 +309,7 @@ class ApiRunnerVlm:
         for num_token in range(1, self.gen_len):
             outputs = model(**inputs)
             inputs["input_ids"] = outputs[0].argmax(2)
+            inputs["image_idx"] = outputs[2]
             inputs["position_ids"] += 1
             streamer.put(inputs["input_ids"])
             generated_ids[:, num_token] = inputs["input_ids"].squeeze(1)
@@ -363,15 +365,23 @@ class ApiRunnerVlm:
 
             added_initializers, decoder_session = self.setup_ort_session(decoder_path)
             generated_ids = []
+            finished_sequences = lang_inputs["input_ids"] == self.processor.tokenizer.eos_token_id
 
             ort_outputs = self.run_ort_session(lang_inputs, session=decoder_session)
             ort_outputs = self.input_handler_vlm.update_vlm_ort_outputs(ort_outputs)
+            generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
+            lang_inputs = self.input_handler_vlm.update_vlm_ort_inputs(lang_inputs, ort_outputs)
+
             for _ in range(1, self.gen_len):
-                generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
-                lang_inputs = self.input_handler_vlm.update_vlm_ort_inputs(lang_inputs, ort_outputs)
+                finished_sequences |= lang_inputs["input_ids"] == self.processor.tokenizer.eos_token_id
+                if finished_sequences.all():
+                    break
+
                 ort_outputs = self.run_ort_session(lang_inputs, decoder_session)
                 ort_outputs = self.input_handler_vlm.update_vlm_ort_outputs(ort_outputs)
-            generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
+                generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
+                lang_inputs = self.input_handler_vlm.update_vlm_ort_inputs(lang_inputs, ort_outputs)
+
             generated_ids = np.concatenate(generated_ids, axis=1)
             predicted_string = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
             print("ORT KV_OFFLOAD Session Outputs:")
@@ -383,14 +393,22 @@ class ApiRunnerVlm:
             added_initializers, session = self.setup_ort_session(model_path)
             generated_ids = []
             inputs = {**vision_inputs, **lang_inputs}
+            finished_sequences = inputs["input_ids"] == self.processor.tokenizer.eos_token_id
+
             ort_outputs = self.run_ort_session(inputs, session=session)
             ort_outputs = self.input_handler_vlm.update_vlm_ort_outputs(ort_outputs)
+            generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
+            inputs = self.input_handler_vlm.update_vlm_ort_inputs(inputs, ort_outputs)
+
             for _ in range(1, self.gen_len):
-                generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
-                inputs = self.input_handler_vlm.update_vlm_ort_inputs(inputs, ort_outputs)
+                finished_sequences |= inputs["input_ids"] == self.processor.tokenizer.eos_token_id
+                if finished_sequences.all():
+                    break
                 ort_outputs = self.run_ort_session(inputs, session)
                 ort_outputs = self.input_handler_vlm.update_vlm_ort_outputs(ort_outputs)
-            generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
+                generated_ids.append(ort_outputs["logits"].argmax(-1).reshape(-1, 1))
+                inputs = self.input_handler_vlm.update_vlm_ort_inputs(inputs, ort_outputs)
+
             generated_ids = np.concatenate(generated_ids, axis=1)
             predicted_string = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
             print("ORT Session Outputs:")
