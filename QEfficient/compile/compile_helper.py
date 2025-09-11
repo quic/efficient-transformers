@@ -13,6 +13,7 @@ import warnings
 from typing import List, Optional, Tuple
 
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.utils import constants
 from QEfficient.utils._utils import load_json, load_yaml
 from QEfficient.utils.logging_utils import logger
 
@@ -77,7 +78,7 @@ def compile_kv_model_on_cloud_ai_100(
         "/opt/qti-aic/exec/qaic-exec",
         f"-m={onnx_path}",
         "-aic-hw",
-        "-aic-hw-version=2.0",
+        f"-aic-hw-version={kwargs.pop('aic_hw_version', kwargs.pop('aic-hw-version', constants.DEFAULT_AIC_HW_VERSION))}",
         f"-network-specialization-config={specializations_json}",
         "-convert-to-fp16",
         "-retained-state",
@@ -167,6 +168,10 @@ def compile(
         :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic ``Defaults to False.``
         :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
         :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
+        :kwargs: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+
+            - `aic_hw_version=ai100` → `-aic-hw-version=ai100`
+            - `aic_hw_version=ai200` → `-aic-hw-version=ai200`
 
     Returns:
         :str: Path to compiled ``qpc`` package.

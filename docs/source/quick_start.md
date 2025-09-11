@@ -116,7 +116,20 @@ To disable MQ, just pass single soc like below, below step will compile the mode
 ```bash
 python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device-group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first
 ```
+### Device Selection for Inference
 
+You can choose which device to run your inference on. By default, it will run on **AI 100 Core**.
+
+To specify a different device, use the `aic-hw-version` option:
+```
+aic-hw-version = 'ai100'  # Default
+aic-hw-version = 'ai200'  # To run on AI 200 Core
+```
+
+
+```bash
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --aic-hw-version ai100
+```
 ### Continuous Batching
 
 Users can compile a model utilizing the continuous batching feature by specifying full_batch_size <full_batch_size_value> in the infer and compiler APIs. If full_batch_size is not provided, the model will be compiled in the regular way.
