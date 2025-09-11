@@ -2,14 +2,14 @@
 This directory contains an example script of how to run inference on InternVL-1B model via QEFFAutoModelForCausalLM class.
 
 ## Required packages:
-- `torch==2.4.1+cpu`
-- `torchvision==0.19.1+cpu`
+- `torch==2.7.1+cpu`
+- `torchvision==0.22.1+cpu`
 - `timm==1.0.14`
 - `einops==0.8.1`
 
 You can install them using pip:
 ```sh
-pip install torch==2.4.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.19.1+cpu einops==0.8.1
+pip install torch==2.7.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.1+cpu einops==0.8.1
 ```
 
 To run example script after package installations:
