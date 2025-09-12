@@ -1313,9 +1313,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         vision_end = perf_counter()
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
-        lang_inputs["position_ids"] = np.where(
-            lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
-        )  # Need to use -1 as position_ids for invalid tokens
+
+        if "position_ids" in inputs:
+            lang_inputs["position_ids"] = inputs["position_ids"]
+        else:
+            lang_inputs["position_ids"] = np.where(
+                lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
+            )  # Need to use -1 as position_ids for invalid tokens
 
         not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
         if not_mllama:

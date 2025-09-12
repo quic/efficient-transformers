@@ -161,6 +161,15 @@ from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeRotaryEmbedding,
     Qwen3MoeSparseMoeBlock,
 )
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    Qwen2_5_VLAttention,
+    Qwen2_5_VLDecoderLayer,
+    Qwen2_5_VLForConditionalGeneration,
+    Qwen2_5_VLModel,
+)
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    Qwen2RMSNorm as Qwen2_5RMSNorm,
+)
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -357,6 +366,12 @@ from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffQwen3MoeRotaryEmbedding,
     QEffQwen3MoeSparseMoeBlock,
 )
+from QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    QEffQwen2_5_VLAttention,
+    QEffQwen2_5_VLDecoderLayer,
+    QEffQwen2_5_VLModel,
+    QEffQwen_2_5_vl_ForConditionalGeneration,
+)
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
     QEFFStarcoder2DecoderLayer,
@@ -391,6 +406,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Phi3RMSNorm: CustomRMSNormAIC,
         Qwen2RMSNorm: CustomRMSNormAIC,
         Qwen3RMSNorm: CustomRMSNormAIC,
+        Qwen2_5RMSNorm: CustomRMSNormAIC,
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
         PixtralRMSNorm: CustomRMSNormAIC,
@@ -530,6 +546,11 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3DecoderLayer: QEffQwen3DecoderLayer,
         Qwen3Model: QEffQwen3Model,
         Qwen3ForCausalLM: QEffQwen3ForCausalLM,
+        # Qwen2.5 VL
+        Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
+        Qwen2_5_VLModel: QEffQwen2_5_VLModel,
+        Qwen2_5_VLAttention: QEffQwen2_5_VLAttention,
+        Qwen2_5_VLDecoderLayer: QEffQwen2_5_VLDecoderLayer,
         # Starcoder2
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
