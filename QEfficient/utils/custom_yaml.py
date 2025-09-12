@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# ----------------------------------------------------------------------------
+
 import warnings
 from pathlib import Path
 
@@ -94,6 +101,7 @@ class DualQPCIOGenerator(CustomIOGenerator):
 
         self.dump(custom_io_vision, f"{self.dtype_suffix}_vision")
         self.dump(custom_io_lang, f"{self.dtype_suffix}_lang")
+        warnings.warn(f"Unsupported model class via CLI: {type(self.model).__name__}", UserWarning)
         return {**custom_io_vision, **custom_io_lang}
 
 
