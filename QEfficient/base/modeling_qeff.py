@@ -78,28 +78,71 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-    def _offload_model_weights(self, offload_pt_weights) -> bool:
-        """
-        Clear PyTorch weights after export if offload_pt_weights is set to True
+    def _clear_model_weights(self) -> None:
+        """Clear PyTorch model weights to reduce memory usage after ONNX export."""
+        try:
+            # Clear tensor storage and replace with empty shell
+            for param in self.model.parameters():
+                if hasattr(param, "data") and hasattr(param.data, "storage"):
+                    param.data.storage().resize_(0)
 
-        Returns:
-            bool: True if weights were successfully offloaded, False otherwise
-        """
-        # Check if offloading is enabled and weights are not already offloaded
-        if offload_pt_weights and not self._is_weights_offloaded:
-            try:
-                self.model = self.model.to_empty(device="meta")
-                self._is_weights_offloaded = True
-                logger.info("Model weights offloaded to meta device")
+            for buffer in self.model.buffers():
+                if hasattr(buffer, "data") and hasattr(buffer.data, "storage"):
+                    buffer.data.storage().resize_(0)
 
-                gc.collect()
-                logger.info("PyTorch weights cleared after export")
-                return True
+            # Clear module dictionaries and hooks
+            for module in self.model.modules():
+                if hasattr(module, "_parameters"):
+                    module._parameters.clear()
+                if hasattr(module, "_buffers"):
+                    module._buffers.clear()
 
-            except Exception as e:
-                logger.error(f"Failed to offload model weights: {e}")
-                return False
-        return False
+                # Clear hooks
+                for hook_dict in [
+                    getattr(module, "_forward_hooks", {}),
+                    getattr(module, "_forward_pre_hooks", {}),
+                    getattr(module, "_backward_hooks", {}),
+                    getattr(module, "_state_dict_hooks", {}),
+                    getattr(module, "_load_state_dict_pre_hooks", {}),
+                ]:
+                    hook_dict.clear()
+
+            # Replace with minimal shell for compatibility
+            class ModelShell:
+                def __init__(self, config):
+                    self.config = config
+                    self.qaic_config = None
+                    self.device = torch.device("meta")
+
+                def parameters(self):
+                    return iter([])
+
+                def named_parameters(self):
+                    return iter([])
+
+                def buffers(self):
+                    return iter([])
+
+                def named_buffers(self):
+                    return iter([])
+
+                def modules(self):
+                    return iter([self])
+
+                def state_dict(self):
+                    return {}
+
+                def to(self, device):
+                    return self
+
+                def eval(self):
+                    return self
+
+            config = getattr(self.model, "config", None)
+            self.model = ModelShell(config)
+
+        except Exception as e:
+            logger.warning(f"Weight clearing failed, continuing: {e}")
 
     def _model_offloaded_check(self) -> None:
         """
@@ -244,19 +287,35 @@ class QEFFBaseModel(ABC):
 
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
-            torch.onnx.export(
-                self.model,
-                (example_inputs,),
-                str(tmp_onnx_path),
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
+            export_kwargs.setdefault("do_constant_folding", False)
+            export_kwargs.setdefault("training", torch.onnx.TrainingMode.EVAL)
+            export_kwargs.setdefault("keep_initializers_as_inputs", False)
+
+            with torch.no_grad():
+                torch.onnx.export(
+                    self.model,
+                    (example_inputs,),
+                    str(tmp_onnx_path),
+                    input_names=input_names,
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    opset_version=constants.ONNX_EXPORT_OPSET,
+                    **export_kwargs,
+                )
             logger.info("PyTorch export successful")
 
-            _ = self._offload_model_weights(offload_pt_weights)
+            # Clear PyTorch weights after successful export to reduce memory usage
+            if offload_pt_weights:
+                self._clear_model_weights()
+                self._is_weights_offloaded = True
+                logger.info("PyTorch weights cleared after ONNX export")
+
+            # Clear temporary references
+            example_inputs.clear()
+            input_names.clear()
+
+            # Force garbage collection
+            gc.collect()
 
             model = onnx.load(tmp_onnx_path, load_external_data=False)
             transform_kwargs = {
