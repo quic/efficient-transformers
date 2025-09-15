@@ -169,6 +169,12 @@ print(report)
 ```
 
 
+## Limitations
+
+### Disk I/O Tracking
+
+**Subprocess I/O Limitation**: Disk I/O tracking captures parent process I/O only. Subprocess I/O (e.g., compilation reading ONNX files via `subprocess.run()`) is not captured due to Linux I/O accounting limitations. During compilation phases, expect lower I/O readings than actual file operations performed by subprocesses.
+
 ## Compatibility
 
 - **Python**: 3.7+
