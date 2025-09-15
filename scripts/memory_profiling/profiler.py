@@ -33,6 +33,8 @@ class ProfilerConfig:
     verbose: bool = False
     enable_cpu_monitoring: bool = True
     enable_disk_monitoring: bool = True
+    track_child_processes: bool = True
+    child_scan_interval: float = 1.0
 
 
 @dataclass
@@ -50,7 +52,7 @@ class ProfileSample:
 
 
 class MetricsCollector:
-    """Handles collection of system metrics."""
+    """Handles collection of system metrics with child process support."""
 
     def __init__(self, config: ProfilerConfig):
         self.config = config
@@ -61,11 +63,31 @@ class MetricsCollector:
         self._last_cpu_ema = 0.0
         self._cpu_ema_alpha = 0.3
 
+        # Child process tracking
+        self._track_children = config.track_child_processes
+        self._child_processes: Dict[int, psutil.Process] = {}
+        self._last_child_scan = 0.0
+        self._child_scan_interval = config.child_scan_interval
+        self._child_cpu_cache: Dict[int, float] = {}
+
+        if self._track_children and self.config.verbose:
+            logger.info("Child process tracking enabled")
+
     def initialize_cpu_monitoring(self) -> None:
         """Initialize CPU monitoring."""
         try:
             self.process.cpu_percent()  # First call to establish baseline
             self._cpu_initialized = True
+
+            # Initialize child process CPU monitoring
+            if self._track_children:
+                self._update_child_processes()
+                for child_proc in self._child_processes.values():
+                    try:
+                        child_proc.cpu_percent()  # Initialize baseline for children
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+
             if self.config.verbose:
                 logger.info("CPU measurement initialized")
         except Exception as e:
@@ -73,55 +95,248 @@ class MetricsCollector:
                 logger.warning(f"CPU initialization warning: {e}")
             self._cpu_initialized = False
 
-    def get_memory_usage(self) -> Tuple[float, float]:
-        """Get current memory usage in MB."""
+    def _update_child_processes(self) -> None:
+        """Discover and track child processes (compilation subprocesses)."""
+        current_time = time.time()
+        if current_time - self._last_child_scan < self._child_scan_interval:
+            return
+
         try:
+            # Get current children (recursive to catch subprocess chains)
+            children = self.process.children(recursive=True)
+
+            # Add new children
+            new_children_count = 0
+            for child in children:
+                if child.pid not in self._child_processes:
+                    try:
+                        # Verify child is still running and accessible
+                        if child.is_running():
+                            self._child_processes[child.pid] = child
+                            self._child_cpu_cache[child.pid] = 0.0
+
+                            # Initialize CPU monitoring for new child
+                            try:
+                                child.cpu_percent()  # First call to establish baseline
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass  # Child may have terminated quickly
+
+                            new_children_count += 1
+
+                            if self.config.verbose:
+                                try:
+                                    cmd_name = child.name()
+                                    logger.info(f"Tracking new subprocess: PID {child.pid} ({cmd_name})")
+                                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                    logger.info(f"Tracking new subprocess: PID {child.pid}")
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+
+            # Remove terminated children
+            terminated_pids = []
+            for pid, proc in self._child_processes.items():
+                try:
+                    if not proc.is_running():
+                        terminated_pids.append(pid)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    terminated_pids.append(pid)
+
+            for pid in terminated_pids:
+                if pid in self._child_processes:
+                    del self._child_processes[pid]
+                if pid in self._child_cpu_cache:
+                    del self._child_cpu_cache[pid]
+                if self.config.verbose:
+                    logger.info(f"Removed terminated subprocess: PID {pid}")
+
+            if new_children_count > 0 and self.config.verbose:
+                logger.info(f"Now tracking {len(self._child_processes)} child processes")
+
+        except Exception as e:
+            if self.config.verbose:
+                logger.warning(f"Child process scan error: {e}")
+
+        self._last_child_scan = current_time
+
+    def get_memory_usage(self) -> Tuple[float, float]:
+        """Get current memory usage in MB (parent + children)."""
+        try:
+            # Parent process memory
             mem_info = self.process.memory_info()
-            rss_mb = mem_info.rss / 1024 / 1024
-            vms_mb = mem_info.vms / 1024 / 1024
-            return rss_mb, vms_mb
-        except Exception:
+            total_rss = mem_info.rss / 1024 / 1024
+            total_vms = mem_info.vms / 1024 / 1024
+
+            # Add child process memory (if tracking enabled)
+            if self._track_children:
+                child_rss = 0.0
+                child_vms = 0.0
+                active_children = 0
+                stale_children = []
+
+                # Iterate through current child processes
+                for pid, child_proc in self._child_processes.items():
+                    try:
+                        child_mem = child_proc.memory_info()
+                        child_rss += child_mem.rss / 1024 / 1024
+                        child_vms += child_mem.vms / 1024 / 1024
+                        active_children += 1
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        # Mark child as stale for cleanup
+                        stale_children.append(pid)
+                        continue
+
+                # Clean up stale children (don't do this during iteration)
+                for pid in stale_children:
+                    if pid in self._child_processes:
+                        del self._child_processes[pid]
+                    if pid in self._child_cpu_cache:
+                        del self._child_cpu_cache[pid]
+
+                total_rss += child_rss
+                total_vms += child_vms
+
+                if self.config.verbose and active_children > 0:
+                    logger.debug(
+                        f"Memory: Parent {mem_info.rss / 1024 / 1024:.1f}MB + "
+                        f"Children {child_rss:.1f}MB = Total {total_rss:.1f}MB RSS"
+                    )
+
+            return total_rss, total_vms
+        except Exception as e:
+            if self.config.verbose:
+                logger.warning(f"Memory collection error: {e}")
             return 0.0, 0.0
 
     def get_cpu_usage(self) -> float:
-        """Get CPU usage with smoothing and normalization."""
+        """Get CPU usage with child processes included and smoothing."""
         if not self.config.enable_cpu_monitoring:
             return 0.0
 
         try:
-            if self._cpu_initialized:
-                cpu_percent = self.process.cpu_percent()
-                if cpu_percent >= 0:
-                    # Normalize CPU to prevent > 100% on multi-core systems
-                    # psutil.Process.cpu_percent() can return > 100% on multi-core
-                    normalized_cpu = min(cpu_percent, 100.0)
+            import multiprocessing
 
-                    # Apply exponential moving average smoothing
-                    smoothed_cpu = self._cpu_ema_alpha * normalized_cpu + (1 - self._cpu_ema_alpha) * self._last_cpu_ema
-                    self._last_cpu_ema = smoothed_cpu
-                    return smoothed_cpu
-            return self._last_cpu_ema
-        except Exception:
+            num_cores = multiprocessing.cpu_count()
+
+            parent_cpu_raw = 0.0
+            child_cpu_raw_total = 0.0
+
+            # Parent CPU (raw percentage, can be >100% on multi-core)
+            if self._cpu_initialized:
+                parent_cpu_raw = self.process.cpu_percent()
+                if parent_cpu_raw < 0:
+                    parent_cpu_raw = 0.0
+
+            # Child CPU (if tracking enabled)
+            if self._track_children:
+                active_children = 0
+
+                for pid, child_proc in list(self._child_processes.items()):
+                    try:
+                        child_cpu_raw = child_proc.cpu_percent()
+                        if child_cpu_raw >= 0:
+                            # Cache raw CPU value
+                            self._child_cpu_cache[pid] = child_cpu_raw
+                            child_cpu_raw_total += child_cpu_raw
+                            active_children += 1
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        # Use cached value if available, otherwise skip
+                        if pid in self._child_cpu_cache:
+                            child_cpu_raw_total += self._child_cpu_cache[pid]
+                        continue
+
+                if self.config.verbose and active_children > 0:
+                    # Convert to system-wide percentage for logging
+                    parent_system_pct = parent_cpu_raw / num_cores
+                    child_system_pct = child_cpu_raw_total / num_cores
+                    logger.debug(
+                        f"CPU: Parent {parent_system_pct:.1f}% + "
+                        f"Children {child_system_pct:.1f}% (from {active_children} processes) "
+                        f"= {parent_system_pct + child_system_pct:.1f}% system-wide"
+                    )
+
+            # Calculate system-wide CPU percentage
+            # psutil.Process.cpu_percent() returns per-process CPU time percentage
+            # To get system-wide percentage: divide by number of cores
+            total_process_cpu = parent_cpu_raw + child_cpu_raw_total
+            system_wide_cpu = total_process_cpu / num_cores
+
+            # Cap at 100% (shouldn't exceed this in normal cases)
+            system_wide_cpu = min(system_wide_cpu, 100.0)
+
+            # Apply exponential moving average smoothing
+            if system_wide_cpu > 0 or self._last_cpu_ema > 0:
+                smoothed_cpu = self._cpu_ema_alpha * system_wide_cpu + (1 - self._cpu_ema_alpha) * self._last_cpu_ema
+                self._last_cpu_ema = smoothed_cpu
+                return smoothed_cpu
+
             return 0.0
+        except Exception as e:
+            if self.config.verbose:
+                logger.warning(f"CPU collection error: {e}")
+            return self._last_cpu_ema
 
     def get_disk_io_stats(self) -> Tuple[float, float, float, float]:
-        """Get disk I/O statistics with rate calculation."""
+        """Get disk I/O statistics with rate calculation (parent + children)."""
         if not self.config.enable_disk_monitoring:
             return 0.0, 0.0, 0.0, 0.0
 
         try:
             current_time = time.time()
-            io_counters = self.process.io_counters()
 
-            # Use read_chars/write_chars if available, fallback to read_bytes/write_bytes
-            if hasattr(io_counters, "read_chars") and hasattr(io_counters, "write_chars"):
-                read_bytes = io_counters.read_chars / 1024 / 1024
-                write_bytes = io_counters.write_chars / 1024 / 1024
-                use_chars = True
+            # Parent process I/O
+            parent_io = self.process.io_counters()
+
+            # Determine which counters to use
+            use_chars = hasattr(parent_io, "read_chars") and hasattr(parent_io, "write_chars")
+
+            if use_chars:
+                total_read_bytes = parent_io.read_chars
+                total_write_bytes = parent_io.write_chars
             else:
-                read_bytes = io_counters.read_bytes / 1024 / 1024
-                write_bytes = io_counters.write_bytes / 1024 / 1024
-                use_chars = False
+                total_read_bytes = parent_io.read_bytes
+                total_write_bytes = parent_io.write_bytes
+
+            # Add child process I/O (if tracking enabled)
+            if self._track_children:
+                child_read_total = 0
+                child_write_total = 0
+                active_io_children = 0
+
+                for pid, child_proc in list(self._child_processes.items()):
+                    try:
+                        child_io = child_proc.io_counters()
+                        if use_chars and hasattr(child_io, "read_chars") and hasattr(child_io, "write_chars"):
+                            child_read_total += child_io.read_chars
+                            child_write_total += child_io.write_chars
+                        else:
+                            child_read_total += child_io.read_bytes
+                            child_write_total += child_io.write_bytes
+                        active_io_children += 1
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        # Child process terminated or inaccessible
+                        continue
+
+                total_read_bytes += child_read_total
+                total_write_bytes += child_write_total
+
+                if self.config.verbose and active_io_children > 0:
+                    parent_read_mb = (
+                        parent_io.read_chars / 1024 / 1024 if use_chars else parent_io.read_bytes / 1024 / 1024
+                    )
+                    parent_write_mb = (
+                        parent_io.write_chars / 1024 / 1024 if use_chars else parent_io.write_bytes / 1024 / 1024
+                    )
+                    child_read_mb = child_read_total / 1024 / 1024
+                    child_write_mb = child_write_total / 1024 / 1024
+                    logger.debug(
+                        f"Disk I/O: Parent R:{parent_read_mb:.1f}MB W:{parent_write_mb:.1f}MB + "
+                        f"Children R:{child_read_mb:.1f}MB W:{child_write_mb:.1f}MB "
+                        f"(from {active_io_children} processes)"
+                    )
+
+            # Convert to MB
+            read_mb = total_read_bytes / 1024 / 1024
+            write_mb = total_write_bytes / 1024 / 1024
 
             # Calculate rates
             read_rate = 0.0
@@ -130,23 +345,32 @@ class MetricsCollector:
             if self._last_disk_counters is not None and self._last_disk_time is not None:
                 time_delta = current_time - self._last_disk_time
                 if time_delta > 0:
+                    # Calculate delta from last measurement
                     if use_chars:
-                        read_delta = read_bytes - (self._last_disk_counters.read_chars / 1024 / 1024)
-                        write_delta = write_bytes - (self._last_disk_counters.write_chars / 1024 / 1024)
+                        last_read = self._last_disk_counters.get("read_chars", 0)
+                        last_write = self._last_disk_counters.get("write_chars", 0)
                     else:
-                        read_delta = read_bytes - (self._last_disk_counters.read_bytes / 1024 / 1024)
-                        write_delta = write_bytes - (self._last_disk_counters.write_bytes / 1024 / 1024)
+                        last_read = self._last_disk_counters.get("read_bytes", 0)
+                        last_write = self._last_disk_counters.get("write_bytes", 0)
 
-                    read_rate = read_delta / time_delta
-                    write_rate = write_delta / time_delta
+                    read_delta = (total_read_bytes - last_read) / 1024 / 1024  # MB
+                    write_delta = (total_write_bytes - last_write) / 1024 / 1024  # MB
 
-            # Update counters
-            self._last_disk_counters = io_counters
+                    read_rate = read_delta / time_delta  # MB/s
+                    write_rate = write_delta / time_delta  # MB/s
+
+            # Update counters (store as dict to handle both counter types)
+            if use_chars:
+                self._last_disk_counters = {"read_chars": total_read_bytes, "write_chars": total_write_bytes}
+            else:
+                self._last_disk_counters = {"read_bytes": total_read_bytes, "write_bytes": total_write_bytes}
             self._last_disk_time = current_time
 
-            return read_bytes, write_bytes, read_rate, write_rate
+            return read_mb, write_mb, read_rate, write_rate
 
-        except Exception:
+        except Exception as e:
+            if self.config.verbose:
+                logger.warning(f"Disk I/O collection error: {e}")
             return 0.0, 0.0, 0.0, 0.0
 
     def collect_sample(self) -> ProfileSample:
@@ -326,6 +550,10 @@ class QEffMemoryProfiler:
         """Background monitoring loop."""
         while self.monitoring:
             try:
+                # Update child processes periodically (throttled internally)
+                if self.metrics_collector._track_children:
+                    self.metrics_collector._update_child_processes()
+
                 # Collect sample
                 sample = self.metrics_collector.collect_sample()
                 self.samples.append(sample)
