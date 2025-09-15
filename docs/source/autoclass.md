@@ -4,10 +4,20 @@
 
 ## `QEFFAutoModelForCausalLM`
 
+### HL API
+
+```{eval-rst}
+.. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM
+   :members: from_pretrained, export, compile, generate
+   :member-order: bysource
+```
+
+### LL API
 ```{eval-rst}
 .. autoclass:: QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM
    :member-order: bysource
    :members:
+   :exclude-members: from_pretrained, generate, export, compile
 ``` 
 
 (QEFFAutoModel)=

@@ -70,3 +70,12 @@ todo_include_todos = True
 suppress_warnings = [
     "ref.rst_pilog",  # Suppress warnings about excluded toctree entries
 ]
+
+def skip_member(app, what, name, obj, skip, options):
+    # Force include 'from_pretrained' even if it's skipped
+    if name == "from_pretrained":
+        return False
+    return skip
+
+def setup(app):
+    app.connect("autodoc-skip-member", skip_member)

@@ -19,9 +19,10 @@ source/release_docs
 
 ```{toctree}
 :caption: 'Getting Started'
-:maxdepth: 4
+:maxdepth: 2
  
 source/introduction
+source/supported_features
 source/validate
 ```
 
@@ -42,12 +43,12 @@ source/upgrade
 
 ```{toctree}
 :caption: 'Inference on Cloud AI 100'
-:maxdepth: 4
+:maxdepth: 2
 
 source/quick_start
+source/features_enablement
 source/autoclass
 source/cli_api
-source/python_api
 ```
 
 
