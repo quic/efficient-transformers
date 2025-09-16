@@ -287,9 +287,6 @@ class QEFFBaseModel(ABC):
 
         try:
             export_kwargs = {} if export_kwargs is None else export_kwargs
-            export_kwargs.setdefault("do_constant_folding", False)
-            export_kwargs.setdefault("training", torch.onnx.TrainingMode.EVAL)
-            export_kwargs.setdefault("keep_initializers_as_inputs", False)
 
             with torch.no_grad():
                 torch.onnx.export(
