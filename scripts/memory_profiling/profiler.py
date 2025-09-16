@@ -28,7 +28,7 @@ from QEfficient.utils.logging_utils import logger
 class ProfilerConfig:
     """Configuration for memory profiler."""
 
-    sampling_interval: float = 0.05
+    sampling_interval: float = 0.2
     output_file: Optional[str] = None
     verbose: bool = False
     enable_cpu_monitoring: bool = True
@@ -98,7 +98,9 @@ class MetricsCollector:
     def _update_child_processes(self) -> None:
         """Discover and track child processes (compilation subprocesses)."""
         current_time = time.time()
-        if current_time - self._last_child_scan < self._child_scan_interval:
+        # Only scan for children if we don't have any, or every 5 seconds
+        scan_interval = 5.0 if self._child_processes else self._child_scan_interval
+        if current_time - self._last_child_scan < scan_interval:
             return
 
         try:
@@ -443,8 +445,8 @@ class QEffMemoryProfiler:
         self.monitoring = False
         self.monitor_thread = None
 
-        # Data storage
-        self.samples: List[ProfileSample] = []
+        # self.samples = deque(maxlen=5000)  # Auto-evicts old samples
+        self.samples: List[ProfileSample] = []  # This could slow down for very long runs
         self.operations: List[Tuple[datetime, str]] = []
 
         # Peak tracking
