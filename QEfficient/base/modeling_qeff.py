@@ -146,14 +146,20 @@ class QEFFBaseModel(ABC):
             :mxfp6_matmul (bool): Use MXFP6 to compress weights for MatMul nodes to run faster on device. ``Defaults to False``.
             :mxint8_kv_cache (bool): Use MXINT8 to compress KV-cache on device to access and update KV-cache faster. ``Defaults to False``.
             :compiler_options: Pass any compiler option as input.
-            Following flag can be passed in compiler_options to enable QNN Compilation path.
-                :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False. if not passed.``
-                :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None. if not passed``
-            for QAIC compilation path, any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
-                - aic_num_cores=16 -> -aic-num-cores=16
-                - convert_to_fp16=True -> -convert-to-fp16
+
+                Following flag can be passed in compiler_options to enable QNN Compilation path.
+                    :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False. if not passed.``
+                    :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None. if not passed``
+
+                for QAIC compilation path, any flag that is supported by ``qaic-exec`` can be passed. Params are converted to flags as below:
+
+                    - aic_num_cores=16 -> -aic-num-cores=16
+                    - convert_to_fp16=True -> -convert-to-fp16
+                    - aic_hw_version=ai100 -> -aic-hw-version=ai100
+                    - aic_hw_version=ai200 -> -aic-hw-version=ai200
 
         ``QEFFAutoModelForCausalLM`` Args:
+
             :full_batch_size (int): Full batch size to allocate cache lines.
             :batch_size (int): Batch size to compile for. ``Defaults to 1``.
             :prefill_seq_len (int): Prefill sequence length to compile for. Prompt will be chunked according to this length.
@@ -311,8 +317,12 @@ class QEFFBaseModel(ABC):
             :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
             :compiler_options: Pass any compiler option as input.
                 Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+
                 - aic_num_cores=16 -> -aic-num-cores=16
                 - convert_to_fp16=True -> -convert-to-fp16
+                - aic_hw_version=ai100 -> -aic-hw-version=ai100
+                - aic_hw_version=ai200 -> -aic-hw-version=ai200
+
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
         if onnx_path is None and self.onnx_path is None:
@@ -344,7 +354,13 @@ class QEFFBaseModel(ABC):
 
             return self.qpc_path
 
-        command = constants.COMPILER + [f"-m={onnx_path}"]
+        command = (
+            constants.COMPILER
+            + [
+                f"-aic-hw-version={compiler_options.pop('aic_hw_version', compiler_options.pop('aic-hw-version', constants.DEFAULT_AIC_HW_VERSION))}"
+            ]
+            + [f"-m={onnx_path}"]
+        )
 
         if mdp_ts_json_path := compiler_options.pop("mdp_load_partition_config", None):
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
