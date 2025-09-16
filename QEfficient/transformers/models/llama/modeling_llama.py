@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 from typing import Callable, List, Optional, Tuple, Union
 
 import torch
@@ -96,6 +97,43 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
 
+
+def eager_attention_forward_blocked(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    dropout: float = 0.0,
+    num_blocks_indicator=None,
+    **kwargs,
+):
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+
+    attn_output = torch.zeros_like(query)
+    q_len = query.shape[2]
+    num_blocks_indicator = int(os.environ['NUM_BLOCKS'])
+    runtime_block_size = q_len // num_blocks_indicator
+    for iteration in range(num_blocks_indicator):
+        curr_attn_weights = torch.matmul(query[:, :, iteration*runtime_block_size:(iteration+1)*runtime_block_size, :], key_states.transpose(2, 3)) * scaling
+        if attention_mask is not None:  # no matter the length, we just slice it
+            curr_attn_weights = torch.where(attention_mask[:, :, iteration*runtime_block_size:(iteration+1)*runtime_block_size, :], torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), curr_attn_weights)
+        
+        sinks = module.sinks.reshape(1, -1, 1, 1).expand(curr_attn_weights.shape[0], -1, curr_attn_weights.shape[-2], -1)
+        combined_logits = torch.cat([curr_attn_weights, sinks], dim=-1)
+        # upcast attention to fp32
+        curr_attn_weights = nn.functional.softmax(combined_logits, dim=-1, dtype=torch.float32)
+        curr_attn_weights = curr_attn_weights[..., :-1]
+        curr_attn_output = torch.matmul(curr_attn_weights, value_states)
+        attn_output[:, :, iteration*runtime_block_size:(iteration+1)*runtime_block_size, :] = curr_attn_output
+
+    attn_output = attn_output.transpose(1, 2).contiguous()
+    return attn_output, attn_output
+
+
+
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -161,7 +199,7 @@ class QEffLlamaAttention(LlamaAttention):
             cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        attention_interface: Callable = eager_attention_forward
+        attention_interface: Callable = eager_attention_forward_blocked
 
         attn_output, attn_weights = attention_interface(
             self,
