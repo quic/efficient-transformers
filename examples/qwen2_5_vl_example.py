@@ -34,11 +34,10 @@ if skip_vision:
     ## Only Text ##
     qeff_model.compile(
         prefill_seq_len=128,
-        ctx_len=4096,
+        ctx_len=6000,
         num_cores=16,
         num_devices=8,
-        mxfp6_matmul=True,
-        mxint8_kv_cache=True,
+        mxfp6_matmul=False,
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
@@ -61,6 +60,26 @@ if skip_vision:
         return_tensors="pt",
     )
 
+    pos_ids, rope_deltas = qeff_model.model.get_rope_index(
+        inputs["input_ids"],
+        image_grid_thw=None,
+        video_grid_thw=None,
+        second_per_grid_ts=None,
+        attention_mask=inputs["attention_mask"],
+    )
+
+    input_ids_length = inputs["input_ids"].shape[1]
+
+    inputs["position_ids"] = torch.cat([pos_ids, pos_ids[0].unsqueeze(0)], dim=0)
+
+    prefill_seq_len = 128
+    num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
+    padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+
+    inputs["position_ids"] = F.pad(
+        inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
+    )
+
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3, 4, 5, 6, 7], generation_len=100)
     print(output.generated_ids)
@@ -72,9 +91,10 @@ else:
     qeff_model.compile(
         prefill_seq_len=128,
         ctx_len=4096,
-        img_size=336,
         num_cores=16,
         num_devices=8,
+        height=1365,
+        width=2044,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
@@ -85,7 +105,6 @@ else:
     image_url = "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg"
 
     image = Image.open(requests.get(image_url, stream=True).raw)
-    image = image.resize((2044, 1365))
 
     messages = [
         {
