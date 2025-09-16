@@ -1357,7 +1357,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
-        lang_inputs["position_ids"] = input_len.numpy()
+        lang_inputs["position_ids"] = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
         if "cross_attention_mask" in lang_inputs:
             bs, _, num_images, img_tiles = lang_inputs["cross_attention_mask"].shape
             lang_inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64).numpy()

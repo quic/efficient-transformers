@@ -1,8 +1,8 @@
 import math
 from typing import Callable, List, Optional, Tuple, Union
-
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLModel
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
@@ -13,6 +13,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLConfig,
     Qwen2_5_VLDecoderLayer,
     Qwen2_5_VLRotaryEmbedding,
+    Qwen2_5_VisionTransformerPretrainedModel,
     repeat_kv,
     rotate_half,
 )
@@ -71,6 +72,69 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     k_embed = (k * cos) + (rotate_half(k) * sin)
 
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
+
+class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPretrainedModel):
+
+    def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            hidden_states (`torch.Tensor` of shape `(seq_len, hidden_size)`):
+                The final hidden states of the model.
+            grid_thw (`torch.Tensor` of shape `(num_images_or_videos, 3)`):
+                The temporal, height and width of feature shape of each image in LLM.
+
+        Returns:
+            `torch.Tensor`: hidden_states.
+        """
+        hidden_states = self.patch_embed(hidden_states)
+        rotary_pos_emb = self.rot_pos_emb(grid_thw)
+        window_index, cu_window_seqlens = self.get_window_index(grid_thw)
+        cu_window_seqlens = torch.tensor(
+            cu_window_seqlens,
+            device=hidden_states.device,
+            dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
+        )
+        cu_window_seqlens = torch.unique_consecutive(cu_window_seqlens)
+
+        seq_len, _ = hidden_states.size()
+        hidden_states = hidden_states.reshape(seq_len // self.spatial_merge_unit, self.spatial_merge_unit, -1)
+        hidden_states = hidden_states[window_index, :, :]
+        hidden_states = hidden_states.reshape(-1,hidden_states.shape[2])
+        rotary_pos_emb = rotary_pos_emb.reshape(-1, self.spatial_merge_unit, rotary_pos_emb.shape[1])
+        rotary_pos_emb = rotary_pos_emb[window_index, :, :]
+        rotary_pos_emb = rotary_pos_emb.reshape(-1, rotary_pos_emb.shape[2])
+        emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
+        position_embeddings = (emb.cos(), emb.sin())
+
+        cu_seqlens = torch.repeat_interleave(grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]).cumsum(
+            dim=0,
+            # Select dtype based on the following factors:
+            #  - FA2 requires that cu_seqlens_q must have dtype int32
+            #  - torch.onnx.export requires that cu_seqlens_q must have same dtype as grid_thw
+            # See https://github.com/huggingface/transformers/pull/34852 for more information
+            dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
+        )
+        cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
+
+        for layer_num, blk in enumerate(self.blocks):
+            # if layer_num == 2:
+            #     break
+            if layer_num in self.fullatt_block_indexes:
+                cu_seqlens_now = cu_seqlens
+            else:
+                cu_seqlens_now = cu_window_seqlens
+            # if self.gradient_checkpointing and self.training:
+            #     hidden_states = self._gradient_checkpointing_func(
+            #         blk.__call__, hidden_states, cu_seqlens_now, None, position_embeddings
+            #     )
+            # else:
+            hidden_states = blk(hidden_states, cu_seqlens=cu_seqlens_now, position_embeddings=position_embeddings)
+
+        hidden_states = self.merger(hidden_states)
+        reverse_indices = torch.argsort(window_index)
+        hidden_states = hidden_states[reverse_indices, :]
+
+        return hidden_states
 
 
 class QEffQwen2_5_VLRotaryEmbedding(Qwen2_5_VLRotaryEmbedding):
@@ -357,9 +421,9 @@ class QEffQwen_2_5_vl_EncoderWrapper(nn.Module):
         self.model = model
         self.model.vision_model = self.model.visual
 
-    def forward(self, pixel_values):
-        image_grid_thw = torch.tensor([[1, 98, 146]])
-        image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)
+    def forward(self, pixel_values, image_grid_thw):
+        grid_thw = torch.tensor([[image_grid_thw.shape[0], image_grid_thw.shape[1], image_grid_thw.shape[2]]])
+        image_embeds = self.model.visual(pixel_values, grid_thw=grid_thw)
         return image_embeds
 
 
@@ -404,6 +468,11 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             vision_size,
             self.model.config.hidden_size,
         )
+        inputs_shapes["image_grid_thw"] = (
+            1,
+            98,
+            146
+        )
         inputs_shapes["position_ids"] = (
             3,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
@@ -416,6 +485,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         vision_inputs = {}
         lang_inputs = {}
         vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.float32)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
         lang_inputs["position_ids"] = (
@@ -455,22 +525,85 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         batch_size: int,
         prefill_seq_len: int,
         ctx_len: int,
-        img_size: int,
+        img_size: None,
+        height: int = None,
+        width: int = None,
         kv_offload: bool = False,
         **compiler_options,
     ):
-        if img_size is None and hasattr(self.config.vision_config, "image_size"):
-            img_size = getattr(self.config.vision_config, "image_size")
-        elif img_size is None:
-            img_size = 1540  # FIXME based on mistral3 Image size
-            logger.warning("Setting img_size to be 1540, as it was neither passed nor found in vision_config")
+
+        if height is None or width is None:
+            height = 1365
+            width = 2048
+            logger.warning("Setting height and width to be 1365 and 2048 respectively, as it was neither passed nor found in vision_config")
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
+        channel = 3
+        patch_size = self.config.vision_config.patch_size
+        temporal_patch_size = self.config.vision_config.temporal_patch_size
+        
+        IMAGE_FACTOR = 28
+        MIN_PIXELS = 4 * 28 * 28
+        MAX_PIXELS = 16384 * 28 * 28
+        MAX_RATIO = 200
 
-        vision_size = 3577
-        height = 14308
-        width = 1176
-        vision = [{"vision_size": vision_size, "height": height, "width": width}]
+        def round_by_factor(number: int, factor: int) -> int:
+            """Returns the closest integer to 'number' that is divisible by 'factor'."""
+            return round(number / factor) * factor
+        
+        def ceil_by_factor(number: int, factor: int) -> int:
+            """Returns the smallest integer greater than or equal to 'number' that is divisible by 'factor'."""
+            return math.ceil(number / factor) * factor
+
+
+        def floor_by_factor(number: int, factor: int) -> int:
+            """Returns the largest integer less than or equal to 'number' that is divisible by 'factor'."""
+            return math.floor(number / factor) * factor
+
+        def smart_resize(
+            height: int, width: int, factor: int = IMAGE_FACTOR, min_pixels: int = MIN_PIXELS, max_pixels: int = MAX_PIXELS
+        ) -> tuple[int, int]:
+            """
+            Rescales the image so that the following conditions are met:
+
+            1. Both dimensions (height and width) are divisible by 'factor'.
+
+            2. The total number of pixels is within the range ['min_pixels', 'max_pixels'].
+
+            3. The aspect ratio of the image is maintained as closely as possible.
+            """
+            if max(height, width) / min(height, width) > MAX_RATIO:
+                raise ValueError(
+                    f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(height, width) / min(height, width)}"
+                )
+            h_bar = max(factor, round_by_factor(height, factor))
+            w_bar = max(factor, round_by_factor(width, factor))
+            if h_bar * w_bar > max_pixels:
+                beta = math.sqrt((height * width) / max_pixels)
+                h_bar = floor_by_factor(height / beta, factor)
+                w_bar = floor_by_factor(width / beta, factor)
+            elif h_bar * w_bar < min_pixels:
+                beta = math.sqrt(min_pixels / (height * width))
+                h_bar = ceil_by_factor(height * beta, factor)
+                w_bar = ceil_by_factor(width * beta, factor)
+            return h_bar, w_bar
+
+
+        resized_height, resized_width = smart_resize(height=height, width=width)
+        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+        grid_height = grid_h * grid_w
+        grid_width  =  patch_size * patch_size * temporal_patch_size * channel
+        vision_size = grid_height // 4
+
+        vision = [
+            {
+                "vision_size": vision_size, 
+                "grid_height": grid_height, 
+                "grid_width": grid_width,
+                "grid_h": grid_h,
+                "grid_w": grid_w
+            }
+        ]
         lang = [
             {
                 "batch_size": batch_size,
@@ -493,9 +626,6 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             specializations["lang"] = lang
             return specializations, compiler_options
         else:
-            # return vision, compiler_options
-            lang[0].pop("vision_size")
-            lang[1].pop("vision_size")
             return lang, compiler_options
 
     def get_onnx_dynamic_axes(self, kv_offload: bool = False):
@@ -503,7 +633,8 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         num_layers = self.config.num_hidden_layers
 
         vision_dynamic_axes = {
-            "pixel_values": {0: "height", 1: "width"},
+            "pixel_values": {0: "grid_height", 1: "grid_width"},
+            "image_grid_thw": {1: "grid_h", 2: "grid_w"}
         }
 
         lang_dynamic_axes = {
