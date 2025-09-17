@@ -57,6 +57,8 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.logging_utils import logger
 
+from QEfficient.generation.text_generation_inference import TextGeneration
+
 
 class QEFFTransformersBase(QEFFBaseModel):
     """
@@ -745,6 +747,17 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         """
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
+
+        # Handle CB for multiple prompts with same image
+        if self.continuous_batching and tokenizer and prompts and len(prompts) > 1:
+            return self.continuous_batching_multi_prompt_generate(
+                inputs=inputs,
+                tokenizer=tokenizer,
+                prompts=prompts,
+                device_ids=device_ids,
+                generation_len=generation_len,
+                streamer=streamer,
+            )
         if tokenizer and prompts:
             return QEfficient.cloud_ai_100_exec_kv(
                 tokenizer,
@@ -757,6 +770,109 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         return self.kv_offload_generate(
             inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
         )
+
+    def continuous_batching_multi_prompt_generate(
+        self,
+        inputs: torch.Tensor,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
+        prompts: List[str],
+        device_ids: List[int] = None,
+        generation_len: Optional[int] = None,
+        streamer: Optional[TextStreamer] = None,
+    ):
+        """
+        Optimized continuous batching generate function for multiple prompts with same image.
+        This method processes a single image with multiple text prompts in a continuous batching manner, by:
+        1. Running the vision encoder once for the shared image.
+        2. Using continuous batching for multiplt prompts in the language decoder.
+        3. Sharing vision embeddings across all prompts to save memory and computation.
+        """
+        if not self.lang_model.qpc_path:
+            raise TypeError("Please run compile API for language model first!")
+
+        try:
+            vision_session = None
+            lang_session = None
+            if self.vision_model.qpc_path:
+                vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
+
+            lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
+
+            # Get compilation dimensions
+            batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
+
+            # Skip inputs/outputs
+            lang_session.skip_buffers(
+                [
+                    x
+                    for x in lang_session.input_names + lang_session.output_names
+                    if x.startswith("past_") or x.endswith("_RetainedState")
+                ]
+            )
+
+            # Process vision inputs once for all prompts
+            vision_inputs = {
+                k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
+            }
+            if vision_inputs:
+                vision_inputs["pixel_values"] = vision_inputs["pixel_values"].to(torch.float16).cpu().numpy()
+            vision_start = perf_counter()
+            vision_outputs = {}
+            if vision_inputs:
+                vision_outputs = vision_session.run(vision_inputs)
+            vision_end = perf_counter()
+
+            # Deactivate vision session after use
+            if self.vision_model.qpc_path:
+                vision_session.deactivate()
+
+            # Text generation instance for continuous batching
+            text_generator = TextGeneration(
+                tokenizer=tokenizer,
+                qpc_path=self.lang_model.qpc_path,
+                device_id=device_ids,
+                ctx_len=ctx_len,
+                enable_debug_logs=False,
+                full_batch_size=fbs,
+            )
+
+            # Prepare prompts for CB
+            # Each prompt processed with same vision embeddings
+            tokenized_prompts = []
+            for prompt in prompts:
+                tokenized_prompt = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+                tokenized_prompts.append(tokenized_prompt)
+
+            # Run CB with shared vision embeddings
+            lang_session.activate()
+
+            if vision_outputs:
+                lang_session.set_buffers(vision_outputs)
+
+            # Execute continuous batching generate
+            exec_info = text_generator.generate(
+                prompt=prompts,
+                generation_len=generation_len,
+                streamer=streamer is not None,
+            )
+
+            print("Vision encoding time (s): ", vision_end - vision_start)
+            return exec_info
+        except Exception as e:
+            print(f"Error in continuous batching: {str(e)}")
+            raise
+        finally:
+            # Clean up
+            if vision_session:
+                try:
+                    vision_session.deactivate()
+                except:
+                    pass
+            if lang_session:
+                try:
+                    lang_session.deactivate()
+                except:
+                    pass
 
     def kv_offload_generate(
         self,
@@ -829,7 +945,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         }
 
         if vision_inputs:
-            vision_inputs["pixel_values"] = vision_inputs["pixel_values"].astype("float16")
+            vision_inputs["pixel_values"] = vision_inputs["pixel_values"].to(torch.float16).cpu().numpy()
         vision_start = perf_counter()
 
         vision_outputs = {}
