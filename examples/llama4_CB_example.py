@@ -1,6 +1,6 @@
 import torch
 import transformers
-from transformers import AutoConfig, AutoProcessor, TextStreamer
+from transformers import AutoConfig, AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
@@ -36,8 +36,8 @@ qeff_model.compile(
 )
 
 image_url = (
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
-    )
+    "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png"
+)
 
 prompts = [
     "Can you describe the image in detail?",
@@ -69,19 +69,21 @@ for prompt in prompts:
     all_inputs.append(inputs)
 
 
-output = qeff_model.generate(inputs=all_inputs[0], tokenizer=tokenizer, device_ids = [0,1,2,3], prompts=prompts, generation_len=100)
+output = qeff_model.generate(
+    inputs=all_inputs[0], tokenizer=tokenizer, device_ids=[0, 1, 2, 3], prompts=prompts, generation_len=100
+)
 
-if hasattr(output, 'generated_texts'):
+if hasattr(output, "generated_texts"):
     for i, (prompt, response) in enumerate(zip(prompts, output.generated_texts)):
-        print(f"Prompt {i+1}: {prompt}")
-        print(f"Response {i+1}: {response}")
+        print(f"Prompt {i + 1}: {prompt}")
+        print(f"Response {i + 1}: {response}")
         print("-" * 30)
 else:
     print("Generated IDs:", output.generated_ids)
     decoded_responses = tokenizer.batch_decode(output.generated_ids, skip_special_tokens=True)
     for i, (prompt, response) in enumerate(zip(prompts, decoded_responses)):
-        print(f"Prompt {i+1}: {prompt}")
-        print(f"Response {i+1}: {response}")
+        print(f"Prompt {i + 1}: {prompt}")
+        print(f"Response {i + 1}: {response}")
         print("-" * 30)
 
 # print(output.generated_ids)

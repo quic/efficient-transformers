@@ -848,7 +848,7 @@ class QEffLlama4DecoderWrapper(nn.Module):
             # For CB with multiple prompts sharing same image, reuse vision embeds accross batches
             batch_size = input_ids.shape[0]
 
-            #Expanfd vision_embeds to match batch size if needed
+            # Expanfd vision_embeds to match batch size if needed
             if vision_embeds.shape[0] == 1 and batch_size > 1:
                 vision_embeds = vision_embeds.expand(batch_size, -1, -1)
 
@@ -858,7 +858,7 @@ class QEffLlama4DecoderWrapper(nn.Module):
         # indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
         # image_features_expanded = vision_embeds.unsqueeze(0)[indices0, indices1]
 
-        #Handle batch aware image indexing for CB
+        # Handle batch aware image indexing for CB
         if batch_size is not None:
             # For CB, use per-batch image indices
             batch_image_idx = image_idx.expand_as(selected[:, :1])
@@ -983,7 +983,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
         vision = [
             {
-                "batch_size": 1, # To process image only once for all batch_sizes(prompts) in continuous batching
+                "batch_size": 1,  # To process image only once for all batch_sizes(prompts) in continuous batching
                 "max_num_tiles": max_num_tiles,
                 "img_size": img_size,
             }

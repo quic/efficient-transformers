@@ -31,6 +31,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
     PerfMetrics,
+    TextGeneration,
     calculate_latency,
     get_compilation_dims,
 )
@@ -56,8 +57,6 @@ from QEfficient.utils import (
     get_padding_shape_from_config,
 )
 from QEfficient.utils.logging_utils import logger
-
-from QEfficient.generation.text_generation_inference import TextGeneration
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -790,89 +789,73 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not self.lang_model.qpc_path:
             raise TypeError("Please run compile API for language model first!")
 
-        try:
-            vision_session = None
-            lang_session = None
-            if self.vision_model.qpc_path:
-                vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
+        vision_session = None
+        lang_session = None
+        if self.vision_model.qpc_path:
+            vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
 
-            lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
+        lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
 
-            # Get compilation dimensions
-            batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
+        # Get compilation dimensions
+        batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
 
-            # Skip inputs/outputs
-            lang_session.skip_buffers(
-                [
-                    x
-                    for x in lang_session.input_names + lang_session.output_names
-                    if x.startswith("past_") or x.endswith("_RetainedState")
-                ]
-            )
+        # Skip inputs/outputs
+        lang_session.skip_buffers(
+            [
+                x
+                for x in lang_session.input_names + lang_session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
+        )
 
-            # Process vision inputs once for all prompts
-            vision_inputs = {
-                k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
-            }
-            if vision_inputs:
-                vision_inputs["pixel_values"] = vision_inputs["pixel_values"].to(torch.float16).cpu().numpy()
-            vision_start = perf_counter()
-            vision_outputs = {}
-            if vision_inputs:
-                vision_outputs = vision_session.run(vision_inputs)
-            vision_end = perf_counter()
+        # Process vision inputs once for all prompts
+        vision_inputs = {
+            k: v for k, v in inputs.items() if k in {"pixel_values", "aspect_ratio_ids", "aspect_ratio_mask"}
+        }
+        if vision_inputs:
+            vision_inputs["pixel_values"] = vision_inputs["pixel_values"].to(torch.float16).cpu().numpy()
+        vision_start = perf_counter()
+        vision_outputs = {}
+        if vision_inputs:
+            vision_outputs = vision_session.run(vision_inputs)
+        vision_end = perf_counter()
 
-            # Deactivate vision session after use
-            if self.vision_model.qpc_path:
-                vision_session.deactivate()
+        # Deactivate vision session after use
+        if self.vision_model.qpc_path:
+            vision_session.deactivate()
 
-            # Text generation instance for continuous batching
-            text_generator = TextGeneration(
-                tokenizer=tokenizer,
-                qpc_path=self.lang_model.qpc_path,
-                device_id=device_ids,
-                ctx_len=ctx_len,
-                enable_debug_logs=False,
-                full_batch_size=fbs,
-            )
+        # Text generation instance for continuous batching
+        text_generator = TextGeneration(
+            tokenizer=tokenizer,
+            qpc_path=self.lang_model.qpc_path,
+            device_id=device_ids,
+            ctx_len=ctx_len,
+            enable_debug_logs=False,
+            full_batch_size=fbs,
+        )
 
-            # Prepare prompts for CB
-            # Each prompt processed with same vision embeddings
-            tokenized_prompts = []
-            for prompt in prompts:
-                tokenized_prompt = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
-                tokenized_prompts.append(tokenized_prompt)
+        # Prepare prompts for CB
+        # Each prompt processed with same vision embeddings
+        tokenized_prompts = []
+        for prompt in prompts:
+            tokenized_prompt = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+            tokenized_prompts.append(tokenized_prompt)
 
-            # Run CB with shared vision embeddings
-            lang_session.activate()
+        # Run CB with shared vision embeddings
+        lang_session.activate()
 
-            if vision_outputs:
-                lang_session.set_buffers(vision_outputs)
+        if vision_outputs:
+            lang_session.set_buffers(vision_outputs)
 
-            # Execute continuous batching generate
-            exec_info = text_generator.generate(
-                prompt=prompts,
-                generation_len=generation_len,
-                streamer=streamer is not None,
-            )
+        # Execute continuous batching generate
+        exec_info = text_generator.generate(
+            prompt=prompts,
+            generation_len=generation_len,
+            streamer=streamer is not None,
+        )
 
-            print("Vision encoding time (s): ", vision_end - vision_start)
-            return exec_info
-        except Exception as e:
-            print(f"Error in continuous batching: {str(e)}")
-            raise
-        finally:
-            # Clean up
-            if vision_session:
-                try:
-                    vision_session.deactivate()
-                except:
-                    pass
-            if lang_session:
-                try:
-                    lang_session.deactivate()
-                except:
-                    pass
+        print("Vision encoding time (s): ", vision_end - vision_start)
+        return exec_info
 
     def kv_offload_generate(
         self,

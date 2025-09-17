@@ -826,7 +826,9 @@ class QEffTextGenerationBase:
 
         return decode_pause_time
 
-    def run_vision_language_continuous_batching_decode(self, prompt_queue, generation_len, shared_vision_embeddings=None):
+    def run_vision_language_continuous_batching_decode(
+        self, prompt_queue, generation_len, shared_vision_embeddings=None
+    ):
         """
         Runs continuous batching decode for vision language models with shared vision embeddings.
 
@@ -919,7 +921,9 @@ class QEffTextGenerationBase:
 
         return decode_pause_time
 
-    def run_vision_language_prefill(self, prompt, generation_len, decode_batch_id=None, shared_vision_embeddings=None):
+    def run_vision_language_prefill(
+        self, prompt, generation_len, prefill_logit_bs=1, decode_batch_id=None, shared_vision_embeddings=None
+    ):
         """
         Default method for running decode. Executes the decoding process for a given set of inputs and a specified generation length.
         Args:
@@ -981,7 +985,6 @@ class QEffTextGenerationBase:
             position_ids,
             generation_len,
         )
-
 
     def run_decode(self, decode_inputs, generation_len, streamer: Optional[transformers.TextStreamer] = None):
         """
