@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# ----------------------------------------------------------------------------
+
 import torch
 import transformers
 from transformers import AutoConfig, AutoProcessor
@@ -41,9 +48,9 @@ image_url = (
 
 prompts = [
     "Can you describe the image in detail?",
-    # "What are the objects in the image?",
-    # "What is the main subject of the image?",
-    # "What colors are predominant in the image?",
+    "What are the objects in the image?",
+    "What is the main subject of the image?",
+    "What colors are predominant in the image?",
 ]
 
 all_inputs = []
