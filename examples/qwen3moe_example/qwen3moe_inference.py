@@ -11,7 +11,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 model_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=48)
-model.compile(prefill_seq_len=1, ctx_len=256, num_cores=16, num_devices=4)
+model.compile(prefill_seq_len=1, ctx_len=256, num_cores=16, num_devices=4, mxfp6_matmul=True, mxint8_kv_cache=True)
 
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 exec_info = model.generate(prompts=["My name is"], tokenizer=tokenizer)
