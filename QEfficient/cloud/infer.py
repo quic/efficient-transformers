@@ -119,6 +119,7 @@ def main(
     2. Check if exported ONNX file already exists, if true, jump to compilation -> execution, else
     3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
     4. Download HF model -> transform -> export -> compile -> execute
+    
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
         :num_cores (int): Number of cores to compile model on.
@@ -143,7 +144,9 @@ def main(
         :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
         :trust_remote_code (bool): Trust remote code execution. ``Defaults to False.``
         :kwargs: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
+                
                 -allocator_dealloc_delay=1 -> -allocator-dealloc-delay=1
+                
                 -qpc_crc=True -> -qpc-crc
 
     .. code-block:: bash

@@ -131,32 +131,6 @@ class MultimodalUtilityMixin:
 
 
 class QEFFAutoModel(QEFFTransformersBase):
-    """
-    The QEFFAutoModel class is designed for manipulating any transformer model from the HuggingFace hub.
-    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
-
-    ``Mandatory`` Args:
-        :model (nn.Module): PyTorch model
-
-    .. code-block:: python
-
-        from QEfficient import QEFFAutoModel
-        from transformers import AutoTokenizer
-
-        # Initialize the model using from_pretrained similar to transformers.AutoModel.
-        model = QEFFAutoModel.from_pretrained("model_name")
-
-        # Now you can directly compile the model for Cloud AI 100
-        model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
-
-        #prepare input
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        inputs = tokenizer("My name is", return_tensors="pt")
-
-        # You can now execute the model
-        model.generate(inputs)
-    """
-
     _hf_auto_class = AutoModel
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
@@ -176,6 +150,8 @@ class QEFFAutoModel(QEFFTransformersBase):
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path, pooling=None, *args, **kwargs):
         """
+        The QEFFAutoModel class is designed for manipulating any transformer model from the HuggingFace hub.
+        Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModel.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
 
@@ -1288,38 +1264,6 @@ MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {"InternVLChatModel": QEFFAutoM
 
 
 class QEFFAutoModelForCausalLM(QEFFBaseModel):
-    """
-    The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
-    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
-
-    ``Mandatory`` Args:
-        :model (nn.Module):  PyTorch model
-        :continuous_batching (bool): Weather this model will be used for continuous batching in future. If this is not set True here, the model can not be exported/compiled for continuous batching later.
-    ``Optional`` Args:
-        :qaic_config (dict): QAIC config dictionary with the following supported keys:
-            :speculative_model_type (str): To specify Speculative Decoding Target Language Models.
-            :include_sampler (bool): Enable/Disable sampling of next tokens.
-            :return_pdfs (bool): Return probability distributions along with sampled
-            next tokens. For Speculative Decoding Target Language Model,
-            `return_pdfs`=True always. Otherwise, `return_pdfs`=True for Speculative
-            Decoding Draft Language Model and `return_pdfs`=False for regular model.
-            :max_top_k_ids (int): Specify the maximum number of top K tokens
-            (<= vocab size) to consider during sampling. The values provided in
-            `top_ks` tensor must be less than this maximum limit.
-
-    .. code-block:: python
-
-        from QEfficient import QEFFAutoModelForCausalLM
-        from transformers import AutoTokenizer
-
-        model_name = "gpt2"
-        model = QEFFAutoModelForCausalLM.from_pretrained(model_name, num_hidden_layers=2)
-        model.compile(prefill_seq_len=128, ctx_len=256, num_cores=16, num_devices=1)
-
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
-    """
-
     _hf_auto_class = AutoModelForCausalLM
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
@@ -1395,6 +1339,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         **kwargs,
     ):
         """
+        The QEFF class is designed for manipulating any causal language model from the HuggingFace hub.
+        Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
         This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCausalLM.
         Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
 

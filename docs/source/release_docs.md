@@ -1,4 +1,4 @@
-# 🚀 Efficient Transformer Library - Release 1.20.0 (Beta)
+# Efficient Transformer Library - Release 1.20.0 (Beta)
 
 Welcome to the official release of **Efficient Transformer Library v1.20.0**! This release brings a host of new model integrations, performance enhancements, and fine-tuning capabilities to accelerate your AI development.
 
@@ -6,7 +6,7 @@ Welcome to the official release of **Efficient Transformer Library v1.20.0**! Th
 
 ---
 
-## 🧠 Newly Supported Models
+## Newly Supported Models
 
 - **Llama-4-Scout-17B-16E-Instruct**
   - Text & Image+Text support
@@ -36,7 +36,7 @@ Welcome to the official release of **Efficient Transformer Library v1.20.0**! Th
 
 ---
 
-## ✨ Key Features & Enhancements
+## Key Features & Enhancements
 
 - **Transformer Upgrade**: Now using version `4.51.3`
 - **SpD & Multi-Projection Heads**: Token speculation via post-attention projections
@@ -46,7 +46,7 @@ Welcome to the official release of **Efficient Transformer Library v1.20.0**! Th
 
 ---
 
-## 🔍 Embedding Model Upgrades
+## Embedding Model Upgrades
 
 - **Flexible Pooling**: Choose from standard or custom strategies
 - **Sentence Embedding**: Now runs directly on AI100
@@ -54,7 +54,7 @@ Welcome to the official release of **Efficient Transformer Library v1.20.0**! Th
 
 ---
 
-## 🛠️ Fine-Tuning Support
+## Fine-Tuning Support
 
 - BERT fine-tuning support with templates and documentation
 - Gradient checkpointing, device-aware `GradScaler`, and CLI `--help` added

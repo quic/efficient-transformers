@@ -1,3 +1,14 @@
 .wy-nav-content {
     max-width: 1200px !important;
 }
+
+/* Force table cells to wrap long text, overriding RTD theme */
+.rst-content table.docutils td,
+.rst-content table.docutils th,
+.wy-table-responsive table td,
+.wy-table-responsive table th,
+.docutils .list-table td,
+.docutils .list-table th {
+    white-space: normal !important;
+    word-break: break-word !important;
+}

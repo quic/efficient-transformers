@@ -22,7 +22,7 @@ source/release_docs
 :maxdepth: 2
  
 source/introduction
-source/supported_features
+source/supported_features.rst
 source/validate
 ```
 

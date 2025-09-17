@@ -55,27 +55,16 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 #
 html_theme = "sphinx_rtd_theme"
 
-
-def setup(app):
-    app.add_css_file("my_theme.css")
-
-
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ["_static"]
-source = [".md"]
+# source = [".md"]
 todo_include_todos = True
 
 suppress_warnings = [
     "ref.rst_pilog",  # Suppress warnings about excluded toctree entries
 ]
 
-def skip_member(app, what, name, obj, skip, options):
-    # Force include 'from_pretrained' even if it's skipped
-    if name == "from_pretrained":
-        return False
-    return skip
-
 def setup(app):
-    app.connect("autodoc-skip-member", skip_member)
+    app.add_css_file("my_theme.css")
