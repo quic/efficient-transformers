@@ -156,7 +156,7 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         experts_out = experts_out.view(B * S, self.top_k, H)
         experts_out = experts_out * top_w.unsqueeze(-1)
         experts_out = experts_out.sum(dim=1)
-        return experts_out, router_logits
+        return experts_out.view(B, S, H), router_logits
 
 
 class QEffQwen3MoeAttention(Qwen3MoeAttention):
