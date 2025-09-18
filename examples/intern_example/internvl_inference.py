@@ -16,6 +16,10 @@ from PIL import Image
 from torchvision.transforms.functional import InterpolationMode
 from transformers import AutoTokenizer, TextStreamer
 
+import decord
+import numpy as np
+from decord import VideoReader, cpu
+
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.utils.logging_utils import logger
 
@@ -130,6 +134,34 @@ class InternProcessor:
         pixel_values = torch.stack(pixel_values)
         return pixel_values
 
+    def get_index(self, bound, fps, max_frame, first_idx=0, num_segments=13):
+        start, end = -100000, 100000
+        start_idx = max(first_idx, round(start * fps))
+        end_idx = min(round(end * fps), max_frame)
+        seg_size = float(end_idx - start_idx) / num_segments
+        frame_indices = np.array([
+            int(start_idx + (seg_size / 2) + np.round(seg_size * idx))
+            for idx in range(num_segments)
+        ])
+        return frame_indices
+
+    def load_video(self, video_path:str, bound=None, input_size=448, max_num=1, num_segments=13):
+        vr = VideoReader(video_path, ctx=cpu(0)) 
+        max_frame = len(vr) - 1
+        fps = float(vr.get_avg_fps())
+        pixel_values_list, num_patches_list = [], []
+        transform = self.build_transform(input_size=input_size) 
+        frame_indices = self.get_index(bound, fps, max_frame, first_idx=0, num_segments=num_segments) 
+        for frame_index in frame_indices:
+            img = Image.fromarray(vr[frame_index].asnumpy()).convert('RGB')
+            img = self.dynamic_preprocess(img, image_size=input_size, use_thumbnail=True, max_num=max_num) 
+            pixel_values = [transform(tile) for tile in img]
+            pixel_values = torch.stack(pixel_values)
+            num_patches_list.append(pixel_values.shape[0])
+            pixel_values_list.append(pixel_values)
+        pixel_values = torch.cat(pixel_values_list)
+        return pixel_values, num_patches_list
+
     def __call__(
         self,
         pixel_values,
@@ -167,13 +199,15 @@ class InternProcessor:
 def run_intern_on_aic(
     model_name,
     prompt,
-    image_url,
     messages,
     roles,
     kv_offload=False,
     prefill_seq_len=3840,
     num_devices=1,
     num_cores=16,
+    multi_frame_inference=False,
+    image_url=None,
+    video_path=None,
 ):
     ## STEP 1 -- LOAD THE MODEL
 
@@ -188,7 +222,10 @@ def run_intern_on_aic(
         num_cores=num_cores,
         num_devices=num_devices,
         prefill_seq_len=prefill_seq_len,
-        mxfp6_matmul=False,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
+        allow_mxint8_mdp_io=True,
+        aic_enable_depth_first=True,
     )
 
     ## STEP 3 -- SETUP THE PROCESSOR
@@ -198,16 +235,20 @@ def run_intern_on_aic(
     internProcessor = InternProcessor(model.model, tokenizer)
 
     ## STEP 4 -- PREPROCESS THE INPUTS
+    if multi_frame_inference:
+        pixel_values, num_patches_list = internProcessor.load_video(video_path)
+        video_prefix = ''.join([f'Frame{i+1}: <image>\n' for i in range(len(num_patches_list))])
+        question = video_prefix + prompt
+    else:
+        response = requests.get(image_url, stream=True)
+        img = Image.open(BytesIO(response.content)).convert("RGB")
+        # img = Image.open(image_url).convert("RGB")
+        # Images are resized to (1000, 747) for inference
+        image = img.resize((1000, 747))
+        # preprocess the resized image
+        pixel_values = internProcessor.load_image(image, max_num=12)
+        question = "<image>\n" + prompt
 
-    img = requests.get(image_url, stream=True)
-    image = Image.open(BytesIO(img.content)).convert("RGB")
-
-    # Images are resized to (1000, 747) for inference
-    image = image.resize((1000, 747))
-
-    # preprocess the resized image
-    pixel_values = internProcessor.load_image(image, max_num=12)
-    question = "<image>\n" + prompt
     query = internProcessor(pixel_values, question, messages, roles)
     inputs = tokenizer(
         query, return_tensors="pt", padding="max_length", max_length=prefill_seq_len, padding_side="right"
@@ -217,19 +258,19 @@ def run_intern_on_aic(
 
     ## STEP 5 -- RUN INFERENCE VIA GENERATE FUNCTION
     streamer = TextStreamer(tokenizer)
-    model.generate(inputs=inputs, streamer=streamer, generation_len=128)
+    if kv_offload:
+        outputs=model.generate(inputs=inputs, streamer=streamer,device_id_lang=[16,17,18,19], device_id_vision=[20,21,22,23], generation_len=128)
+    else:    
+        outputs=model.generate(inputs=inputs, streamer=streamer,device_ids=[24,25,26,27], generation_len=128)
+    print(outputs)
 
 
 if __name__ == "__main__":
-    model_name = "OpenGVLab/InternVL2_5-1B"
+    model_name = "OpenGVLab/InternVL3-8B"
 
     # Chat Template information for prompt preprocessing
     messages: List[List[str]] = []
     roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
-
-    # Inputs for the model
-    prompt = "Please describe the image in detail."
-    image_url = "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg"
 
     ## Compilation parameters
 
@@ -237,7 +278,8 @@ if __name__ == "__main__":
     # The Dual QPC approach splits the model to perform Image Encoding and Output generation in 2 different QPCs.
     # The outputs of the Vision Encoder are then passed to the Language model via host in this case.
 
-    kv_offload = False
+    kv_offload = True
+    multi_frame_inference=True
 
     # InternVL is an Early-Fusion model that uses placeholder tokens within the input_ids to interleave text_embeddings with
     # Image embeddings and generate final input_embeds for outout generation. Hence we need very large prefill_seq_len (3840 in this case) to
@@ -247,17 +289,37 @@ if __name__ == "__main__":
     num_devices = 4
     num_cores = 16
 
-    run_intern_on_aic(
-        model_name=model_name,
-        prompt=prompt,
-        image_url=image_url,
-        messages=messages,
-        roles=roles,
-        kv_offload=kv_offload,
-        prefill_seq_len=prefill_seq_len,
-        num_devices=num_devices,
-        num_cores=num_cores,
-    )
+    # Inputs for the model
+    if multi_frame_inference:
+        video_path = "/local/mnt/workspace/aditjadh/aisyssol/red-panda.mp4"
+        prompt="What is happening in this video" 
+        run_intern_on_aic(
+            model_name=model_name,
+            prompt=prompt,
+            messages=messages,
+            roles=roles,
+            kv_offload=kv_offload,
+            prefill_seq_len=prefill_seq_len,
+            num_devices=num_devices,
+            num_cores=num_cores,
+            multi_frame_inference=multi_frame_inference,
+            video_path=video_path,
+        )
+    else:
+        image_url = "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg"
+        prompt="Describe the image"
+        run_intern_on_aic(
+            model_name=model_name,
+            prompt=prompt,
+            image_url=image_url,
+            messages=messages,
+            roles=roles,
+            kv_offload=kv_offload,
+            prefill_seq_len=prefill_seq_len,
+            num_devices=num_devices,
+            num_cores=num_cores,
+            multi_frame_inference=multi_frame_inference,
+        )
 
 
 """

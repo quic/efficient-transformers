@@ -7,30 +7,29 @@
 
 import torch
 import transformers
-from transformers import AutoConfig, AutoProcessor, TextStreamer
+from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-model_id = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
+model_id = "/local/mnt/workspace/aditjadh/aisyssol/models--meta-llama--Llama-4-Scout-17B-16E-Instruct/snapshots/7dab2f5f854fe665b6b2f1eccbd3c48e5f627ad8"
 config = AutoConfig.from_pretrained(model_id)
-# For Testing Purpose Only
-config.text_config.num_hidden_layers = 4
-config.vision_config.num_hidden_layers = 2
 
-qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config
-)
-tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
+model = AutoModelForImageTextToText.from_pretrained(model_id, attn_implementation="eager", config=config)
+model.eval()
+tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
+
+### For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
+qeff_model = QEFFAutoModelForImageTextToText(model, kv_offload=True)
 
 ### For multi-image, the value of max_num_tiles should be the sum of the num_tiles values across all the images ###
 qeff_model.compile(
     prefill_seq_len=128,
-    ctx_len=5376,
+    ctx_len=8192,
     img_size=336,
     num_cores=16,
-    num_devices=8,
-    max_num_tiles=34,
+    num_devices=4,
+    max_num_tiles=45,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     aic_enable_depth_first=True,
@@ -69,7 +68,5 @@ inputs = processor.apply_chat_template(
 
 inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
 streamer = TextStreamer(tokenizer)
-output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3, 4, 5, 6, 7], generation_len=100)
-print(output.generated_ids)
-print(tokenizer.batch_decode(output.generated_ids))
+output = qeff_model.generate(inputs=inputs, device_id_vision=[32,33,34,35], device_id_lang=[36,37,38,39], generation_len=100)
 print(output)
