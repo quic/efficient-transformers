@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 import os
 import time
 from datetime import datetime
@@ -20,24 +21,24 @@ from QEfficient.finetune.configs.training import TrainConfig
 from QEfficient.finetune.utils.helper import (
     Task_Mode,
     get_autocast_ctx,
+    get_grad_scaler,
     get_op_verifier_ctx,
     get_rank,
     get_world_size,
+    init_qaic_profiling,
     is_rank_zero,
     save_to_json,
+    stop_qaic_profiling,
 )
 from QEfficient.finetune.utils.logging_utils import logger
 
 try:
     import torch_qaic  # noqa: F401
-    import torch_qaic.debug as qaic_debug  # noqa: F401
-    import torch_qaic.profile as qaic_profile  # noqa: F401
-    import torch_qaic.utils as qaic_utils  # noqa: F401
-    from torch.qaic.amp import GradScaler as QAicGradScaler
 except ImportError as e:
-    logger.log_rank_zero(f"{e}. Moving ahead without these qaic modules.")
-
-from torch.amp import GradScaler
+    logger.log_rank_zero(
+        f"Unable to import 'torch_qaic' package due to exception: {e}. Moving ahead without the torch_qaic extension.",
+        logging.WARNING,
+    )
 
 
 def train(
@@ -95,11 +96,7 @@ def train(
         tensorboard_log_dir = train_config.output_dir + "/runs/" + f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         tensorboard_updates = SummaryWriter(log_dir=tensorboard_log_dir)
 
-    if train_config.grad_scaler:
-        if device.startswith("qaic"):
-            scaler = QAicGradScaler()
-        else:
-            scaler = GradScaler(device_type)
+    scaler = get_grad_scaler(train_config.grad_scaler, device_type)
 
     loss_0_counter = torch.tensor([0]).to(device)
 
@@ -115,7 +112,7 @@ def train(
         acc_helper = torchmetrics.classification.MulticlassAccuracy(num_classes=num_classes).to(device)
 
     autocast_ctx = get_autocast_ctx(train_config.use_autocast, device_type, dtype=torch.float16)
-    op_verifier_ctx = partial(get_op_verifier_ctx, train_config.opByOpVerifier, device, train_config.output_dir)
+    op_verifier_ctx = partial(get_op_verifier_ctx, train_config.opByOpVerifier, device_type, train_config.output_dir)
 
     # Start the training loop
     for epoch in range(train_config.num_epochs):
@@ -127,10 +124,9 @@ def train(
 
         if train_config.use_peft and train_config.from_peft_checkpoint:
             intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
+            intermediate_step = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1])
             if epoch < intermediate_epoch:
                 logger.log_rank_zero(f"Skipping epoch {epoch + 1} since fine tuning has already completed for it.")
-                # to bring the count of train_step in sync with where it left off
-                total_train_steps += len(train_dataloader)
                 continue
 
         logger.log_rank_zero(f"Starting epoch {epoch + 1}/{train_config.num_epochs}")
@@ -148,24 +144,22 @@ def train(
             dynamic_ncols=True,
         )
 
-        # enable profile for qaic
-        qaic_profile.start_profiling(device, 1) if train_config.use_profiler else None
+        init_qaic_profiling(train_config.use_profiler, device_type)
+
         num_dummy_samples = 0
         for step, batch in enumerate(train_dataloader):
+            # total_train_steps indicates the cumulative number of training steps completed across all epochs.
+            # When resuming fine-tuning from previously saved checkpoints, total_train_steps indicates the total number of steps trained across the earlier session and the ongoing one.
+            total_train_steps = (epoch) * len(train_dataloader) + step
             # resume training from a particular checkpoint, assuming the dataset is not shuffled
             if train_config.use_peft and train_config.from_peft_checkpoint:
-                intermediate_step = int(train_config.from_peft_checkpoint.split("/")[-1].split("_")[-1])
-                intermediate_epoch = int(train_config.from_peft_checkpoint.split("/")[-2].split("_")[-1]) - 1
                 # to bring the count of train_step in sync with where it left off
                 if epoch == intermediate_epoch and step == 0:
-                    total_train_steps += intermediate_step
                     logger.log_rank_zero(
                         f"Skipping first {intermediate_step} steps for epoch {epoch + 1}, since fine tuning has already completed for it."
                     )
                 if epoch == intermediate_epoch and step < intermediate_step:
-                    total_train_steps += 1
                     continue
-            total_train_steps += 1
 
             if train_config.max_train_step > 0 and total_train_steps >= train_config.max_train_step:
                 max_steps_reached = True
@@ -238,12 +232,12 @@ def train(
             else:
                 num_samples_in_cur_update = len(train_dataloader) % train_config.gradient_accumulation_steps
 
-            loss = loss / num_samples_in_cur_update
+            normalized_loss = loss / num_samples_in_cur_update
 
             if train_config.grad_scaler:
-                scaler.scale(loss).backward()  # backward pass
+                scaler.scale(normalized_loss).backward()  # backward pass
             else:
-                loss.backward()  # backward pass
+                normalized_loss.backward()  # backward pass
 
             if is_optimizer_step:
                 if train_config.grad_scaler:
@@ -256,7 +250,7 @@ def train(
 
             # Save the trained checkpoints for every given steps
             if (step + 1) % train_config.intermediate_step_save == 0:
-                qaic_profile.stop_profiling(device) if train_config.use_profiler else None
+                stop_qaic_profiling(train_config.use_profiler, device_type)
                 if train_config.enable_ddp:
                     if dist.get_rank() == 0:
                         model.module.save_pretrained(
@@ -361,7 +355,6 @@ def train(
         logger.log_rank_zero(
             f"Epoch {epoch + 1}: Train epoch loss: {train_epoch_loss:.4f}, Train metric: {train_epoch_metric:.4f}, Epoch time {epoch_end_time:.2f} sec"
         )
-
         # Saving the results every epoch to plot later
         if train_config.save_metrics:
             save_to_json(
@@ -380,9 +373,14 @@ def train(
 
     results["last_epoch_train_loss"] = train_epoch_loss.cpu()
     results["last_epoch_train_metric"] = train_epoch_metric.cpu()
+    results["train_step_loss"] = train_step_loss
+    results["train_step_metric"] = train_step_metric
+
     if train_config.run_validation:
         results["last_epoch_eval_loss"] = eval_epoch_loss.cpu()
         results["last_epoch_eval_metric"] = eval_epoch_metric.cpu()
+        results["eval_step_loss"] = eval_step_loss
+        results["eval_step_metric"] = eval_step_metric
     results["avg_epoch_time"] = avg_epoch_time
     results["avg_checkpoint_time"] = avg_checkpoint_time
     if train_config.save_metrics:

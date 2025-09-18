@@ -10,18 +10,39 @@ from typing import List
 import numpy as np
 import pytest
 
-from QEfficient import QEFFAutoModelForCausalLM as AutoModelForCausalLM
+from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
-from QEfficient.utils.device_utils import get_available_device_id
 
-configs = [
+sampler_transform_configs = [
     pytest.param(
-        "meta-llama/Llama-3.1-8B",  # model
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
+        Constants.INPUT_STR * 2,  # prompts
+        32,  # prefill_seq_len
+        128,  # ctx_len
+        20,  # generation_len
+        2,  # full_batch_size
+        1,  # spec_length
+    ),
+]
+greedy_sampling_configs = [
+    pytest.param(
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
         Constants.INPUT_STR * 4,  # prompts
         32,  # prefill_seq_len
-        256,  # ctx_len
+        128,  # ctx_len
+        20,  # generation_len
+        4,  # full_batch_size
+        1,  # spec_length
+    ),
+]
+random_sampling_configs = [
+    pytest.param(
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # model
+        Constants.INPUT_STR * 4,  # prompts
+        32,  # prefill_seq_len
+        64,  # ctx_len
         20,  # generation_len
         4,  # full_batch_size
         1,  # spec_length
@@ -32,7 +53,7 @@ configs = [
 @pytest.mark.on_qaic
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length",
-    configs,
+    sampler_transform_configs,
 )
 def test_sampler_transform(
     model: str,
@@ -49,13 +70,25 @@ def test_sampler_transform(
     next tokens and/or probability distributions.
     """
     # Export and compile QEfficient models
-    qaic_config = {
-        "include_sampler": True,
-        "return_pdfs": False,
-        "max_top_k_ids": 512,
-    }
-    model_w_sampler = AutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=qaic_config)
-    model_wo_sampler = AutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=None)
+    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        num_hidden_layers=2,
+        qaic_config={
+            "include_sampler": True,
+            "return_pdfs": False,
+            "max_top_k_ids": 512,
+        },
+    )
+    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        num_hidden_layers=2,
+        qaic_config={
+            "include_sampler": False,
+            "return_pdfs": False,
+        },
+    )
     model_w_sampler_qpc_path: str = model_w_sampler.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
@@ -94,30 +127,20 @@ def test_sampler_transform(
     )
 
     # Validate sampler inputs
-    sampler_inputs = [
-        "last_accepted_output_tokens",
-        "repetition_penalties",
-        "frequency_penalties",
-        "presence_penalties",
-        "temperatures",
-        "top_ks",
-        "top_ps",
-        "min_ps",
-        "random_numbers",
-    ]
+    sampler_inputs = Constants.SAMPLER_INPUTS
     for input_name in sampler_inputs:
         assert input_name in model_w_sampler_session.input_names, (
-            f"Sampler input {input_name} not found in QPC compiled with Sampler"
+            f"Sampler input {input_name} not found in QPC compiled with On Device Sampler"
         )
         assert input_name not in model_wo_sampler_session.input_names, (
-            f"Sampler input {input_name} found in QPC compiled without Sampler"
+            f"Sampler input {input_name} found in QPC compiled without On Device Sampler"
         )
 
 
 @pytest.mark.on_qaic
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length",
-    configs,
+    greedy_sampling_configs,
 )
 def test_greedy_sampling(
     model: str,
@@ -132,13 +155,25 @@ def test_greedy_sampling(
     Test greedy sampling with QPC compiled with and without On Device Sampling.
     """
     # Export and compile QEfficient models
-    qaic_config = {
-        "include_sampler": True,
-        "return_pdfs": False,
-        "max_top_k_ids": 512,
-    }
-    model_w_sampler = AutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=qaic_config)
-    model_wo_sampler = AutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=None)
+    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        num_hidden_layers=4,
+        qaic_config={
+            "include_sampler": True,
+            "return_pdfs": False,
+            "max_top_k_ids": 512,
+        },
+    )
+    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        num_hidden_layers=4,
+        qaic_config={
+            "include_sampler": False,
+            "return_pdfs": False,
+        },
+    )
     model_w_sampler.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
@@ -165,7 +200,6 @@ def test_greedy_sampling(
     model_w_sampler_exec_info = model_w_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=get_available_device_id(),
         generation_len=generation_len,
         include_sampler=True,
         return_pdfs=False,
@@ -183,7 +217,6 @@ def test_greedy_sampling(
     model_wo_sampler_exec_info = model_wo_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=get_available_device_id(),
         generation_len=generation_len,
         include_sampler=False,
         return_pdfs=False,
@@ -202,7 +235,7 @@ def test_greedy_sampling(
 @pytest.mark.on_qaic
 @pytest.mark.parametrize(
     "model, prompts, prefill_seq_len, ctx_len, generation_len, full_batch_size, spec_length",
-    configs,
+    random_sampling_configs,
 )
 def test_random_sampling(
     model: str,
@@ -217,13 +250,23 @@ def test_random_sampling(
     Test random sampling with QPC compiled with and without On Device Sampling.
     """
     # Export and compile QEfficient models
-    qaic_config = {
-        "include_sampler": True,
-        "return_pdfs": False,
-        "max_top_k_ids": 512,
-    }
-    model_w_sampler = AutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=qaic_config)
-    model_wo_sampler = AutoModelForCausalLM.from_pretrained(model, continuous_batching=True, qaic_config=None)
+    model_w_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        qaic_config={
+            "include_sampler": True,
+            "return_pdfs": False,
+            "max_top_k_ids": 512,
+        },
+    )
+    model_wo_sampler = QEFFAutoModelForCausalLM.from_pretrained(
+        model,
+        continuous_batching=True,
+        qaic_config={
+            "include_sampler": False,
+            "return_pdfs": False,
+        },
+    )
     model_w_sampler.compile(
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
@@ -250,7 +293,6 @@ def test_random_sampling(
     model_w_sampler_exec_info = model_w_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=get_available_device_id(),
         generation_len=generation_len,
         include_sampler=True,
         return_pdfs=False,
@@ -268,7 +310,6 @@ def test_random_sampling(
     model_wo_sampler_exec_info = model_wo_sampler.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=get_available_device_id(),
         generation_len=generation_len,
         include_sampler=False,
         return_pdfs=False,

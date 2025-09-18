@@ -18,7 +18,9 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import padding_check_and_fix
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.sampler_utils import validate_sampler_inputs
 
 
 @dataclass
@@ -345,12 +347,12 @@ def cloud_ai_100_exec_kv(
         :Write_io_dir (str): Path to write the input and output files. ``Defaults to None``.
         :automation (bool): If true, it prints input, output, and performance stats. ``Defaults to False``.
         :prompt_to_lora_id_mapping (List[int]): Mapping to associate prompts with their respective LoRA adapter.
-        :include_sampler (bool): Enable/Disable sampling of next tokens.
-        :return_pdfs (bool): Return probability distributions along with sampled
+        :include_sampler (bool, default=False): Enable/Disable sampling of next tokens.
+        :return_pdfs (bool, default=False): Return probability distributions along with sampled
         next tokens. For Speculative Decoding Target Language Model,
         `return_pdfs`=True always. Otherwise, `return_pdfs`=True for Speculative
         Decoding Draft Language Model and `return_pdfs`=False for regular model.
-        sampling_params (Dict[str, Any]): A dictionary of sampling parameters supported by the QAIC backend.
+        sampling_params (Dict[str, Any], default=None): A dictionary of sampling parameters supported by the QAIC backend.
         The dictionary should contain the following keys:
         `repetition_penalties`, `frequency_penalties`, `presence_penalties`, `temperatures`, `top_ks`, `top_ps`,
         `min_ps`, and `random_numbers`. Each value should be a numpy array of shape (batch_size, 1).
@@ -433,7 +435,6 @@ class QEffTextGenerationBase:
         self._ctx_len = ctx_len
         self._write_io_dir = write_io_dir
         self.is_tlm = is_tlm
-        self.include_sampler = include_sampler
         self.return_pdfs = return_pdfs
         self.sampling_params = sampling_params
 
@@ -441,44 +442,9 @@ class QEffTextGenerationBase:
         self._session = QAICInferenceSession(qpc_path, device_id, enable_debug_logs=enable_debug_logs)
 
         # Validate sampler inputs for On-Device Sampling
-        sampler_inputs = [
-            "last_accepted_output_tokens",
-            "repetition_penalties",
-            "frequency_penalties",
-            "presence_penalties",
-            "temperatures",
-            "top_ks",
-            "top_ps",
-            "min_ps",
-            "random_numbers",
-        ]
-        count = 0
-        for session_input_name in self._session.input_names:
-            if session_input_name in sampler_inputs:
-                count += 1
-                if count == len(sampler_inputs):
-                    self.include_sampler = True
-                    break
-        if count == 0:
-            self.include_sampler = False
-        elif count < len(sampler_inputs):
-            raise ValueError(
-                "The provided QPC does not have the required number of inputs to run sampling "
-                f"on the QAIC device (only {count}/{len(sampler_inputs)} inputs provided). Partial "
-                "sampling support is not available. Please check the QPC and try again."
-            )
-
-        if include_sampler and not self.include_sampler:
-            logger.warning_once(
-                "User entered `include_sampler`=True. But the provided QPC is not compiled "
-                "to run sampling on the QAIC device. Falling back to the PyTorch backend."
-            )
-        elif (include_sampler is None or not include_sampler) and self.include_sampler:
-            raise ValueError(
-                "The provided QPC is compiled to run sampling on the QAIC device. "
-                "But the user did not enter `include_sampler`=True. Please make sure the input "
-                "is specified correctly."
-            )
+        self.include_sampler = validate_sampler_inputs(
+            session_inputs=set(self._session.input_names), include_sampler=include_sampler
+        )
 
         # Fetch the variables from the QPC
         self._vocab_size = self._fetch_vocab_size()  # Fetch Vocab size
@@ -644,16 +610,7 @@ class QEffTextGenerationBase:
             decode_inputs["batch_index"] = self.batch_index
         if self.include_sampler:
             decode_inputs["last_accepted_output_tokens"] = decode_inputs["input_ids"]
-            for op in [
-                "repetition_penalties",
-                "frequency_penalties",
-                "presence_penalties",
-                "temperatures",
-                "top_ks",
-                "top_ps",
-                "min_ps",
-                "random_numbers",
-            ]:
+            for op in Constants.SAMPLER_OPS:
                 if self.batch_index is not None:
                     decode_inputs[op] = self.sampling_params[op][self.batch_index.flatten()]
                 else:
@@ -819,16 +776,7 @@ class QEffTextGenerationBase:
             inputs["num_logits_to_keep"] = np.zeros((1, 1))
         if self.include_sampler:
             inputs["last_accepted_output_tokens"] = inputs["input_ids"]
-            for op in [
-                "repetition_penalties",
-                "frequency_penalties",
-                "presence_penalties",
-                "temperatures",
-                "top_ks",
-                "top_ps",
-                "min_ps",
-                "random_numbers",
-            ]:
+            for op in Constants.SAMPLER_OPS:
                 if decode_batch_id is not None:
                     inputs[op] = self.sampling_params[op][decode_batch_id.flatten()]
                 else:
