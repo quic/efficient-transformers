@@ -262,7 +262,7 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
             device=hidden_states.device, dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32
         )
 
-        cu_window_seqlens = torch.unique_consecutive(cu_window_seqlens)
+        # cu_window_seqlens = torch.unique_consecutive(cu_window_seqlens)
 
         seq_len, _ = hidden_states.size()
         hidden_states = hidden_states.reshape(seq_len // self.spatial_merge_unit, self.spatial_merge_unit, -1)
@@ -298,8 +298,6 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
         cu_seqlens = torch.cat([torch.tensor([0], dtype=cu_seqlens.dtype), cu_seqlens])
 
         for layer_num, blk in enumerate(self.blocks):
-            if layer_num == 1:
-                break
             if layer_num in self.fullatt_block_indexes:
                 cu_seqlens_now = cu_seqlens
             else:
