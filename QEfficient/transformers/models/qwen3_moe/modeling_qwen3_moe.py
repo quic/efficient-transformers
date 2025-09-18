@@ -133,7 +133,7 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
             self.up_proj_w = torch.stack(self.up_proj_w)
             self.down_proj_w = torch.stack(self.down_proj_w)
 
-    def all_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def alt_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
         T = B * S
         x = hidden_states.view(T, H)
