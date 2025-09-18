@@ -28,7 +28,7 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 ### use skip_vision=Ture, if want to run only text, ow false ###
-skip_vision = True
+skip_vision = False
 
 if skip_vision:
     ## Only Text ##
@@ -92,7 +92,7 @@ else:
         prefill_seq_len=128,
         ctx_len=4096,
         num_cores=16,
-        num_devices=8,
+        num_devices=16,
         height=1365,
         width=2044,
         mxfp6_matmul=True,
@@ -147,8 +147,9 @@ else:
         inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
     )
 
+    inputs.pop("image_grid_thw")
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, device_ids=[0, 1, 2, 3, 4, 5, 6, 7], generation_len=100)
+    output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
