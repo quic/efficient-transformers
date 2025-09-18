@@ -1617,7 +1617,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
-                model, comp_ctx_lengths=comp_ctx_lengths, kv_offload=kv_offload
+                model, comp_ctx_lengths=comp_ctx_lengths, prefill_ccl_len=prefill_ccl_len, kv_offload=kv_offload
             )
         return cls(
             model,

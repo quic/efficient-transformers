@@ -849,7 +849,7 @@ class QEffTextGenerationBase:
                             max_position_id = np.max(decode_inputs["position_ids"])
 
                             # Update ccl_id and comp_ctx_lengths based on the maximum position id
-                            ccl_id_initial = 3
+                            ccl_id_initial = self.prefill_ccl_len
                             ccl_id = ccl_id_initial
                             for i in range(ccl_id_initial, len(self.comp_ctx_lengths)):
                                 if max_position_id < self.comp_ctx_lengths[i]:
