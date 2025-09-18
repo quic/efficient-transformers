@@ -137,11 +137,12 @@ from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2RMSNorm,
 )
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    Qwen2_5_VisionTransformerPretrainedModel,
     Qwen2_5_VLAttention,
     Qwen2_5_VLDecoderLayer,
     Qwen2_5_VLForConditionalGeneration,
     Qwen2_5_VLModel,
-    Qwen2_5_VisionTransformerPretrainedModel,
+    Qwen2_5_VLVisionAttention,
 )
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2RMSNorm as Qwen2_5RMSNorm,
@@ -314,11 +315,12 @@ from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2Model,
 )
 from QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    QEffQwen2_5_VisionTransformerPretrainedModel,
     QEffQwen2_5_VLAttention,
     QEffQwen2_5_VLDecoderLayer,
     QEffQwen2_5_VLModel,
+    QEffQwen2_5_VLVisionAttention,
     QEffQwen_2_5_vl_ForConditionalGeneration,
-    QEffQwen2_5_VisionTransformerPretrainedModel,
 )
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
@@ -476,6 +478,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen2_5_VLAttention: QEffQwen2_5_VLAttention,
         Qwen2_5_VLDecoderLayer: QEffQwen2_5_VLDecoderLayer,
         Qwen2_5_VisionTransformerPretrainedModel: QEffQwen2_5_VisionTransformerPretrainedModel,
+        Qwen2_5_VLVisionAttention: QEffQwen2_5_VLVisionAttention,
         # Starcoder2
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,

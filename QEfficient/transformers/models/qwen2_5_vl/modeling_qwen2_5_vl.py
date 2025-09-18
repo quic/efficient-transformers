@@ -1,5 +1,6 @@
 import math
 from typing import Callable, List, Optional, Tuple, Union
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,11 +10,13 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
 )
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    Qwen2_5_VisionTransformerPretrainedModel,
     Qwen2_5_VLAttention,
     Qwen2_5_VLConfig,
     Qwen2_5_VLDecoderLayer,
     Qwen2_5_VLRotaryEmbedding,
-    Qwen2_5_VisionTransformerPretrainedModel,
+    Qwen2_5_VLVisionAttention,
+    apply_rotary_pos_emb_vision,
     repeat_kv,
     rotate_half,
 )
@@ -73,7 +76,170 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
 
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
+
+class QEffQwen2_5_VLVisionAttention(Qwen2_5_VLVisionAttention):
+    def __init__(self, dim: int, num_heads: int = 16) -> None:
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.qkv = nn.Linear(dim, dim * 3, bias=True)
+        self.proj = nn.Linear(dim, dim)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        rotary_pos_emb: Optional[torch.Tensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    ) -> torch.Tensor:
+        seq_length = hidden_states.shape[0]
+        q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+        if position_embeddings is None:
+            logger.warning_once(
+                "The attention layers in this model are transitioning from computing the RoPE embeddings internally "
+                "through `rotary_pos_emb` (2D tensor of RoPE theta values), to using externally computed "
+                "`position_embeddings` (Tuple of tensors, containing cos and sin). In v4.54 `rotary_pos_emb` will be "
+                "removed and `position_embeddings` will be mandatory."
+            )
+            emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
+            cos = emb.cos()
+            sin = emb.sin()
+        else:
+            cos, sin = position_embeddings
+        q, k = apply_rotary_pos_emb_vision(q, k, cos, sin)
+
+        attention_mask = torch.full(
+            [1, seq_length, seq_length], torch.finfo(q.dtype).min, device=q.device, dtype=q.dtype
+        )
+
+        # Create index grids
+        seq_len = attention_mask.shape[-1]
+        rows = torch.arange(seq_len).view(1, -1)
+        cols = torch.arange(seq_len).view(-1, 1)
+
+        # Prepare start and end indices
+        start = cu_seqlens[:-1].view(-1, 1, 1)
+        end = cu_seqlens[1:].view(-1, 1, 1)
+
+        # Create block masks using broadcasting
+        row_mask = (rows >= start) & (rows < end)
+        col_mask = (cols >= start) & (cols < end)
+        block_mask = row_mask & col_mask  # shape: (num_blocks, seq_len, seq_len)
+
+        # Combine all blocks into one mask
+        final_mask = torch.ones((seq_len, seq_len), dtype=torch.float32)
+        final_mask[block_mask.any(dim=0)] = 0
+
+        final_mask = torch.where(final_mask == 1.0, torch.finfo(q.dtype).min, final_mask)
+
+        attention_mask[0] = final_mask
+
+        q = q.transpose(0, 1)
+        k = k.transpose(0, 1)
+        v = v.transpose(0, 1)
+        attn_weights = torch.matmul(q, k.transpose(1, 2)) / math.sqrt(self.head_dim)
+        attn_weights = attn_weights + attention_mask
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
+        attn_output = torch.matmul(attn_weights, v)
+        attn_output = attn_output.transpose(0, 1)
+        attn_output = attn_output.reshape(seq_length, -1)
+        attn_output = self.proj(attn_output)
+        return attn_output
+
+
 class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPretrainedModel):
+    def rot_pos_emb(self, grid_thw):
+        pos_ids = []
+
+        t, h, w = grid_thw.shape
+
+        hpos_ids = torch.arange(h).unsqueeze(1).expand(-1, w)
+        hpos_ids = hpos_ids.reshape(
+            h // self.spatial_merge_size,
+            self.spatial_merge_size,
+            w // self.spatial_merge_size,
+            self.spatial_merge_size,
+        )
+        hpos_ids = hpos_ids.permute(0, 2, 1, 3)
+        hpos_ids = hpos_ids.flatten()
+
+        wpos_ids = torch.arange(w).unsqueeze(0).expand(h, -1)
+        wpos_ids = wpos_ids.reshape(
+            h // self.spatial_merge_size,
+            self.spatial_merge_size,
+            w // self.spatial_merge_size,
+            self.spatial_merge_size,
+        )
+        wpos_ids = wpos_ids.permute(0, 2, 1, 3)
+        wpos_ids = wpos_ids.flatten()
+        pos_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
+        pos_ids = torch.cat(pos_ids, dim=0)
+        max_grid_size = max(grid_thw.shape)
+        rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size)
+        rotary_pos_emb = rotary_pos_emb_full[pos_ids].flatten(1)
+        return rotary_pos_emb
+
+    def get_window_index(self, grid_thw):
+        window_index: list = []
+        cu_window_seqlens: list = [0]
+        window_index_id = 0
+        vit_merger_window_size = self.window_size // self.spatial_merge_size // self.patch_size
+
+        grid_t, grid_h, grid_w = grid_thw.shape
+
+        # for grid_t, grid_h, grid_w in grid_thw:
+        llm_grid_h, llm_grid_w = (
+            grid_h // self.spatial_merge_size,
+            grid_w // self.spatial_merge_size,
+        )
+        index = torch.arange(grid_t * llm_grid_h * llm_grid_w).reshape(grid_t, llm_grid_h, llm_grid_w)
+
+        pad_h = vit_merger_window_size - llm_grid_h % vit_merger_window_size
+        pad_w = vit_merger_window_size - llm_grid_w % vit_merger_window_size
+        num_windows_h = (llm_grid_h + pad_h) // vit_merger_window_size
+        num_windows_w = (llm_grid_w + pad_w) // vit_merger_window_size
+
+        index_padded = F.pad(index, (0, pad_w, 0, pad_h), "constant", -100)
+
+        # return index_padded, index_padded
+        index_padded = index_padded.reshape(
+            grid_t,
+            num_windows_h,
+            vit_merger_window_size,
+            num_windows_w,
+            vit_merger_window_size,
+        )
+        index_padded = index_padded.permute(0, 1, 3, 2, 4).reshape(
+            grid_t,
+            num_windows_h * num_windows_w,
+            vit_merger_window_size,
+            vit_merger_window_size,
+        )
+
+        seqlens = (index_padded != -100).sum([2, 3]).reshape(-1)
+
+        index_padded = index_padded.reshape(-1)
+
+        mask = (index_padded == -100).to(torch.int32)
+
+        if torch.jit.is_tracing():
+            order = torch.argsort(mask)
+        else:
+            order = torch.argsort(mask, stable=True)
+
+        index_new = index_padded[order]
+        index_new = index_new[: index.reshape(-1).size(0)]
+
+        window_index.append(index_new + window_index_id)
+
+        cu_seqlens_tmp = seqlens.cumsum(0) * self.spatial_merge_unit + cu_window_seqlens[-1]
+
+        cu_window_seqlens = torch.cat([torch.tensor([0], dtype=cu_seqlens_tmp.dtype), cu_seqlens_tmp])
+
+        window_index_id += grid_t * llm_grid_h * llm_grid_w
+        window_index = torch.cat(window_index, dim=0)
+
+        return window_index, cu_window_seqlens
 
     def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor) -> torch.Tensor:
         """
@@ -87,47 +253,58 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
             `torch.Tensor`: hidden_states.
         """
         hidden_states = self.patch_embed(hidden_states)
+
         rotary_pos_emb = self.rot_pos_emb(grid_thw)
+
         window_index, cu_window_seqlens = self.get_window_index(grid_thw)
-        cu_window_seqlens = torch.tensor(
-            cu_window_seqlens,
-            device=hidden_states.device,
-            dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
+
+        cu_window_seqlens = cu_window_seqlens.to(
+            device=hidden_states.device, dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32
         )
+
         cu_window_seqlens = torch.unique_consecutive(cu_window_seqlens)
 
         seq_len, _ = hidden_states.size()
         hidden_states = hidden_states.reshape(seq_len // self.spatial_merge_unit, self.spatial_merge_unit, -1)
+
         hidden_states = hidden_states[window_index, :, :]
-        hidden_states = hidden_states.reshape(-1,hidden_states.shape[2])
-        rotary_pos_emb = rotary_pos_emb.reshape(-1, self.spatial_merge_unit, rotary_pos_emb.shape[1])
+
+        hidden_states = hidden_states.reshape(seq_len, -1)
+        rotary_pos_emb = rotary_pos_emb.reshape(seq_len // self.spatial_merge_unit, self.spatial_merge_unit, -1)
         rotary_pos_emb = rotary_pos_emb[window_index, :, :]
-        rotary_pos_emb = rotary_pos_emb.reshape(-1, rotary_pos_emb.shape[2])
+        rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
         emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
         position_embeddings = (emb.cos(), emb.sin())
 
-        cu_seqlens = torch.repeat_interleave(grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]).cumsum(
-            dim=0,
-            # Select dtype based on the following factors:
-            #  - FA2 requires that cu_seqlens_q must have dtype int32
-            #  - torch.onnx.export requires that cu_seqlens_q must have same dtype as grid_thw
-            # See https://github.com/huggingface/transformers/pull/34852 for more information
-            dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
+        t, h, w = grid_thw.shape
+
+        t = torch.arange(t, t + 1).squeeze()
+        h = torch.arange(h, h + 1).squeeze()
+        w = torch.arange(w, w + 1).squeeze()
+
+        cu_seqlens = (
+            (h * w)
+            .expand(t)
+            .cumsum(
+                dim=0,
+                # Select dtype based on the following factors:
+                #  - FA2 requires that cu_seqlens_q must have dtype int32
+                #  - torch.onnx.export requires that cu_seqlens_q must have same dtype as grid_thw
+                # See https://github.com/huggingface/transformers/pull/34852 for more information
+                dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
+            )
         )
-        cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
+
+        cu_seqlens = torch.cat([torch.tensor([0], dtype=cu_seqlens.dtype), cu_seqlens])
 
         for layer_num, blk in enumerate(self.blocks):
-            # if layer_num == 2:
-            #     break
+            if layer_num == 1:
+                break
             if layer_num in self.fullatt_block_indexes:
                 cu_seqlens_now = cu_seqlens
             else:
                 cu_seqlens_now = cu_window_seqlens
-            # if self.gradient_checkpointing and self.training:
-            #     hidden_states = self._gradient_checkpointing_func(
-            #         blk.__call__, hidden_states, cu_seqlens_now, None, position_embeddings
-            #     )
-            # else:
+
             hidden_states = blk(hidden_states, cu_seqlens=cu_seqlens_now, position_embeddings=position_embeddings)
 
         hidden_states = self.merger(hidden_states)
@@ -422,8 +599,7 @@ class QEffQwen_2_5_vl_EncoderWrapper(nn.Module):
         self.model.vision_model = self.model.visual
 
     def forward(self, pixel_values, image_grid_thw):
-        grid_thw = torch.tensor([[image_grid_thw.shape[0], image_grid_thw.shape[1], image_grid_thw.shape[2]]])
-        image_embeds = self.model.visual(pixel_values, grid_thw=grid_thw)
+        image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)
         return image_embeds
 
 
@@ -468,11 +644,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             vision_size,
             self.model.config.hidden_size,
         )
-        inputs_shapes["image_grid_thw"] = (
-            1,
-            98,
-            146
-        )
+        inputs_shapes["image_grid_thw"] = (1, 98, 146)
         inputs_shapes["position_ids"] = (
             3,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
@@ -485,7 +657,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         vision_inputs = {}
         lang_inputs = {}
         vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
-        vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.float32)
+        vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.int64)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
         lang_inputs["position_ids"] = (
@@ -531,17 +703,18 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         kv_offload: bool = False,
         **compiler_options,
     ):
-
         if height is None or width is None:
             height = 1365
             width = 2048
-            logger.warning("Setting height and width to be 1365 and 2048 respectively, as it was neither passed nor found in vision_config")
+            logger.warning(
+                "Setting height and width to be 1365 and 2048 respectively, as it was neither passed nor found in vision_config"
+            )
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         channel = 3
         patch_size = self.config.vision_config.patch_size
         temporal_patch_size = self.config.vision_config.temporal_patch_size
-        
+
         IMAGE_FACTOR = 28
         MIN_PIXELS = 4 * 28 * 28
         MAX_PIXELS = 16384 * 28 * 28
@@ -550,18 +723,21 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         def round_by_factor(number: int, factor: int) -> int:
             """Returns the closest integer to 'number' that is divisible by 'factor'."""
             return round(number / factor) * factor
-        
+
         def ceil_by_factor(number: int, factor: int) -> int:
             """Returns the smallest integer greater than or equal to 'number' that is divisible by 'factor'."""
             return math.ceil(number / factor) * factor
-
 
         def floor_by_factor(number: int, factor: int) -> int:
             """Returns the largest integer less than or equal to 'number' that is divisible by 'factor'."""
             return math.floor(number / factor) * factor
 
         def smart_resize(
-            height: int, width: int, factor: int = IMAGE_FACTOR, min_pixels: int = MIN_PIXELS, max_pixels: int = MAX_PIXELS
+            height: int,
+            width: int,
+            factor: int = IMAGE_FACTOR,
+            min_pixels: int = MIN_PIXELS,
+            max_pixels: int = MAX_PIXELS,
         ) -> tuple[int, int]:
             """
             Rescales the image so that the following conditions are met:
@@ -588,20 +764,19 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                 w_bar = ceil_by_factor(width * beta, factor)
             return h_bar, w_bar
 
-
         resized_height, resized_width = smart_resize(height=height, width=width)
         grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
         grid_height = grid_h * grid_w
-        grid_width  =  patch_size * patch_size * temporal_patch_size * channel
+        grid_width = patch_size * patch_size * temporal_patch_size * channel
         vision_size = grid_height // 4
 
         vision = [
             {
-                "vision_size": vision_size, 
-                "grid_height": grid_height, 
+                "vision_size": vision_size,
+                "grid_height": grid_height,
                 "grid_width": grid_width,
                 "grid_h": grid_h,
-                "grid_w": grid_w
+                "grid_w": grid_w,
             }
         ]
         lang = [
@@ -634,7 +809,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
-            "image_grid_thw": {1: "grid_h", 2: "grid_w"}
+            "image_grid_thw": {1: "grid_h", 2: "grid_w"},
         }
 
         lang_dynamic_axes = {
