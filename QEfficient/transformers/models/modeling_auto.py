@@ -1316,6 +1316,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         if "position_ids" in inputs:
             lang_inputs["position_ids"] = inputs["position_ids"]
+            lang_inputs.pop("attention_mask")
         else:
             lang_inputs["position_ids"] = np.where(
                 lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
@@ -1340,7 +1341,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         for i in range(num_chunks):
             chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][
-                :, i * prefill_seq_len : (i + 1) * prefill_seq_len
+                :, :, i * prefill_seq_len : (i + 1) * prefill_seq_len
             ]
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
