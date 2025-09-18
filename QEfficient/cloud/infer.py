@@ -143,8 +143,12 @@ def main(
         :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
         :trust_remote_code (bool): Trust remote code execution. ``Defaults to False.``
         :kwargs: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
-                -allocator_dealloc_delay=1 -> -allocator-dealloc-delay=1
-                -qpc_crc=True -> -qpc-crc
+
+            - `allocator_dealloc_delay=1` → `-allocator-dealloc-delay=1`
+            - `qpc_crc=True` → `-qpc-crc`
+            - `aic_hw_version=ai100` → `-aic-hw-version=ai100`
+            - `aic_hw_version=ai200` → `-aic-hw-version=ai200`
+
 
     .. code-block:: bash
 
@@ -231,7 +235,6 @@ def main(
             tokenizer,
             prompts=prompt,
             device_id=device_group,
-            prompt=prompt,
             prompts_txt_file_path=prompts_txt_file_path,
             generation_len=generation_len,
         )
