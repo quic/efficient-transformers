@@ -133,6 +133,39 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
             self.up_proj_w = torch.stack(self.up_proj_w)
             self.down_proj_w = torch.stack(self.down_proj_w)
 
+    def all_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        B, S, H = hidden_states.shape
+        T = B * S
+        x = hidden_states.view(T, H)
+
+        router_logits = self.gate(x)  # [T, E]
+        prob = F.softmax(router_logits, -1, dtype=torch.float)
+        top_w, top_i = torch.topk(prob, self.top_k, -1)
+        if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
+            top_w /= top_w.sum(-1, keepdim=True)
+        top_w = top_w.to(x.dtype)
+        masked_logits = torch.zeros_like(router_logits)
+        masked_logits.scatter_(1, top_i, top_w)
+
+        # Routing weights for each expert [T, E]
+        routing_weights = masked_logits
+
+        # ────────────────── allocate the output tensor ─────
+        expert_out = x.new_zeros((T, H))  # accumulation buffer
+
+        # ───────────────────────── Expert computation loop ─────────────────────────────
+        for e in range(self.num_experts):
+            routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
+            W_g, W_u = self.experts[e].gate_proj, self.experts[e].up_proj  # [H, I], [H, I]
+            W_d = self.experts[e].down_proj  # [I, H]
+            gate = W_g(x)  # [T, I]
+            up = W_u(x)  # [T, I]
+            down = W_d(up * self.experts[e].act_fn(gate))  # [T, H]
+
+            masked_down = torch.where(routing_weight > 0, down * routing_weight, torch.zeros_like(expert_out))
+            expert_out += masked_down
+        return expert_out.view(B, S, H), router_logits
+
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
         T = B * S
