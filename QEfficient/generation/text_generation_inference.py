@@ -912,11 +912,6 @@ class QEffTextGenerationBase:
                 (self.batch_size, self._decode_seq_len, self._vocab_size), dtype=np.float32
             )
             self._session.set_buffers({"logits": logits_out_placeholder})
-        else:
-            self._set_output_buffers(
-                batch_size=self.batch_size,
-                sequence_length=self._decode_seq_len,
-            )
         finished_sequences = decode_inputs["input_ids"] == self.tokenizer.eos_token_id
         num_token = 0
         for num_token in range(1, generation_len):
