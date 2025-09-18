@@ -1356,7 +1356,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
-        super().__init__(model, **kwargs)
+        super().__init__(model, qaic_config=qaic_config, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
         self.model.qaic_config = qaic_config
@@ -1370,6 +1370,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
         self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
+        # TODO : Update in qaic_config isn't updated in the hash due to SpDTransforms. Need to move
+        # SpDTransforms to PytorchTransforms.
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
 
@@ -1826,6 +1828,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 device_id=device_id,
                 generation_len=generation_len,
                 is_tlm=self.is_tlm,
+                **kwargs,
             )
         else:
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
