@@ -21,12 +21,17 @@ processor = AutoProcessor.from_pretrained(model_id)
 
 # pass HF_TOKEN if gated model
 # For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
-comp_ctx_lengths = [4096,6144,8192]  # None
-ctx_len=8192
+comp_ctx_lengths = [4096, 6144, 8192]
+ctx_len = 8192
 prefill_ccl_len = 1
-device_id=[24,25,26,27]
+device_id = [24, 25, 26, 27]
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, config=config, attn_implementation="eager", kv_offload=True, comp_ctx_lengths=comp_ctx_lengths, prefill_ccl_len=prefill_ccl_len
+    model_id,
+    config=config,
+    attn_implementation="eager",
+    kv_offload=True,
+    comp_ctx_lengths=comp_ctx_lengths,
+    prefill_ccl_len=prefill_ccl_len,
 )
 
 ### use skip_vision=Ture, if want to run only text, or false ###

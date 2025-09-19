@@ -23,11 +23,13 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_co
 processor = AutoProcessor.from_pretrained(model_id)
 
 ### For running the model in single QPC approach use kv_offload=False. For Dual QPC approach use kv_offload=True ###
-comp_ctx_lengths = [2048,4096,6144,8192]  # None
-ctx_len=8192
+comp_ctx_lengths = [2048, 4096, 6144, 8192]
+ctx_len = 8192
 prefill_ccl_len = 1
-device_id=[32,33,34,35]
-qeff_model = QEFFAutoModelForImageTextToText(model, kv_offload=False, comp_ctx_lengths=comp_ctx_lengths, prefill_ccl_len=prefill_ccl_len)
+device_id = [32, 33, 34, 35]
+qeff_model = QEFFAutoModelForImageTextToText(
+    model, kv_offload=False, comp_ctx_lengths=comp_ctx_lengths, prefill_ccl_len=prefill_ccl_len
+)
 
 ### use skip_vision=Ture, if want to run only text, ow false ###
 skip_vision = False
@@ -52,11 +54,13 @@ if skip_vision:
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "I N X U D A B H A I E Q O E C B N R O Z Y D D S F H R D A R M U W U H Z A U Y R X S L H R K D C O F G L I V R C W X Y K L I X B A V P W S C Y A Z X W P O I N X U D A B H A I E Q O E C B N R O Z Y D D S F H R D A R M U W U H Z A U Y R X S L H R K D C O F G L I V R C W X Y K L I X B A V P W S C Y A Z X W P O R U C C N H L D I U C S N P S N L N J L P E Z I I N Q H X F M D O N E V Y T H I N X U D A B H A I E Q O E C B N R O Z Y D D S F H R D A R M U W U H Z A U Y R X S L H R K D C O F G L I V R C W X Y K L I X B A V P W S C Y A Z X W P O R U C C N H L D I U C S N P S N L N J L P E Z I I N Q H X F M D O N E V Y T H"},
+                {
+                    "type": "text",
+                    "text": "I N X U D A B H A I E Q O E C B N R O Z Y D D S F H R D A R M U W U H Z A U Y R X S L H R K D C O F G L I V R C W X Y K L I X B A V P W S C Y A Z X W P O I N X U D A B H A I E Q O E C B N R O Z Y D D S F H R D A R M U W U H Z A U Y R X S L H R K D C O F G L I V R C W X Y K L I X B A V P W S C Y A Z X W P O R U C C N H L D I U C S N P S N L N J L P E Z I I N Q H X F M D O N E V Y T H I N X U D A B H A I E Q O E C B N R O Z Y D D S F H R D A R M U W U H Z A U Y R X S L H R K D C O F G L I V R C W X Y K L I X B A V P W S C Y A Z X W P O R U C C N H L D I U C S N P S N L N J L P E Z I I N Q H X F M D O N E V Y T H",
+                },
             ],
         },
     ]
-                # {"type": "text", "text": "Tell me about yourself."},
 
     inputs = processor.apply_chat_template(
         messages,

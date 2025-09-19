@@ -39,7 +39,12 @@ def run_model(
     # The outputs of the Vision Encoder are then passed to the Language model via host in this case.
 
     model = QEFFAutoModelForImageTextToText.from_pretrained(
-        model_name, token=token, attn_implementation="eager", kv_offload=kv_offload, comp_ctx_lengths=comp_ctx_lengths, prefill_ccl_len=prefill_ccl_len
+        model_name,
+        token=token,
+        attn_implementation="eager",
+        kv_offload=kv_offload,
+        comp_ctx_lengths=comp_ctx_lengths,
+        prefill_ccl_len=prefill_ccl_len,
     )
 
     ## STEP - 2 Export & Compile the Model
@@ -84,7 +89,6 @@ def run_model(
 
 if __name__ == "__main__":
     # Model name and Input parameters
-    # model_name = "meta-llama/Llama-3.2-11B-Vision-Instruct"
     model_name = "llava-hf/llava-1.5-7b-hf"
     query = "Describe this image."
     image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
@@ -94,13 +98,10 @@ if __name__ == "__main__":
     prefill_seq_len = 32
     ctx_len = 512
     generation_len = 128
-    #mllama
-    # img_size = 560
-    #llava
     img_size = 336
     num_cores = 16
     num_devices = 4
-    comp_ctx_lengths = [128,256,384,512]
+    comp_ctx_lengths = [128, 256, 384, 512]
     prefill_ccl_len = 2
 
     run_model(

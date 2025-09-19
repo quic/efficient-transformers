@@ -180,14 +180,20 @@ def run_intern_on_aic(
     # The original Intern-VL model, despite being multimodal, is loaded using `AutoModelForCausalLM` in Huggingface.
     # To maintain compatibility, we load this model using `QEFFAutoModelForCausalLM`.
 
-    comp_ctx_lengths = [4096,6144,8192]  # None
-    ctx_len=8192
+    comp_ctx_lengths = [4096, 6144, 8192]
+    ctx_len = 8192
     prefill_ccl_len = 1
-    device_id=[28,29,30,31]
+    device_id = [28, 29, 30, 31]
 
     # model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=kv_offload, trust_remote_code=True)
 
-    model = QEFFAutoModelForCausalLM.from_pretrained(model_name, kv_offload=kv_offload, comp_ctx_lengths=comp_ctx_lengths, prefill_ccl_len=prefill_ccl_len, trust_remote_code=True)
+    model = QEFFAutoModelForCausalLM.from_pretrained(
+        model_name,
+        kv_offload=kv_offload,
+        comp_ctx_lengths=comp_ctx_lengths,
+        prefill_ccl_len=prefill_ccl_len,
+        trust_remote_code=True,
+    )
 
     ## STEP 2 -- EXPORT & COMPILE THE MODEL
 
