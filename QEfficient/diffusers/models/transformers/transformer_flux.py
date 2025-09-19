@@ -4,117 +4,40 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
-from typing import Any, Dict, Optional, Tuple, Union
+import os
+from typing import Any, Callable, Dict, List, Tuple, Optional, Union
+from venv import logger
 
-import numpy as np
 import torch
-from diffusers.models.attention_dispatch import dispatch_attention_fn
+import torch.nn as nn
+import numpy as np
+
+from diffusers.models.transformers.transformer_flux import FluxAttention,FluxSingleTransformerBlock, FluxTransformerBlock, FluxTransformer2DModel, FluxPosEmbed, FluxAttnProcessor
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
-from diffusers.models.transformers.transformer_flux import (
-    FluxAttention,
-    FluxAttnProcessor,
-    FluxSingleTransformerBlock,
-    FluxTransformer2DModel,
-    FluxTransformerBlock,
-    _get_qkv_projections,
-)
+from diffusers.models.embeddings import CombinedTimestepGuidanceTextProjEmbeddings, CombinedTimestepTextProjEmbeddings
+from diffusers.models.attention import FeedForward
 
-from QEfficient.utils.logging_utils import logger
-
-
-def qeff_apply_rotary_emb(
-    x: torch.Tensor, freqs_cis: Union[torch.Tensor, Tuple[torch.Tensor]]
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Apply rotary embeddings to input tensors using the given frequency tensor. This function applies rotary embeddings
-    to the given query or key 'x' tensors using the provided frequency tensor 'freqs_cis'. The input tensors are
-    reshaped as complex numbers, and the frequency tensor is reshaped for broadcasting compatibility. The resulting
-    tensors contain rotary embeddings and are returned as real tensors.
-
-    Args:
-        x (`torch.Tensor`):
-            Query or key tensor to apply rotary embeddings. [B, H, S, D] xk (torch.Tensor): Key tensor to apply
-        freqs_cis (`Tuple[torch.Tensor]`): Precomputed frequency tensor for complex exponentials. ([S, D], [S, D],)
-
-    Returns:
-        Tuple[torch.Tensor, torch.Tensor]: Tuple of modified query tensor and key tensor with rotary embeddings.
-    """
-    cos, sin = freqs_cis  # [S, D]
-    cos = cos[None, :, None, :]
-    sin = sin[None, :, None, :]
-    cos, sin = cos.to(x.device), sin.to(x.device)
-    B, S, H, D = x.shape
-    x_real, x_imag = x.reshape(B, -1, H, D // 2, 2).unbind(-1)
-    x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
-    out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
-    return out
-
-
-class QEffFluxAttnProcessor(FluxAttnProcessor):
-    _attention_backend = None
-    _parallel_config = None
-
-    def __call__(
-        self,
-        attn: "QEffFluxAttention",
-        hidden_states: torch.Tensor,
-        encoder_hidden_states: torch.Tensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        image_rotary_emb: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        query, key, value, encoder_query, encoder_key, encoder_value = _get_qkv_projections(
-            attn, hidden_states, encoder_hidden_states
-        )
-
-        query = query.unflatten(-1, (attn.heads, -1))
-        key = key.unflatten(-1, (attn.heads, -1))
-        value = value.unflatten(-1, (attn.heads, -1))
-
-        query = attn.norm_q(query)
-        key = attn.norm_k(key)
-
-        if attn.added_kv_proj_dim is not None:
-            encoder_query = encoder_query.unflatten(-1, (attn.heads, -1))
-            encoder_key = encoder_key.unflatten(-1, (attn.heads, -1))
-            encoder_value = encoder_value.unflatten(-1, (attn.heads, -1))
-
-            encoder_query = attn.norm_added_q(encoder_query)
-            encoder_key = attn.norm_added_k(encoder_key)
-
-            query = torch.cat([encoder_query, query], dim=1)
-            key = torch.cat([encoder_key, key], dim=1)
-            value = torch.cat([encoder_value, value], dim=1)
-
-        if image_rotary_emb is not None:
-            query = qeff_apply_rotary_emb(query, image_rotary_emb)
-            key = qeff_apply_rotary_emb(key, image_rotary_emb)
-
-        hidden_states = dispatch_attention_fn(
-            query, key, value, attn_mask=attention_mask, backend=self._attention_backend
-        )
-        hidden_states = hidden_states.flatten(2, 3)
-        hidden_states = hidden_states.to(query.dtype)
-
-        if encoder_hidden_states is not None:
-            encoder_hidden_states, hidden_states = hidden_states.split_with_sizes(
-                [encoder_hidden_states.shape[1], hidden_states.shape[1] - encoder_hidden_states.shape[1]], dim=1
-            )
-            hidden_states = attn.to_out[0](hidden_states)
-            hidden_states = attn.to_out[1](hidden_states)
-            encoder_hidden_states = attn.to_add_out(encoder_hidden_states)
-
-            return hidden_states, encoder_hidden_states
-        else:
-            return hidden_states
-
-
-class QEffFluxAttention(FluxAttention):
-    def __qeff_init__(self):
-        processor = QEffFluxAttnProcessor()
-        self.processor = processor
-
+from QEfficient.diffusers.models.normalization import QEffAdaLayerNormZero, QEffAdaLayerNormZeroSingle, QEffAdaLayerNormContinuous
 
 class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
+    def __init__(self, dim: int, num_attention_heads: int, attention_head_dim: int, mlp_ratio: float = 4.0):
+        super().__init__(dim, num_attention_heads, attention_head_dim, mlp_ratio)
+        self.mlp_hidden_dim = int(dim * mlp_ratio)
+        self.norm = QEffAdaLayerNormZeroSingle(dim)
+        self.proj_mlp = nn.Linear(dim, self.mlp_hidden_dim)
+        self.act_mlp = nn.GELU(approximate="tanh")
+        self.proj_out = nn.Linear(dim + self.mlp_hidden_dim, dim)
+        self.attn = FluxAttention(
+            query_dim=dim,
+            dim_head=attention_head_dim,
+            heads=num_attention_heads,
+            out_dim=dim,
+            bias=True,
+            processor=FluxAttnProcessor(),
+            eps=1e-6,
+            pre_only=True,
+        )
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -125,9 +48,10 @@ class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         text_seq_len = encoder_hidden_states.shape[1]
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
-        shift_msa, scale_msa, gate = torch.split(temb, 1)
+        temb = tuple(torch.split(temb, 1))
+        gate = temb[2]
         residual = hidden_states
-        norm_hidden_states = self.norm(hidden_states, scale_msa, shift_msa)
+        norm_hidden_states = self.norm(hidden_states, scale_msa=temb[1], shift_msa=temb[0])
         mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
         joint_attention_kwargs = joint_attention_kwargs or {}
         attn_output = self.attn(
@@ -140,13 +64,37 @@ class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
         hidden_states = gate * self.proj_out(hidden_states)
         hidden_states = residual + hidden_states
         # if hidden_states.dtype == torch.float16:
-        hidden_states = hidden_states.clip(torch.finfo(torch.float32).min, torch.finfo(torch.float32).max)
+        hidden_states = hidden_states.clip(-65504, 65504)
 
         encoder_hidden_states, hidden_states = hidden_states[:, :text_seq_len], hidden_states[:, text_seq_len:]
         return encoder_hidden_states, hidden_states
 
-
 class QEffFluxTransformerBlock(FluxTransformerBlock):
+    def __init__(
+        self, dim: int, num_attention_heads: int, attention_head_dim: int, qk_norm: str = "rms_norm", eps: float = 1e-6
+    ):
+        super().__init__(dim, num_attention_heads, attention_head_dim)
+
+        self.norm1 = QEffAdaLayerNormZero(dim)
+        self.norm1_context = QEffAdaLayerNormZero(dim)
+        self.attn = FluxAttention(
+            query_dim=dim,
+            added_kv_proj_dim=dim,
+            dim_head=attention_head_dim,
+            heads=num_attention_heads,
+            out_dim=dim,
+            context_pre_only=False,
+            bias=True,
+            processor=FluxAttnProcessor(),
+            eps=eps,
+        )
+
+        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.ff = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
+
+        self.norm2_context = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.ff_context = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -160,7 +108,9 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
         norm_hidden_states = self.norm1(hidden_states, shift_msa=temb1[0], scale_msa=temb1[1])
         gate_msa, shift_mlp, scale_mlp, gate_mlp = temb1[-4:]
 
-        norm_encoder_hidden_states = self.norm1_context(encoder_hidden_states, shift_msa=temb2[0], scale_msa=temb2[1])
+        norm_encoder_hidden_states = self.norm1_context(
+            encoder_hidden_states, shift_msa=temb2[0], scale_msa=temb2[1]
+        )
 
         c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = temb2[-4:]
 
@@ -207,8 +157,81 @@ class QEffFluxTransformerBlock(FluxTransformerBlock):
 
         return encoder_hidden_states, hidden_states
 
-
 class QEffFluxTransformer2DModel(FluxTransformer2DModel):
+    def __init__(
+        self,
+        patch_size: int = 1,
+        in_channels: int = 64,
+        out_channels: Optional[int] = None,
+        num_layers: int = 19,
+        num_single_layers: int = 38,
+        attention_head_dim: int = 128,
+        num_attention_heads: int = 24,
+        joint_attention_dim: int = 4096,
+        pooled_projection_dim: int = 768,
+        guidance_embeds: bool = False,
+        axes_dims_rope: Tuple[int, int, int] = (16, 56, 56),
+    ):
+
+        resolved_out_channels = out_channels or in_channels
+        inner_dim = num_attention_heads * attention_head_dim
+
+        super().__init__(
+            patch_size=patch_size,
+            in_channels=in_channels,
+            out_channels=out_channels,
+            num_layers=num_layers,
+            num_single_layers=num_single_layers,
+            attention_head_dim=attention_head_dim,
+            num_attention_heads=num_attention_heads,
+            joint_attention_dim=joint_attention_dim,
+            pooled_projection_dim=pooled_projection_dim,
+            guidance_embeds=guidance_embeds,
+            axes_dims_rope=axes_dims_rope,
+        )
+
+        self.out_channels = resolved_out_channels
+        self.inner_dim = inner_dim
+
+        self.pos_embed = FluxPosEmbed(theta=10000, axes_dim=axes_dims_rope)
+
+        text_time_guidance_cls = (
+            CombinedTimestepGuidanceTextProjEmbeddings if guidance_embeds else CombinedTimestepTextProjEmbeddings
+        )
+        self.time_text_embed = text_time_guidance_cls(
+            embedding_dim=self.inner_dim, pooled_projection_dim=pooled_projection_dim
+        )
+
+        self.context_embedder = nn.Linear(joint_attention_dim, self.inner_dim)
+        self.x_embedder = nn.Linear(in_channels, self.inner_dim)
+
+        self.transformer_blocks = nn.ModuleList(
+            [
+                QEffFluxTransformerBlock(
+                    dim=self.inner_dim,
+                    num_attention_heads=num_attention_heads,
+                    attention_head_dim=attention_head_dim,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+        self.single_transformer_blocks = nn.ModuleList(
+            [
+                QEffFluxSingleTransformerBlock(
+                    dim=self.inner_dim,
+                    num_attention_heads=num_attention_heads,
+                    attention_head_dim=attention_head_dim,
+                )
+                for _ in range(num_single_layers)
+            ]
+        )
+
+        self.norm_out = QEffAdaLayerNormContinuous(self.inner_dim, self.inner_dim, elementwise_affine=False, eps=1e-6)
+        self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=True)
+
+        self.gradient_checkpointing = False
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -259,6 +282,11 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
         if guidance is not None:
             guidance = guidance.to(hidden_states.dtype) * 1000
 
+        temb = (
+            self.time_text_embed(timestep, pooled_projections)
+            if guidance is None
+            else self.time_text_embed(timestep, guidance, pooled_projections)
+        )
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
         if txt_ids.ndim == 3:
@@ -283,13 +311,24 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
             joint_attention_kwargs.update({"ip_hidden_states": ip_hidden_states})
 
         for index_block, block in enumerate(self.transformer_blocks):
-            encoder_hidden_states, hidden_states = block(
-                hidden_states=hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                temb=adaln_emb[index_block],
-                image_rotary_emb=image_rotary_emb,
-                joint_attention_kwargs=joint_attention_kwargs,
-            )
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
+                    block,
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    image_rotary_emb,
+                    joint_attention_kwargs,
+                )
+
+            else:
+                encoder_hidden_states, hidden_states = block(
+                    hidden_states=hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    temb=adaln_emb[index_block],
+                    image_rotary_emb=image_rotary_emb,
+                    joint_attention_kwargs=joint_attention_kwargs,
+                )
 
             # controlnet residual
             if controlnet_block_samples is not None:
@@ -304,13 +343,24 @@ class QEffFluxTransformer2DModel(FluxTransformer2DModel):
                     hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
 
         for index_block, block in enumerate(self.single_transformer_blocks):
-            encoder_hidden_states, hidden_states = block(
-                hidden_states=hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                temb=adaln_single_emb[index_block],
-                image_rotary_emb=image_rotary_emb,
-                joint_attention_kwargs=joint_attention_kwargs,
-            )
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
+                    block,
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    image_rotary_emb,
+                    joint_attention_kwargs,
+                )
+
+            else:
+                encoder_hidden_states, hidden_states = block(
+                    hidden_states=hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    temb=adaln_single_emb[index_block],
+                    image_rotary_emb=image_rotary_emb,
+                    joint_attention_kwargs=joint_attention_kwargs,
+                )
 
             # controlnet residual
             if controlnet_single_block_samples is not None:

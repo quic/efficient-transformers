@@ -88,6 +88,7 @@ if check_qaic_sdk():
     from QEfficient.diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion3 import (
         QEFFStableDiffusion3Pipeline,
     )
+    from  QEfficient.diffusers.pipelines.flux.pipeline_flux import QEFFFluxPipeline
     from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
     from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
     from QEfficient.peft import QEffAutoPeftModelForCausalLM
@@ -110,6 +111,7 @@ if check_qaic_sdk():
         "QEFFCommonLoader",
         "QEFFStableDiffusionPipeline",
         "QEFFStableDiffusion3Pipeline",
+        "QEFFFluxPipeline",
     ]
 
 else:
