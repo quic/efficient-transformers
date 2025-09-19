@@ -58,5 +58,3 @@ Welcome to the official release of **Efficient Transformer Library v1.20.0**! Th
 
 - BERT fine-tuning support with templates and documentation
 - Gradient checkpointing, device-aware `GradScaler`, and CLI `--help` added
-
----

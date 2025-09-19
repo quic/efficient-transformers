@@ -37,7 +37,14 @@ release = "main"
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = ["myst_parser", "sphinx.ext.todo", "sphinx.ext.viewcode", "sphinx.ext.autodoc", "sphinx_multiversion"]
+extensions = [
+    "myst_parser",
+    "sphinx.ext.todo",
+    "sphinx.ext.viewcode",
+    "sphinx.ext.autodoc",
+    "sphinx_multiversion",
+    "sphinx.ext.napoleon",
+]
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
@@ -65,6 +72,7 @@ todo_include_todos = True
 suppress_warnings = [
     "ref.rst_pilog",  # Suppress warnings about excluded toctree entries
 ]
+
 
 def setup(app):
     app.add_css_file("my_theme.css")

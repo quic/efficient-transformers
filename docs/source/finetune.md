@@ -153,4 +153,3 @@ tensorboard --logdir runs/<file> --bind_all
             # from transformers import DataCollatorForLanguageModeling
             # return DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
         ```
----

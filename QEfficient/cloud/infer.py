@@ -34,21 +34,47 @@ def execute_vlm_model(
     generation_len: Optional[int] = None,
 ):
     """
-    This method generates output by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
-    ``Mandatory`` Args:
-        :qeff_model (PreTrainedModel): QEfficient model object.
-        :model_name (str): Hugging Face Model Card name, Example: ``llava-hf/llava-1.5-7b-hf``
-        :image_url (str): Image URL to be used for inference. ``Defaults to None.``
-        :image_path (str): Image path to be used for inference. ``Defaults to None.``
-    ``Optional`` Args:
-        :prompt (str): Sample prompt for the model text generation. ``Defaults to None.``
-        :device_group (List[int]): Device Ids to be used for compilation. If ``len(device_group) > 1``, multiple Card setup is enabled. ``Defaults to None.``
-        :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
-        :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to None.``
-        :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
-        :generation_len (int): Number of tokens to be generated. ``Defaults to None.``
-    Returns:
-        :dict: Output from the ``AI_100`` runtime.
+    Generate output from a compiled Vision-Language Model (VLM) on Cloud AI 100 hardware.
+
+    This method takes a QEfficient VLM model, processes image and text inputs, and generates
+    text outputs using the compiled QPC.
+
+    Parameters
+    ----------
+    qeff_model : PreTrainedModel
+        QEfficient model object, expected to be an instance capable of VLM operations.
+    model_name : str
+        Hugging Face Model Card name (e.g., ``llava-hf/llava-1.5-7b-hf``) used for loading processor.
+    image_url : str
+        URL of the image to be used for inference.
+    image_path : str
+        Local file path to the image to be used for inference.
+
+    Other Parameters
+    ----------------
+    prompt : str, optional
+        Sample prompt for the model text generation. Default is None.
+    device_group : List[int], optional
+        List of device IDs to be used for inference. If ``len(device_group) > 1``,
+        multiple card setup is enabled. Default is None.
+    local_model_dir : str, optional
+        Path to custom model weights and config files, used if not loading from Hugging Face Hub. Default is None.
+    cache_dir : str, optional
+        Cache directory where downloaded HuggingFace files are stored. Default is None.
+    hf_token : str, optional
+        HuggingFace login token to access private repositories. Default is None.
+    generation_len : int, optional
+        Maximum number of tokens to be generated. Default is None.
+
+    Returns
+    -------
+    dict
+        Output from the ``AI_100`` runtime, typically containing generated text and performance metrics.
+
+    Raises
+    ------
+    ValueError
+        If neither ``image_url`` nor ``image_path`` is provided.
     """
     if not (image_url or image_path):
         raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
@@ -115,43 +141,91 @@ def main(
     **kwargs,
 ) -> None:
     """
-    1. Check if compiled qpc for given config already exists, if it does jump to execute, else
-    2. Check if exported ONNX file already exists, if true, jump to compilation -> execution, else
-    3. Check if HF model exists in cache, if true, start transform -> export -> compilation -> execution, else,
-    4. Download HF model -> transform -> export -> compile -> execute
+    Main entry point for the QEfficient inference script.
+
+    This function handles the end-to-end process of downloading, optimizing,
+    compiling, and executing a HuggingFace model on Cloud AI 100 hardware.
+    The process follows these steps:
     
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-        :num_cores (int): Number of cores to compile model on.
-    ``Optional`` Args:
-        :device_group (List[int]): Device Ids to be used for compilation. If ``len(device_group) > 1``, multiple Card setup is enabled. ``Defaults to None.``
-        :prompt (str): Sample prompt for the model text generation. ``Defaults to None.``
-        :prompts_txt_file_path (str): Path to txt file for multiple input prompts. ``Defaults to None.``
-        :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
-        :mos (int): Effort level to reduce the on-chip memory. ``Defaults to 1.``
-        :batch_size (int): Batch size to compile the model for. ``Defaults to 1.``
-        :full_batch_size (int): Set full batch size to enable continuous batching mode. ``Default to None``
-        :prompt_len (int): Prompt length for the model to compile. ``Defaults to 32.``
-        :ctx_len (int): Maximum context length to compile the model. ``Defaults to 128.``
-        :generation_len (int): Number of tokens to be generated. ``Defaults to False.``
-        :mxfp6 (bool): Enable compilation for MXFP6 precision. ``Defaults to False.``
-        :mxint8 (bool): Compress Present/Past KV to ``MXINT8`` using ``CustomIO`` config. ``Defaults to False.``
-        :local_model_dir (str): Path to custom model weights and config files. ``Defaults to None.``
-        :cache_dir (str): Cache dir where downloaded HuggingFace files are stored. ``Defaults to None.``
-        :hf_token (str): HuggingFace login token to access private repos. ``Defaults to None.``
-        :allow_mxint8_mdp_io (bool): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
-        :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
-        :qnn_config (str): Path of QNN Config parameters file. ``Defaults to None.``
-        :trust_remote_code (bool): Trust remote code execution. ``Defaults to False.``
-        :kwargs: Pass any compiler option as input. Any flag that is supported by `qaic-exec` can be passed. Params are converted to flags as below:
-                
-                -allocator_dealloc_delay=1 -> -allocator-dealloc-delay=1
-                
-                -qpc_crc=True -> -qpc-crc
+    1. Checks for an existing compiled QPC package. If found, it jumps directly to execution.
+    2. Checks for an existing exported ONNX file. If true, it proceeds to compilation then execution.
+    3. Checks if the HuggingFace model exists in the cache. If true, it performs model transformation, ONNX export, compilation, and then execution.
+    4. If none of the above, it downloads the HuggingFace model, then performs transformation, ONNX export, compilation, and execution.
+
+    Parameters
+    ----------
+    model_name : str
+        Hugging Face Model Card name (e.g., ``gpt2``) or path to a local model.
+    num_cores : int
+        Number of cores to compile the model on.
+
+    Other Parameters
+    ----------------
+    device_group : List[int], optional
+        List of device IDs to be used for compilation and inference. If ``len(device_group) > 1``,
+        a multiple card setup is enabled. Default is None.
+    prompt : str, optional
+        Sample prompt(s) for the model text generation. For batch size > 1,
+        pass multiple prompts separated by a pipe (``|``) symbol. Default is None.
+    prompts_txt_file_path : str, optional
+        Path to a text file containing multiple input prompts, one per line. Default is None.
+    aic_enable_depth_first : bool, optional
+        Enables Depth-First Search (DFS) with default memory size during compilation. Default is False.
+    mos : int, optional
+        Effort level to reduce on-chip memory. Default is 1.
+    batch_size : int, optional
+        Batch size to compile the model for. Default is 1.
+    full_batch_size : int, optional
+        Sets the full batch size to enable continuous batching mode. Default is None.
+    prompt_len : int, optional
+        Prompt length for the model to compile. Default is 32.
+    ctx_len : int, optional
+        Maximum context length to compile the model for. Default is 128.
+    generation_len : int, optional
+        Maximum number of tokens to be generated during inference. Default is None.
+    mxfp6 : bool, optional
+        Enables compilation for MXFP6 precision for constant MatMul weights. Default is False.
+        A warning is issued as ``--mxfp6`` is deprecated; use ``--mxfp6-matmul`` instead.
+    mxint8 : bool, optional
+        Compresses Present/Past KV to ``MXINT8`` using ``CustomIO`` config. Default is False.
+        A warning is issued as ``--mxint8`` is deprecated; use ``--mxint8-kv-cache`` instead.
+    local_model_dir : str, optional
+        Path to custom model weights and config files. Default is None.
+    cache_dir : str, optional
+        Cache directory where downloaded HuggingFace files are stored. Default is None.
+    hf_token : str, optional
+        HuggingFace login token to access private repositories. Default is None.
+    allow_mxint8_mdp_io : bool, optional
+        Allows MXINT8 compression of MDP IO traffic during compilation. Default is False.
+    enable_qnn : bool or str, optional
+        Enables QNN compilation. Can be passed as a flag (True) or with a configuration file path (str).
+        If a string path is provided, it's treated as ``qnn_config``. Default is False.
+    qnn_config : str, optional
+        Path of the QNN Config parameters file. Default is None.
+    trust_remote_code : bool, optional
+        If True, trusts remote code when loading models from HuggingFace. Default is False.
+    **kwargs :
+        Additional compiler options passed directly to `qaic-exec`. Any flag supported by
+        `qaic-exec` can be passed. Parameters are converted to flags as follows:
+
+        - ``-allocator_dealloc_delay=1`` -> ``-allocator-dealloc-delay=1``
+        - ``-qpc_crc=True`` -> ``-qpc-crc``
+
+    Example
+    -------
+    To run inference from the command line:
 
     .. code-block:: bash
 
-        python -m QEfficient.cloud.infer OPTIONS
+        python -m QEfficient.cloud.infer --model-name gpt2 --num-cores 16 --prompt "Hello world"
+
+    For advanced compilation options:
+
+    .. code-block:: bash
+
+        python -m QEfficient.cloud.infer --model-name meta-llama/Llama-3.2-11B-Vision-Instruct \\
+            --num-cores 16 --prompt "Describe this image." --image-url "https://example.com/image.jpg" \\
+            --prefill-seq-len 32 --ctx-len 512 --img-size 560 --mxfp6-matmul
 
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
