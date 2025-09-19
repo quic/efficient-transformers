@@ -31,6 +31,7 @@ test_models_causal = [
     "microsoft/Phi-3-mini-4k-instruct",
     "tiiuae/falcon-7b",
     "Qwen/Qwen2-0.5B",
+    "Qwen/Qwen3-0.6B",
     "bigcode/starcoder2-3b",
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Felladrin/Minueza-32M-Base",
