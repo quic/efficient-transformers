@@ -93,8 +93,8 @@ else:
         ctx_len=4096,
         num_cores=16,
         num_devices=16,
-        height=1365,
-        width=2044,
+        height=354,
+        width=536,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
@@ -102,7 +102,7 @@ else:
     )
 
     ### IMAGE + TEXT ###
-    image_url = "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg"
+    image_url = "https://picsum.photos/id/237/536/354"
 
     image = Image.open(requests.get(image_url, stream=True).raw)
 
