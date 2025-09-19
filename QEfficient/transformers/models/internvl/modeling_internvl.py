@@ -21,6 +21,9 @@ class QEffInternEncoderWrapper(nn.Module):
 
     def forward(self, pixel_values):
         vision_embeds = self.model.extract_feature(pixel_values)
+        # Reshape from [num_patches, 256, hidden_dim] -> [1, num_patches*256, head_dim]
+        # To enable prefill chunking for num_patches > 1
+        vision_embeds = vision_embeds.reshape(1, -1, vision_embeds.shape[-1])
         return vision_embeds
 
 
@@ -36,7 +39,13 @@ class QEffInternDecoderWrapper(nn.Module):
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
         image_input_ids = input_ids.reshape(B * N)
-        selected = image_input_ids == constants.INTERN_IMG_CONTEXT_TOKEN
+        # TODO: Find a better way to decide which token value to use
+        image_context_token = (
+            constants.INTERN_3_5_IMG_CONTEXT_TOKEN
+            if "Qwen3" in self.config.architectures[0]
+            else constants.INTERN_IMG_CONTEXT_TOKEN
+        )
+        selected = image_input_ids == image_context_token
         indices1 = selected.unsqueeze(0).to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
@@ -238,7 +247,13 @@ class QEffInternVLModel(nn.Module):
         B, N, C = input_embeds.shape
         image_input_embeds = input_embeds.reshape(B * N, C)
         image_input_ids = input_ids.reshape(B * N)
-        selected = image_input_ids == constants.INTERN_IMG_CONTEXT_TOKEN
+        # TODO: Find a better way to decide which token value to use
+        image_context_token = (
+            constants.INTERN_3_5_IMG_CONTEXT_TOKEN
+            if "Qwen3" in self.config.architectures[0]
+            else constants.INTERN_IMG_CONTEXT_TOKEN
+        )
+        selected = image_input_ids == image_context_token
         indices1 = selected.unsqueeze(0).to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)

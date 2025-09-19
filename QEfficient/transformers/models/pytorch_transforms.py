@@ -136,6 +136,13 @@ from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Model,
     Qwen2RMSNorm,
 )
+from transformers.models.qwen3.modeling_qwen3 import (
+    Qwen3Attention,
+    Qwen3DecoderLayer,
+    Qwen3ForCausalLM,
+    Qwen3Model,
+    Qwen3RMSNorm,
+)
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -303,6 +310,12 @@ from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
     QEffQwen2ForCausalLM,
     QEffQwen2Model,
 )
+from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
+    QEffQwen3Attention,
+    QEffQwen3DecoderLayer,
+    QEffQwen3ForCausalLM,
+    QEffQwen3Model,
+)
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
     QEFFStarcoder2DecoderLayer,
@@ -335,6 +348,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         MixtralRMSNorm: CustomRMSNormAIC,
         Phi3RMSNorm: CustomRMSNormAIC,
         Qwen2RMSNorm: CustomRMSNormAIC,
+        Qwen3RMSNorm: CustomRMSNormAIC,
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
         GraniteMoeRMSNorm: CustomRMSNormAIC,
@@ -452,6 +466,11 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen2DecoderLayer: QEffQwen2DecoderLayer,
         Qwen2Model: QEffQwen2Model,
         Qwen2ForCausalLM: QEffQwen2ForCausalLM,
+        # Qwen3
+        Qwen3Attention: QEffQwen3Attention,
+        Qwen3DecoderLayer: QEffQwen3DecoderLayer,
+        Qwen3Model: QEffQwen3Model,
+        Qwen3ForCausalLM: QEffQwen3ForCausalLM,
         # Starcoder2
         Starcoder2Attention: QEffStarcoder2Attention,
         Starcoder2DecoderLayer: QEFFStarcoder2DecoderLayer,
@@ -498,6 +517,7 @@ class SpDTransform:
         # Llama
         QEffLlamaForCausalLM,
         QEffQwen2ForCausalLM,
+        QEffQwen3ForCausalLM,
     }
 
     @classmethod
