@@ -140,7 +140,7 @@ class QEffGptOssMLP(GptOssMLP):
         return experts_out, router_logits
 
     # ------------------- Gather based, weights as activation approach, With Seperate Gate, up Projections ---------------
-    def forward(self, hidden_states):
+    def forward_decode_only(self, hidden_states):
         # print("Seperate Split, Up, Gate Projections")
         bs, seq_len, _ = hidden_states.shape
         hidden_states = hidden_states.view(bs * seq_len, self.experts.hidden_size)
@@ -187,6 +187,43 @@ class QEffGptOssMLP(GptOssMLP):
         experts_out = experts_out.sum(dim=1)
 
         return experts_out, router_logits
+
+    # ------------------- Gather based, weights as activation approach ---------------
+    # Forward OC
+    def forward(self, hidden_states):
+        bs, seq_len, _ = hidden_states.shape
+        hidden_states = hidden_states.view(bs * seq_len, self.experts.hidden_size)
+
+        # Router computation
+        router_logits = F.linear(hidden_states, self.router.weight, self.router.bias)
+        router_top_value, router_indices = torch.topk(router_logits, self.router.top_k, dim=-1)
+        router_top_value = torch.nn.functional.softmax(router_top_value, dim=1, dtype=router_top_value.dtype)
+
+        # -------------------- PREFILL APPROACH ---------------------------------------- #
+        masked_logits = torch.zeros_like(router_logits)
+        masked_logits.scatter_(1, router_indices, router_top_value)
+        final_out_pref = torch.zeros(bs * seq_len, self.experts.hidden_size)
+        for ind in torch.arange(self.experts.num_experts):
+            pref_gate_proj = self.experts.gate_proj[ind]
+            pref_gate_proj_bias = self.experts.gate_proj_bias[ind]
+            pref_up_proj = self.experts.up_proj[ind]
+            pref_up_proj_bias = self.experts.up_proj_bias[ind]
+            pref_down_proj = self.experts.down_proj[ind]
+            pref_down_proj_bias = self.experts.down_proj_bias[ind]
+            pref_gate = torch.matmul(hidden_states, pref_gate_proj) + pref_gate_proj_bias
+            pref_up = torch.matmul(hidden_states, pref_up_proj) + pref_up_proj_bias
+            # Apply activations
+            pref_gate = torch.clamp(pref_gate, min=None, max=self.experts.limit)
+            pref_up = torch.clamp(pref_up, min=-self.experts.limit, max=self.experts.limit)
+            # GLU activation
+            pref_glu = torch.sigmoid(pref_gate * self.experts.alpha) * pref_gate
+            pref_gated_out = (pref_up + 1) * pref_glu
+            # Down projection
+            pref_out = torch.matmul(pref_gated_out, pref_down_proj) + pref_down_proj_bias
+            final_out_pref += pref_out * masked_logits[:, ind.flatten()]
+        # -------------------- PREFILL APPROACH END ---------------------------------------- #
+
+        return final_out_pref, router_logits
 
     def optimized_moe_forward(self, hidden_states: torch.Tensor):
         B, S, H = hidden_states.shape
