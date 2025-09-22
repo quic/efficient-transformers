@@ -43,6 +43,7 @@ if check_qaic_sdk():
     from QEfficient.base import (
         QEFFAutoModel,
         QEFFAutoModelForCausalLM,
+        QEFFAutoModelForCTC,
         QEFFAutoModelForImageTextToText,
         QEFFAutoModelForSpeechSeq2Seq,
         QEFFCommonLoader,
@@ -66,6 +67,7 @@ if check_qaic_sdk():
         "QEffAutoPeftModelForCausalLM",
         "QEFFAutoModelForImageTextToText",
         "QEFFAutoModelForSpeechSeq2Seq",
+        "QEFFAutoModelForCTC",
         "QEFFCommonLoader",
     ]
 
